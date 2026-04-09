@@ -1,0 +1,118 @@
+import { NextRequest, NextResponse } from "next/server";
+import { createOutboundCall } from "@/lib/retell";
+import { getOrder, formatOrderSummary } from "@/lib/shopify";
+import { redis, keys, saveCallRecord } from "@/lib/redis";
+
+export const runtime = "nodejs";
+
+interface TriggerCallBody {
+  phone: string;
+  order_id: string;
+  force?: boolean; // bypass deduplication
+}
+
+/**
+ * Manual call trigger endpoint.
+ * Protected by APP_SECRET header.
+ */
+export async function POST(req: NextRequest) {
+  // Simple auth
+  const authHeader = req.headers.get("x-api-key") ?? req.headers.get("authorization");
+  const appSecret = process.env.APP_SECRET;
+  if (appSecret && authHeader !== appSecret && authHeader !== `Bearer ${appSecret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let body: TriggerCallBody;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const { phone, order_id, force = false } = body;
+
+  if (!phone || !order_id) {
+    return NextResponse.json(
+      { error: "phone and order_id are required" },
+      { status: 400 }
+    );
+  }
+
+  // ── Deduplication check ───────────────────────────────────────────────────
+  if (!force) {
+    const dedupKey = keys.dedup(phone, order_id);
+    const already = await redis.get(dedupKey);
+    if (already) {
+      return NextResponse.json(
+        { error: "Call already placed for this phone + order. Use force=true to override." },
+        { status: 409 }
+      );
+    }
+  }
+
+  // ── Fetch order details from Shopify ─────────────────────────────────────
+  let orderData = {
+    customer_name: "Cliente",
+    products: "",
+    total: "",
+    country: "CR",
+    summary: "",
+  };
+
+  try {
+    const order = await getOrder(order_id);
+    orderData = {
+      customer_name: order.customer
+        ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
+        : `${order.billing_address?.first_name ?? ""} ${order.billing_address?.last_name ?? ""}`.trim(),
+      products: order.line_items.map((li) => `${li.quantity}x ${li.title}`).join(", "),
+      total: `${order.total_price} ${order.currency}`,
+      country: order.billing_address?.country ?? "CR",
+      summary: formatOrderSummary(order),
+    };
+  } catch (err) {
+    console.warn(`[calls/trigger] Could not fetch order ${order_id}:`, err);
+  }
+
+  // ── Set dedup key ─────────────────────────────────────────────────────────
+  const dedupKey = keys.dedup(phone, order_id);
+  await redis.set(dedupKey, "1", { ex: 86400 });
+
+  // ── Create Retell call ────────────────────────────────────────────────────
+  const { call_id } = await createOutboundCall({
+    toPhone: phone,
+    metadata: {
+      order_id,
+      shop_domain: process.env.SHOPIFY_SHOP_DOMAIN ?? "",
+      customer_name: orderData.customer_name,
+      products: orderData.products,
+      total: orderData.total,
+      country: orderData.country,
+      event_type: "manual_trigger",
+    },
+  });
+
+  // ── Save call record ──────────────────────────────────────────────────────
+  await saveCallRecord({
+    call_id,
+    order_id,
+    phone,
+    customer_name: orderData.customer_name,
+    products: orderData.products,
+    total: orderData.total,
+    country: orderData.country,
+    status: "calling",
+    upsell_accepted: false,
+    duration_seconds: 0,
+    started_at: new Date().toISOString(),
+  });
+
+  return NextResponse.json({
+    success: true,
+    call_id,
+    order_id,
+    phone,
+    customer_name: orderData.customer_name,
+  });
+}
