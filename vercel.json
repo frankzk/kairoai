@@ -1,0 +1,17 @@
+{
+  "regions": ["iad1"],
+  "functions": {
+    "app/api/retell/llm/route.ts": {
+      "maxDuration": 25
+    },
+    "app/api/shopify/webhook/route.ts": {
+      "maxDuration": 10
+    },
+    "app/api/retell/webhook/route.ts": {
+      "maxDuration": 15
+    },
+    "app/api/calls/trigger/route.ts": {
+      "maxDuration": 15
+    }
+  }
+}
