@@ -3,7 +3,7 @@
 import { Phone, Clock, ShoppingBag, TrendingUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { CallRecord } from "@/lib/redis";
+import type { CallRecord } from "@/lib/db";
 
 const STATUS_CONFIG: Record<
   CallRecord["status"],

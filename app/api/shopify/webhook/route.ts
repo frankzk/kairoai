@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateShopifyHmac, getOrder, type ShopifyOrder } from "@/lib/shopify";
 import { createOutboundCall } from "@/lib/retell";
-import { redis, keys, saveCallRecord } from "@/lib/redis";
+import { checkDedup, setDedup, saveCallRecord } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -65,14 +65,12 @@ async function handleNewOrder(order: ShopifyOrder): Promise<void> {
   const normalizedPhone = normalizePhone(phone);
 
   // ── Deduplicate ───────────────────────────────────────────────────────────
-  const dedupKey = keys.dedup(normalizedPhone, orderId);
-  const already = await redis.get(dedupKey);
+  const already = await checkDedup(normalizedPhone, orderId);
   if (already) {
-    console.info(`[shopify/webhook] Duplicate: ${dedupKey} — skipping`);
+    console.info(`[shopify/webhook] Duplicate: ${normalizedPhone}:${orderId} — skipping`);
     return;
   }
-  // TTL 24h
-  await redis.set(dedupKey, "1", { ex: 86400 });
+  await setDedup(normalizedPhone, orderId);
 
   const customerName =
     order.customer
@@ -134,10 +132,9 @@ async function handleAbandonedCheckout(
   const normalizedPhone = normalizePhone(phone);
 
   // Deduplicate with checkout token
-  const dedupKey = keys.dedup(normalizedPhone, `checkout-${checkoutToken}`);
-  const already = await redis.get(dedupKey);
+  const already = await checkDedup(normalizedPhone, `checkout-${checkoutToken}`);
   if (already) return;
-  await redis.set(dedupKey, "1", { ex: 86400 });
+  await setDedup(normalizedPhone, `checkout-${checkoutToken}`);
 
   const customer = checkout.customer as Record<string, unknown> | undefined;
   const customerName = customer

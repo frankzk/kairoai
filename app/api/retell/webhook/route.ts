@@ -7,7 +7,7 @@ import {
 import {
   updateCallRecord,
   incrementStat,
-} from "@/lib/redis";
+} from "@/lib/db";
 
 export const runtime = "nodejs";
 

@@ -13,7 +13,7 @@ import {
   completeDraftOrder,
   formatOrderSummary,
 } from "@/lib/shopify";
-import { redis, keys } from "@/lib/redis";
+import { deleteDedup, scheduleRetry } from "@/lib/db";
 import { MIREVA_CR_UPSELL_RULES } from "@/lib/upsell-rules";
 
 export const runtime = "nodejs";
@@ -265,18 +265,9 @@ async function executeFunctionCall(
 
     case "schedule_retry": {
       const retryAt = Date.now() + Number(args.minutes) * 60 * 1000;
-      const retryKey = keys.dedup(String(args.phone), String(args.order_id));
-      // Delete dedup key so retry is allowed
-      await redis.del(retryKey);
-      // Save retry to sorted set (score = timestamp to execute)
-      await redis.zadd(keys.retryQueue(), {
-        score: retryAt,
-        member: JSON.stringify({
-          phone: args.phone,
-          order_id: args.order_id,
-          scheduled_at: new Date(retryAt).toISOString(),
-        }),
-      });
+      // Eliminar dedup para que el reintento sea permitido
+      await deleteDedup(String(args.phone), String(args.order_id));
+      await scheduleRetry(String(args.phone), String(args.order_id), retryAt);
       return {
         success: true,
         message: `Reintento programado en ${args.minutes} minutos`,

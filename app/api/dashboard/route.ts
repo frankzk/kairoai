@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRecentCalls, getTodayStats } from "@/lib/redis";
+import { getRecentCalls, getTodayStats } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const revalidate = 0;

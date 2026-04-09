@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { StatsCards, type StatsData } from "@/components/StatsCards";
 import { CallsTable } from "@/components/CallsTable";
 import { AgentStatus } from "@/components/AgentStatus";
-import type { CallRecord } from "@/lib/redis";
+import type { CallRecord } from "@/lib/db";
 
 interface DashboardData {
   stats: StatsData;

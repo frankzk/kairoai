@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createOutboundCall } from "@/lib/retell";
 import { getOrder, formatOrderSummary } from "@/lib/shopify";
-import { redis, keys, saveCallRecord } from "@/lib/redis";
+import { checkDedup, setDedup, saveCallRecord } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -41,8 +41,7 @@ export async function POST(req: NextRequest) {
 
   // ── Deduplication check ───────────────────────────────────────────────────
   if (!force) {
-    const dedupKey = keys.dedup(phone, order_id);
-    const already = await redis.get(dedupKey);
+    const already = await checkDedup(phone, order_id);
     if (already) {
       return NextResponse.json(
         { error: "Call already placed for this phone + order. Use force=true to override." },
@@ -75,9 +74,8 @@ export async function POST(req: NextRequest) {
     console.warn(`[calls/trigger] Could not fetch order ${order_id}:`, err);
   }
 
-  // ── Set dedup key ─────────────────────────────────────────────────────────
-  const dedupKey = keys.dedup(phone, order_id);
-  await redis.set(dedupKey, "1", { ex: 86400 });
+  // ── Set dedup ─────────────────────────────────────────────────────────────
+  await setDedup(phone, order_id);
 
   // ── Create Retell call ────────────────────────────────────────────────────
   const { call_id } = await createOutboundCall({
