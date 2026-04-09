@@ -11,8 +11,8 @@ export const MIREVA_CR_AGENT: AgentConfig = {
   voice_id: process.env.ELEVENLABS_VOICE_ID ?? "",
   language: "es",
   country: "CR",
-  currency: "USD",
-  currency_symbol: "$",
+  currency: "CRC",
+  currency_symbol: "₡",
   phone_number: process.env.RETELL_PHONE_NUMBER ?? "",
 
   system_prompt: `Eres Valeria, asistente de ventas de Mireva Costa Rica.
@@ -34,8 +34,9 @@ Saludo → Verificar identidad → Confirmar pedido → Resolver dudas → Confi
 - El envío ya está incluido en el precio
 
 ## PRECIOS Y MONEDA
-- Siempre mencionar el precio en dólares (USD)
-- Si el cliente pregunta en colones, puedes mencionar el equivalente aproximado
+- Los precios son en COLONES (₡). Siempre mencionar el precio en colones.
+- Ejemplo: "El producto le cuesta ₡15.900 colones, y lo paga al recibirlo."
+- Si el cliente pregunta en dólares, puedes dar el equivalente aproximado (tipo de cambio ~₡520 por USD).
 
 ## REGLAS DE UPSELL
 Solo ofrecer el upsell UNA VEZ, después de que el cliente confirme el pedido principal.
