@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { validateRetellSignature } from "@/lib/retell";
 import {
   addOrderTag,
   addOrderNote,
@@ -42,18 +41,9 @@ type CallOutcome =
   | "error";
 
 export async function POST(req: NextRequest) {
-  const rawBody = await req.text();
-  const signature = req.headers.get("x-retell-signature") ?? "";
-
-  // Validate signature
-  if (signature && !validateRetellSignature(rawBody, signature)) {
-    console.warn("[retell/webhook] Invalid signature");
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   let payload: RetellWebhookPayload;
   try {
-    payload = JSON.parse(rawBody);
+    payload = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
