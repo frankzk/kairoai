@@ -23,15 +23,15 @@ export async function GET() {
     );
   }
 
-  // Fetch open (unfulfilled) orders, most recent first, limit 50
-  const url = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/orders.json?status=open&fulfillment_status=unfulfilled&limit=50&order=created_at+desc&fields=id,order_number,name,email,phone,financial_status,fulfillment_status,total_price,currency,line_items,customer,billing_address,shipping_address,created_at`;
+  // Fetch all open orders (any fulfillment status), most recent first, limit 50
+  const url = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/orders.json?status=open&limit=50&order=created_at+desc&fields=id,order_number,name,email,phone,financial_status,fulfillment_status,total_price,currency,line_items,customer,billing_address,shipping_address,created_at`;
 
   const res = await fetch(url, {
     headers: {
       "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
       "Content-Type": "application/json",
     },
-    next: { revalidate: 60 }, // cache 1 min
+    cache: "no-store",
   });
 
   if (!res.ok) {

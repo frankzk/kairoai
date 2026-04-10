@@ -48,6 +48,7 @@ export interface ShopifyAddress {
   first_name: string;
   last_name: string;
   address1: string;
+  address2?: string;
   city: string;
   province: string;
   country: string;

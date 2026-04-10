@@ -5,7 +5,18 @@ import { Phone, RefreshCw, AlertCircle, PhoneOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type { ShopifyOrderSummary } from "@/app/api/shopify/orders/route";
+interface ShopifyOrderSummary {
+  id: string;
+  order_number: number;
+  name: string;
+  customer_name: string;
+  phone: string | null;
+  products: string;
+  total: string;
+  financial_status: string;
+  fulfillment_status: string | null;
+  created_at: string;
+}
 
 function normalizePhone(phone: string): string {
   let cleaned = phone.replace(/[\s\-().]/g, "");
