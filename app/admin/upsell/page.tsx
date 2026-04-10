@@ -69,16 +69,21 @@ export default function UpsellAdminPage() {
     fetchProducts();
   }, []);
 
+  // Use SKU if available, fall back to variant_id (some Shopify products have no SKU)
+  function skuOrId(p: ShopifyProductOption): string {
+    return p.sku.trim() || String(p.variant_id);
+  }
+
   function handleTriggerSelect(p: ShopifyProductOption | null) {
     setTriggerProduct(p);
-    setForm((f) => ({ ...f, trigger_sku: p?.sku ?? "" }));
+    setForm((f) => ({ ...f, trigger_sku: p ? skuOrId(p) : "" }));
   }
 
   function handleUpsellSelect(p: ShopifyProductOption | null) {
     setUpsellProduct(p);
     setForm((f) => ({
       ...f,
-      upsell_sku: p?.sku ?? "",
+      upsell_sku: p ? skuOrId(p) : "",
       upsell_name: p?.display_name ?? f.upsell_name,
       upsell_price: p ? String(p.price) : f.upsell_price,
     }));
