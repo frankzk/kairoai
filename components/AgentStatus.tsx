@@ -19,6 +19,7 @@ export function AgentStatus({ agentName, isActive }: AgentStatusProps) {
   const [orderId, setOrderId] = useState("");
   const [triggerState, setTriggerState] = useState<TriggerState>("idle");
   const [resultMessage, setResultMessage] = useState("");
+  const [resultType, setResultType] = useState<"success" | "error">("success");
 
   async function handleTriggerCall(e: React.FormEvent) {
     e.preventDefault();
@@ -40,15 +41,18 @@ export function AgentStatus({ agentName, isActive }: AgentStatusProps) {
 
       if (res.ok) {
         setTriggerState("success");
+        setResultType("success");
         setResultMessage(`Llamada iniciada — ID: ${data.call_id}`);
         setPhone("");
         setOrderId("");
       } else {
         setTriggerState("error");
+        setResultType("error");
         setResultMessage(data.error ?? "Error al disparar la llamada");
       }
     } catch {
       setTriggerState("error");
+      setResultType("error");
       setResultMessage("Error de red. Intenta de nuevo.");
     }
 
@@ -128,12 +132,12 @@ export function AgentStatus({ agentName, isActive }: AgentStatusProps) {
             {resultMessage && (
               <div
                 className={`flex items-center gap-2 mt-2 text-xs ${
-                  triggerState === "success"
+                  resultType === "success"
                     ? "text-emerald-400"
                     : "text-red-400"
                 }`}
               >
-                {triggerState === "success" ? (
+                {resultType === "success" ? (
                   <CheckCircle2 className="h-3.5 w-3.5" />
                 ) : (
                   <AlertCircle className="h-3.5 w-3.5" />
