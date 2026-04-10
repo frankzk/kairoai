@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { StatsCards, type StatsData } from "@/components/StatsCards";
 import { CallsTable } from "@/components/CallsTable";
 import { AgentStatus } from "@/components/AgentStatus";
+import { OrdersTable } from "@/components/OrdersTable";
 import type { CallRecord } from "@/lib/db";
 
 interface DashboardData {
@@ -119,8 +120,11 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-6 space-y-6">
-        {/* Agent Status + Manual Trigger */}
-        <AgentStatus agentName="Valeria" isActive={!loading} />
+        {/* Agent Status */}
+        <AgentStatus agentName="Milagros" isActive={!loading} />
+
+        {/* Shopify Orders with call buttons */}
+        <OrdersTable />
 
         {/* KPI Cards */}
         {loading ? (

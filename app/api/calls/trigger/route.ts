@@ -51,15 +51,26 @@ export async function POST(req: NextRequest) {
     summary: "",
   };
 
+  let shippingAddress = "no disponible";
+  let addressComplete = false;
+
   try {
     const order = await getOrder(order_id);
+    const addr = order.shipping_address ?? order.billing_address;
+    shippingAddress = addr
+      ? [addr.address1, addr.address2, addr.city, addr.province].filter(Boolean).join(", ")
+      : "no disponible";
+    addressComplete = addr?.address1
+      ? /[a-zA-ZáéíóúÁÉÍÓÚñÑ]/.test(addr.address1) && /\d/.test(addr.address1)
+      : false;
+
     orderData = {
       customer_name: order.customer
         ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
         : `${order.billing_address?.first_name ?? ""} ${order.billing_address?.last_name ?? ""}`.trim(),
       products: order.line_items.map((li) => `${li.quantity}x ${li.title}`).join(", "),
       total: `${order.total_price} ${order.currency}`,
-      country: order.billing_address?.country ?? "CR",
+      country: order.billing_address?.country ?? "PE",
       summary: formatOrderSummary(order),
     };
   } catch (err) {
@@ -80,6 +91,8 @@ export async function POST(req: NextRequest) {
       total: orderData.total,
       country: orderData.country,
       event_type: "manual_trigger",
+      shipping_address: shippingAddress,
+      address_complete: addressComplete,
     },
   });
 
