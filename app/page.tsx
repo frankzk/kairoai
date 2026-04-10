@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Zap } from "lucide-react";
+import { RefreshCw, Zap, TrendingUp } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { StatsCards, type StatsData } from "@/components/StatsCards";
 import { CallsTable } from "@/components/CallsTable";
@@ -100,6 +101,12 @@ export default function DashboardPage() {
               />
               <span className="hidden sm:inline">Actualizar</span>
             </Button>
+            <Link href="/admin/upsell">
+              <Button variant="outline" size="sm" className="gap-2">
+                <TrendingUp className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Upsells</span>
+              </Button>
+            </Link>
           </div>
         </div>
       </header>

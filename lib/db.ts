@@ -163,3 +163,93 @@ export async function scheduleRetry(
   });
   if (error) throw new Error(`scheduleRetry: ${error.message}`);
 }
+
+// ─── Upsell Rules ─────────────────────────────────────────────────────────────
+
+export interface UpsellRuleDB {
+  id: number;
+  trigger_sku: string;
+  upsell_sku: string;
+  upsell_name: string;
+  upsell_price: number; // ₡ Colones
+  pitch: string;
+  tier: "S" | "A" | "B";
+  active: boolean;
+  created_at: string;
+}
+
+export async function getUpsellRules(activeOnly = true): Promise<UpsellRuleDB[]> {
+  let query = getDB()
+    .from("upsell_rules")
+    .select("*")
+    .order("tier")
+    .order("created_at");
+  if (activeOnly) query = query.eq("active", true);
+  const { data, error } = await query;
+  if (error) throw new Error(`getUpsellRules: ${error.message}`);
+  return (data ?? []) as UpsellRuleDB[];
+}
+
+export async function createUpsellRule(
+  rule: Omit<UpsellRuleDB, "id" | "created_at">
+): Promise<UpsellRuleDB> {
+  const { data, error } = await getDB()
+    .from("upsell_rules")
+    .insert(rule)
+    .select()
+    .single();
+  if (error) throw new Error(`createUpsellRule: ${error.message}`);
+  return data as UpsellRuleDB;
+}
+
+export async function updateUpsellRule(
+  id: number,
+  updates: Partial<Omit<UpsellRuleDB, "id" | "created_at">>
+): Promise<void> {
+  const { error } = await getDB()
+    .from("upsell_rules")
+    .update(updates)
+    .eq("id", id);
+  if (error) throw new Error(`updateUpsellRule: ${error.message}`);
+}
+
+export async function deleteUpsellRule(id: number): Promise<void> {
+  const { error } = await getDB().from("upsell_rules").delete().eq("id", id);
+  if (error) throw new Error(`deleteUpsellRule: ${error.message}`);
+}
+
+/** Finds the best matching upsell rule for a trigger SKU (highest tier = S > A > B) */
+export async function findBestUpsellRule(
+  triggerSku: string
+): Promise<UpsellRuleDB | null> {
+  const tierOrder = { S: 0, A: 1, B: 2 };
+  const rules = await getUpsellRules(true);
+  const matches = rules.filter(
+    (r) => r.trigger_sku.toLowerCase() === triggerSku.toLowerCase()
+  );
+  if (!matches.length) return null;
+  return matches.sort(
+    (a, b) => tierOrder[a.tier] - tierOrder[b.tier]
+  )[0];
+}
+
+/** Formats all active rules for injection into the agent system prompt */
+export function formatRulesForPrompt(rules: UpsellRuleDB[]): string {
+  if (!rules.length) return "No hay reglas de upsell configuradas.";
+  const byTier: Record<string, UpsellRuleDB[]> = { S: [], A: [], B: [] };
+  for (const r of rules) byTier[r.tier].push(r);
+  const label = { S: "ALTA conversión (>20%)", A: "MEDIA (10-20%)", B: "BUENA (5-10%)" };
+  return (["S", "A", "B"] as const)
+    .filter((t) => byTier[t].length)
+    .map(
+      (t) =>
+        `### Tier ${t} — ${label[t]}\n` +
+        byTier[t]
+          .map(
+            (r) =>
+              `- Trigger SKU "${r.trigger_sku}" → ofrecer "${r.upsell_name}" (SKU: ${r.upsell_sku}) a ₡${r.upsell_price.toLocaleString("es-CR")}. Pitch: "${r.pitch}"`
+          )
+          .join("\n")
+    )
+    .join("\n\n");
+}

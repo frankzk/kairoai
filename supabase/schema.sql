@@ -46,6 +46,22 @@ CREATE TABLE IF NOT EXISTS retry_queue (
 CREATE INDEX IF NOT EXISTS retry_queue_scheduled_idx
   ON retry_queue (scheduled_at) WHERE NOT processed;
 
+-- Reglas de upsell (configurables desde el dashboard)
+CREATE TABLE IF NOT EXISTS upsell_rules (
+  id           BIGSERIAL   PRIMARY KEY,
+  trigger_sku  TEXT        NOT NULL,
+  upsell_sku   TEXT        NOT NULL,
+  upsell_name  TEXT        NOT NULL,
+  upsell_price INTEGER     NOT NULL, -- en Colones (₡)
+  pitch        TEXT        NOT NULL,
+  tier         TEXT        NOT NULL DEFAULT 'B'
+               CHECK (tier IN ('S', 'A', 'B')),
+  active       BOOLEAN     NOT NULL DEFAULT TRUE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS upsell_rules_trigger_idx ON upsell_rules (trigger_sku) WHERE active;
+
 -- Limpieza automática de dedup expirados (opcional, requiere pg_cron)
 -- SELECT cron.schedule('cleanup-dedup', '0 * * * *',
 --   'DELETE FROM call_dedup WHERE expires_at < NOW()');

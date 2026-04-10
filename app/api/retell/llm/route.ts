@@ -14,7 +14,7 @@ import {
   formatOrderSummary,
 } from "@/lib/shopify";
 import { deleteDedup, scheduleRetry } from "@/lib/db";
-import { MIREVA_CR_UPSELL_RULES } from "@/lib/upsell-rules";
+import { getUpsellRules, findBestUpsellRule, formatRulesForPrompt } from "@/lib/db";
 
 export const runtime = "nodejs";
 // Retell expects < 1s response — use edge-friendly timeout
@@ -102,7 +102,7 @@ async function callGemini(
 ) {
   const model = genAI.getGenerativeModel({
     model: "gemini-1.5-flash",
-    systemInstruction: buildSystemPrompt(metadata),
+    systemInstruction: await buildSystemPrompt(metadata),
     tools: [
       {
         functionDeclarations: AGENT_TOOLS.map((tool) => ({
@@ -169,12 +169,23 @@ async function callGemini(
   return { text, end_call: endCall, tool_calls: undefined };
 }
 
-function buildSystemPrompt(metadata: Record<string, unknown>): string {
+async function buildSystemPrompt(metadata: Record<string, unknown>): Promise<string> {
   const orderContext = metadata.order_id
     ? `\n\n## CONTEXTO DEL PEDIDO ACTUAL\n- ID de pedido: ${metadata.order_id}\n- Cliente: ${metadata.customer_name ?? "desconocido"}\n- Productos: ${metadata.products ?? "ver con get_order_details"}\n- Total: ${metadata.total ?? "ver con get_order_details"}\n- País: ${metadata.country ?? "Costa Rica"}\n- Tipo de evento: ${metadata.event_type ?? "order_confirmation"}`
     : "";
 
-  return MIREVA_CR_AGENT.system_prompt + orderContext;
+  // Load upsell rules from DB and inject dynamically
+  let upsellSection = "";
+  try {
+    const rules = await getUpsellRules(true);
+    if (rules.length) {
+      upsellSection = `\n\n## REGLAS DE UPSELL (cargadas en tiempo real)\n${formatRulesForPrompt(rules)}`;
+    }
+  } catch {
+    // Don't fail the call if DB is unavailable — use empty rules
+  }
+
+  return MIREVA_CR_AGENT.system_prompt + upsellSection + orderContext;
 }
 
 // ─── Function Execution ────────────────────────────────────────────────────
@@ -221,9 +232,11 @@ async function executeFunctionCall(
     }
 
     case "offer_upsell": {
-      const rule = MIREVA_CR_UPSELL_RULES.find(
-        (r) => r.upsell_sku === String(args.product_sku)
-      );
+      // Load rule from DB — falls back to matching by trigger SKU or upsell SKU
+      const allRules = await getUpsellRules(true);
+      const rule =
+        allRules.find((r) => r.upsell_sku === String(args.product_sku)) ??
+        (await findBestUpsellRule(String(args.product_sku)));
       if (!rule) {
         return { success: false, message: "SKU de upsell no encontrado" };
       }
