@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ProductPicker } from "@/components/ProductPicker";
 import type { UpsellRuleDB } from "@/lib/db";
+import type { ShopifyProductOption } from "@/app/api/shopify/products/route";
 
 const TIER_COLORS: Record<string, "default" | "success" | "warning"> = {
   S: "success",
@@ -33,6 +35,13 @@ export default function UpsellAdminPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  // Shopify product picker state
+  const [products, setProducts] = useState<ShopifyProductOption[]>([]);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsError, setProductsError] = useState("");
+  const [triggerProduct, setTriggerProduct] = useState<ShopifyProductOption | null>(null);
+  const [upsellProduct, setUpsellProduct] = useState<ShopifyProductOption | null>(null);
+
   async function fetchRules() {
     const res = await fetch("/api/upsell-rules");
     const data = await res.json();
@@ -40,7 +49,48 @@ export default function UpsellAdminPage() {
     setLoading(false);
   }
 
-  useEffect(() => { fetchRules(); }, []);
+  async function fetchProducts() {
+    setProductsLoading(true);
+    setProductsError("");
+    try {
+      const res = await fetch("/api/shopify/products");
+      const data = await res.json();
+      if (data.error) setProductsError(data.error);
+      else setProducts(data.products ?? []);
+    } catch {
+      setProductsError("Error al cargar productos de Shopify");
+    } finally {
+      setProductsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchRules();
+    fetchProducts();
+  }, []);
+
+  function handleTriggerSelect(p: ShopifyProductOption | null) {
+    setTriggerProduct(p);
+    setForm((f) => ({ ...f, trigger_sku: p?.sku ?? "" }));
+  }
+
+  function handleUpsellSelect(p: ShopifyProductOption | null) {
+    setUpsellProduct(p);
+    setForm((f) => ({
+      ...f,
+      upsell_sku: p?.sku ?? "",
+      upsell_name: p?.display_name ?? f.upsell_name,
+      upsell_price: p ? String(p.price) : f.upsell_price,
+    }));
+  }
+
+  function resetForm() {
+    setForm(EMPTY_FORM);
+    setTriggerProduct(null);
+    setUpsellProduct(null);
+    setEditId(null);
+    setShowForm(false);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -62,9 +112,7 @@ export default function UpsellAdminPage() {
         setError(d.error ?? "Error al guardar");
         return;
       }
-      setForm(EMPTY_FORM);
-      setEditId(null);
-      setShowForm(false);
+      resetForm();
       await fetchRules();
     } finally {
       setSaving(false);
@@ -95,6 +143,11 @@ export default function UpsellAdminPage() {
       pitch: rule.pitch,
       tier: rule.tier,
     });
+    // Restore picker selections from loaded products
+    const matchTrigger = products.find((p) => p.sku === rule.trigger_sku) ?? null;
+    const matchUpsell = products.find((p) => p.sku === rule.upsell_sku) ?? null;
+    setTriggerProduct(matchTrigger);
+    setUpsellProduct(matchUpsell);
     setEditId(rule.id);
     setShowForm(true);
   }
@@ -120,7 +173,7 @@ export default function UpsellAdminPage() {
           <Button
             className="ml-auto"
             size="sm"
-            onClick={() => { setShowForm(true); setEditId(null); setForm(EMPTY_FORM); }}
+            onClick={() => { setTriggerProduct(null); setUpsellProduct(null); setEditId(null); setForm(EMPTY_FORM); setShowForm(true); }}
           >
             <Plus className="h-4 w-4 mr-2" /> Nueva regla
           </Button>
@@ -139,24 +192,25 @@ export default function UpsellAdminPage() {
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">SKU del producto comprado (trigger)</label>
-                    <Input
-                      placeholder="ej: shampoo-romero"
-                      value={form.trigger_sku}
-                      onChange={(e) => setForm({ ...form, trigger_sku: e.target.value })}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">SKU del producto a ofrecer (upsell)</label>
-                    <Input
-                      placeholder="ej: crema-peinar-romero"
-                      value={form.upsell_sku}
-                      onChange={(e) => setForm({ ...form, upsell_sku: e.target.value })}
-                      required
-                    />
-                  </div>
+                  <ProductPicker
+                    label="Producto comprado (trigger)"
+                    value={triggerProduct}
+                    onChange={handleTriggerSelect}
+                    products={products}
+                    loading={productsLoading}
+                    error={productsError}
+                    placeholder="Buscar producto trigger..."
+                  />
+                  <ProductPicker
+                    label="Producto a ofrecer (upsell)"
+                    value={upsellProduct}
+                    onChange={handleUpsellSelect}
+                    products={products}
+                    loading={productsLoading}
+                    error={productsError}
+                    placeholder="Buscar producto upsell..."
+                  />
+                  {/* Upsell name: auto-filled but editable */}
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground">Nombre del producto upsell</label>
                     <Input
@@ -166,6 +220,7 @@ export default function UpsellAdminPage() {
                       required
                     />
                   </div>
+                  {/* Price: auto-filled from Shopify but editable */}
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground">Precio en ₡ Colones</label>
                     <Input
@@ -217,7 +272,7 @@ export default function UpsellAdminPage() {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => { setShowForm(false); setEditId(null); setForm(EMPTY_FORM); }}
+                    onClick={resetForm}
                   >
                     <X className="h-4 w-4 mr-1" /> Cancelar
                   </Button>
