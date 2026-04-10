@@ -12,17 +12,9 @@ interface TriggerCallBody {
 }
 
 /**
- * Manual call trigger endpoint.
- * Protected by APP_SECRET header.
+ * Manual call trigger endpoint (dashboard only).
  */
 export async function POST(req: NextRequest) {
-  // Simple auth
-  const authHeader = req.headers.get("x-api-key") ?? req.headers.get("authorization");
-  const appSecret = process.env.APP_SECRET;
-  if (appSecret && authHeader !== appSecret && authHeader !== `Bearer ${appSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   let body: TriggerCallBody;
   try {
     body = await req.json();

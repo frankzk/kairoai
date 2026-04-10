@@ -32,7 +32,6 @@ export function AgentStatus({ agentName, isActive }: AgentStatusProps) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": process.env.NEXT_PUBLIC_APP_SECRET ?? "",
         },
         body: JSON.stringify({ phone, order_id: orderId }),
       });
