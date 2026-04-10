@@ -136,7 +136,7 @@ export async function confirmOrder(orderId: string): Promise<ShopifyOrder> {
   const order = await addOrderTag(orderId, "confirmado-kairo");
   await addOrderNote(
     orderId,
-    `Pedido confirmado por agente de voz Valeria (Kairo AI) el ${new Date().toLocaleString("es-CR")}`
+    `Pedido confirmado por agente de voz Milagros (Kairo AI) el ${new Date().toLocaleString("es-PE")}`
   );
   return order;
 }

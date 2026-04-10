@@ -57,7 +57,6 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchData();
-    // Auto-refresh every 30 seconds
     const interval = setInterval(() => fetchData(), 30_000);
     return () => clearInterval(interval);
   }, [fetchData]);
@@ -123,7 +122,7 @@ export default function DashboardPage() {
         {/* Agent Status */}
         <AgentStatus agentName="Milagros" isActive={!loading} />
 
-        {/* Shopify Orders with call buttons */}
+        {/* Pedidos de Shopify con botones LLAMAR */}
         <OrdersTable />
 
         {/* KPI Cards */}
@@ -147,7 +146,6 @@ export default function DashboardPage() {
           <CallsTable calls={calls} />
         )}
 
-        {/* Footer */}
         <footer className="text-center text-xs text-muted-foreground py-4">
           <p>
             Kairo AI · Agentes de voz IA para e-commerce COD en LATAM ·{" "}

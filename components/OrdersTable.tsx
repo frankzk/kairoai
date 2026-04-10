@@ -5,6 +5,7 @@ import { Phone, RefreshCw, AlertCircle, PhoneOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+
 interface ShopifyOrderSummary {
   id: string;
   order_number: number;
@@ -34,7 +35,7 @@ export function OrdersTable() {
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [calling, setCalling] = useState<Record<string, boolean>>({});
-  const [callResults, setCallResults] = useState<Record<string, "ok" | "err">>({});
+  const [callResults, setCallResults] = useState<Record<string, "ok" | "err">>({}); 
 
   async function fetchOrders(showRefreshing = false) {
     if (showRefreshing) setRefreshing(true);
@@ -45,16 +46,14 @@ export function OrdersTable() {
       if (data.error) setError(data.error);
       else setOrders(data.orders ?? []);
     } catch {
-      setError("Error al cargar pedidos");
+      setError("Error al cargar pedidos de Shopify");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }
 
-  useEffect(() => {
-    fetchOrders();
-  }, []);
+  useEffect(() => { fetchOrders(); }, []);
 
   async function handleCall(order: ShopifyOrderSummary) {
     if (!order.phone) return;
@@ -91,10 +90,10 @@ export function OrdersTable() {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base">
-            Pedidos pendientes
+            Pedidos de Shopify
             {orders.length > 0 && (
               <span className="ml-2 text-xs font-normal text-muted-foreground">
-                ({orders.length})
+                ({orders.length} pendientes)
               </span>
             )}
           </CardTitle>
@@ -114,14 +113,16 @@ export function OrdersTable() {
         {loading ? (
           <div className="h-48 animate-pulse bg-muted/30 rounded-b-lg" />
         ) : error ? (
-          <div className="flex items-center gap-2 px-6 py-8 text-sm text-amber-400">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{error}</span>
+          <div className="flex flex-col gap-1 px-6 py-8 text-sm">
+            <div className="flex items-center gap-2 text-amber-400">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
           </div>
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-            <p className="text-sm">No hay pedidos sin atender.</p>
-            <p className="text-xs mt-1">Los nuevos pedidos de Shopify aparecen aquí.</p>
+            <p className="text-sm">No hay pedidos abiertos en Shopify.</p>
+            <p className="text-xs mt-1">Los pedidos nuevos aparecen aquí automáticamente.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -141,63 +142,42 @@ export function OrdersTable() {
                   const isCalling = calling[order.id];
                   const result = callResults[order.id];
                   const noPhone = !order.phone;
-
                   return (
-                    <tr
-                      key={order.id}
-                      className="border-b border-border/50 hover:bg-muted/20 transition-colors"
-                    >
+                    <tr key={order.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
                       <td className="py-3 px-4">
-                        <span className="font-mono text-xs text-primary">
-                          {order.name}
-                        </span>
+                        <span className="font-mono text-xs text-primary">{order.name}</span>
                       </td>
                       <td className="py-3 px-4">
-                        <div>
-                          <p className="font-medium text-xs text-foreground">
-                            {order.customer_name}
+                        <p className="font-medium text-xs text-foreground">{order.customer_name}</p>
+                        {order.phone ? (
+                          <p className="text-xs text-muted-foreground font-mono">{order.phone}</p>
+                        ) : (
+                          <p className="text-xs text-red-400 flex items-center gap-1">
+                            <PhoneOff className="h-3 w-3" /> Sin teléfono
                           </p>
-                          {order.phone ? (
-                            <p className="text-xs text-muted-foreground font-mono">
-                              {order.phone}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-red-400 flex items-center gap-1">
-                              <PhoneOff className="h-3 w-3" /> Sin teléfono
-                            </p>
-                          )}
-                        </div>
+                        )}
                       </td>
                       <td className="py-3 px-4 hidden md:table-cell">
                         <p className="text-xs text-muted-foreground max-w-[200px] truncate" title={order.products}>
                           {order.products}
                         </p>
                       </td>
-                      <td className="py-3 px-4 font-mono text-xs">
-                        {order.total}
-                      </td>
+                      <td className="py-3 px-4 font-mono text-xs">{order.total}</td>
                       <td className="py-3 px-4 hidden lg:table-cell">
-                        <span className="text-xs text-muted-foreground">
-                          {formatDate(order.created_at)}
-                        </span>
+                        <span className="text-xs text-muted-foreground">{formatDate(order.created_at)}</span>
                       </td>
                       <td className="py-3 px-4">
                         {result === "ok" ? (
-                          <Badge variant="success" className="text-xs">
-                            Llamando
-                          </Badge>
+                          <Badge variant="success" className="text-xs">Llamando</Badge>
                         ) : result === "err" ? (
-                          <Badge variant="destructive" className="text-xs">
-                            Error
-                          </Badge>
+                          <Badge variant="destructive" className="text-xs">Error</Badge>
                         ) : (
                           <Button
                             size="sm"
-                            variant="outline"
                             disabled={isCalling || noPhone}
                             onClick={() => handleCall(order)}
-                            className="gap-1.5 text-xs h-7 px-2.5"
-                            title={noPhone ? "Este pedido no tiene teléfono registrado" : ""}
+                            className="gap-1.5 text-xs h-7 px-3"
+                            title={noPhone ? "Sin teléfono" : ""}
                           >
                             <Phone className={`h-3 w-3 ${isCalling ? "animate-pulse" : ""}`} />
                             {isCalling ? "Llamando..." : "Llamar"}
