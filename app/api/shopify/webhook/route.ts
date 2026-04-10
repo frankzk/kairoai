@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateShopifyHmac, getOrder, type ShopifyOrder } from "@/lib/shopify";
 import { createOutboundCall } from "@/lib/retell";
-import { checkDedup, setDedup, saveCallRecord } from "@/lib/db";
+import { checkDedup, setDedup, saveCallRecord, findBestUpsellRule } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -83,6 +83,35 @@ async function handleNewOrder(order: ShopifyOrder): Promise<void> {
     .map((li) => `${li.quantity}x ${li.title}`)
     .join(", ");
 
+  // Build shipping address string and check completeness
+  const addr = order.shipping_address ?? order.billing_address;
+  const shippingAddress = addr
+    ? [addr.address1, addr.address2, addr.city, addr.province].filter(Boolean).join(", ")
+    : "no disponible";
+  // Address is considered complete if address1 contains both letters and numbers
+  const addressComplete = addr?.address1
+    ? /[a-zA-ZáéíóúÁÉÍÓÚñÑ]/.test(addr.address1) && /\d/.test(addr.address1)
+    : false;
+
+  // ── Look up best upsell rule for this order's SKUs ────────────────────────
+  let upsellProductName = "";
+  let upsellProductPrice = "";
+  let upsellPitch = "";
+  try {
+    const skus = order.line_items.map((li) => li.sku).filter(Boolean) as string[];
+    for (const sku of skus) {
+      const rule = await findBestUpsellRule(sku);
+      if (rule) {
+        upsellProductName = rule.upsell_name;
+        upsellProductPrice = String(rule.upsell_price);
+        upsellPitch = rule.pitch;
+        break;
+      }
+    }
+  } catch {
+    // Don't block the call if upsell lookup fails
+  }
+
   // ── Create Retell call ────────────────────────────────────────────────────
   const { call_id } = await createOutboundCall({
     toPhone: normalizedPhone,
@@ -92,8 +121,13 @@ async function handleNewOrder(order: ShopifyOrder): Promise<void> {
       customer_name: customerName,
       products,
       total: `${order.total_price} ${order.currency}`,
-      country: order.billing_address?.country ?? "CR",
+      country: order.billing_address?.country ?? "PE",
       event_type: "order_confirmation",
+      shipping_address: shippingAddress,
+      address_complete: addressComplete,
+      upsell_product_name: upsellProductName,
+      upsell_product_price: upsellProductPrice,
+      upsell_pitch: upsellPitch,
     },
   });
 
@@ -105,7 +139,7 @@ async function handleNewOrder(order: ShopifyOrder): Promise<void> {
     customer_name: customerName,
     products,
     total: `${order.total_price} ${order.currency}`,
-    country: order.billing_address?.country ?? "CR",
+    country: order.billing_address?.country ?? "PE",
     status: "calling",
     upsell_accepted: false,
     duration_seconds: 0,

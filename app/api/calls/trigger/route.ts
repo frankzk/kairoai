@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createOutboundCall } from "@/lib/retell";
 import { getOrder, formatOrderSummary } from "@/lib/shopify";
-import { checkDedup, setDedup, saveCallRecord } from "@/lib/db";
+import { checkDedup, setDedup, saveCallRecord, findBestUpsellRule } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -51,17 +51,43 @@ export async function POST(req: NextRequest) {
     summary: "",
   };
 
+  let shippingAddress = "no disponible";
+  let addressComplete = false;
+  let upsellProductName = "";
+  let upsellProductPrice = "";
+  let upsellPitch = "";
+
   try {
     const order = await getOrder(order_id);
+    const addr = order.shipping_address ?? order.billing_address;
+    shippingAddress = addr
+      ? [addr.address1, addr.address2, addr.city, addr.province].filter(Boolean).join(", ")
+      : "no disponible";
+    addressComplete = addr?.address1
+      ? /[a-zA-ZáéíóúÁÉÍÓÚñÑ]/.test(addr.address1) && /\d/.test(addr.address1)
+      : false;
+
     orderData = {
       customer_name: order.customer
         ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
         : `${order.billing_address?.first_name ?? ""} ${order.billing_address?.last_name ?? ""}`.trim(),
       products: order.line_items.map((li) => `${li.quantity}x ${li.title}`).join(", "),
       total: `${order.total_price} ${order.currency}`,
-      country: order.billing_address?.country ?? "CR",
+      country: order.billing_address?.country ?? "PE",
       summary: formatOrderSummary(order),
     };
+
+    // Look up best upsell rule for this order's SKUs
+    const skus = order.line_items.map((li) => li.sku).filter(Boolean) as string[];
+    for (const sku of skus) {
+      const rule = await findBestUpsellRule(sku);
+      if (rule) {
+        upsellProductName = rule.upsell_name;
+        upsellProductPrice = String(rule.upsell_price);
+        upsellPitch = rule.pitch;
+        break;
+      }
+    }
   } catch (err) {
     console.warn(`[calls/trigger] Could not fetch order ${order_id}:`, err);
   }
@@ -80,6 +106,11 @@ export async function POST(req: NextRequest) {
       total: orderData.total,
       country: orderData.country,
       event_type: "manual_trigger",
+      shipping_address: shippingAddress,
+      address_complete: addressComplete,
+      upsell_product_name: upsellProductName,
+      upsell_product_price: upsellProductPrice,
+      upsell_pitch: upsellPitch,
     },
   });
 
