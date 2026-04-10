@@ -11,30 +11,47 @@ export const runtime = "nodejs";
 
 // GET /api/upsell-rules — list all rules
 export async function GET() {
-  const rules = await getUpsellRules(false); // include inactive
-  return NextResponse.json({ rules });
+  try {
+    const rules = await getUpsellRules(false); // include inactive
+    return NextResponse.json({ rules });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Error al leer reglas";
+    console.error("[upsell-rules GET]", msg);
+    return NextResponse.json({ rules: [], error: msg });
+  }
 }
 
 // POST /api/upsell-rules — create rule
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { trigger_sku, upsell_sku, upsell_name, upsell_price, pitch, tier } = body;
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const { trigger_sku, upsell_sku, upsell_name, upsell_price, pitch, tier } = body as Record<string, string>;
 
   if (!trigger_sku || !upsell_sku || !upsell_name || !upsell_price || !pitch) {
     return NextResponse.json({ error: "Faltan campos requeridos" }, { status: 400 });
   }
 
-  const rule = await createUpsellRule({
-    trigger_sku: trigger_sku.trim().toLowerCase(),
-    upsell_sku: upsell_sku.trim().toLowerCase(),
-    upsell_name: upsell_name.trim(),
-    upsell_price: Number(upsell_price),
-    pitch: pitch.trim(),
-    tier: (tier ?? "B") as UpsellRuleDB["tier"],
-    active: true,
-  });
-
-  return NextResponse.json({ rule }, { status: 201 });
+  try {
+    const rule = await createUpsellRule({
+      trigger_sku: trigger_sku.trim().toLowerCase(),
+      upsell_sku: upsell_sku.trim().toLowerCase(),
+      upsell_name: upsell_name.trim(),
+      upsell_price: Number(upsell_price),
+      pitch: pitch.trim(),
+      tier: (tier ?? "B") as UpsellRuleDB["tier"],
+      active: true,
+    });
+    return NextResponse.json({ rule }, { status: 201 });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Error al guardar en base de datos";
+    console.error("[upsell-rules POST]", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }
 
 // PATCH /api/upsell-rules — update rule

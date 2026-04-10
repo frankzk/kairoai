@@ -112,13 +112,22 @@ export default function UpsellAdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+
+      let d: Record<string, unknown> = {};
+      try {
+        d = await res.json();
+      } catch {
+        // non-JSON response (e.g. 500 HTML)
+      }
+
       if (!res.ok) {
-        const d = await res.json();
-        setError(d.error ?? "Error al guardar");
+        setError((d.error as string) ?? `Error ${res.status} al guardar`);
         return;
       }
       resetForm();
       await fetchRules();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error de red");
     } finally {
       setSaving(false);
     }
