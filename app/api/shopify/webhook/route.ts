@@ -83,6 +83,16 @@ async function handleNewOrder(order: ShopifyOrder): Promise<void> {
     .map((li) => `${li.quantity}x ${li.title}`)
     .join(", ");
 
+  // Build shipping address string and check completeness
+  const addr = order.shipping_address ?? order.billing_address;
+  const shippingAddress = addr
+    ? [addr.address1, addr.address2, addr.city, addr.province].filter(Boolean).join(", ")
+    : "no disponible";
+  // Address is considered complete if address1 contains both letters and numbers
+  const addressComplete = addr?.address1
+    ? /[a-zA-ZáéíóúÁÉÍÓÚñÑ]/.test(addr.address1) && /\d/.test(addr.address1)
+    : false;
+
   // ── Create Retell call ────────────────────────────────────────────────────
   const { call_id } = await createOutboundCall({
     toPhone: normalizedPhone,
@@ -92,8 +102,10 @@ async function handleNewOrder(order: ShopifyOrder): Promise<void> {
       customer_name: customerName,
       products,
       total: `${order.total_price} ${order.currency}`,
-      country: order.billing_address?.country ?? "CR",
+      country: order.billing_address?.country ?? "PE",
       event_type: "order_confirmation",
+      shipping_address: shippingAddress,
+      address_complete: addressComplete,
     },
   });
 
