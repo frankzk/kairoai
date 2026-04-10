@@ -20,6 +20,7 @@ export async function GET() {
     "read_draft_orders",
     "write_draft_orders",
     "read_customers",
+    "read_checkouts",
   ].join(",");
 
   const redirectUri = `https://kairoai-pearl.vercel.app/api/shopify/auth/callback`;

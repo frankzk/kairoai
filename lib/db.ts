@@ -44,8 +44,15 @@ export interface CallRecord {
 }
 
 export interface AgentSettings {
-  max_retries: number;       // 1–5, total attempts (original + retries)
-  retry_delay_minutes: number; // minutes between attempts
+  max_retries: number;          // 1–5, total attempts (original + retries)
+  retry_delay_minutes: number;  // legacy fallback
+  retry_delays: number[];       // per-attempt delays in minutes, e.g. [30, 120, 240]
+  // Abandoned cart agent
+  cart_agent_enabled: boolean;
+  cart_agent_name: string;
+  cart_agent_phone: string;
+  cart_agent_retell_id: string;
+  cart_agent_retry_delays: number[];
 }
 
 export interface DailyStats {
@@ -297,13 +304,26 @@ export async function findBestUpsellRule(
 
 // ─── Agent Settings ───────────────────────────────────────────────────────────
 
+const DEFAULT_SETTINGS: AgentSettings = {
+  max_retries: 3,
+  retry_delay_minutes: 30,
+  retry_delays: [30, 120, 240],
+  cart_agent_enabled: false,
+  cart_agent_name: "",
+  cart_agent_phone: "",
+  cart_agent_retell_id: "",
+  cart_agent_retry_delays: [60, 240],
+};
+
 export async function getAgentSettings(): Promise<AgentSettings> {
   const { data } = await getDB()
     .from("agent_settings")
-    .select("max_retries, retry_delay_minutes")
+    .select("*")
     .eq("id", 1)
     .maybeSingle();
-  return (data as AgentSettings | null) ?? { max_retries: 3, retry_delay_minutes: 30 };
+  if (!data) return DEFAULT_SETTINGS;
+  // Merge with defaults so new fields always have a value
+  return { ...DEFAULT_SETTINGS, ...(data as Partial<AgentSettings>) };
 }
 
 export async function updateAgentSettings(

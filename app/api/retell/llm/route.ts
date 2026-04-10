@@ -13,7 +13,7 @@ import {
   completeDraftOrder,
   formatOrderSummary,
 } from "@/lib/shopify";
-import { deleteDedup, scheduleRetry, updateCallRecord, getAgentSettings } from "@/lib/db";
+import { deleteDedup, scheduleRetry, updateCallRecord, getAgentSettings, getCallAttemptCount } from "@/lib/db";
 import { getUpsellRules, findBestUpsellRule, formatRulesForPrompt } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -301,16 +301,20 @@ async function executeFunctionCall(
     }
 
     case "schedule_retry": {
-      // Use admin-configured delay instead of agent-suggested minutes
-      const settings = await getAgentSettings().catch(() => ({ retry_delay_minutes: 30 }));
-      const delayMs = settings.retry_delay_minutes * 60 * 1000;
-      const retryAt = Date.now() + delayMs;
-      // Eliminar dedup para que el reintento sea permitido
+      const settings = await getAgentSettings().catch(() => ({ retry_delay_minutes: 30, retry_delays: [] as number[] }));
+      // Pick per-attempt delay based on how many calls have already been made
+      const attemptsDone = await getCallAttemptCount(String(args.order_id));
+      const delays: number[] = settings.retry_delays?.length
+        ? settings.retry_delays
+        : [settings.retry_delay_minutes ?? 30];
+      // attemptsDone is the number of completed calls; use that as index (0-based)
+      const delayMin = delays[Math.min(attemptsDone - 1, delays.length - 1)] ?? 30;
+      const retryAt = Date.now() + delayMin * 60 * 1000;
       await deleteDedup(String(args.phone), String(args.order_id));
       await scheduleRetry(String(args.phone), String(args.order_id), retryAt);
       return {
         success: true,
-        message: `Reintento programado en ${settings.retry_delay_minutes} minutos`,
+        message: `Reintento programado en ${delayMin} minutos`,
         retry_at: new Date(retryAt).toISOString(),
       };
     }
