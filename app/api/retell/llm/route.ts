@@ -161,18 +161,35 @@ async function callGemini(
   }
 
   const text = response.text();
+  const lower = text.toLowerCase();
   const endCall =
-    text.toLowerCase().includes("hasta luego") ||
-    text.toLowerCase().includes("que tenga un buen") ||
-    text.toLowerCase().includes("fue un gusto") ||
-    text.toLowerCase().includes("buen día, cuídese");
+    lower.includes("motorizado te llamará antes de la entrega") ||
+    lower.includes("llamará antes de la entrega") ||
+    lower.includes("hasta luego") ||
+    lower.includes("que tengas un buen") ||
+    lower.includes("fue un gusto") ||
+    lower.includes("buen día, cuídate") ||
+    lower.includes("que estés bien") ||
+    lower.includes("estará llegando en 2") ||
+    lower.includes("confirmamos tu dirección y tu pedido");
 
   return { text, end_call: endCall, tool_calls: undefined };
 }
 
 async function buildSystemPrompt(metadata: Record<string, unknown>): Promise<string> {
+  const storeName = process.env.STORE_NAME ?? process.env.SHOPIFY_SHOP_DOMAIN?.split(".")[0] ?? "la tienda";
+
   const orderContext = metadata.order_id
-    ? `\n\n## CONTEXTO DEL PEDIDO ACTUAL\n- ID de pedido: ${metadata.order_id}\n- Cliente: ${metadata.customer_name ?? "desconocido"}\n- Productos: ${metadata.products ?? "ver con get_order_details"}\n- Total: ${metadata.total ?? "ver con get_order_details"}\n- País: ${metadata.country ?? "Costa Rica"}\n- Tipo de evento: ${metadata.event_type ?? "order_confirmation"}`
+    ? `\n\n## CONTEXTO DEL PEDIDO ACTUAL
+- ID de pedido: ${metadata.order_id}
+- Tienda: ${storeName}
+- Cliente (NOMBRE): ${metadata.customer_name ?? "desconocido"}
+- Producto(s) (PRODUCTO): ${metadata.products ?? "ver con get_order_details"}
+- Total (MONTO): ${metadata.total ?? "ver con get_order_details"}
+- Dirección registrada (DIRECCIÓN): ${metadata.shipping_address ?? "ver con get_order_details"}
+- ¿Dirección completa?: ${metadata.address_complete ? "Sí, parece completa" : "No, puede estar incompleta — preguntar al cliente"}
+- País: ${metadata.country ?? "Perú"}
+- Tipo de evento: ${metadata.event_type ?? "order_confirmation"}`
     : "";
 
   // Load upsell rules from DB and inject dynamically
