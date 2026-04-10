@@ -62,6 +62,22 @@ CREATE TABLE IF NOT EXISTS upsell_rules (
 
 CREATE INDEX IF NOT EXISTS upsell_rules_trigger_idx ON upsell_rules (trigger_sku) WHERE active;
 
+-- Configuración del agente (única fila con id=1)
+CREATE TABLE IF NOT EXISTS agent_settings (
+  id                   INTEGER     PRIMARY KEY DEFAULT 1,
+  max_retries          INTEGER     NOT NULL DEFAULT 3 CHECK (max_retries BETWEEN 1 AND 5),
+  retry_delay_minutes  INTEGER     NOT NULL DEFAULT 30 CHECK (retry_delay_minutes >= 1),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO agent_settings (id, max_retries, retry_delay_minutes)
+  VALUES (1, 3, 30) ON CONFLICT (id) DO NOTHING;
+
+-- Campo de producto upsell en llamadas (nombre del producto ofrecido)
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS upsell_product TEXT;
+
+-- Campo de número de intento en retry_queue
+ALTER TABLE retry_queue ADD COLUMN IF NOT EXISTS attempt_number INTEGER NOT NULL DEFAULT 1;
+
 -- Limpieza automática de dedup expirados (opcional, requiere pg_cron)
 -- SELECT cron.schedule('cleanup-dedup', '0 * * * *',
 --   'DELETE FROM call_dedup WHERE expires_at < NOW()');

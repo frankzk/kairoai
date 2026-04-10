@@ -36,10 +36,16 @@ export interface CallRecord {
     | "upsell_accepted"
     | "error";
   upsell_accepted: boolean;
+  upsell_product?: string;
   duration_seconds: number;
   started_at: string;
   ended_at?: string;
   notes?: string;
+}
+
+export interface AgentSettings {
+  max_retries: number;       // 1–5, total attempts (original + retries)
+  retry_delay_minutes: number; // minutes between attempts
 }
 
 export interface DailyStats {
@@ -156,12 +162,68 @@ export async function scheduleRetry(
   orderId: string,
   scheduledAtMs: number
 ): Promise<void> {
+  // Count existing calls for this order to determine attempt_number
+  const { count } = await getDB()
+    .from("calls")
+    .select("*", { count: "exact", head: true })
+    .eq("order_id", orderId);
+  const attempt = (count ?? 1) + 1;
+
   const { error } = await getDB().from("retry_queue").insert({
     phone,
     order_id: orderId,
     scheduled_at: new Date(scheduledAtMs).toISOString(),
+    attempt_number: attempt,
   });
   if (error) throw new Error(`scheduleRetry: ${error.message}`);
+}
+
+export interface RetryItem {
+  id: number;
+  phone: string;
+  order_id: string;
+  scheduled_at: string;
+  attempt_number: number;
+}
+
+/** Returns unprocessed retries that are due now */
+export async function getDueRetries(): Promise<RetryItem[]> {
+  const { data, error } = await getDB()
+    .from("retry_queue")
+    .select("id, phone, order_id, scheduled_at, attempt_number")
+    .eq("processed", false)
+    .lte("scheduled_at", new Date().toISOString())
+    .order("scheduled_at")
+    .limit(20);
+  if (error) throw new Error(`getDueRetries: ${error.message}`);
+  return (data ?? []) as RetryItem[];
+}
+
+export async function markRetryProcessed(id: number): Promise<void> {
+  await getDB().from("retry_queue").update({ processed: true }).eq("id", id);
+}
+
+/** Returns the most recent call record for an order (for metadata re-use) */
+export async function getRecentCallByOrder(
+  orderId: string
+): Promise<CallRecord | null> {
+  const { data } = await getDB()
+    .from("calls")
+    .select("*")
+    .eq("order_id", orderId)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data as CallRecord | null) ?? null;
+}
+
+/** Returns total call attempts for an order */
+export async function getCallAttemptCount(orderId: string): Promise<number> {
+  const { count } = await getDB()
+    .from("calls")
+    .select("*", { count: "exact", head: true })
+    .eq("order_id", orderId);
+  return count ?? 0;
 }
 
 // ─── Upsell Rules ─────────────────────────────────────────────────────────────
@@ -231,6 +293,27 @@ export async function findBestUpsellRule(
   return matches.sort(
     (a, b) => tierOrder[a.tier] - tierOrder[b.tier]
   )[0];
+}
+
+// ─── Agent Settings ───────────────────────────────────────────────────────────
+
+export async function getAgentSettings(): Promise<AgentSettings> {
+  const { data } = await getDB()
+    .from("agent_settings")
+    .select("max_retries, retry_delay_minutes")
+    .eq("id", 1)
+    .maybeSingle();
+  return (data as AgentSettings | null) ?? { max_retries: 3, retry_delay_minutes: 30 };
+}
+
+export async function updateAgentSettings(
+  updates: Partial<AgentSettings>
+): Promise<void> {
+  const { error } = await getDB()
+    .from("agent_settings")
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq("id", 1);
+  if (error) throw new Error(`updateAgentSettings: ${error.message}`);
 }
 
 /** Formats all active rules for injection into the agent system prompt */

@@ -13,7 +13,7 @@ import {
   completeDraftOrder,
   formatOrderSummary,
 } from "@/lib/shopify";
-import { deleteDedup, scheduleRetry } from "@/lib/db";
+import { deleteDedup, scheduleRetry, updateCallRecord, getAgentSettings } from "@/lib/db";
 import { getUpsellRules, findBestUpsellRule, formatRulesForPrompt } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -50,7 +50,8 @@ export async function POST(req: NextRequest) {
     const result = await executeFunctionCall(
       body.func_call.name,
       JSON.parse(body.func_call.arguments || "{}"),
-      body.call?.metadata ?? {}
+      body.call?.metadata ?? {},
+      body.call?.call_id ?? ""
     );
 
     return NextResponse.json({
@@ -193,7 +194,8 @@ async function buildSystemPrompt(metadata: Record<string, unknown>): Promise<str
 async function executeFunctionCall(
   name: string,
   args: Record<string, unknown>,
-  metadata: Record<string, unknown>
+  metadata: Record<string, unknown>,
+  callId: string
 ): Promise<unknown> {
   console.info(`[retell/llm] Executing function: ${name}`, args);
 
@@ -258,6 +260,11 @@ async function executeFunctionCall(
         note: `Upsell de Kairo AI para pedido #${order.order_number}`,
       });
 
+      // Record the upsell product name in the call record
+      if (callId) {
+        updateCallRecord(callId, { upsell_product: rule.upsell_name }).catch(() => {});
+      }
+
       return {
         success: true,
         draft_order_id: String(draft.id),
@@ -277,13 +284,16 @@ async function executeFunctionCall(
     }
 
     case "schedule_retry": {
-      const retryAt = Date.now() + Number(args.minutes) * 60 * 1000;
+      // Use admin-configured delay instead of agent-suggested minutes
+      const settings = await getAgentSettings().catch(() => ({ retry_delay_minutes: 30 }));
+      const delayMs = settings.retry_delay_minutes * 60 * 1000;
+      const retryAt = Date.now() + delayMs;
       // Eliminar dedup para que el reintento sea permitido
       await deleteDedup(String(args.phone), String(args.order_id));
       await scheduleRetry(String(args.phone), String(args.order_id), retryAt);
       return {
         success: true,
-        message: `Reintento programado en ${args.minutes} minutos`,
+        message: `Reintento programado en ${settings.retry_delay_minutes} minutos`,
         retry_at: new Date(retryAt).toISOString(),
       };
     }
