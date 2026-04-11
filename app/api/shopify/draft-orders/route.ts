@@ -20,7 +20,7 @@ export async function GET() {
     return NextResponse.json({ error: "Shopify no configurado." }, { status: 503 });
   }
 
-  const url = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/draft_orders.json?status=open&limit=100&order=updated_at+desc`;
+  const url = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/draft_orders.json?status=open&limit=250`;
 
   try {
     const res = await fetch(url, {
@@ -81,6 +81,11 @@ export async function GET() {
           updated_at: o.updated_at as string,
         };
       }
+    );
+
+    // Sort newest first regardless of what Shopify returns
+    orders.sort(
+      (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
     );
 
     return NextResponse.json({ orders });
