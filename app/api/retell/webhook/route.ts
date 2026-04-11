@@ -27,6 +27,7 @@ interface RetellWebhookPayload {
       agent_sentiment?: string;
       custom_analysis_data?: Record<string, unknown>;
     };
+    recording_url?: string;
     transcript?: string;
     transcript_object?: Array<{ role: string; content: string }>;
     disconnection_reason?: string;
@@ -69,13 +70,14 @@ export async function POST(req: NextRequest) {
     `[retell/webhook] Call ${callId} ended. Outcome: ${outcome}. Order: ${orderId}`
   );
 
-  // ── Update Redis record ───────────────────────────────────────────────────
+  // ── Update call record ────────────────────────────────────────────────────
   await updateCallRecord(callId, {
     status: outcome,
     upsell_accepted: outcome === "upsell_accepted",
     duration_seconds: durationSeconds,
     ended_at: new Date().toISOString(),
     notes: summary,
+    ...(call.recording_url ? { recording_url: call.recording_url } : {}),
   });
 
   // ── Increment stats ───────────────────────────────────────────────────────

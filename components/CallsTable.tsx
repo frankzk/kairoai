@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Phone, Clock, ShoppingBag, TrendingUp, Search, X, RotateCcw } from "lucide-react";
+import { Phone, Clock, ShoppingBag, TrendingUp, Search, X, RotateCcw, PlayCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CallRecord, RetryItem } from "@/lib/db";
@@ -217,16 +217,30 @@ export function CallsTable({
                       </div>
                     </td>
 
-                    {/* Duration */}
+                    {/* Duration + recording */}
                     <td className="py-3 px-4 hidden sm:table-cell">
-                      {call.duration_seconds > 0 ? (
-                        <div className="flex items-center gap-1 text-muted-foreground">
-                          <Clock className="h-3.5 w-3.5" />
-                          <span className="font-mono text-xs">{formatDuration(call.duration_seconds)}</span>
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">—</span>
-                      )}
+                      <div className="flex flex-col gap-1">
+                        {call.duration_seconds > 0 ? (
+                          <div className="flex items-center gap-1 text-muted-foreground">
+                            <Clock className="h-3.5 w-3.5" />
+                            <span className="font-mono text-xs">{formatDuration(call.duration_seconds)}</span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                        {call.recording_url && (
+                          <a
+                            href={call.recording_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
+                            title="Escuchar grabación"
+                          >
+                            <PlayCircle className="h-3.5 w-3.5" />
+                            <span className="text-xs">Grabación</span>
+                          </a>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

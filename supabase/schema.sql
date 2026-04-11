@@ -75,6 +75,9 @@ INSERT INTO agent_settings (id, max_retries, retry_delay_minutes)
 -- Campo de producto upsell en llamadas (nombre del producto ofrecido)
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS upsell_product TEXT;
 
+-- URL de grabación de Retell AI
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_url TEXT;
+
 -- Campo de número de intento en retry_queue
 ALTER TABLE retry_queue ADD COLUMN IF NOT EXISTS attempt_number INTEGER NOT NULL DEFAULT 1;
 

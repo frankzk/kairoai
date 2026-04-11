@@ -41,6 +41,7 @@ export interface CallRecord {
   started_at: string;
   ended_at?: string;
   notes?: string;
+  recording_url?: string;
 }
 
 export interface AgentSettings {
