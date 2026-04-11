@@ -6,7 +6,7 @@ export const revalidate = 0;
 
 export async function GET() {
   const [calls, stats, pendingRetries] = await Promise.all([
-    getRecentCalls(50),
+    getRecentCalls(200),
     getTodayStats(),
     getPendingRetries().catch(() => []),
   ]);

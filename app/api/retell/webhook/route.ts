@@ -6,6 +6,11 @@ import {
 import {
   updateCallRecord,
   incrementStat,
+  getCallById,
+  getCallAttemptCount,
+  getAgentSettings,
+  scheduleRetry,
+  deleteDedup,
 } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -95,6 +100,15 @@ export async function POST(req: NextRequest) {
     await incrementStat("no_answer");
   }
 
+  // ── Auto-schedule retry for no_answer (Single Prompt agents can't call
+  //    schedule_retry themselves, so the webhook does it automatically) ──────
+  if (outcome === "no_answer" && orderId &&
+      !orderId.startsWith("checkout-") && !orderId.startsWith("draft-")) {
+    autoScheduleRetry(callId, orderId).catch((err) =>
+      console.error("[retell/webhook] autoScheduleRetry error:", err)
+    );
+  }
+
   // ── Update Shopify (best-effort, don't block response) ───────────────────
   if (orderId && !orderId.startsWith("checkout-")) {
     updateShopify(orderId, outcome, summary, durationSeconds).catch((err) =>
@@ -103,6 +117,37 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ received: true, outcome });
+}
+
+// ─── Auto-retry ───────────────────────────────────────────────────────────
+
+async function autoScheduleRetry(callId: string, orderId: string): Promise<void> {
+  const [callRec, settings, attemptsDone] = await Promise.all([
+    getCallById(callId),
+    getAgentSettings(),
+    getCallAttemptCount(orderId),
+  ]);
+
+  if (!callRec) return;
+
+  if (attemptsDone >= settings.max_retries) {
+    console.info(`[retell/webhook] Max retries (${settings.max_retries}) reached for ${orderId}`);
+    return;
+  }
+
+  const delays: number[] = settings.retry_delays?.length
+    ? settings.retry_delays
+    : [settings.retry_delay_minutes ?? 30];
+  // attemptsDone is total calls made; use as 0-based index into delays array
+  const delayMin = delays[Math.min(attemptsDone - 1, delays.length - 1)] ?? 30;
+  const retryAt = Date.now() + delayMin * 60 * 1000;
+
+  await deleteDedup(callRec.phone, orderId);
+  await scheduleRetry(callRec.phone, orderId, retryAt);
+
+  console.info(
+    `[retell/webhook] Retry #${attemptsDone + 1} scheduled for order ${orderId} in ${delayMin} min`
+  );
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────

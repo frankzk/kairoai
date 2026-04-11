@@ -211,6 +211,16 @@ export async function markRetryProcessed(id: number): Promise<void> {
   await getDB().from("retry_queue").update({ processed: true }).eq("id", id);
 }
 
+/** Returns a single call record by call_id */
+export async function getCallById(callId: string): Promise<CallRecord | null> {
+  const { data } = await getDB()
+    .from("calls")
+    .select("*")
+    .eq("call_id", callId)
+    .maybeSingle();
+  return (data as CallRecord | null) ?? null;
+}
+
 /** Returns all unprocessed scheduled retries (for UI display) */
 export async function getPendingRetries(): Promise<RetryItem[]> {
   const { data, error } = await getDB()

@@ -1,61 +1,57 @@
 "use client";
 
-import { useState } from "react";
-import { Phone, Clock, ShoppingBag, TrendingUp, Search, X, RotateCcw, PlayCircle } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  Phone, Clock, ShoppingBag, TrendingUp, Search, X,
+  RotateCcw, PlayCircle, ChevronDown, ChevronRight,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CallRecord, RetryItem } from "@/lib/db";
 
 const STATUS_CONFIG: Record<
   CallRecord["status"],
   { label: string; variant: "success" | "destructive" | "warning" | "muted" | "default" | "secondary" | "outline" }
 > = {
-  calling: { label: "Llamando...", variant: "default" },
-  confirmed: { label: "Confirmado", variant: "success" },
-  upsell_accepted: { label: "Upsell ✓", variant: "success" },
-  cancelled: { label: "Cancelado", variant: "destructive" },
-  no_answer: { label: "No Contesta", variant: "warning" },
-  error: { label: "Error", variant: "muted" },
+  calling:         { label: "Llamando...", variant: "default" },
+  confirmed:       { label: "Confirmado",  variant: "success" },
+  upsell_accepted: { label: "Upsell ✓",   variant: "success" },
+  cancelled:       { label: "Cancelado",   variant: "destructive" },
+  no_answer:       { label: "No Contesta", variant: "warning" },
+  error:           { label: "Error",       variant: "muted" },
 };
 
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}m ${s}s`;
+function fmtDuration(s: number) {
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
-
-function formatTime(isoString: string): string {
+function fmtTime(iso: string) {
   try {
-    return new Date(isoString).toLocaleTimeString("es-CR", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  } catch {
-    return "—";
-  }
+    return new Date(iso).toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit", hour12: false });
+  } catch { return "—"; }
 }
-
-function formatDate(isoString: string): string {
+function fmtDate(iso: string) {
   try {
-    return new Date(isoString).toLocaleDateString("es-CR", {
-      day: "2-digit",
-      month: "short",
-    });
-  } catch {
-    return "—";
-  }
+    return new Date(iso).toLocaleDateString("es-CR", { day: "2-digit", month: "short" });
+  } catch { return "—"; }
 }
-
-function retryLabel(scheduledAt: string): string {
+function retryLabel(scheduledAt: string) {
   const ms = new Date(scheduledAt).getTime() - Date.now();
   if (ms <= 0) return "Reintento pendiente";
   const min = Math.ceil(ms / 60_000);
   if (min < 60) return `Reintento en ${min} min`;
-  const h = Math.floor(min / 60);
-  const rem = min % 60;
-  return rem > 0 ? `Reintento en ${h}h ${rem}min` : `Reintento en ${h}h`;
+  const h = Math.floor(min / 60), r = min % 60;
+  return r > 0 ? `Reintento en ${h}h ${r}min` : `Reintento en ${h}h`;
+}
+
+interface OrderGroup {
+  order_id: string;
+  phone: string;
+  customer_name: string;
+  products: string;
+  total: string;
+  calls: CallRecord[];   // sorted newest → oldest
+  latestCall: CallRecord;
+  pendingRetry?: RetryItem;
 }
 
 export function CallsTable({
@@ -66,40 +62,78 @@ export function CallsTable({
   pendingRetries?: RetryItem[];
 }) {
   const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // Build a map: order_id → earliest pending retry
-  const retryByOrder = new Map<string, RetryItem>();
-  for (const r of pendingRetries) {
-    if (!retryByOrder.has(r.order_id)) retryByOrder.set(r.order_id, r);
-  }
+  // Build a map order_id → earliest pending retry
+  const retryByOrder = useMemo(() => {
+    const m = new Map<string, RetryItem>();
+    for (const r of pendingRetries) {
+      if (!m.has(r.order_id)) m.set(r.order_id, r);
+    }
+    return m;
+  }, [pendingRetries]);
+
+  // Group calls by order_id
+  const groups = useMemo((): OrderGroup[] => {
+    const map = new Map<string, CallRecord[]>();
+    for (const c of calls) {
+      if (!map.has(c.order_id)) map.set(c.order_id, []);
+      map.get(c.order_id)!.push(c);
+    }
+    return Array.from(map.entries())
+      .map(([order_id, grpCalls]) => {
+        const sorted = [...grpCalls].sort(
+          (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
+        );
+        const latest = sorted[0];
+        return {
+          order_id,
+          phone: latest.phone,
+          customer_name: latest.customer_name,
+          products: latest.products,
+          total: latest.total,
+          calls: sorted,
+          latestCall: latest,
+          pendingRetry: retryByOrder.get(order_id),
+        };
+      })
+      .sort((a, b) =>
+        new Date(b.latestCall.started_at).getTime() -
+        new Date(a.latestCall.started_at).getTime()
+      );
+  }, [calls, retryByOrder]);
 
   const filtered = search.trim()
-    ? calls.filter((c) => {
+    ? groups.filter(({ order_id, phone, customer_name, products }) => {
         const q = search.toLowerCase();
         return (
-          c.phone.includes(q) ||
-          c.order_id.toLowerCase().includes(q) ||
-          c.customer_name.toLowerCase().includes(q) ||
-          c.products.toLowerCase().includes(q)
+          phone.includes(q) ||
+          order_id.toLowerCase().includes(q) ||
+          customer_name.toLowerCase().includes(q) ||
+          products.toLowerCase().includes(q)
         );
       })
-    : calls;
+    : groups;
+
+  const toggle = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
   if (!calls.length) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
         <Phone className="h-12 w-12 mb-4 opacity-20" />
         <p className="text-sm">No hay llamadas registradas aún.</p>
-        <p className="text-xs mt-1 opacity-70">
-          Las llamadas aparecerán aquí cuando Shopify envíe nuevos pedidos.
-        </p>
       </div>
     );
   }
 
   return (
     <div>
-      {/* Search bar */}
+      {/* Search */}
       <div className="px-4 py-3 border-b border-border/50">
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-input bg-background">
           <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -116,124 +150,130 @@ export function CallsTable({
           )}
         </div>
         <p className="text-xs text-muted-foreground mt-2 px-1">
-          {filtered.length !== calls.length
-            ? `${filtered.length} de ${calls.length} registros`
-            : `${calls.length} registros`}
+          {filtered.length !== groups.length
+            ? `${filtered.length} de ${groups.length} pedidos`
+            : `${groups.length} pedidos · ${calls.length} llamadas`}
         </p>
       </div>
 
+      {/* Table */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border">
-              <th className="text-left py-3 px-4 text-muted-foreground font-medium">Hora</th>
-              <th className="text-left py-3 px-4 text-muted-foreground font-medium">Cliente</th>
-              <th className="text-left py-3 px-4 text-muted-foreground font-medium hidden md:table-cell">Producto</th>
-              <th className="text-left py-3 px-4 text-muted-foreground font-medium hidden lg:table-cell">Total</th>
-              <th className="text-left py-3 px-4 text-muted-foreground font-medium">Resultado</th>
-              <th className="text-left py-3 px-4 text-muted-foreground font-medium hidden sm:table-cell">Duración</th>
+              <th className="w-8 py-3 px-2" />
+              <th className="text-left py-3 px-3 text-muted-foreground font-medium">Hora</th>
+              <th className="text-left py-3 px-3 text-muted-foreground font-medium">Cliente</th>
+              <th className="text-left py-3 px-3 text-muted-foreground font-medium hidden md:table-cell">Producto</th>
+              <th className="text-left py-3 px-3 text-muted-foreground font-medium hidden lg:table-cell">Total</th>
+              <th className="text-left py-3 px-3 text-muted-foreground font-medium">Resultado</th>
+              <th className="text-left py-3 px-3 text-muted-foreground font-medium hidden sm:table-cell">Duración</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="py-10 text-center text-muted-foreground text-sm">
-                  Sin resultados para &quot;{search}&quot;
-                </td>
-              </tr>
-            ) : (
-              filtered.map((call) => {
-                const statusConf = STATUS_CONFIG[call.status] ?? {
-                  label: call.status,
-                  variant: "muted" as const,
-                };
-                const pendingRetry = retryByOrder.get(call.order_id);
-                const isRetryNote = call.notes?.startsWith("Reintento");
+            {filtered.map((grp) => {
+              const lc = grp.latestCall;
+              const sc = STATUS_CONFIG[lc.status] ?? { label: lc.status, variant: "muted" as const };
+              const isExp = expanded.has(grp.order_id);
+              const hasMany = grp.calls.length > 1;
 
-                return (
+              return (
+                <>
+                  {/* ── Main row (latest call) ─────────────────────────── */}
                   <tr
-                    key={call.call_id}
-                    className="border-b border-border/50 hover:bg-muted/30 transition-colors"
+                    key={grp.order_id}
+                    className={`border-b border-border/50 hover:bg-muted/20 transition-colors ${hasMany ? "cursor-pointer" : ""}`}
+                    onClick={() => hasMany && toggle(grp.order_id)}
                   >
+                    {/* Expand toggle */}
+                    <td className="py-3 px-2 text-center">
+                      {hasMany ? (
+                        <button
+                          className="text-muted-foreground hover:text-foreground"
+                          onClick={(e) => { e.stopPropagation(); toggle(grp.order_id); }}
+                          title={`${grp.calls.length} intentos`}
+                        >
+                          {isExp
+                            ? <ChevronDown className="h-4 w-4" />
+                            : <ChevronRight className="h-4 w-4" />}
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground/30 text-xs">·</span>
+                      )}
+                    </td>
+
                     {/* Time */}
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-3">
                       <div className="flex flex-col">
-                        <span className="font-mono text-foreground">{formatTime(call.started_at)}</span>
-                        <span className="text-xs text-muted-foreground">{formatDate(call.started_at)}</span>
-                        {isRetryNote && (
-                          <span className="text-xs text-amber-400 font-medium mt-0.5">{call.notes}</span>
+                        <span className="font-mono text-foreground">{fmtTime(lc.started_at)}</span>
+                        <span className="text-xs text-muted-foreground">{fmtDate(lc.started_at)}</span>
+                        {hasMany && (
+                          <span className="text-xs text-primary mt-0.5">{grp.calls.length} intentos</span>
                         )}
                       </div>
                     </td>
 
                     {/* Customer */}
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-3">
                       <div className="flex flex-col">
-                        <span className="font-medium text-foreground">{call.customer_name || "—"}</span>
-                        <span className="text-xs text-muted-foreground font-mono">{call.phone}</span>
-                        <span className="text-xs text-muted-foreground">#{call.order_id}</span>
+                        <span className="font-medium text-foreground">{lc.customer_name || "—"}</span>
+                        <span className="text-xs text-muted-foreground font-mono">{lc.phone}</span>
+                        <span className="text-xs text-muted-foreground">#{lc.order_id}</span>
                       </div>
                     </td>
 
                     {/* Products */}
-                    <td className="py-3 px-4 hidden md:table-cell">
+                    <td className="py-3 px-3 hidden md:table-cell">
                       <div className="flex items-start gap-1.5">
                         <ShoppingBag className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
                         <span className="text-xs text-muted-foreground max-w-[200px] truncate">
-                          {call.products || "—"}
+                          {lc.products || "—"}
                         </span>
                       </div>
                     </td>
 
                     {/* Total */}
-                    <td className="py-3 px-4 hidden lg:table-cell">
-                      <span className="font-mono text-foreground text-xs">{call.total || "—"}</span>
+                    <td className="py-3 px-3 hidden lg:table-cell">
+                      <span className="font-mono text-foreground text-xs">{lc.total || "—"}</span>
                     </td>
 
                     {/* Status + retry + upsell */}
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-3">
                       <div className="flex flex-col gap-1">
-                        <Badge variant={statusConf.variant}>{statusConf.label}</Badge>
-                        {pendingRetry && (
+                        <Badge variant={sc.variant}>{sc.label}</Badge>
+                        {grp.pendingRetry && (
                           <div className="flex items-center gap-1 text-amber-400">
                             <RotateCcw className="h-3 w-3 shrink-0" />
-                            <span className="text-xs">{retryLabel(pendingRetry.scheduled_at)}</span>
+                            <span className="text-xs font-medium">{retryLabel(grp.pendingRetry.scheduled_at)}</span>
                           </div>
                         )}
-                        {call.upsell_product && (
+                        {lc.upsell_product && (
                           <div className="flex items-center gap-1">
                             <TrendingUp className="h-3 w-3 text-emerald-400 shrink-0" />
-                            <span className="text-xs text-emerald-400 truncate max-w-[140px]" title={call.upsell_product}>
-                              {call.upsell_product}
-                            </span>
+                            <span className="text-xs text-emerald-400 truncate max-w-[140px]">{lc.upsell_product}</span>
                           </div>
-                        )}
-                        {call.upsell_accepted && call.status !== "upsell_accepted" && !call.upsell_product && (
-                          <Badge variant="success" className="text-xs">
-                            <TrendingUp className="h-2.5 w-2.5 mr-1" />
-                            Upsell
-                          </Badge>
                         )}
                       </div>
                     </td>
 
                     {/* Duration + recording */}
-                    <td className="py-3 px-4 hidden sm:table-cell">
+                    <td className="py-3 px-3 hidden sm:table-cell">
                       <div className="flex flex-col gap-1">
-                        {call.duration_seconds > 0 ? (
+                        {lc.duration_seconds > 0 ? (
                           <div className="flex items-center gap-1 text-muted-foreground">
                             <Clock className="h-3.5 w-3.5" />
-                            <span className="font-mono text-xs">{formatDuration(call.duration_seconds)}</span>
+                            <span className="font-mono text-xs">{fmtDuration(lc.duration_seconds)}</span>
                           </div>
                         ) : (
                           <span className="text-muted-foreground text-xs">—</span>
                         )}
-                        {call.recording_url && (
+                        {lc.recording_url && (
                           <a
-                            href={call.recording_url}
+                            href={lc.recording_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
+                            className="flex items-center gap-1 text-primary hover:text-primary/80"
+                            onClick={(e) => e.stopPropagation()}
                             title="Escuchar grabación"
                           >
                             <PlayCircle className="h-3.5 w-3.5" />
@@ -243,9 +283,80 @@ export function CallsTable({
                       </div>
                     </td>
                   </tr>
-                );
-              })
-            )}
+
+                  {/* ── Expanded: all attempts ─────────────────────────── */}
+                  {isExp && grp.calls.map((c, idx) => {
+                    const sc2 = STATUS_CONFIG[c.status] ?? { label: c.status, variant: "muted" as const };
+                    const attemptNum = grp.calls.length - idx;
+                    return (
+                      <tr
+                        key={c.call_id}
+                        className="border-b border-border/30 bg-muted/10"
+                      >
+                        <td className="py-2 px-2" />
+                        <td className="py-2 px-3">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-medium text-primary">
+                              Intento {attemptNum}
+                            </span>
+                            <span className="font-mono text-xs text-muted-foreground">{fmtTime(c.started_at)}</span>
+                            <span className="text-xs text-muted-foreground">{fmtDate(c.started_at)}</span>
+                          </div>
+                        </td>
+                        <td className="py-2 px-3" colSpan={3}>
+                          {c.notes && (
+                            <p className="text-xs text-muted-foreground italic truncate max-w-[320px]" title={c.notes}>
+                              {c.notes}
+                            </p>
+                          )}
+                        </td>
+                        <td className="py-2 px-3">
+                          <Badge variant={sc2.variant} className="text-xs">{sc2.label}</Badge>
+                        </td>
+                        <td className="py-2 px-3 hidden sm:table-cell">
+                          <div className="flex flex-col gap-0.5">
+                            {c.duration_seconds > 0 && (
+                              <span className="text-xs text-muted-foreground font-mono">
+                                {fmtDuration(c.duration_seconds)}
+                              </span>
+                            )}
+                            {c.recording_url && (
+                              <a
+                                href={c.recording_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-primary hover:text-primary/80"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <PlayCircle className="h-3 w-3" />
+                                <span className="text-xs">Grabación</span>
+                              </a>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {/* ── Pending retry row ─────────────────────────────── */}
+                  {isExp && grp.pendingRetry && (
+                    <tr key={`retry-${grp.order_id}`} className="border-b border-border/30 bg-amber-500/5">
+                      <td className="py-2 px-2" />
+                      <td className="py-2 px-3" colSpan={5}>
+                        <div className="flex items-center gap-2 text-amber-400">
+                          <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+                          <span className="text-xs font-medium">
+                            {retryLabel(grp.pendingRetry.scheduled_at)}
+                            {" "}(intento {grp.pendingRetry.attempt_number})
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-2 px-3" />
+                    </tr>
+                  )}
+                </>
+              );
+            })}
           </tbody>
         </table>
       </div>
