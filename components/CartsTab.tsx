@@ -1,21 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Phone, RefreshCw, AlertCircle, PhoneOff } from "lucide-react";
+import { Phone, RefreshCw, AlertCircle, PhoneOff, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
-interface ShopifyOrderSummary {
+interface DraftOrderSummary {
   id: string;
-  order_number: number;
   name: string;
   customer_name: string;
   phone: string | null;
+  email: string | null;
   products: string;
   total: string;
-  financial_status: string;
-  fulfillment_status: string | null;
+  status: string;
   created_at: string;
+  updated_at: string;
 }
 
 function normalizePhone(phone: string): string {
@@ -28,8 +28,8 @@ function normalizePhone(phone: string): string {
   return cleaned;
 }
 
-export function OrdersTable() {
-  const [orders, setOrders] = useState<ShopifyOrderSummary[]>([]);
+export function CartsTab() {
+  const [orders, setOrders] = useState<DraftOrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
@@ -40,12 +40,12 @@ export function OrdersTable() {
     if (showRefreshing) setRefreshing(true);
     setError("");
     try {
-      const res = await fetch("/api/shopify/orders", { cache: "no-store" });
+      const res = await fetch("/api/shopify/draft-orders", { cache: "no-store" });
       const data = await res.json();
       if (data.error) setError(data.error);
       else setOrders(data.orders ?? []);
     } catch {
-      setError("Error al cargar pedidos");
+      setError("Error al cargar pedidos preliminares");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -56,8 +56,9 @@ export function OrdersTable() {
     fetchOrders();
   }, []);
 
-  async function handleCall(order: ShopifyOrderSummary) {
+  async function handleCall(order: DraftOrderSummary) {
     if (!order.phone) return;
+    const orderId = `draft-${order.id}`;
     setCalling((c) => ({ ...c, [order.id]: true }));
     try {
       const res = await fetch("/api/calls/trigger", {
@@ -65,8 +66,12 @@ export function OrdersTable() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           phone: normalizePhone(order.phone),
-          order_id: order.id,
+          order_id: orderId,
           force: true,
+          customer_name: order.customer_name,
+          products: order.products,
+          total: order.total,
+          event_type: "abandoned_cart",
         }),
       });
       setCallResults((r) => ({ ...r, [order.id]: res.ok ? "ok" : "err" }));
@@ -102,8 +107,8 @@ export function OrdersTable() {
   if (orders.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-        <p className="text-sm">No hay pedidos abiertos en este momento.</p>
-        <p className="text-xs mt-1">Los pedidos abiertos de Shopify aparecen aquí.</p>
+        <ShoppingCart className="h-10 w-10 mb-3 opacity-20" />
+        <p className="text-sm">No hay pedidos preliminares abiertos.</p>
       </div>
     );
   }
@@ -111,12 +116,21 @@ export function OrdersTable() {
   return (
     <div>
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
-        <span className="text-xs text-muted-foreground">{orders.length} pedido{orders.length !== 1 ? "s" : ""} abierto{orders.length !== 1 ? "s" : ""}</span>
-        <Button variant="ghost" size="sm" onClick={() => fetchOrders(true)} disabled={refreshing} className="gap-1.5 text-xs h-7">
+        <span className="text-xs text-muted-foreground">
+          {orders.length} pedido{orders.length !== 1 ? "s" : ""} preliminar{orders.length !== 1 ? "es" : ""}
+        </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => fetchOrders(true)}
+          disabled={refreshing}
+          className="gap-1.5 text-xs h-7"
+        >
           <RefreshCw className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
           Actualizar
         </Button>
       </div>
+
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -153,16 +167,19 @@ export function OrdersTable() {
                           <PhoneOff className="h-3 w-3" /> Sin teléfono
                         </p>
                       )}
+                      {order.email && (
+                        <p className="text-xs text-muted-foreground truncate max-w-[140px]">{order.email}</p>
+                      )}
                     </div>
                   </td>
                   <td className="py-3 px-4 hidden md:table-cell">
                     <p className="text-xs text-muted-foreground max-w-[200px] truncate" title={order.products}>
-                      {order.products}
+                      {order.products || "—"}
                     </p>
                   </td>
                   <td className="py-3 px-4 font-mono text-xs">{order.total}</td>
                   <td className="py-3 px-4 hidden lg:table-cell">
-                    <span className="text-xs text-muted-foreground">{formatDate(order.created_at)}</span>
+                    <span className="text-xs text-muted-foreground">{formatDate(order.updated_at)}</span>
                   </td>
                   <td className="py-3 px-4">
                     {result === "ok" ? (

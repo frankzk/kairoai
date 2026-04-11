@@ -210,6 +210,17 @@ export async function markRetryProcessed(id: number): Promise<void> {
   await getDB().from("retry_queue").update({ processed: true }).eq("id", id);
 }
 
+/** Returns all unprocessed scheduled retries (for UI display) */
+export async function getPendingRetries(): Promise<RetryItem[]> {
+  const { data, error } = await getDB()
+    .from("retry_queue")
+    .select("id, phone, order_id, scheduled_at, attempt_number")
+    .eq("processed", false)
+    .order("scheduled_at");
+  if (error) throw new Error(`getPendingRetries: ${error.message}`);
+  return (data ?? []) as RetryItem[];
+}
+
 /** Returns the most recent call record for an order (for metadata re-use) */
 export async function getRecentCallByOrder(
   orderId: string
