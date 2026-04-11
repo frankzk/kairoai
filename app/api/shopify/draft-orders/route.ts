@@ -20,7 +20,14 @@ export async function GET() {
     return NextResponse.json({ error: "Shopify no configurado." }, { status: 503 });
   }
 
-  const url = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/draft_orders.json?status=open&limit=250`;
+  // Use descending ID so the 250 we fetch are the 250 most recent draft orders.
+  // Shopify draft_orders IDs are sequential; highest = newest.
+  const params = new URLSearchParams({
+    status: "open",
+    limit: "250",
+    order: "id desc",
+  });
+  const url = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/draft_orders.json?${params}`;
 
   try {
     const res = await fetch(url, {
