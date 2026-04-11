@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
-import { getRecentCalls, getTodayStats } from "@/lib/db";
+import { getRecentCalls, getTodayStats, getPendingRetries } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const revalidate = 0;
 
 export async function GET() {
-  const [calls, stats] = await Promise.all([
+  const [calls, stats, pendingRetries] = await Promise.all([
     getRecentCalls(50),
     getTodayStats(),
+    getPendingRetries().catch(() => []),
   ]);
 
   const confirmationRate =
@@ -18,6 +19,7 @@ export async function GET() {
   return NextResponse.json({
     stats: { ...stats, confirmation_rate: confirmationRate },
     calls,
+    pending_retries: pendingRetries,
     fetched_at: new Date().toISOString(),
   });
 }

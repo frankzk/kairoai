@@ -78,6 +78,17 @@ ALTER TABLE calls ADD COLUMN IF NOT EXISTS upsell_product TEXT;
 -- Campo de número de intento en retry_queue
 ALTER TABLE retry_queue ADD COLUMN IF NOT EXISTS attempt_number INTEGER NOT NULL DEFAULT 1;
 
+-- Nuevas columnas de configuración del agente (ejecutar si aún no existen)
+ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS retry_delays           JSONB   NOT NULL DEFAULT '[30, 120, 240]';
+ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS cart_agent_enabled     BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS cart_agent_name        TEXT    NOT NULL DEFAULT '';
+ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS cart_agent_phone       TEXT    NOT NULL DEFAULT '';
+ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS cart_agent_retell_id   TEXT    NOT NULL DEFAULT '';
+ALTER TABLE agent_settings ADD COLUMN IF NOT EXISTS cart_agent_retry_delays JSONB  NOT NULL DEFAULT '[60, 240]';
+
+-- Recargar el schema cache de PostgREST
+NOTIFY pgrst, 'reload schema';
+
 -- Limpieza automática de dedup expirados (opcional, requiere pg_cron)
 -- SELECT cron.schedule('cleanup-dedup', '0 * * * *',
 --   'DELETE FROM call_dedup WHERE expires_at < NOW()');

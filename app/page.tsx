@@ -1,18 +1,21 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Zap, TrendingUp, Settings } from "lucide-react";
+import { RefreshCw, Zap, TrendingUp, Settings, Phone, Package, ShoppingCart } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { StatsCards, type StatsData } from "@/components/StatsCards";
 import { CallsTable } from "@/components/CallsTable";
 import { AgentStatus } from "@/components/AgentStatus";
 import { OrdersTable } from "@/components/OrdersTable";
-import type { CallRecord } from "@/lib/db";
+import { CartsTab } from "@/components/CartsTab";
+import type { CallRecord, RetryItem } from "@/lib/db";
 
 interface DashboardData {
   stats: StatsData;
   calls: CallRecord[];
+  pending_retries: RetryItem[];
   fetched_at: string;
 }
 
@@ -25,11 +28,14 @@ const EMPTY_STATS: StatsData = {
   confirmation_rate: 0,
 };
 
+type Tab = "calls" | "orders" | "carts";
+
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string>("");
+  const [tab, setTab] = useState<Tab>("calls");
 
   const fetchData = useCallback(async (showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
@@ -57,13 +63,20 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchData();
-    // Auto-refresh every 30 seconds
     const interval = setInterval(() => fetchData(), 30_000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
   const stats = data?.stats ?? EMPTY_STATS;
   const calls = data?.calls ?? [];
+  const pendingRetries = data?.pending_retries ?? [];
+
+  const tabCls = (active: boolean) =>
+    `flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+      active
+        ? "border-primary text-primary"
+        : "border-transparent text-muted-foreground hover:text-foreground"
+    }`;
 
   return (
     <div className="min-h-screen bg-background">
@@ -75,12 +88,8 @@ export default function DashboardPage() {
               <Zap className="h-4 w-4 text-primary" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-foreground tracking-tight">
-                Kairo AI
-              </h1>
-              <p className="text-xs text-muted-foreground">
-                Voice Agents · E-commerce COD · LATAM
-              </p>
+              <h1 className="text-lg font-bold text-foreground tracking-tight">Kairo AI</h1>
+              <p className="text-xs text-muted-foreground">Voice Agents · E-commerce COD · LATAM</p>
             </div>
           </div>
 
@@ -90,16 +99,8 @@ export default function DashboardPage() {
                 Actualizado: {lastUpdated}
               </span>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchData(true)}
-              disabled={refreshing}
-              className="gap-2"
-            >
-              <RefreshCw
-                className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
-              />
+            <Button variant="outline" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="gap-2">
+              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Actualizar</span>
             </Button>
             <Link href="/admin/upsell">
@@ -123,29 +124,51 @@ export default function DashboardPage() {
         {/* Agent Status */}
         <AgentStatus agentName="Milagros" isActive={!loading} />
 
-        {/* Shopify Orders with call buttons */}
-        <OrdersTable />
-
-        {/* KPI Cards */}
+        {/* KPI Stats */}
         {loading ? (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div
-                key={i}
-                className="h-28 rounded-lg border border-border bg-card animate-pulse"
-              />
+              <div key={i} className="h-28 rounded-lg border border-border bg-card animate-pulse" />
             ))}
           </div>
         ) : (
           <StatsCards stats={stats} />
         )}
 
-        {/* Calls Table */}
-        {loading ? (
-          <div className="h-96 rounded-lg border border-border bg-card animate-pulse" />
-        ) : (
-          <CallsTable calls={calls} />
-        )}
+        {/* ── 3-tab section ────────────────────────────────────────────────── */}
+        <Card className="overflow-hidden">
+          <CardHeader className="p-0 border-b border-border">
+            <div className="flex overflow-x-auto">
+              <button onClick={() => setTab("calls")} className={tabCls(tab === "calls")}>
+                <Phone className="h-3.5 w-3.5" />
+                Llamadas Recientes
+                {calls.length > 0 && (
+                  <span className="ml-1 text-xs text-muted-foreground">({calls.length})</span>
+                )}
+              </button>
+              <button onClick={() => setTab("orders")} className={tabCls(tab === "orders")}>
+                <Package className="h-3.5 w-3.5" />
+                Pedidos de Shopify
+              </button>
+              <button onClick={() => setTab("carts")} className={tabCls(tab === "carts")}>
+                <ShoppingCart className="h-3.5 w-3.5" />
+                Carritos Abandonados
+              </button>
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-0">
+            {tab === "calls" && (
+              loading ? (
+                <div className="h-64 animate-pulse bg-muted/30" />
+              ) : (
+                <CallsTable calls={calls} pendingRetries={pendingRetries} />
+              )
+            )}
+            {tab === "orders" && <OrdersTable />}
+            {tab === "carts" && <CartsTab />}
+          </CardContent>
+        </Card>
 
         {/* Footer */}
         <footer className="text-center text-xs text-muted-foreground py-4">

@@ -9,6 +9,11 @@ interface TriggerCallBody {
   phone: string;
   order_id: string;
   force?: boolean; // bypass deduplication
+  // Optional pre-filled data for cart calls (avoids Shopify order fetch)
+  customer_name?: string;
+  products?: string;
+  total?: string;
+  event_type?: string;
 }
 
 /**
@@ -42,11 +47,11 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── Fetch order details from Shopify ─────────────────────────────────────
+  // ── Fetch order details (or use pre-filled cart data) ─────────────────────
   let orderData = {
-    customer_name: "Cliente",
-    products: "",
-    total: "",
+    customer_name: body.customer_name ?? "Cliente",
+    products: body.products ?? "",
+    total: body.total ?? "",
     country: "CR",
     summary: "",
   };
@@ -57,39 +62,43 @@ export async function POST(req: NextRequest) {
   let upsellProductPrice = "";
   let upsellPitch = "";
 
-  try {
-    const order = await getOrder(order_id);
-    const addr = order.shipping_address ?? order.billing_address;
-    shippingAddress = addr
-      ? [addr.address1, addr.address2, addr.city, addr.province].filter(Boolean).join(", ")
-      : "no disponible";
-    addressComplete = addr?.address1
-      ? /[a-zA-ZáéíóúÁÉÍÓÚñÑ]/.test(addr.address1) && /\d/.test(addr.address1)
-      : false;
+  // Only fetch from Shopify if this is a real order (not a checkout/pre-filled)
+  const isRealOrder = !order_id.startsWith("checkout-") && !body.customer_name;
+  if (isRealOrder) {
+    try {
+      const order = await getOrder(order_id);
+      const addr = order.shipping_address ?? order.billing_address;
+      shippingAddress = addr
+        ? [addr.address1, addr.address2, addr.city, addr.province].filter(Boolean).join(", ")
+        : "no disponible";
+      addressComplete = addr?.address1
+        ? /[a-zA-ZáéíóúÁÉÍÓÚñÑ]/.test(addr.address1) && /\d/.test(addr.address1)
+        : false;
 
-    orderData = {
-      customer_name: order.customer
-        ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
-        : `${order.billing_address?.first_name ?? ""} ${order.billing_address?.last_name ?? ""}`.trim(),
-      products: order.line_items.map((li) => `${li.quantity}x ${li.title}`).join(", "),
-      total: `${order.total_price} ${order.currency}`,
-      country: order.billing_address?.country ?? "PE",
-      summary: formatOrderSummary(order),
-    };
+      orderData = {
+        customer_name: order.customer
+          ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
+          : `${order.billing_address?.first_name ?? ""} ${order.billing_address?.last_name ?? ""}`.trim(),
+        products: order.line_items.map((li) => `${li.quantity}x ${li.title}`).join(", "),
+        total: `${order.total_price} ${order.currency}`,
+        country: order.billing_address?.country ?? "PE",
+        summary: formatOrderSummary(order),
+      };
 
-    // Look up best upsell rule for this order's SKUs
-    const skus = order.line_items.map((li) => li.sku).filter(Boolean) as string[];
-    for (const sku of skus) {
-      const rule = await findBestUpsellRule(sku);
-      if (rule) {
-        upsellProductName = rule.upsell_name;
-        upsellProductPrice = String(rule.upsell_price);
-        upsellPitch = rule.pitch;
-        break;
+      // Look up best upsell rule for this order's SKUs
+      const skus = order.line_items.map((li) => li.sku).filter(Boolean) as string[];
+      for (const sku of skus) {
+        const rule = await findBestUpsellRule(sku);
+        if (rule) {
+          upsellProductName = rule.upsell_name;
+          upsellProductPrice = String(rule.upsell_price);
+          upsellPitch = rule.pitch;
+          break;
+        }
       }
+    } catch (err) {
+      console.warn(`[calls/trigger] Could not fetch order ${order_id}:`, err);
     }
-  } catch (err) {
-    console.warn(`[calls/trigger] Could not fetch order ${order_id}:`, err);
   }
 
   // ── Set dedup ─────────────────────────────────────────────────────────────
@@ -105,7 +114,7 @@ export async function POST(req: NextRequest) {
       products: orderData.products,
       total: orderData.total,
       country: orderData.country,
-      event_type: "manual_trigger",
+      event_type: body.event_type ?? (isRealOrder ? "manual_trigger" : "abandoned_cart"),
       shipping_address: shippingAddress,
       address_complete: addressComplete,
       upsell_product_name: upsellProductName,

@@ -1,21 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Phone, RefreshCw, AlertCircle, PhoneOff } from "lucide-react";
+import { Phone, RefreshCw, AlertCircle, PhoneOff, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
-interface ShopifyOrderSummary {
+interface CartSummary {
   id: string;
-  order_number: number;
-  name: string;
+  token: string;
   customer_name: string;
   phone: string | null;
+  email: string | null;
   products: string;
   total: string;
-  financial_status: string;
-  fulfillment_status: string | null;
+  checkout_url: string;
   created_at: string;
+  updated_at: string;
 }
 
 function normalizePhone(phone: string): string {
@@ -28,24 +28,24 @@ function normalizePhone(phone: string): string {
   return cleaned;
 }
 
-export function OrdersTable() {
-  const [orders, setOrders] = useState<ShopifyOrderSummary[]>([]);
+export function CartsTab() {
+  const [carts, setCarts] = useState<CartSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [calling, setCalling] = useState<Record<string, boolean>>({});
   const [callResults, setCallResults] = useState<Record<string, "ok" | "err">>({});
 
-  async function fetchOrders(showRefreshing = false) {
+  async function fetchCarts(showRefreshing = false) {
     if (showRefreshing) setRefreshing(true);
     setError("");
     try {
-      const res = await fetch("/api/shopify/orders", { cache: "no-store" });
+      const res = await fetch("/api/shopify/checkouts", { cache: "no-store" });
       const data = await res.json();
       if (data.error) setError(data.error);
-      else setOrders(data.orders ?? []);
+      else setCarts(data.carts ?? []);
     } catch {
-      setError("Error al cargar pedidos");
+      setError("Error al cargar carritos");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -53,27 +53,32 @@ export function OrdersTable() {
   }
 
   useEffect(() => {
-    fetchOrders();
+    fetchCarts();
   }, []);
 
-  async function handleCall(order: ShopifyOrderSummary) {
-    if (!order.phone) return;
-    setCalling((c) => ({ ...c, [order.id]: true }));
+  async function handleCall(cart: CartSummary) {
+    if (!cart.phone) return;
+    const cartId = `checkout-${cart.token}`;
+    setCalling((c) => ({ ...c, [cartId]: true }));
     try {
       const res = await fetch("/api/calls/trigger", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          phone: normalizePhone(order.phone),
-          order_id: order.id,
+          phone: normalizePhone(cart.phone),
+          order_id: cartId,
           force: true,
+          customer_name: cart.customer_name,
+          products: cart.products,
+          total: cart.total,
+          event_type: "abandoned_cart",
         }),
       });
-      setCallResults((r) => ({ ...r, [order.id]: res.ok ? "ok" : "err" }));
+      setCallResults((r) => ({ ...r, [cartId]: res.ok ? "ok" : "err" }));
     } catch {
-      setCallResults((r) => ({ ...r, [order.id]: "err" }));
+      setCallResults((r) => ({ ...r, [cartId]: "err" }));
     } finally {
-      setCalling((c) => ({ ...c, [order.id]: false }));
+      setCalling((c) => ({ ...c, [cartId]: false }));
     }
   }
 
@@ -92,18 +97,25 @@ export function OrdersTable() {
 
   if (error) {
     return (
-      <div className="flex items-center gap-2 px-6 py-8 text-sm text-amber-400">
-        <AlertCircle className="h-4 w-4 shrink-0" />
-        <span>{error}</span>
+      <div className="flex flex-col gap-2 px-6 py-8 text-sm text-amber-400">
+        <div className="flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+        {error.includes("read_checkouts") && (
+          <p className="text-xs text-muted-foreground ml-6">
+            Re-autenticá Shopify en <code>/api/shopify/auth</code> para obtener el permiso.
+          </p>
+        )}
       </div>
     );
   }
 
-  if (orders.length === 0) {
+  if (carts.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-        <p className="text-sm">No hay pedidos abiertos en este momento.</p>
-        <p className="text-xs mt-1">Los pedidos abiertos de Shopify aparecen aquí.</p>
+        <ShoppingCart className="h-10 w-10 mb-3 opacity-20" />
+        <p className="text-sm">No hay carritos abandonados en este momento.</p>
       </div>
     );
   }
@@ -111,8 +123,8 @@ export function OrdersTable() {
   return (
     <div>
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
-        <span className="text-xs text-muted-foreground">{orders.length} pedido{orders.length !== 1 ? "s" : ""} abierto{orders.length !== 1 ? "s" : ""}</span>
-        <Button variant="ghost" size="sm" onClick={() => fetchOrders(true)} disabled={refreshing} className="gap-1.5 text-xs h-7">
+        <span className="text-xs text-muted-foreground">{carts.length} carrito{carts.length !== 1 ? "s" : ""} abandonado{carts.length !== 1 ? "s" : ""}</span>
+        <Button variant="ghost" size="sm" onClick={() => fetchCarts(true)} disabled={refreshing} className="gap-1.5 text-xs h-7">
           <RefreshCw className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
           Actualizar
         </Button>
@@ -121,48 +133,45 @@ export function OrdersTable() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border">
-              <th className="text-left py-3 px-4 text-muted-foreground font-medium">Pedido</th>
               <th className="text-left py-3 px-4 text-muted-foreground font-medium">Cliente</th>
               <th className="text-left py-3 px-4 text-muted-foreground font-medium hidden md:table-cell">Productos</th>
               <th className="text-left py-3 px-4 text-muted-foreground font-medium">Total</th>
-              <th className="text-left py-3 px-4 text-muted-foreground font-medium hidden lg:table-cell">Fecha</th>
+              <th className="text-left py-3 px-4 text-muted-foreground font-medium hidden lg:table-cell">Abandonado</th>
               <th className="py-3 px-4" />
             </tr>
           </thead>
           <tbody>
-            {orders.map((order) => {
-              const isCalling = calling[order.id];
-              const result = callResults[order.id];
-              const noPhone = !order.phone;
+            {carts.map((cart) => {
+              const cartId = `checkout-${cart.token}`;
+              const isCalling = calling[cartId];
+              const result = callResults[cartId];
+              const noPhone = !cart.phone;
 
               return (
-                <tr
-                  key={order.id}
-                  className="border-b border-border/50 hover:bg-muted/20 transition-colors"
-                >
-                  <td className="py-3 px-4">
-                    <span className="font-mono text-xs text-primary">{order.name}</span>
-                  </td>
+                <tr key={cart.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
                   <td className="py-3 px-4">
                     <div>
-                      <p className="font-medium text-xs text-foreground">{order.customer_name}</p>
-                      {order.phone ? (
-                        <p className="text-xs text-muted-foreground font-mono">{order.phone}</p>
+                      <p className="font-medium text-xs text-foreground">{cart.customer_name}</p>
+                      {cart.phone ? (
+                        <p className="text-xs text-muted-foreground font-mono">{cart.phone}</p>
                       ) : (
                         <p className="text-xs text-red-400 flex items-center gap-1">
                           <PhoneOff className="h-3 w-3" /> Sin teléfono
                         </p>
                       )}
+                      {cart.email && (
+                        <p className="text-xs text-muted-foreground truncate max-w-[140px]">{cart.email}</p>
+                      )}
                     </div>
                   </td>
                   <td className="py-3 px-4 hidden md:table-cell">
-                    <p className="text-xs text-muted-foreground max-w-[200px] truncate" title={order.products}>
-                      {order.products}
+                    <p className="text-xs text-muted-foreground max-w-[200px] truncate" title={cart.products}>
+                      {cart.products || "—"}
                     </p>
                   </td>
-                  <td className="py-3 px-4 font-mono text-xs">{order.total}</td>
+                  <td className="py-3 px-4 font-mono text-xs">{cart.total}</td>
                   <td className="py-3 px-4 hidden lg:table-cell">
-                    <span className="text-xs text-muted-foreground">{formatDate(order.created_at)}</span>
+                    <span className="text-xs text-muted-foreground">{formatDate(cart.updated_at)}</span>
                   </td>
                   <td className="py-3 px-4">
                     {result === "ok" ? (
@@ -174,9 +183,9 @@ export function OrdersTable() {
                         size="sm"
                         variant="outline"
                         disabled={isCalling || noPhone}
-                        onClick={() => handleCall(order)}
+                        onClick={() => handleCall(cart)}
                         className="gap-1.5 text-xs h-7 px-2.5"
-                        title={noPhone ? "Este pedido no tiene teléfono registrado" : ""}
+                        title={noPhone ? "Este carrito no tiene teléfono registrado" : ""}
                       >
                         <Phone className={`h-3 w-3 ${isCalling ? "animate-pulse" : ""}`} />
                         {isCalling ? "Llamando..." : "Llamar"}
