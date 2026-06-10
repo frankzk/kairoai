@@ -357,6 +357,7 @@ Important:
 
 - Shopify variants without SKU are shown as `Sin SKU` and cannot be used for automatic cost matching until a SKU is added in Shopify.
 - Unit cost and packaging cost are editable inline. Values save on blur or Enter through `/api/finance/product-costs`.
+- The `SKUs con costo guardado` table is an audit list of saved cost records that are currently used in profitability calculations.
 
 ### 3. Gastos
 

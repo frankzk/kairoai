@@ -1021,7 +1021,7 @@ function CostsTab({
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Costos activos</CardTitle>
+            <CardTitle className="text-base">SKUs con costo guardado</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="overflow-auto border border-border">
