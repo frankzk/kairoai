@@ -304,7 +304,7 @@ export default function UpsellAdminPage() {
             <CardContent className="flex flex-col items-center py-16 text-muted-foreground">
               <p className="text-sm">No hay reglas de upsell todavía.</p>
               <p className="text-xs mt-1">
-                Hacé click en "Nueva regla" para agregar la primera.
+                Hacé click en &quot;Nueva regla&quot; para agregar la primera.
               </p>
             </CardContent>
           </Card>

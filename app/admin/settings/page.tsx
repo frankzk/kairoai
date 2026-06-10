@@ -141,7 +141,7 @@ export default function SettingsPage() {
                 <p>
                   Cuando Valeria no logra comunicarse (no contesta, buzón de voz), agenda un reintento.
                   El cron se ejecuta cada minuto y dispara la llamada cuando llega la hora.
-                  Cada intento aparece en "Llamadas Recientes" con una nota de reintento.
+                  Cada intento aparece en &quot;Llamadas Recientes&quot; con una nota de reintento.
                 </p>
               </div>
 
