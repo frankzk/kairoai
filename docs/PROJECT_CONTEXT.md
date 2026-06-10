@@ -106,7 +106,7 @@ Tabs:
 
 - `Pedidos`: upload Boxful logistics Excel files, inspect matched rows, and track operational follow-up state.
 - `Liquidaciones`: upload settlement/liquidation Excel files, inspect financial settlement rows, source Excel traceability, claim alerts, and anomalies.
-- `Costos SKU`: loads Shopify products/variants, lets the user select a SKU, and stores product costs by SKU.
+- `Costos SKU`: loads Shopify products/variants and lets the user edit unit and packaging costs inline by SKU.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses.
 - `Rentabilidad`: shows the approved net-profit formula and missing SKU costs.
 
@@ -335,7 +335,7 @@ Purpose:
 
 - define cost of goods sold by product/SKU.
 - use SKU as the primary key for cost matching.
-- show Shopify products/variants so the user can select an existing SKU instead of typing product data manually.
+- show Shopify products/variants so the user can edit costs directly in the product table instead of typing product data manually.
 
 Suggested fields:
 
@@ -356,6 +356,7 @@ pedido_product_cost = sum(unit_cost * quantity)
 Important:
 
 - Shopify variants without SKU are shown as `Sin SKU` and cannot be used for automatic cost matching until a SKU is added in Shopify.
+- Unit cost and packaging cost are editable inline. Values save on blur or Enter through `/api/finance/product-costs`.
 
 ### 3. Gastos
 
@@ -493,7 +494,7 @@ Build in this order:
 - Added settlement source trace in `Pedidos`: when a logistics row matches a settlement row by order or guide, the table shows the liquidation Excel file name, status, and amount to liquidate. If multiple settlement rows match, the UI shows the first file plus a `+N` badge.
 - Added anomaly reporting in `Pedidos`: double settlements are counted in the top metric `Anomalias` and shown in a `Doble liquidacion detectada` table.
 - Improved import reliability: finance upload handlers now surface non-JSON server responses with a readable message, and importers infer date ranges from Excel rows when period dates are omitted.
-- `Costos SKU` now fetches `/api/shopify/products` and displays Shopify variants with SKU, Shopify price, and whether a local cost is already configured.
+- `Costos SKU` now fetches `/api/shopify/products` and displays Shopify variants with SKU, Shopify price, inline unit cost, inline packaging cost, and saved/missing cost state.
 - Profitability summary now exposes settlement charged-cost breakdown:
   - COD collected
   - COD commission

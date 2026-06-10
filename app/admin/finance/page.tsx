@@ -146,13 +146,6 @@ interface ProfitabilitySummary {
   missing_cost_skus: string[];
 }
 
-const emptyCost = {
-  sku: "",
-  product_name: "",
-  unit_cost: "",
-  packaging_cost: "0",
-};
-
 const emptyExpense = {
   type: "ads" as ExpenseType,
   expense_date: new Date().toISOString().slice(0, 10),
@@ -181,7 +174,6 @@ export default function FinancePage() {
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
   const [importingLogistics, setImportingLogistics] = useState(false);
-  const [costForm, setCostForm] = useState(emptyCost);
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
 
   const latestImport = imports[0];
@@ -303,20 +295,33 @@ export default function FinancePage() {
     }
   }
 
-  async function saveCost(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function saveProductCost(input: {
+    sku: string;
+    product_name: string;
+    unit_cost: number;
+    packaging_cost: number;
+  }) {
     const res = await fetch("/api/finance/product-costs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(costForm),
+      body: JSON.stringify(input),
     });
     const json = await readApiJson(res);
     if (!res.ok) {
-      setError(json.error ?? "No se pudo guardar costo");
-      return;
+      const message = json.error ?? "No se pudo guardar costo";
+      setError(message);
+      throw new Error(message);
     }
-    setCostForm(emptyCost);
-    await refresh();
+    const savedCost = json.cost as ProductCost;
+    setCosts((current) => {
+      const withoutSku = current.filter(
+        (cost) => cost.sku.toLowerCase() !== savedCost.sku.toLowerCase()
+      );
+      return [...withoutSku, savedCost].sort((a, b) => a.sku.localeCompare(b.sku));
+    });
+    const summaryRes = await fetch("/api/finance/summary", { cache: "no-store" });
+    const summaryJson = await readApiJson(summaryRes);
+    if (summaryRes.ok) setSummary(summaryJson.summary ?? null);
   }
 
   async function saveExpense(event: FormEvent<HTMLFormElement>) {
@@ -468,9 +473,7 @@ export default function FinancePage() {
                 productsError={productsError}
                 productSearch={productSearch}
                 setProductSearch={setProductSearch}
-                form={costForm}
-                setForm={setCostForm}
-                onSave={saveCost}
+                onSaveProductCost={saveProductCost}
                 onDelete={deleteCost}
               />
             )}
@@ -891,9 +894,7 @@ function CostsTab({
   productsError,
   productSearch,
   setProductSearch,
-  form,
-  setForm,
-  onSave,
+  onSaveProductCost,
   onDelete,
 }: {
   costs: ProductCost[];
@@ -902,9 +903,12 @@ function CostsTab({
   productsError: string;
   productSearch: string;
   setProductSearch: (value: string) => void;
-  form: typeof emptyCost;
-  setForm: (form: typeof emptyCost) => void;
-  onSave: (event: FormEvent<HTMLFormElement>) => void;
+  onSaveProductCost: (input: {
+    sku: string;
+    product_name: string;
+    unit_cost: number;
+    packaging_cost: number;
+  }) => Promise<void>;
   onDelete: (id: number) => void;
 }) {
   const costBySku = useMemo(
@@ -921,34 +925,8 @@ function CostsTab({
     );
   }, [productSearch, products]);
 
-  function selectProduct(product: ShopifyProductOption) {
-    if (!product.sku) return;
-    setForm({
-      ...form,
-      sku: product.sku,
-      product_name: product.display_name,
-    });
-  }
-
   return (
-    <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Costo por SKU</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={onSave} className="space-y-3">
-            <Input placeholder="SKU" value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} required />
-            <Input placeholder="Producto" value={form.product_name} onChange={(e) => setForm({ ...form, product_name: e.target.value })} />
-            <Input type="number" placeholder="Costo unitario" value={form.unit_cost} onChange={(e) => setForm({ ...form, unit_cost: e.target.value })} required />
-            <Input type="number" placeholder="Costo empaque" value={form.packaging_cost} onChange={(e) => setForm({ ...form, packaging_cost: e.target.value })} />
-            <Button type="submit" className="w-full gap-2">
-              <Plus className="h-4 w-4" /> Guardar costo
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
+    <div className="space-y-4">
       <div className="space-y-4">
         <Card>
           <CardHeader>
@@ -976,14 +954,15 @@ function CostsTab({
                     <th className="px-3 py-2">Producto</th>
                     <th className="px-3 py-2">SKU</th>
                     <th className="px-3 py-2 text-right">Precio Shopify</th>
-                    <th className="px-3 py-2">Costo</th>
-                    <th className="px-3 py-2" />
+                    <th className="px-3 py-2">Costo unitario</th>
+                    <th className="px-3 py-2">Empaque</th>
+                    <th className="px-3 py-2">Estado</th>
                   </tr>
                 </thead>
                 <tbody>
                   {productsLoading ? (
                     <tr>
-                      <td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      <td colSpan={6} className="px-3 py-6 text-center text-sm text-muted-foreground">
                         Cargando productos Shopify...
                       </td>
                     </tr>
@@ -998,29 +977,38 @@ function CostsTab({
                           </td>
                           <td className="px-3 py-2 text-right font-mono text-xs">{currency(product.price)}</td>
                           <td className="px-3 py-2">
-                            {savedCost ? (
-                              <Badge variant="success">{currency(savedCost.unit_cost)}</Badge>
+                            <InlineCostEditor
+                              product={product}
+                              savedCost={savedCost}
+                              field="unit_cost"
+                              disabled={!product.sku}
+                              onSave={onSaveProductCost}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <InlineCostEditor
+                              product={product}
+                              savedCost={savedCost}
+                              field="packaging_cost"
+                              disabled={!product.sku}
+                              onSave={onSaveProductCost}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            {!product.sku ? (
+                              <Badge variant="warning">Sin SKU</Badge>
+                            ) : savedCost ? (
+                              <Badge variant="success">Guardado</Badge>
                             ) : (
                               <Badge variant="warning">Sin costo</Badge>
                             )}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={!product.sku}
-                              onClick={() => selectProduct(product)}
-                            >
-                              Usar
-                            </Button>
                           </td>
                         </tr>
                       );
                     })
                   ) : (
                     <tr>
-                      <td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      <td colSpan={6} className="px-3 py-6 text-center text-sm text-muted-foreground">
                         No hay productos para mostrar.
                       </td>
                     </tr>
@@ -1067,6 +1055,80 @@ function CostsTab({
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function InlineCostEditor({
+  product,
+  savedCost,
+  field,
+  disabled,
+  onSave,
+}: {
+  product: ShopifyProductOption;
+  savedCost?: ProductCost;
+  field: "unit_cost" | "packaging_cost";
+  disabled: boolean;
+  onSave: (input: {
+    sku: string;
+    product_name: string;
+    unit_cost: number;
+    packaging_cost: number;
+  }) => Promise<void>;
+}) {
+  const initialValue =
+    field === "unit_cost" ? savedCost?.unit_cost ?? 0 : savedCost?.packaging_cost ?? 0;
+  const [value, setValue] = useState(String(initialValue || ""));
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setValue(String(initialValue || ""));
+  }, [initialValue]);
+
+  async function persist() {
+    if (disabled || !product.sku) return;
+    const numericValue = Number(value || 0);
+    const currentValue = field === "unit_cost" ? savedCost?.unit_cost ?? 0 : savedCost?.packaging_cost ?? 0;
+    if (numericValue === currentValue && savedCost) return;
+
+    setSaving(true);
+    setSaved(false);
+    try {
+      await onSave({
+        sku: product.sku,
+        product_name: product.display_name,
+        unit_cost: field === "unit_cost" ? numericValue : savedCost?.unit_cost ?? 0,
+        packaging_cost: field === "packaging_cost" ? numericValue : savedCost?.packaging_cost ?? 0,
+      });
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1200);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        type="number"
+        min="0"
+        step="1"
+        disabled={disabled || saving}
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onBlur={persist}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          }
+        }}
+        className="h-8 w-28 px-2 text-right font-mono text-xs"
+        placeholder="0"
+      />
+      {saving && <span className="text-xs text-muted-foreground">Guardando</span>}
+      {saved && <span className="text-xs text-emerald-300">OK</span>}
     </div>
   );
 }
