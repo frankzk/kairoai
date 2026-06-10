@@ -104,7 +104,7 @@ Navigation:
 
 Tabs:
 
-- `Pedidos`: upload Boxful logistics Excel files, inspect matched rows, and track operational follow-up state.
+- `Pedidos`: shows Shopify orders as the baseline tracking list, uploads Boxful logistics Excel files, inspects matched rows, and tracks operational follow-up state.
 - `Liquidaciones`: upload settlement/liquidation Excel files by cutoff date, inspect financial settlement rows, source Excel traceability, claim alerts, and anomalies.
 - `Costos SKU`: loads Shopify products/variants and lets the user edit unit and packaging costs inline by SKU.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses.
@@ -133,6 +133,7 @@ Excel parsing:
 - `settlement_imports.file_name` is a business identifier because Boxful references liquidations by Excel file name. The UI must keep this visible in latest import cards and history so the team can know which Boxful liquidation files are still missing in Kairo AI.
 - If the user does not enter `period_start`, the importer infers the earliest `Creado en` date from the Excel and uses that to limit Shopify order fetching. This prevents long Vercel imports and avoids opaque non-JSON server errors.
 - Shopify matching accepts exact order names, `#MCRC` order names, and numeric order numbers when reconciling imported files.
+- `/admin/finance` requests Shopify orders with `status=any` from `2026-03-01T00:00:00-06:00` so the Pedidos tab can show store orders even before a Boxful logistics file is imported. Boxful rows replace/enrich matching Shopify rows instead of creating duplicates.
 
 Database schema:
 
@@ -173,13 +174,14 @@ Shopify is active in production.
 Validated endpoints:
 
 - `/api/shopify/products`: returns products and variants.
-- `/api/shopify/orders`: returns recent open orders.
+- `/api/shopify/orders`: returns recent open orders by default; accepts `status`, `all=1`, `limit`, and `created_at_min` for finance tracking.
 
 Important behavior:
 
 - Shopify order name values look like `#MCRC11518`.
 - The logistics settlement file uses an `Orden` column that often matches Shopify `order.name`.
 - Some settlement rows use numeric-only order values such as `3937`, which did not match the current Shopify `#MCRC...` naming pattern in the first analysis.
+- In `/admin/finance`, Shopify orders appear in the `Pedidos` tab. Rows with a matching Boxful logistics import show `Origen = Boxful`; Shopify-only rows show `Origen = Shopify` and remain `Pendiente` unless Shopify is cancelled/voided or a liquidation row provides a final status.
 
 ## Logistics Settlement Analysis
 

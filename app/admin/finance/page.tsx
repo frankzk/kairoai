@@ -89,9 +89,47 @@ interface LogisticsRow {
   cod_amount: number;
   delivery_cost: number;
   shopify_order_name: string;
+  shopify_order_number: number | null;
   shopify_financial_status: string;
   shopify_fulfillment_status: string;
   shopify_cancelled_at: string | null;
+  shopify_created_at: string | null;
+  package_items: Array<{ title: string; quantity: number; price: number }>;
+}
+
+interface ShopifyOrderSummary {
+  id: string;
+  order_number: number;
+  name: string;
+  customer_name: string;
+  phone: string | null;
+  products: string;
+  total: string;
+  total_price: number;
+  currency: string;
+  financial_status: string;
+  fulfillment_status: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+  line_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
+}
+
+interface TrackableOrderRow {
+  row_key: string;
+  source: "boxful" | "shopify";
+  guide_number: string;
+  order_name: string;
+  customer_name: string;
+  boxful_status: string;
+  internal_status: string;
+  match_status: string;
+  cod_amount: number;
+  shopify_order_name: string;
+  shopify_order_number: number | null;
+  shopify_financial_status: string;
+  shopify_fulfillment_status: string;
+  shopify_cancelled_at: string | null;
+  shopify_created_at: string | null;
   package_items: Array<{ title: string; quantity: number; price: number }>;
 }
 
@@ -159,12 +197,16 @@ const emptyExpense = {
   notes: "",
 };
 
+const FINANCE_SHOPIFY_ORDERS_URL =
+  "/api/shopify/orders?status=any&all=1&limit=250&created_at_min=2026-03-01T00%3A00%3A00-06%3A00";
+
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
   const [imports, setImports] = useState<SettlementImport[]>([]);
   const [rows, setRows] = useState<SettlementRow[]>([]);
   const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
   const [logisticsRows, setLogisticsRows] = useState<LogisticsRow[]>([]);
+  const [shopifyOrders, setShopifyOrders] = useState<ShopifyOrderSummary[]>([]);
   const [costs, setCosts] = useState<ProductCost[]>([]);
   const [shopifyProducts, setShopifyProducts] = useState<ShopifyProductOption[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
@@ -188,6 +230,10 @@ export default function FinancePage() {
     () => buildSettlementTraceByKey(rows, imports),
     [rows, imports]
   );
+  const visibleOrderRows = useMemo(
+    () => buildVisibleOrderRows(logisticsRows, shopifyOrders),
+    [logisticsRows, shopifyOrders]
+  );
   const doubleSettlementAnomalies = useMemo(
     () => getDoubleSettlementAnomalies(settlementTraceByKey),
     [settlementTraceByKey]
@@ -197,24 +243,28 @@ export default function FinancePage() {
     setLoading(true);
     setError("");
     try {
-      const [settlementsRes, logisticsRes, costsRes, expensesRes, summaryRes] = await Promise.all([
-        fetch("/api/finance/settlements", { cache: "no-store" }),
-        fetch("/api/finance/logistics", { cache: "no-store" }),
-        fetch("/api/finance/product-costs", { cache: "no-store" }),
-        fetch("/api/finance/expenses", { cache: "no-store" }),
-        fetch("/api/finance/summary", { cache: "no-store" }),
-      ]);
+      const [settlementsRes, logisticsRes, costsRes, expensesRes, summaryRes, shopifyOrdersRes] =
+        await Promise.all([
+          fetch("/api/finance/settlements", { cache: "no-store" }),
+          fetch("/api/finance/logistics", { cache: "no-store" }),
+          fetch("/api/finance/product-costs", { cache: "no-store" }),
+          fetch("/api/finance/expenses", { cache: "no-store" }),
+          fetch("/api/finance/summary", { cache: "no-store" }),
+          fetch(FINANCE_SHOPIFY_ORDERS_URL, { cache: "no-store" }),
+        ]);
 
       const settlementsJson = await readApiJson(settlementsRes);
       const logisticsJson = await readApiJson(logisticsRes);
       const costsJson = await readApiJson(costsRes);
       const expensesJson = await readApiJson(expensesRes);
       const summaryJson = await readApiJson(summaryRes);
+      const shopifyOrdersJson = await readApiJson(shopifyOrdersRes);
 
       setImports(settlementsJson.imports ?? []);
       setRows(settlementsJson.rows ?? []);
       setLogisticsImports(logisticsJson.imports ?? []);
       setLogisticsRows(logisticsJson.rows ?? []);
+      setShopifyOrders(shopifyOrdersJson.orders ?? []);
       setCosts(costsJson.costs ?? []);
       setExpenses(expensesJson.expenses ?? []);
       setSummary(summaryJson.summary ?? null);
@@ -224,7 +274,8 @@ export default function FinancePage() {
         logisticsJson.error ??
         costsJson.error ??
         expensesJson.error ??
-        summaryJson.error;
+        summaryJson.error ??
+        shopifyOrdersJson.error;
       if (firstError) setError(firstError);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
@@ -353,7 +404,7 @@ export default function FinancePage() {
   }
 
   const orderStats = useMemo(() => {
-    const effectiveStatuses = logisticsRows.map((row) =>
+    const effectiveStatuses = visibleOrderRows.map((row) =>
       getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey))
     );
     return {
@@ -374,6 +425,7 @@ export default function FinancePage() {
     liquidationAlertRows.length,
     rows,
     settlementTraceByKey,
+    visibleOrderRows,
   ]);
 
   return (
@@ -449,9 +501,10 @@ export default function FinancePage() {
             {tab === "orders" && (
               <OrdersTab
                 logisticsImports={logisticsImports}
-                logisticsRows={logisticsRows}
+                rows={visibleOrderRows}
                 latestLogisticsImport={latestLogisticsImport}
                 settlementTraceByKey={settlementTraceByKey}
+                shopifyOrderCount={shopifyOrders.length}
                 importingLogistics={importingLogistics}
                 onLogisticsImport={handleLogisticsImport}
               />
@@ -498,16 +551,18 @@ export default function FinancePage() {
 
 function OrdersTab({
   logisticsImports,
-  logisticsRows,
+  rows,
   latestLogisticsImport,
   settlementTraceByKey,
+  shopifyOrderCount,
   importingLogistics,
   onLogisticsImport,
 }: {
   logisticsImports: LogisticsImport[];
-  logisticsRows: LogisticsRow[];
+  rows: TrackableOrderRow[];
   latestLogisticsImport?: LogisticsImport;
   settlementTraceByKey: Map<string, SettlementTrace[]>;
+  shopifyOrderCount: number;
   importingLogistics: boolean;
   onLogisticsImport: (event: FormEvent<HTMLFormElement>) => void;
 }) {
@@ -538,17 +593,21 @@ function OrdersTab({
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
-            {latestLogisticsImport ? latestLogisticsImport.file_name : "Sin Boxful importado"}
+            {latestLogisticsImport ? latestLogisticsImport.file_name : "Pedidos Shopify"}
           </CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.
+          </p>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-5">
+            <MiniStat label="Pedidos Shopify" value={shopifyOrderCount} />
             <MiniStat label="Filas Boxful" value={latestLogisticsImport?.total_rows ?? 0} />
             <MiniStat label="Match Shopify" value={latestLogisticsImport?.matched_rows ?? 0} />
             <MiniStat label="Sin match" value={latestLogisticsImport?.unmatched_rows ?? 0} />
-            <MiniStat label="Pedidos visibles" value={logisticsRows.length} />
+            <MiniStat label="Pedidos visibles" value={rows.length} />
           </div>
-          <OrdersTable rows={logisticsRows} settlementTraceByKey={settlementTraceByKey} />
+          <OrdersTable rows={rows} settlementTraceByKey={settlementTraceByKey} />
           {logisticsImports.length > 1 && (
             <div className="border-t border-border pt-3">
               <p className="mb-2 text-xs font-medium text-muted-foreground">Historial de Boxful</p>
@@ -572,7 +631,7 @@ function OrdersTable({
   rows,
   settlementTraceByKey,
 }: {
-  rows: LogisticsRow[];
+  rows: TrackableOrderRow[];
   settlementTraceByKey: Map<string, SettlementTrace[]>;
 }) {
   return (
@@ -581,6 +640,7 @@ function OrdersTable({
         <thead className="sticky top-0 bg-card">
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
             <th className="px-3 py-2">Orden</th>
+            <th className="px-3 py-2">Origen</th>
             <th className="px-3 py-2">Guia</th>
             <th className="px-3 py-2">Cliente</th>
             <th className="px-3 py-2">Estado seguimiento</th>
@@ -595,9 +655,14 @@ function OrdersTable({
             const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
             const trackingStatus = getEffectiveTrackingStatus(row, traces);
             return (
-              <tr key={row.id} className="border-b border-border/50">
+              <tr key={row.row_key} className="border-b border-border/50">
                 <td className="px-3 py-2 font-mono text-xs">{row.order_name}</td>
-                <td className="px-3 py-2 font-mono text-xs">{row.guide_number}</td>
+                <td className="px-3 py-2">
+                  <Badge variant={row.source === "boxful" ? "success" : "muted"}>
+                    {row.source === "boxful" ? "Boxful" : "Shopify"}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2 font-mono text-xs">{row.guide_number || "-"}</td>
                 <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
                 <td className="px-3 py-2">
                   <StatusBadge
@@ -1408,6 +1473,76 @@ async function readApiJson(res: Response) {
   }
 }
 
+function buildVisibleOrderRows(
+  logisticsRows: LogisticsRow[],
+  shopifyOrders: ShopifyOrderSummary[]
+): TrackableOrderRow[] {
+  const existingKeys = new Set<string>();
+  const logisticsDisplayRows = logisticsRows.map((row) => {
+    for (const key of getOrderMatchKeys(row)) existingKeys.add(key);
+    return {
+      ...row,
+      row_key: `boxful-${row.id}`,
+      source: "boxful" as const,
+    };
+  });
+
+  const shopifyOnlyRows = shopifyOrders
+    .filter((order) => !getShopifyOrderMatchKeys(order).some((key) => existingKeys.has(key)))
+    .map((order): TrackableOrderRow => ({
+      row_key: `shopify-${order.id}`,
+      source: "shopify",
+      guide_number: "",
+      order_name: order.name,
+      customer_name: order.customer_name,
+      boxful_status: "",
+      internal_status:
+        order.cancelled_at || order.financial_status === "voided" ? "annulled" : "pending",
+      match_status: "matched",
+      cod_amount: Number(order.total_price || parseMoneyText(order.total)),
+      shopify_order_name: order.name,
+      shopify_order_number: order.order_number ?? null,
+      shopify_financial_status: order.financial_status,
+      shopify_fulfillment_status: order.fulfillment_status ?? "",
+      shopify_cancelled_at: order.cancelled_at,
+      shopify_created_at: order.created_at,
+      package_items: (order.line_items ?? []).map((item) => ({
+        title: `${item.quantity}x ${item.title}`,
+        quantity: Number(item.quantity || 0),
+        price: Number(item.price || 0),
+      })),
+    }));
+
+  return [...logisticsDisplayRows, ...shopifyOnlyRows].sort((a, b) =>
+    String(b.shopify_created_at || "").localeCompare(String(a.shopify_created_at || ""))
+  );
+}
+
+function getOrderMatchKeys(row: Pick<TrackableOrderRow, "order_name" | "shopify_order_name" | "shopify_order_number">): string[] {
+  return uniqueKeys([
+    normalizeMatchKey(row.order_name),
+    normalizeMatchKey(row.shopify_order_name),
+    row.shopify_order_number ? normalizeMatchKey(String(row.shopify_order_number)) : "",
+    row.shopify_order_number ? normalizeMatchKey(`#MCRC${row.shopify_order_number}`) : "",
+  ]);
+}
+
+function getShopifyOrderMatchKeys(order: ShopifyOrderSummary): string[] {
+  return uniqueKeys([
+    normalizeMatchKey(order.name),
+    normalizeMatchKey(String(order.order_number ?? "")),
+    normalizeMatchKey(`#MCRC${order.order_number ?? ""}`),
+  ]);
+}
+
+function uniqueKeys(keys: string[]): string[] {
+  return Array.from(new Set(keys.filter(Boolean)));
+}
+
+function parseMoneyText(value: string): number {
+  return Number(String(value || "").replace(/,/g, "").replace(/[^0-9.-]/g, "")) || 0;
+}
+
 function getDeliveredWithoutSettlement(
   logisticsRows: LogisticsRow[],
   settlementRows: SettlementRow[]
@@ -1472,7 +1607,7 @@ function addSettlementTrace(
 }
 
 function getSettlementTracesForLogisticsRow(
-  row: LogisticsRow,
+  row: Pick<TrackableOrderRow, "order_name" | "shopify_order_name" | "guide_number">,
   settlementTraceByKey: Map<string, SettlementTrace[]>
 ): SettlementTrace[] {
   const seen = new Set<string>();
@@ -1535,7 +1670,10 @@ function normalizeMatchKey(value: string): string {
     .replace(/\s+/g, "");
 }
 
-function getEffectiveTrackingStatus(row: LogisticsRow, traces: SettlementTrace[]): string {
+function getEffectiveTrackingStatus(
+  row: Pick<TrackableOrderRow, "internal_status" | "shopify_cancelled_at" | "shopify_financial_status">,
+  traces: SettlementTrace[]
+): string {
   if (row.shopify_cancelled_at || row.shopify_financial_status === "voided") return "annulled";
   if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
 
@@ -1546,7 +1684,7 @@ function getEffectiveTrackingStatus(row: LogisticsRow, traces: SettlementTrace[]
 }
 
 function getTrackingStatusLabel(
-  row: LogisticsRow,
+  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status">,
   traces: SettlementTrace[],
   status: string
 ): string {
