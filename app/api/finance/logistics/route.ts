@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import {
-  createSettlementImport,
-  deleteSettlementImport,
-  insertSettlementRows,
-  listSettlementImports,
-  listSettlementRows,
+  createLogisticsImport,
+  deleteLogisticsImport,
+  insertLogisticsRows,
+  listLogisticsImports,
+  listLogisticsRows,
   type InternalOrderStatus,
-  type SettlementOrderItem,
-  type SettlementRow,
+  type LogisticsPackageItem,
+  type LogisticsRow,
 } from "@/lib/finance";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-interface ParsedSettlementRow {
+interface ParsedLogisticsRow {
   raw: Record<string, unknown>;
   guide_number: string;
   order_name: string;
@@ -23,44 +23,39 @@ interface ParsedSettlementRow {
   customer_phone: string;
   created_on: string | null;
   courier: string;
+  boxful_status: string;
   service_type: string;
   cod_amount: number;
   cod_commission: number;
-  card_commission: number;
   delivery_cost: number;
-  pick_pack_cost: number;
-  packaging_cost: number;
-  amount_to_liquidate: number;
-  settlement_status: string;
-  internal_status: InternalOrderStatus;
+  total_cost: number;
+  liquidated_on: string | null;
+  finalized_on: string | null;
+  label_url: string;
+  package_items: LogisticsPackageItem[];
 }
 
-interface ShopifySettlementOrder {
+interface ShopifyOrder {
   id: number;
   name: string;
   order_number: number;
   created_at: string;
   financial_status: string;
   fulfillment_status: string | null;
+  cancelled_at: string | null;
   total_price: string;
-  line_items?: Array<{
-    sku?: string | null;
-    title?: string;
-    quantity?: number;
-    price?: string;
-  }>;
 }
 
 export async function GET(req: NextRequest) {
   try {
     const importId = Number(req.nextUrl.searchParams.get("import_id"));
     const [imports, rows] = await Promise.all([
-      listSettlementImports(),
-      listSettlementRows(importId || undefined),
+      listLogisticsImports(),
+      listLogisticsRows(importId || undefined),
     ]);
     return NextResponse.json({ imports, rows });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al leer liquidaciones";
+    const message = err instanceof Error ? err.message : "Error al leer logistica";
     return NextResponse.json({ imports: [], rows: [], error: message }, { status: 500 });
   }
 }
@@ -78,64 +73,55 @@ export async function POST(req: NextRequest) {
     const periodEnd = nullableDate(String(form.get("period_end") ?? ""));
 
     const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
-    const settlementRows = parseSettlementRows(workbook);
-    if (!settlementRows.length) {
-      return NextResponse.json({ error: "No se encontraron filas en la hoja Envios" }, { status: 400 });
+    const boxfulRows = parseBoxfulRows(workbook);
+    if (!boxfulRows.length) {
+      return NextResponse.json({ error: "No se encontraron filas logisticas" }, { status: 400 });
     }
 
-    const consolidated = parseConsolidated(workbook);
-    const shopifyOrders = await fetchShopifyOrders(periodStart ?? inferEarliestDate(settlementRows));
+    const shopifyOrders = await fetchShopifyOrders(periodStart ?? inferEarliestDate(boxfulRows));
     const indexes = buildShopifyIndexes(shopifyOrders);
-
-    const statusSummary: Record<string, { count: number; amount_to_liquidate: number }> = {};
+    const statusSummary: Record<string, { count: number }> = {};
     let matchedRows = 0;
 
-    const pendingRows = settlementRows.map((row) => {
+    const pendingRows = boxfulRows.map((row) => {
       const shopify = findShopifyMatch(row.order_name, indexes);
       if (shopify) matchedRows++;
 
-      const status = statusSummary[row.settlement_status] ?? {
-        count: 0,
-        amount_to_liquidate: 0,
+      statusSummary[row.boxful_status] = {
+        count: (statusSummary[row.boxful_status]?.count ?? 0) + 1,
       };
-      status.count += 1;
-      status.amount_to_liquidate = roundMoney(status.amount_to_liquidate + row.amount_to_liquidate);
-      statusSummary[row.settlement_status] = status;
 
       return { row, shopify };
     });
 
-    const settlementImport = await createSettlementImport({
+    const logisticsImport = await createLogisticsImport({
       file_name: file.name,
       period_label: periodLabel,
       period_start: periodStart,
       period_end: periodEnd,
-      total_rows: settlementRows.length,
+      total_rows: boxfulRows.length,
       matched_rows: matchedRows,
-      unmatched_rows: settlementRows.length - matchedRows,
-      total_collected: consolidated.total_collected || sum(settlementRows.map((r) => r.cod_amount)),
-      total_to_liquidate:
-        consolidated.total_to_liquidate || sum(settlementRows.map((r) => r.amount_to_liquidate)),
+      unmatched_rows: boxfulRows.length - matchedRows,
       status_summary: statusSummary,
     });
 
     const rowsToInsert = pendingRows.map(({ row, shopify }) =>
-      buildSettlementRow(settlementImport.id, row, shopify)
+      buildLogisticsRow(logisticsImport.id, row, shopify)
     );
 
     for (let i = 0; i < rowsToInsert.length; i += 250) {
-      await insertSettlementRows(rowsToInsert.slice(i, i + 250));
+      await insertLogisticsRows(rowsToInsert.slice(i, i + 250));
     }
 
     return NextResponse.json({
-      import: settlementImport,
+      import: logisticsImport,
       matched_rows: matchedRows,
-      unmatched_rows: settlementRows.length - matchedRows,
+      unmatched_rows: boxfulRows.length - matchedRows,
       status_summary: statusSummary,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al importar liquidacion";
-    console.error("[finance/settlements POST]", message);
+    const message = err instanceof Error ? err.message : "Error al importar logistica";
+    console.error("[finance/logistics POST]", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -145,16 +131,16 @@ export async function DELETE(req: NextRequest) {
   if (!id) return NextResponse.json({ error: "id requerido" }, { status: 400 });
 
   try {
-    await deleteSettlementImport(id);
+    await deleteLogisticsImport(id);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al eliminar liquidacion";
+    const message = err instanceof Error ? err.message : "Error al eliminar logistica";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
-function parseSettlementRows(workbook: XLSX.WorkBook): ParsedSettlementRow[] {
-  const sheet = workbook.Sheets.Envios ?? workbook.Sheets[workbook.SheetNames[0]];
+function parseBoxfulRows(workbook: XLSX.WorkBook): ParsedLogisticsRow[] {
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
     defval: "",
     raw: false,
@@ -164,7 +150,6 @@ function parseSettlementRows(workbook: XLSX.WorkBook): ParsedSettlementRow[] {
     .map((raw) => {
       const firstName = text(raw.Nombre);
       const lastName = text(raw.Apellido);
-      const settlementStatus = text(raw.Estado);
       return {
         raw,
         guide_number: text(raw["No. Guia"]),
@@ -174,63 +159,52 @@ function parseSettlementRows(workbook: XLSX.WorkBook): ParsedSettlementRow[] {
         customer_phone: text(raw.Telefono),
         created_on: parseDate(text(raw["Creado en"])),
         courier: text(raw.Courier),
+        boxful_status: text(raw.Estado),
         service_type: text(raw["Tipo de Servicio"]),
         cod_amount: money(raw["Monto COD"]),
         cod_commission: money(raw["Monto de comision COD"]),
-        card_commission: money(raw["Com. Tarjeta"]),
         delivery_cost: money(raw["Costo de entrega"]),
-        pick_pack_cost: money(raw["Pick&Pack"]),
-        packaging_cost: money(raw.Empaque),
-        amount_to_liquidate: money(raw["A Liquidar"]),
-        settlement_status: settlementStatus,
-        internal_status: mapSettlementStatus(settlementStatus),
+        total_cost: money(raw.Total),
+        liquidated_on: parseDate(text(raw["Liquidado en"])),
+        finalized_on: parseDate(text(raw["Finalización"])),
+        label_url: text(raw.Etiqueta),
+        package_items: parsePackageItems(raw),
       };
     })
-    .filter((row) => row.order_name || row.guide_number);
+    .filter((row) => row.guide_number || row.order_name);
 }
 
-function parseConsolidated(workbook: XLSX.WorkBook): {
-  total_collected: number;
-  total_to_liquidate: number;
-} {
-  const sheet = workbook.Sheets.Consolidado;
-  if (!sheet) return { total_collected: 0, total_to_liquidate: 0 };
-
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-    header: ["description", "amount"],
-    defval: "",
-    raw: false,
-  });
-
-  let totalCollected = 0;
-  let totalToLiquidate = 0;
-  for (const row of rows) {
-    const description = text(row.description).toLowerCase();
-    if (description.includes("total colectado")) totalCollected = money(row.amount);
-    if (description.includes("monto a liquidar") || description.includes("total a recibir")) {
-      totalToLiquidate = money(row.amount);
-    }
+function parsePackageItems(raw: Record<string, unknown>): LogisticsPackageItem[] {
+  const items: LogisticsPackageItem[] = [];
+  for (let i = 1; i <= 4; i++) {
+    const title = text(raw[`Paquete ${i}`]);
+    if (!title) continue;
+    items.push({
+      title,
+      quantity: Number(text(raw[`Cantidad Paquete ${i}`]) || 0),
+      price: money(raw[`Precio Paquete ${i}`]),
+    });
   }
-  return { total_collected: totalCollected, total_to_liquidate: totalToLiquidate };
+  return items;
 }
 
-async function fetchShopifyOrders(periodStart: string | null): Promise<ShopifySettlementOrder[]> {
+async function fetchShopifyOrders(periodStart: string | null): Promise<ShopifyOrder[]> {
   const shop = process.env.SHOPIFY_SHOP_DOMAIN;
   const token = process.env.SHOPIFY_ACCESS_TOKEN;
   if (!shop || !token) return [];
 
   const minDate = periodStart
     ? new Date(new Date(periodStart).getTime() - 45 * 24 * 60 * 60 * 1000).toISOString()
-    : "2026-04-01T00:00:00-06:00";
+    : "2026-01-01T00:00:00-06:00";
 
   let url =
     `https://${shop}/admin/api/2024-01/orders.json` +
     `?status=any&limit=250&order=created_at%20desc` +
     `&created_at_min=${encodeURIComponent(minDate)}` +
-    `&fields=id,name,order_number,created_at,financial_status,fulfillment_status,total_price,line_items`;
+    `&fields=id,name,order_number,created_at,financial_status,fulfillment_status,cancelled_at,total_price`;
 
-  const orders: ShopifySettlementOrder[] = [];
-  for (let page = 0; page < 30 && url; page++) {
+  const orders: ShopifyOrder[] = [];
+  for (let page = 0; page < 80 && url; page++) {
     const res = await fetch(url, {
       headers: {
         "X-Shopify-Access-Token": token,
@@ -240,7 +214,7 @@ async function fetchShopifyOrders(periodStart: string | null): Promise<ShopifySe
     });
     if (!res.ok) break;
 
-    const json = (await res.json()) as { orders?: ShopifySettlementOrder[] };
+    const json = (await res.json()) as { orders?: ShopifyOrder[] };
     orders.push(...(json.orders ?? []));
 
     const link = res.headers.get("link") ?? "";
@@ -250,7 +224,7 @@ async function fetchShopifyOrders(periodStart: string | null): Promise<ShopifySe
   return orders;
 }
 
-function buildShopifyIndexes(orders: ShopifySettlementOrder[]) {
+function buildShopifyIndexes(orders: ShopifyOrder[]) {
   return {
     byName: new Map(orders.map((order) => [order.name, order])),
     byMcrcNumber: new Map(orders.map((order) => [`#MCRC${order.order_number}`, order])),
@@ -261,7 +235,7 @@ function buildShopifyIndexes(orders: ShopifySettlementOrder[]) {
 function findShopifyMatch(
   orderName: string,
   indexes: ReturnType<typeof buildShopifyIndexes>
-): ShopifySettlementOrder | undefined {
+): ShopifyOrder | undefined {
   const raw = orderName.trim();
   return (
     indexes.byName.get(raw) ??
@@ -270,18 +244,12 @@ function findShopifyMatch(
   );
 }
 
-function buildSettlementRow(
+function buildLogisticsRow(
   importId: number,
-  row: ParsedSettlementRow,
-  shopify?: ShopifySettlementOrder
-): Omit<SettlementRow, "id" | "created_at"> {
-  const orderItems: SettlementOrderItem[] = (shopify?.line_items ?? []).map((item) => ({
-    sku: String(item.sku ?? "").toLowerCase(),
-    title: String(item.title ?? ""),
-    quantity: Number(item.quantity ?? 0),
-    price: Number(item.price ?? 0),
-  }));
-
+  row: ParsedLogisticsRow,
+  shopify?: ShopifyOrder
+): Omit<LogisticsRow, "id" | "created_at"> {
+  const internalStatus = mapInternalStatus(row.boxful_status, shopify);
   return {
     import_id: importId,
     guide_number: row.guide_number,
@@ -291,29 +259,33 @@ function buildSettlementRow(
     customer_phone: row.customer_phone,
     created_on: row.created_on,
     courier: row.courier,
+    boxful_status: row.boxful_status,
+    internal_status: internalStatus,
+    match_status: shopify ? "matched" : "unmatched",
     service_type: row.service_type,
     cod_amount: row.cod_amount,
     cod_commission: row.cod_commission,
-    card_commission: row.card_commission,
     delivery_cost: row.delivery_cost,
-    pick_pack_cost: row.pick_pack_cost,
-    packaging_cost: row.packaging_cost,
-    amount_to_liquidate: row.amount_to_liquidate,
-    settlement_status: row.settlement_status,
-    match_status: shopify ? "matched" : "unmatched",
-    internal_status: row.internal_status,
+    total_cost: row.total_cost,
+    liquidated_on: row.liquidated_on,
+    finalized_on: row.finalized_on,
+    label_url: row.label_url,
+    package_items: row.package_items,
     shopify_order_id: shopify ? String(shopify.id) : "",
     shopify_order_name: shopify?.name ?? "",
+    shopify_order_number: shopify?.order_number ?? null,
     shopify_financial_status: shopify?.financial_status ?? "",
     shopify_fulfillment_status: shopify?.fulfillment_status ?? "",
+    shopify_cancelled_at: shopify?.cancelled_at ?? null,
     shopify_total: Number(shopify?.total_price ?? 0),
     shopify_created_at: shopify?.created_at ?? null,
-    order_items: orderItems,
     raw_row: row.raw,
   };
 }
 
-function mapSettlementStatus(status: string): InternalOrderStatus {
+function mapInternalStatus(status: string, shopify?: ShopifyOrder): InternalOrderStatus {
+  if (shopify?.cancelled_at || shopify?.financial_status === "voided") return "annulled";
+
   const lower = status.toLowerCase();
   if (lower.includes("entregado") && !lower.includes("no entregado")) return "delivered";
   if (lower.includes("no entregado") || lower.includes("devuelto")) return "not_delivered";
@@ -331,7 +303,7 @@ function money(value: unknown): number {
 }
 
 function parseDate(value: string): string | null {
-  if (!value) return null;
+  if (!value || value === "-") return null;
   const parts = value.split(/[/-]/).map(Number);
   if (parts.length === 3 && parts[2] > 1900) {
     const [day, month, year] = parts;
@@ -345,18 +317,10 @@ function nullableDate(value: string): string | null {
   return value ? value : null;
 }
 
-function inferEarliestDate(rows: ParsedSettlementRow[]): string | null {
+function inferEarliestDate(rows: ParsedLogisticsRow[]): string | null {
   const dates = rows
     .map((row) => row.created_on)
     .filter((date): date is string => Boolean(date))
     .sort();
   return dates[0] ?? null;
-}
-
-function sum(values: number[]): number {
-  return roundMoney(values.reduce((acc, value) => acc + Number(value || 0), 0));
-}
-
-function roundMoney(value: number): number {
-  return Math.round(value * 100) / 100;
 }

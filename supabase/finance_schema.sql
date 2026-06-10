@@ -89,4 +89,56 @@ CREATE INDEX IF NOT EXISTS settlement_rows_order_name_idx ON settlement_rows (or
 CREATE INDEX IF NOT EXISTS settlement_rows_internal_status_idx ON settlement_rows (internal_status);
 CREATE INDEX IF NOT EXISTS settlement_rows_match_status_idx ON settlement_rows (match_status);
 
+CREATE TABLE IF NOT EXISTS logistics_imports (
+  id                 BIGSERIAL PRIMARY KEY,
+  file_name          TEXT          NOT NULL,
+  period_label       TEXT          NOT NULL DEFAULT '',
+  period_start       DATE,
+  period_end         DATE,
+  total_rows         INTEGER       NOT NULL DEFAULT 0,
+  matched_rows       INTEGER       NOT NULL DEFAULT 0,
+  unmatched_rows     INTEGER       NOT NULL DEFAULT 0,
+  status_summary     JSONB         NOT NULL DEFAULT '{}'::jsonb,
+  created_at         TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS logistics_rows (
+  id                         BIGSERIAL PRIMARY KEY,
+  import_id                  BIGINT      NOT NULL REFERENCES logistics_imports(id) ON DELETE CASCADE,
+  guide_number               TEXT        NOT NULL DEFAULT '',
+  order_name                 TEXT        NOT NULL DEFAULT '',
+  store_order_number         TEXT        NOT NULL DEFAULT '',
+  customer_name              TEXT        NOT NULL DEFAULT '',
+  customer_phone             TEXT        NOT NULL DEFAULT '',
+  created_on                 DATE,
+  courier                    TEXT        NOT NULL DEFAULT '',
+  boxful_status              TEXT        NOT NULL DEFAULT '',
+  internal_status            TEXT        NOT NULL DEFAULT 'pending',
+  match_status               TEXT        NOT NULL DEFAULT 'unmatched',
+  service_type               TEXT        NOT NULL DEFAULT '',
+  cod_amount                 NUMERIC(12,2) NOT NULL DEFAULT 0,
+  cod_commission             NUMERIC(12,2) NOT NULL DEFAULT 0,
+  delivery_cost              NUMERIC(12,2) NOT NULL DEFAULT 0,
+  total_cost                 NUMERIC(12,2) NOT NULL DEFAULT 0,
+  liquidated_on              DATE,
+  finalized_on               DATE,
+  label_url                  TEXT        NOT NULL DEFAULT '',
+  package_items              JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  shopify_order_id           TEXT        NOT NULL DEFAULT '',
+  shopify_order_name         TEXT        NOT NULL DEFAULT '',
+  shopify_order_number       INTEGER,
+  shopify_financial_status   TEXT        NOT NULL DEFAULT '',
+  shopify_fulfillment_status TEXT        NOT NULL DEFAULT '',
+  shopify_cancelled_at       TIMESTAMPTZ,
+  shopify_total              NUMERIC(12,2) NOT NULL DEFAULT 0,
+  shopify_created_at         TIMESTAMPTZ,
+  raw_row                    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS logistics_rows_import_idx ON logistics_rows (import_id);
+CREATE INDEX IF NOT EXISTS logistics_rows_order_name_idx ON logistics_rows (order_name);
+CREATE INDEX IF NOT EXISTS logistics_rows_internal_status_idx ON logistics_rows (internal_status);
+CREATE INDEX IF NOT EXISTS logistics_rows_match_status_idx ON logistics_rows (match_status);
+
 NOTIFY pgrst, 'reload schema';

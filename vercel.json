@@ -18,6 +18,9 @@
     },
     "app/api/finance/settlements/route.ts": {
       "maxDuration": 60
+    },
+    "app/api/finance/logistics/route.ts": {
+      "maxDuration": 60
     }
   }
 }

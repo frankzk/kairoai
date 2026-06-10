@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type React from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   ArrowLeft,
   Banknote,
   FileSpreadsheet,
@@ -19,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
-type Tab = "orders" | "costs" | "expenses" | "profit";
+type Tab = "orders" | "settlements" | "costs" | "expenses" | "profit";
 type ExpenseType = "ads" | "payroll" | "misc";
 
 interface SettlementImport {
@@ -35,6 +36,7 @@ interface SettlementImport {
 
 interface SettlementRow {
   id: number;
+  import_id: number;
   order_name: string;
   guide_number: string;
   customer_name: string;
@@ -47,6 +49,47 @@ interface SettlementRow {
   shopify_financial_status: string;
   shopify_fulfillment_status: string;
   order_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
+}
+
+interface SettlementTrace {
+  file_name: string;
+  amount_to_liquidate: number;
+  settlement_status: string;
+  internal_status: string;
+}
+
+interface DoubleSettlementAnomaly {
+  key: string;
+  kind: "order" | "guide";
+  traces: SettlementTrace[];
+}
+
+interface LogisticsImport {
+  id: number;
+  file_name: string;
+  period_label: string;
+  total_rows: number;
+  matched_rows: number;
+  unmatched_rows: number;
+  created_at: string;
+}
+
+interface LogisticsRow {
+  id: number;
+  guide_number: string;
+  order_name: string;
+  customer_name: string;
+  courier: string;
+  boxful_status: string;
+  internal_status: string;
+  match_status: string;
+  cod_amount: number;
+  delivery_cost: number;
+  shopify_order_name: string;
+  shopify_financial_status: string;
+  shopify_fulfillment_status: string;
+  shopify_cancelled_at: string | null;
+  package_items: Array<{ title: string; quantity: number; price: number }>;
 }
 
 interface ProductCost {
@@ -71,6 +114,13 @@ interface BusinessExpense {
 }
 
 interface ProfitabilitySummary {
+  cod_collected: number;
+  cod_commission: number;
+  card_commission: number;
+  delivery_cost: number;
+  pick_pack_cost: number;
+  settlement_packaging_cost: number;
+  settlement_charged_costs: number;
   settlement_total: number;
   product_costs: number;
   ads: number;
@@ -106,41 +156,65 @@ export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
   const [imports, setImports] = useState<SettlementImport[]>([]);
   const [rows, setRows] = useState<SettlementRow[]>([]);
+  const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
+  const [logisticsRows, setLogisticsRows] = useState<LogisticsRow[]>([]);
   const [costs, setCosts] = useState<ProductCost[]>([]);
   const [expenses, setExpenses] = useState<BusinessExpense[]>([]);
   const [summary, setSummary] = useState<ProfitabilitySummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
+  const [importingLogistics, setImportingLogistics] = useState(false);
   const [costForm, setCostForm] = useState(emptyCost);
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
 
   const latestImport = imports[0];
+  const latestLogisticsImport = logisticsImports[0];
+  const liquidationAlertRows = useMemo(
+    () => getDeliveredWithoutSettlement(logisticsRows, rows),
+    [logisticsRows, rows]
+  );
+  const settlementTraceByKey = useMemo(
+    () => buildSettlementTraceByKey(rows, imports),
+    [rows, imports]
+  );
+  const doubleSettlementAnomalies = useMemo(
+    () => getDoubleSettlementAnomalies(settlementTraceByKey),
+    [settlementTraceByKey]
+  );
 
   async function refresh() {
     setLoading(true);
     setError("");
     try {
-      const [settlementsRes, costsRes, expensesRes, summaryRes] = await Promise.all([
+      const [settlementsRes, logisticsRes, costsRes, expensesRes, summaryRes] = await Promise.all([
         fetch("/api/finance/settlements", { cache: "no-store" }),
+        fetch("/api/finance/logistics", { cache: "no-store" }),
         fetch("/api/finance/product-costs", { cache: "no-store" }),
         fetch("/api/finance/expenses", { cache: "no-store" }),
         fetch("/api/finance/summary", { cache: "no-store" }),
       ]);
 
-      const settlementsJson = await settlementsRes.json();
-      const costsJson = await costsRes.json();
-      const expensesJson = await expensesRes.json();
-      const summaryJson = await summaryRes.json();
+      const settlementsJson = await readApiJson(settlementsRes);
+      const logisticsJson = await readApiJson(logisticsRes);
+      const costsJson = await readApiJson(costsRes);
+      const expensesJson = await readApiJson(expensesRes);
+      const summaryJson = await readApiJson(summaryRes);
 
       setImports(settlementsJson.imports ?? []);
       setRows(settlementsJson.rows ?? []);
+      setLogisticsImports(logisticsJson.imports ?? []);
+      setLogisticsRows(logisticsJson.rows ?? []);
       setCosts(costsJson.costs ?? []);
       setExpenses(expensesJson.expenses ?? []);
       setSummary(summaryJson.summary ?? null);
 
       const firstError =
-        settlementsJson.error ?? costsJson.error ?? expensesJson.error ?? summaryJson.error;
+        settlementsJson.error ??
+        logisticsJson.error ??
+        costsJson.error ??
+        expensesJson.error ??
+        summaryJson.error;
       if (firstError) setError(firstError);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
@@ -164,7 +238,7 @@ export default function FinancePage() {
         method: "POST",
         body: data,
       });
-      const json = await res.json();
+      const json = await readApiJson(res);
       if (!res.ok) throw new Error(json.error ?? "No se pudo importar");
       form.reset();
       await refresh();
@@ -175,6 +249,28 @@ export default function FinancePage() {
     }
   }
 
+  async function handleLogisticsImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setImportingLogistics(true);
+    setError("");
+    try {
+      const res = await fetch("/api/finance/logistics", {
+        method: "POST",
+        body: data,
+      });
+      const json = await readApiJson(res);
+      if (!res.ok) throw new Error(json.error ?? "No se pudo importar logistica");
+      form.reset();
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo importar logistica");
+    } finally {
+      setImportingLogistics(false);
+    }
+  }
+
   async function saveCost(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const res = await fetch("/api/finance/product-costs", {
@@ -182,7 +278,7 @@ export default function FinancePage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(costForm),
     });
-    const json = await res.json();
+    const json = await readApiJson(res);
     if (!res.ok) {
       setError(json.error ?? "No se pudo guardar costo");
       return;
@@ -198,7 +294,7 @@ export default function FinancePage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(expenseForm),
     });
-    const json = await res.json();
+    const json = await readApiJson(res);
     if (!res.ok) {
       setError(json.error ?? "No se pudo guardar gasto");
       return;
@@ -218,13 +314,28 @@ export default function FinancePage() {
   }
 
   const orderStats = useMemo(() => {
+    const effectiveStatuses = logisticsRows.map((row) =>
+      getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey))
+    );
     return {
-      delivered: rows.filter((row) => row.internal_status === "delivered").length,
-      notDelivered: rows.filter((row) => row.internal_status === "not_delivered").length,
-      unmatched: rows.filter((row) => row.match_status === "unmatched").length,
+      delivered: effectiveStatuses.filter((status) => status === "delivered").length,
+      notDelivered: effectiveStatuses.filter(
+        (status) => status === "not_delivered" || status === "returned"
+      ).length,
+      annulled: effectiveStatuses.filter((status) => status === "annulled").length,
+      liquidationAlerts: liquidationAlertRows.length,
+      anomalies: liquidationAlertRows.length + doubleSettlementAnomalies.length,
+      pending: effectiveStatuses.filter((status) => status === "pending" || status === "unmatched").length,
+      unmatched: logisticsRows.filter((row) => row.match_status === "unmatched").length,
       total: money(rows.reduce((acc, row) => acc + Number(row.amount_to_liquidate || 0), 0)),
     };
-  }, [rows]);
+  }, [
+    doubleSettlementAnomalies.length,
+    logisticsRows,
+    liquidationAlertRows.length,
+    rows,
+    settlementTraceByKey,
+  ]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -256,16 +367,22 @@ export default function FinancePage() {
           </div>
         )}
 
-        <section className="grid gap-4 md:grid-cols-4">
-          <MetricCard label="A liquidar" value={currency(summary?.settlement_total ?? orderStats.total)} />
-          <MetricCard label="Entregados" value={String(summary?.delivered_orders ?? orderStats.delivered)} />
-          <MetricCard label="No entregados" value={String(summary?.not_delivered_orders ?? orderStats.notDelivered)} />
+        <section className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
+          <MetricCard label="Entregados" value={String(orderStats.delivered)} />
+          <MetricCard label="No entregados" value={String(orderStats.notDelivered)} />
+          <MetricCard label="Anulados" value={String(orderStats.annulled)} />
+          <MetricCard label="Pendientes" value={String(orderStats.pending)} />
+          <MetricCard label="Por reclamar" value={String(orderStats.liquidationAlerts)} warning />
+          <MetricCard label="Anomalias" value={String(orderStats.anomalies)} warning />
           <MetricCard label="Utilidad neta" value={currency(summary?.net_profit ?? 0)} accent />
         </section>
 
         <div className="flex gap-2 overflow-x-auto border-b border-border">
           <TabButton active={tab === "orders"} onClick={() => setTab("orders")} icon={<FileSpreadsheet />}>
             Pedidos
+          </TabButton>
+          <TabButton active={tab === "settlements"} onClick={() => setTab("settlements")} icon={<ReceiptText />}>
+            Liquidaciones
           </TabButton>
           <TabButton active={tab === "costs"} onClick={() => setTab("costs")} icon={<Package />}>
             Costos SKU
@@ -284,9 +401,21 @@ export default function FinancePage() {
           <>
             {tab === "orders" && (
               <OrdersTab
+                logisticsImports={logisticsImports}
+                logisticsRows={logisticsRows}
+                latestLogisticsImport={latestLogisticsImport}
+                settlementTraceByKey={settlementTraceByKey}
+                importingLogistics={importingLogistics}
+                onLogisticsImport={handleLogisticsImport}
+              />
+            )}
+            {tab === "settlements" && (
+              <SettlementsTab
                 imports={imports}
                 rows={rows}
                 latestImport={latestImport}
+                liquidationAlertRows={liquidationAlertRows}
+                doubleSettlementAnomalies={doubleSettlementAnomalies}
                 importing={importing}
                 onImport={handleImport}
               />
@@ -318,18 +447,159 @@ export default function FinancePage() {
 }
 
 function OrdersTab({
+  logisticsImports,
+  logisticsRows,
+  latestLogisticsImport,
+  settlementTraceByKey,
+  importingLogistics,
+  onLogisticsImport,
+}: {
+  logisticsImports: LogisticsImport[];
+  logisticsRows: LogisticsRow[];
+  latestLogisticsImport?: LogisticsImport;
+  settlementTraceByKey: Map<string, SettlementTrace[]>;
+  importingLogistics: boolean;
+  onLogisticsImport: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
+      <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Importar Boxful logistico</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={onLogisticsImport} className="space-y-3">
+              <Input name="file" type="file" accept=".xlsx,.xls" required />
+              <Input name="period_label" placeholder="Periodo, ej: 13 marzo - 10 junio" />
+              <div className="grid grid-cols-2 gap-2">
+                <Input name="period_start" type="date" />
+                <Input name="period_end" type="date" />
+              </div>
+              <Button type="submit" disabled={importingLogistics} className="w-full gap-2">
+                {importingLogistics ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                {importingLogistics ? "Importando..." : "Subir Boxful"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            {latestLogisticsImport ? latestLogisticsImport.file_name : "Sin Boxful importado"}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-4">
+            <MiniStat label="Filas Boxful" value={latestLogisticsImport?.total_rows ?? 0} />
+            <MiniStat label="Match Shopify" value={latestLogisticsImport?.matched_rows ?? 0} />
+            <MiniStat label="Sin match" value={latestLogisticsImport?.unmatched_rows ?? 0} />
+            <MiniStat label="Pedidos visibles" value={logisticsRows.length} />
+          </div>
+          <OrdersTable rows={logisticsRows} settlementTraceByKey={settlementTraceByKey} />
+          {logisticsImports.length > 1 && (
+            <div className="border-t border-border pt-3">
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Historial de Boxful</p>
+              <div className="space-y-1 text-xs text-muted-foreground">
+                {logisticsImports.slice(0, 4).map((item) => (
+                  <div key={item.id} className="flex justify-between gap-3">
+                    <span>Boxful: {item.file_name}</span>
+                    <span>{item.total_rows} filas</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function OrdersTable({
+  rows,
+  settlementTraceByKey,
+}: {
+  rows: LogisticsRow[];
+  settlementTraceByKey: Map<string, SettlementTrace[]>;
+}) {
+  return (
+    <div className="max-h-[620px] overflow-auto border border-border">
+      <table className="w-full min-w-[1120px] text-sm">
+        <thead className="sticky top-0 bg-card">
+          <tr className="border-b border-border text-left text-xs text-muted-foreground">
+            <th className="px-3 py-2">Orden</th>
+            <th className="px-3 py-2">Guia</th>
+            <th className="px-3 py-2">Cliente</th>
+            <th className="px-3 py-2">Estado seguimiento</th>
+            <th className="px-3 py-2">Shopify</th>
+            <th className="px-3 py-2">Estado liquidacion</th>
+            <th className="px-3 py-2">Items</th>
+            <th className="px-3 py-2 text-right">COD</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 500).map((row) => {
+            const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
+            const trackingStatus = getEffectiveTrackingStatus(row, traces);
+            return (
+              <tr key={row.id} className="border-b border-border/50">
+                <td className="px-3 py-2 font-mono text-xs">{row.order_name}</td>
+                <td className="px-3 py-2 font-mono text-xs">{row.guide_number}</td>
+                <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
+                <td className="px-3 py-2">
+                  <StatusBadge
+                    status={trackingStatus}
+                    label={getTrackingStatusLabel(row, traces, trackingStatus)}
+                  />
+                </td>
+                <td className="px-3 py-2">
+                  <Badge variant={row.match_status === "matched" ? "success" : "warning"}>
+                    {row.match_status === "matched" ? row.shopify_order_name : "sin match"}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2">
+                  <SettlementTraceBadge traces={traces} />
+                </td>
+                <td className="px-3 py-2 text-xs text-muted-foreground">
+                  {(row.package_items ?? []).slice(0, 2).map((item) => item.title).join(", ") || "-"}
+                </td>
+                <td className="px-3 py-2 text-right font-mono text-xs">
+                  {currency(row.cod_amount)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SettlementsTab({
   imports,
   rows,
   latestImport,
+  liquidationAlertRows,
+  doubleSettlementAnomalies,
   importing,
   onImport,
 }: {
   imports: SettlementImport[];
   rows: SettlementRow[];
   latestImport?: SettlementImport;
+  liquidationAlertRows: LogisticsRow[];
+  doubleSettlementAnomalies: DoubleSettlementAnomaly[];
   importing: boolean;
   onImport: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const fileByImportId = useMemo(
+    () => new Map(imports.map((item) => [item.id, item.file_name])),
+    [imports]
+  );
+
   return (
     <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
       <Card>
@@ -346,7 +616,7 @@ function OrdersTab({
             </div>
             <Button type="submit" disabled={importing} className="w-full gap-2">
               {importing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              {importing ? "Importando..." : "Subir Excel"}
+              {importing ? "Importando..." : "Subir liquidacion"}
             </Button>
           </form>
         </CardContent>
@@ -361,14 +631,38 @@ function OrdersTab({
         <CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-4">
             <MiniStat label="Filas" value={latestImport?.total_rows ?? 0} />
-            <MiniStat label="Match" value={latestImport?.matched_rows ?? 0} />
+            <MiniStat label="Match Shopify" value={latestImport?.matched_rows ?? 0} />
             <MiniStat label="Sin match" value={latestImport?.unmatched_rows ?? 0} />
             <MiniStat label="A liquidar" value={currency(latestImport?.total_to_liquidate ?? 0)} />
           </div>
-          <OrdersTable rows={rows} />
-          {imports.length > 1 && (
+          {liquidationAlertRows.length > 0 && (
+            <div className="border border-amber-500/40 bg-amber-500/10 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-amber-100">
+                  <AlertTriangle className="h-4 w-4" />
+                  <span className="text-sm font-semibold">Entregados sin liquidacion</span>
+                </div>
+                <Badge variant="warning">{liquidationAlertRows.length} por reclamar</Badge>
+              </div>
+              <ClaimAlertsTable rows={liquidationAlertRows} />
+            </div>
+          )}
+          {doubleSettlementAnomalies.length > 0 && (
+            <div className="border border-red-500/40 bg-red-500/10 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-red-100">
+                  <AlertTriangle className="h-4 w-4" />
+                  <span className="text-sm font-semibold">Doble liquidacion detectada</span>
+                </div>
+                <Badge variant="destructive">{doubleSettlementAnomalies.length} anomalias</Badge>
+              </div>
+              <DoubleSettlementTable anomalies={doubleSettlementAnomalies} />
+            </div>
+          )}
+          <SettlementRowsTable rows={rows} fileByImportId={fileByImportId} />
+          {imports.length > 0 && (
             <div className="border-t border-border pt-3">
-              <p className="mb-2 text-xs font-medium text-muted-foreground">Historial de imports</p>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Historial de liquidaciones</p>
               <div className="space-y-1 text-xs text-muted-foreground">
                 {imports.slice(0, 6).map((item) => (
                   <div key={item.id} className="flex justify-between gap-3">
@@ -385,24 +679,33 @@ function OrdersTab({
   );
 }
 
-function OrdersTable({ rows }: { rows: SettlementRow[] }) {
+function SettlementRowsTable({
+  rows,
+  fileByImportId,
+}: {
+  rows: SettlementRow[];
+  fileByImportId: Map<number, string>;
+}) {
   return (
-    <div className="max-h-[620px] overflow-auto border border-border">
-      <table className="w-full min-w-[980px] text-sm">
+    <div className="max-h-[560px] overflow-auto border border-border">
+      <table className="w-full min-w-[1040px] text-sm">
         <thead className="sticky top-0 bg-card">
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
+            <th className="px-3 py-2">Archivo</th>
             <th className="px-3 py-2">Orden</th>
             <th className="px-3 py-2">Guia</th>
             <th className="px-3 py-2">Cliente</th>
-            <th className="px-3 py-2">Estado</th>
+            <th className="px-3 py-2">Estado liquidacion</th>
             <th className="px-3 py-2">Shopify</th>
-            <th className="px-3 py-2">Items</th>
             <th className="px-3 py-2 text-right">A liquidar</th>
           </tr>
         </thead>
         <tbody>
           {rows.slice(0, 500).map((row) => (
             <tr key={row.id} className="border-b border-border/50">
+              <td className="max-w-[260px] truncate px-3 py-2 text-xs" title={fileByImportId.get(row.import_id)}>
+                {fileByImportId.get(row.import_id) || `Import #${row.import_id}`}
+              </td>
               <td className="px-3 py-2 font-mono text-xs">{row.order_name}</td>
               <td className="px-3 py-2 font-mono text-xs">{row.guide_number}</td>
               <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
@@ -414,16 +717,124 @@ function OrdersTable({ rows }: { rows: SettlementRow[] }) {
                   {row.match_status === "matched" ? row.shopify_order_name : "sin match"}
                 </Badge>
               </td>
-              <td className="px-3 py-2 text-xs text-muted-foreground">
-                {(row.order_items ?? []).slice(0, 2).map((item) => item.sku || item.title).join(", ") || "-"}
-              </td>
-              <td className="px-3 py-2 text-right font-mono text-xs">
-                {currency(row.amount_to_liquidate)}
+              <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.amount_to_liquidate)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SettlementTraceBadge({ traces }: { traces: SettlementTrace[] }) {
+  if (!traces.length) {
+    return <Badge variant="muted">Sin liquidacion</Badge>;
+  }
+
+  const [firstTrace, ...extraTraces] = traces;
+  return (
+    <div className="max-w-[260px] space-y-1">
+      <div className="truncate text-xs font-medium" title={firstTrace.file_name}>
+        {firstTrace.file_name}
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        <Badge variant="success">{currency(firstTrace.amount_to_liquidate)}</Badge>
+        {firstTrace.settlement_status && <Badge variant="muted">{firstTrace.settlement_status}</Badge>}
+        {extraTraces.length > 0 && <Badge variant="warning">+{extraTraces.length}</Badge>}
+      </div>
+    </div>
+  );
+}
+
+function ClaimAlertsTable({ rows }: { rows: LogisticsRow[] }) {
+  return (
+    <div className="max-h-72 overflow-auto border border-amber-500/30 bg-background/70">
+      <table className="w-full min-w-[760px] text-sm">
+        <thead className="sticky top-0 bg-card">
+          <tr className="border-b border-border text-left text-xs text-muted-foreground">
+            <th className="px-3 py-2">Orden</th>
+            <th className="px-3 py-2">Guia</th>
+            <th className="px-3 py-2">Cliente</th>
+            <th className="px-3 py-2">Courier</th>
+            <th className="px-3 py-2 text-right">COD esperado</th>
+            <th className="px-3 py-2">Accion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 80).map((row) => (
+            <tr key={row.id} className="border-b border-border/50">
+              <td className="px-3 py-2 font-mono text-xs">{row.order_name}</td>
+              <td className="px-3 py-2 font-mono text-xs">{row.guide_number}</td>
+              <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
+              <td className="px-3 py-2">{row.courier || "-"}</td>
+              <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.cod_amount)}</td>
+              <td className="px-3 py-2">
+                <Badge variant="warning">Reclamar liquidacion</Badge>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {rows.length > 80 && (
+        <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
+          Mostrando 80 de {rows.length} alertas.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DoubleSettlementTable({ anomalies }: { anomalies: DoubleSettlementAnomaly[] }) {
+  return (
+    <div className="max-h-72 overflow-auto border border-red-500/30 bg-background/70">
+      <table className="w-full min-w-[820px] text-sm">
+        <thead className="sticky top-0 bg-card">
+          <tr className="border-b border-border text-left text-xs text-muted-foreground">
+            <th className="px-3 py-2">Llave</th>
+            <th className="px-3 py-2">Tipo</th>
+            <th className="px-3 py-2">Archivos</th>
+            <th className="px-3 py-2 text-right">Liquidaciones</th>
+            <th className="px-3 py-2 text-right">Total A liquidar</th>
+            <th className="px-3 py-2">Accion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {anomalies.slice(0, 80).map((anomaly) => {
+            const total = anomaly.traces.reduce(
+              (acc, trace) => acc + Number(trace.amount_to_liquidate || 0),
+              0
+            );
+            return (
+              <tr key={`${anomaly.kind}-${anomaly.key}`} className="border-b border-border/50">
+                <td className="px-3 py-2 font-mono text-xs">{anomaly.key}</td>
+                <td className="px-3 py-2">
+                  <Badge variant="warning">{anomaly.kind === "order" ? "Orden" : "Guia"}</Badge>
+                </td>
+                <td className="px-3 py-2 text-xs">
+                  {anomaly.traces.slice(0, 3).map((trace) => (
+                    <div key={`${trace.file_name}-${trace.amount_to_liquidate}`} className="max-w-[320px] truncate" title={trace.file_name}>
+                      {trace.file_name} · {trace.settlement_status || "sin estado"} · {currency(trace.amount_to_liquidate)}
+                    </div>
+                  ))}
+                  {anomaly.traces.length > 3 && (
+                    <div className="text-muted-foreground">+{anomaly.traces.length - 3} mas</div>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right font-mono text-xs">{anomaly.traces.length}</td>
+                <td className="px-3 py-2 text-right font-mono text-xs">{currency(total)}</td>
+                <td className="px-3 py-2">
+                  <Badge variant="destructive">Revisar cobro duplicado</Badge>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {anomalies.length > 80 && (
+        <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
+          Mostrando 80 de {anomalies.length} anomalias.
+        </div>
+      )}
     </div>
   );
 }
@@ -585,7 +996,9 @@ function ExpensesTab({
 
 function ProfitTab({ summary }: { summary: ProfitabilitySummary | null }) {
   const items = [
-    ["Resultado logistico", summary?.settlement_total ?? 0],
+    ["COD cobrado", summary?.cod_collected ?? 0],
+    ["Costos cobrados en liquidacion", -(summary?.settlement_charged_costs ?? 0)],
+    ["A liquidar neto", summary?.settlement_total ?? 0],
     ["Costo producto", -(summary?.product_costs ?? 0)],
     ["Ads", -(summary?.ads ?? 0)],
     ["Planilla", -(summary?.payroll ?? 0)],
@@ -600,6 +1013,10 @@ function ProfitTab({ summary }: { summary: ProfitabilitySummary | null }) {
           <CardTitle className="text-base">Formula de utilidad</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          <div className="border border-border bg-background p-3 text-xs text-muted-foreground">
+            Los costos de entrega, Pick&Pack, empaque y comisiones vienen de la liquidacion.
+            Ya estan incluidos dentro de `A liquidar`, asi que se muestran como desglose y no se restan dos veces.
+          </div>
           {items.map(([label, value]) => (
             <div key={label as string} className="flex items-center justify-between border-b border-border/50 py-3">
               <span className="text-sm text-muted-foreground">{label}</span>
@@ -608,6 +1025,18 @@ function ProfitTab({ summary }: { summary: ProfitabilitySummary | null }) {
               </span>
             </div>
           ))}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Desglose liquidacion</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <BreakdownLine label="Comision COD" value={summary?.cod_commission ?? 0} />
+          <BreakdownLine label="Comision tarjeta" value={summary?.card_commission ?? 0} />
+          <BreakdownLine label="Costo entrega" value={summary?.delivery_cost ?? 0} />
+          <BreakdownLine label="Pick&Pack" value={summary?.pick_pack_cost ?? 0} />
+          <BreakdownLine label="Empaque liquidacion" value={summary?.settlement_packaging_cost ?? 0} />
         </CardContent>
       </Card>
       <Card>
@@ -630,12 +1059,39 @@ function ProfitTab({ summary }: { summary: ProfitabilitySummary | null }) {
   );
 }
 
-function MetricCard({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+function BreakdownLine({ label, value }: { label: string; value: number }) {
   return (
-    <Card className={accent ? "border-primary/40" : ""}>
+    <div className="flex items-center justify-between border-b border-border/50 pb-2 last:border-0">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="font-mono text-xs">{currency(value)}</span>
+    </div>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  accent = false,
+  warning = false,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  warning?: boolean;
+}) {
+  return (
+    <Card className={accent ? "border-primary/40" : warning ? "border-amber-500/40" : ""}>
       <CardContent className="p-4">
         <p className="text-xs text-muted-foreground">{label}</p>
-        <p className={accent ? "mt-2 text-2xl font-bold text-primary" : "mt-2 text-2xl font-bold"}>
+        <p
+          className={
+            accent
+              ? "mt-2 text-2xl font-bold text-primary"
+              : warning
+                ? "mt-2 text-2xl font-bold text-amber-300"
+                : "mt-2 text-2xl font-bold"
+          }
+        >
           {value}
         </p>
       </CardContent>
@@ -680,9 +1136,12 @@ function TabButton({
 
 function StatusBadge({ status, label }: { status: string; label: string }) {
   if (status === "delivered") return <Badge variant="success">{label || "Entregado"}</Badge>;
-  if (status === "not_delivered") return <Badge variant="destructive">{label || "No entregado"}</Badge>;
+  if (status === "returned" || status === "not_delivered") {
+    return <Badge variant="destructive">{label || "No entregado"}</Badge>;
+  }
+  if (status === "annulled") return <Badge variant="warning">Anulado</Badge>;
   if (status === "unmatched") return <Badge variant="warning">Sin match</Badge>;
-  return <Badge variant="muted">{label || status}</Badge>;
+  return <Badge variant="muted">{label || "Pendiente"}</Badge>;
 }
 
 function currency(value: number): string {
@@ -695,4 +1154,173 @@ function currency(value: number): string {
 
 function money(value: number): number {
   return Math.round(Number(value || 0) * 100) / 100;
+}
+
+async function readApiJson(res: Response) {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    const preview = text.replace(/\s+/g, " ").trim().slice(0, 180);
+    throw new Error(`El servidor devolvio una respuesta invalida (${res.status}). ${preview}`);
+  }
+}
+
+function getDeliveredWithoutSettlement(
+  logisticsRows: LogisticsRow[],
+  settlementRows: SettlementRow[]
+): LogisticsRow[] {
+  const settledOrderKeys = new Set<string>();
+  const settledGuideKeys = new Set<string>();
+
+  for (const row of settlementRows) {
+    const orderKey = normalizeMatchKey(row.order_name || row.shopify_order_name);
+    const guideKey = normalizeMatchKey(row.guide_number);
+    if (orderKey) settledOrderKeys.add(orderKey);
+    if (guideKey) settledGuideKeys.add(guideKey);
+  }
+
+  return logisticsRows.filter((row) => {
+    if (row.internal_status !== "delivered") return false;
+    const orderKey = normalizeMatchKey(row.order_name || row.shopify_order_name);
+    const guideKey = normalizeMatchKey(row.guide_number);
+    return !((orderKey && settledOrderKeys.has(orderKey)) || (guideKey && settledGuideKeys.has(guideKey)));
+  });
+}
+
+function buildSettlementTraceByKey(
+  settlementRows: SettlementRow[],
+  imports: SettlementImport[]
+): Map<string, SettlementTrace[]> {
+  const fileByImportId = new Map(imports.map((item) => [item.id, item.file_name]));
+  const traceByKey = new Map<string, SettlementTrace[]>();
+
+  for (const row of settlementRows) {
+    const trace: SettlementTrace = {
+      file_name: fileByImportId.get(row.import_id) || `Import #${row.import_id}`,
+      amount_to_liquidate: row.amount_to_liquidate,
+      settlement_status: row.settlement_status,
+      internal_status: row.internal_status,
+    };
+    addSettlementTrace(traceByKey, normalizeMatchKey(row.order_name || row.shopify_order_name), trace);
+    addSettlementTrace(traceByKey, normalizeMatchKey(row.guide_number), trace);
+  }
+
+  return traceByKey;
+}
+
+function addSettlementTrace(
+  traceByKey: Map<string, SettlementTrace[]>,
+  key: string,
+  trace: SettlementTrace
+) {
+  if (!key) return;
+  const existing = traceByKey.get(key) ?? [];
+  if (
+    existing.some(
+      (item) =>
+        item.file_name === trace.file_name &&
+        item.amount_to_liquidate === trace.amount_to_liquidate &&
+        item.settlement_status === trace.settlement_status
+    )
+  ) {
+    return;
+  }
+  traceByKey.set(key, [...existing, trace]);
+}
+
+function getSettlementTracesForLogisticsRow(
+  row: LogisticsRow,
+  settlementTraceByKey: Map<string, SettlementTrace[]>
+): SettlementTrace[] {
+  const seen = new Set<string>();
+  const traces: SettlementTrace[] = [];
+  const keys = [
+    normalizeMatchKey(row.order_name || row.shopify_order_name),
+    normalizeMatchKey(row.guide_number),
+  ];
+
+  for (const key of keys) {
+    for (const trace of settlementTraceByKey.get(key) ?? []) {
+      const traceKey = `${trace.file_name}|${trace.amount_to_liquidate}|${trace.settlement_status}`;
+      if (seen.has(traceKey)) continue;
+      seen.add(traceKey);
+      traces.push(trace);
+    }
+  }
+
+  return traces;
+}
+
+function getDoubleSettlementAnomalies(
+  settlementTraceByKey: Map<string, SettlementTrace[]>
+): DoubleSettlementAnomaly[] {
+  const anomalies: DoubleSettlementAnomaly[] = [];
+
+  for (const [key, traces] of Array.from(settlementTraceByKey.entries())) {
+    const uniqueTraces = uniqueSettlementTraces(traces);
+    if (uniqueTraces.length < 2) continue;
+
+    anomalies.push({
+      key,
+      kind: /^\d{6,}$/.test(key) ? "guide" : "order",
+      traces: uniqueTraces,
+    });
+  }
+
+  return anomalies
+    .sort((a, b) => b.traces.length - a.traces.length || a.key.localeCompare(b.key))
+    .slice(0, 250);
+}
+
+function uniqueSettlementTraces(traces: SettlementTrace[]): SettlementTrace[] {
+  const seen = new Set<string>();
+  const unique: SettlementTrace[] = [];
+  for (const trace of traces) {
+    const key = `${trace.file_name}|${trace.amount_to_liquidate}|${trace.settlement_status}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(trace);
+  }
+  return unique;
+}
+
+function normalizeMatchKey(value: string): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^#/, "")
+    .replace(/\s+/g, "");
+}
+
+function getEffectiveTrackingStatus(row: LogisticsRow, traces: SettlementTrace[]): string {
+  if (row.shopify_cancelled_at || row.shopify_financial_status === "voided") return "annulled";
+  if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
+
+  const settlementStatus = traces.find((trace) => isFinalTrackingStatus(trace.internal_status));
+  if (settlementStatus) return settlementStatus.internal_status;
+
+  return "pending";
+}
+
+function getTrackingStatusLabel(
+  row: LogisticsRow,
+  traces: SettlementTrace[],
+  status: string
+): string {
+  if (status === "annulled") return "Anulado";
+  if (isFinalTrackingStatus(row.internal_status)) {
+    return status === "not_delivered" || status === "returned" ? "No entregado" : row.boxful_status || "Entregado";
+  }
+
+  const settlementTrace = traces.find((trace) => trace.internal_status === status);
+  if (settlementTrace?.settlement_status) return settlementTrace.settlement_status;
+  if (status === "delivered") return "Entregado";
+  if (status === "not_delivered" || status === "returned") return "No entregado";
+  return "Pendiente";
+}
+
+function isFinalTrackingStatus(status: string): boolean {
+  return status === "delivered" || status === "not_delivered" || status === "returned";
 }

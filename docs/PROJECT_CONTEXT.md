@@ -104,13 +104,15 @@ Navigation:
 
 Tabs:
 
-- `Pedidos`: upload weekly/period settlement Excel files and inspect matched rows.
+- `Pedidos`: upload Boxful logistics Excel files, inspect matched rows, and track operational follow-up state.
+- `Liquidaciones`: upload settlement/liquidation Excel files, inspect financial settlement rows, source Excel traceability, claim alerts, and anomalies.
 - `Costos SKU`: manual CRUD for product costs by SKU.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses.
 - `Rentabilidad`: shows the approved net-profit formula and missing SKU costs.
 
 APIs:
 
+- `GET/POST/DELETE /api/finance/logistics`
 - `GET/POST/DELETE /api/finance/product-costs`
 - `GET/POST/PATCH/DELETE /api/finance/expenses`
 - `GET/POST/DELETE /api/finance/settlements`
@@ -123,8 +125,12 @@ Core logic:
 Excel parsing:
 
 - Uses the `xlsx` npm package.
+- Boxful logistics imports use the first sheet.
+- Boxful column M (`Estado`) is the source of truth for delivered/returned logistics status.
 - Settlement imports expect a sheet named `Envios`; if missing, the first sheet is used.
 - Optional `Consolidado` sheet is read for total collected and total to liquidate.
+- If the user does not enter `period_start`, the importer infers the earliest `Creado en` date from the Excel and uses that to limit Shopify order fetching. This prevents long Vercel imports and avoids opaque non-JSON server errors.
+- Shopify matching accepts exact order names, `#MCRC` order names, and numeric order numbers when reconciling imported files.
 
 Database schema:
 
@@ -134,8 +140,27 @@ Database schema:
 
 Important implementation detail:
 
+- `Estado seguimiento` and `Estado liquidacion` are different business concepts and must not be merged:
+  - `Estado seguimiento` comes from Boxful logistics column M and Shopify cancellation state.
+  - `Estado liquidacion` comes from settlement/liquidation Excel rows and represents whether/where the order appeared financially.
+- Operational order status uses this priority:
+  - `Anulado`: Shopify says the order is cancelled or `financial_status = voided`.
+  - `Entregado`: Boxful logistics column M says `Entregado`.
+  - `No entregado`: Boxful logistics column M says `No entregado` or equivalent returned status.
+  - Liquidation fallback: if logistics is still pending/in-progress but a Boxful liquidation row says `Entregado` or `No entregado`, tracking can use that liquidation status to update the follow-up state.
+  - `Pendiente`: the order is in progress and has none of the final states above.
 - Product costs are applied only to rows whose internal status is `delivered`.
 - `No entregado` rows still affect profitability through their negative `A Liquidar` value.
+- Claim alert rule: if a Boxful logistics row is `Entregado` but no settlement/liquidation row exists for the same order or guide number, `/admin/finance` flags it as `Entregados sin liquidacion` / `Por reclamar`. This is a revenue-control alert so the team can claim payment from the logistics provider.
+- Settlement traceability rule: whenever an order appears in a settlement/liquidation import, the order history/table must show the source Excel file name. The UI matches logistics rows to settlement rows by normalized order number or guide number and displays `settlement_imports.file_name`.
+- Anomaly reporting rule: every financial/logistics inconsistency should be surfaced in the UI, not hidden in secondary badges. Double settlement/liquidation is an anomaly and must be reported with the matching key, source Excel files, statuses, count, and total amount.
+- Settlement/liquidation files also include per-order charged logistics costs:
+  - `Monto de comision COD`
+  - `Com. Tarjeta`
+  - `Costo de entrega`
+  - `Pick&Pack`
+  - `Empaque`
+- These charged costs are imported and shown in profitability as a settlement breakdown. They must not be subtracted again from net profit because `A Liquidar` already represents the net logistics result after those charges.
 - Shopify matching currently uses exact settlement `Orden` to Shopify `order.name`.
 - Numeric-only settlement order values remain unmatched until their source is identified.
 
@@ -257,7 +282,8 @@ Recommended top-level navigation:
 Purpose:
 
 - track order outcome and reconciliation status
-- show whether each order was delivered, returned/not delivered, annulled, pending, or unmatched
+- show whether each order is pending, annulled, delivered, or not delivered from the follow-up/logistics perspective
+- show settlement presence as a separate `Estado liquidacion` column, without treating it as the follow-up status
 
 Suggested columns:
 
@@ -272,17 +298,32 @@ Suggested columns:
 - internal operational status
 - courier
 - order date
-- settlement date
-- amount to liquidate
+- settlement Excel source file, when present
+- settlement amount/status, when present
 - match status
 
 Internal statuses:
 
 - `Entregado`: appears as delivered in settlement.
-- `Devuelto / No entregado`: appears as not delivered in settlement.
+- `No entregado`: appears as not delivered in Boxful logistics or settlement.
 - `Anulado`: COD order was not confirmed and was not dispatched.
-- `Pendiente`: exists in Shopify but does not appear in any settlement yet.
+- `Pendiente`: order is still in progress and does not have `Anulado`, `Entregado`, or `No entregado`.
 - `Sin match`: appears in settlement but was not found in Shopify.
+- `Por reclamar`: appears as delivered in Boxful logistics, but is missing from imported settlement/liquidation rows by both order number and guide number.
+
+Anomalies:
+
+- `Doble liquidacion`: the same normalized order number or guide number appears in two or more distinct settlement/liquidation rows. The UI must report the source Excel files and amounts so the team can review possible duplicate payment/cost.
+
+### 1.5 Liquidaciones
+
+Purpose:
+
+- manage financial settlement files independently from shipment follow-up
+- upload weekly/period liquidation Excel files
+- report delivered orders missing from liquidation as claim alerts
+- report double liquidation or any financial/logistics inconsistency as anomalies
+- show each settlement row with its source Excel file, status, Shopify match, and amount to liquidate
 
 Important rule:
 
@@ -386,6 +427,7 @@ utilidad_neta = resultado_logistico - product_costs - ads - payroll - miscellane
 Important:
 
 - In the settlement file, `No entregado` rows already contribute negative values through `A Liquidar`.
+- In the settlement file, delivery, Pick&Pack, empaque, COD commission, and card commission are visible per order. These explain the difference between COD collected and `A Liquidar`, but they are not additional deductions after `A Liquidar`.
 - Product costs should usually be applied only to delivered orders unless inventory is lost or non-returnable. This needs a business rule before final profit calculations.
 
 Suggested KPIs:
@@ -430,6 +472,30 @@ Build in this order:
 - `npm run lint`: passed
 - `npm run build`: passed
 - Added `dynamic = "force-dynamic"` to `/api/shopify/products` because that API should not fetch Shopify during static prerender.
+- Added Boxful logistics import model:
+  - `logistics_imports`
+  - `logistics_rows`
+  - `/api/finance/logistics`
+  - `/admin/finance` now treats Boxful as the source for operational delivery state.
+- Boxful logistics source is not the same as settlement/liquidation source.
+- Current Boxful state rule:
+  - Shopify cancelled or `financial_status = voided` -> `Anulado`
+  - Boxful column M `Entregado` -> `Entregado`
+  - Boxful column M `No entregado` -> `No entregado`
+  - Liquidation row `Estado = Entregado` or `No entregado` can update tracking when logistics is still pending
+  - Other Boxful states -> `Pendiente`
+- Added claim alert in `Pedidos`: delivered Boxful rows missing from liquidations are counted in the top metric `Por reclamar` and listed in an `Entregados sin liquidacion` table with order, guide, customer, courier, and expected COD.
+- Added settlement source trace in `Pedidos`: when a logistics row matches a settlement row by order or guide, the table shows the liquidation Excel file name, status, and amount to liquidate. If multiple settlement rows match, the UI shows the first file plus a `+N` badge.
+- Added anomaly reporting in `Pedidos`: double settlements are counted in the top metric `Anomalias` and shown in a `Doble liquidacion detectada` table.
+- Improved import reliability: finance upload handlers now surface non-JSON server responses with a readable message, and importers infer date ranges from Excel rows when period dates are omitted.
+- Profitability summary now exposes settlement charged-cost breakdown:
+  - COD collected
+  - COD commission
+  - card commission
+  - delivery cost
+  - Pick&Pack
+  - settlement packaging
+  - net `A Liquidar`
 
 ## Open Questions
 

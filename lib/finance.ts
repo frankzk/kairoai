@@ -4,6 +4,7 @@ export type ExpenseType = "ads" | "payroll" | "misc";
 export type InternalOrderStatus =
   | "delivered"
   | "not_delivered"
+  | "returned"
   | "annulled"
   | "pending"
   | "unmatched";
@@ -90,7 +91,67 @@ export interface SettlementRow {
   created_at: string;
 }
 
+export interface LogisticsPackageItem {
+  title: string;
+  quantity: number;
+  price: number;
+}
+
+export interface LogisticsImport {
+  id: number;
+  file_name: string;
+  period_label: string;
+  period_start: string | null;
+  period_end: string | null;
+  total_rows: number;
+  matched_rows: number;
+  unmatched_rows: number;
+  status_summary: Record<string, { count: number }>;
+  created_at: string;
+}
+
+export interface LogisticsRow {
+  id: number;
+  import_id: number;
+  guide_number: string;
+  order_name: string;
+  store_order_number: string;
+  customer_name: string;
+  customer_phone: string;
+  created_on: string | null;
+  courier: string;
+  boxful_status: string;
+  internal_status: InternalOrderStatus;
+  match_status: "matched" | "unmatched";
+  service_type: string;
+  cod_amount: number;
+  cod_commission: number;
+  delivery_cost: number;
+  total_cost: number;
+  liquidated_on: string | null;
+  finalized_on: string | null;
+  label_url: string;
+  package_items: LogisticsPackageItem[];
+  shopify_order_id: string;
+  shopify_order_name: string;
+  shopify_order_number: number | null;
+  shopify_financial_status: string;
+  shopify_fulfillment_status: string;
+  shopify_cancelled_at: string | null;
+  shopify_total: number;
+  shopify_created_at: string | null;
+  raw_row: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface ProfitabilitySummary {
+  cod_collected: number;
+  cod_commission: number;
+  card_commission: number;
+  delivery_cost: number;
+  pick_pack_cost: number;
+  settlement_packaging_cost: number;
+  settlement_charged_costs: number;
   settlement_total: number;
   product_costs: number;
   ads: number;
@@ -228,11 +289,58 @@ export async function listSettlementRows(importId?: number): Promise<SettlementR
     .select("*")
     .order("created_on", { ascending: false, nullsFirst: false })
     .order("id", { ascending: false })
-    .limit(1000);
+    .limit(10000);
   if (importId) query = query.eq("import_id", importId);
   const { data, error } = await query;
   if (error) throw new Error(`listSettlementRows: ${error.message}`);
   return (data ?? []) as SettlementRow[];
+}
+
+export async function listLogisticsImports(): Promise<LogisticsImport[]> {
+  const { data, error } = await getDB()
+    .from("logistics_imports")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`listLogisticsImports: ${error.message}`);
+  return (data ?? []) as LogisticsImport[];
+}
+
+export async function createLogisticsImport(
+  input: Omit<LogisticsImport, "id" | "created_at">
+): Promise<LogisticsImport> {
+  const { data, error } = await getDB()
+    .from("logistics_imports")
+    .insert(input)
+    .select()
+    .single();
+  if (error) throw new Error(`createLogisticsImport: ${error.message}`);
+  return data as LogisticsImport;
+}
+
+export async function deleteLogisticsImport(id: number): Promise<void> {
+  const { error } = await getDB().from("logistics_imports").delete().eq("id", id);
+  if (error) throw new Error(`deleteLogisticsImport: ${error.message}`);
+}
+
+export async function insertLogisticsRows(
+  rows: Omit<LogisticsRow, "id" | "created_at">[]
+): Promise<void> {
+  if (!rows.length) return;
+  const { error } = await getDB().from("logistics_rows").insert(rows);
+  if (error) throw new Error(`insertLogisticsRows: ${error.message}`);
+}
+
+export async function listLogisticsRows(importId?: number): Promise<LogisticsRow[]> {
+  let query = getDB()
+    .from("logistics_rows")
+    .select("*")
+    .order("created_on", { ascending: false, nullsFirst: false })
+    .order("id", { ascending: false })
+    .limit(10000);
+  if (importId) query = query.eq("import_id", importId);
+  const { data, error } = await query;
+  if (error) throw new Error(`listLogisticsRows: ${error.message}`);
+  return (data ?? []) as LogisticsRow[];
 }
 
 export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {
@@ -249,6 +357,14 @@ export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {
   );
   const missingCostSkus = new Set<string>();
 
+  const codCollected = sum(rows.map((row) => row.cod_amount));
+  const codCommission = sum(rows.map((row) => row.cod_commission));
+  const cardCommission = sum(rows.map((row) => row.card_commission));
+  const deliveryCost = sum(rows.map((row) => row.delivery_cost));
+  const pickPackCost = sum(rows.map((row) => row.pick_pack_cost));
+  const settlementPackagingCost = sum(rows.map((row) => row.packaging_cost));
+  const settlementChargedCosts =
+    codCommission + cardCommission + deliveryCost + pickPackCost + settlementPackagingCost;
   const settlementTotal = sum(rows.map((row) => row.amount_to_liquidate));
   let productCosts = 0;
 
@@ -271,6 +387,13 @@ export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {
   const misc = sum(expenses.filter((e) => e.type === "misc").map((e) => e.amount));
 
   return {
+    cod_collected: roundMoney(codCollected),
+    cod_commission: roundMoney(codCommission),
+    card_commission: roundMoney(cardCommission),
+    delivery_cost: roundMoney(deliveryCost),
+    pick_pack_cost: roundMoney(pickPackCost),
+    settlement_packaging_cost: roundMoney(settlementPackagingCost),
+    settlement_charged_costs: roundMoney(settlementChargedCosts),
     settlement_total: roundMoney(settlementTotal),
     product_costs: roundMoney(productCosts),
     ads: roundMoney(ads),
@@ -278,7 +401,7 @@ export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {
     misc: roundMoney(misc),
     net_profit: roundMoney(settlementTotal - productCosts - ads - payroll - misc),
     delivered_orders: rows.filter((r) => r.internal_status === "delivered").length,
-    not_delivered_orders: rows.filter((r) => r.internal_status === "not_delivered").length,
+    not_delivered_orders: rows.filter((r) => r.internal_status === "not_delivered" || r.internal_status === "returned").length,
     unmatched_orders: rows.filter((r) => r.match_status === "unmatched").length,
     matched_orders: rows.filter((r) => r.match_status === "matched").length,
     missing_cost_skus: Array.from(missingCostSkus).slice(0, 100),
