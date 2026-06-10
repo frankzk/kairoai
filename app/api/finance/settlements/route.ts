@@ -73,9 +73,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Archivo requerido" }, { status: 400 });
     }
 
-    const periodLabel = String(form.get("period_label") ?? "");
     const periodStart = nullableDate(String(form.get("period_start") ?? ""));
     const periodEnd = nullableDate(String(form.get("period_end") ?? ""));
+    const periodLabel =
+      String(form.get("period_label") ?? "").trim() || (periodEnd ? `Corte ${periodEnd}` : "");
 
     const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
     const settlementRows = parseSettlementRows(workbook);

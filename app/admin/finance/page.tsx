@@ -28,6 +28,8 @@ interface SettlementImport {
   id: number;
   file_name: string;
   period_label: string;
+  period_start: string | null;
+  period_end: string | null;
   total_rows: number;
   matched_rows: number;
   unmatched_rows: number;
@@ -653,15 +655,17 @@ function SettlementsTab({
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Importar liquidacion</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            El nombre del Excel se guarda como identificador Boxful.
+          </p>
         </CardHeader>
         <CardContent>
           <form onSubmit={onImport} className="space-y-3">
             <Input name="file" type="file" accept=".xlsx,.xls" required />
-            <Input name="period_label" placeholder="Semana o periodo, ej: 3-9 junio" />
-            <div className="grid grid-cols-2 gap-2">
-              <Input name="period_start" type="date" />
-              <Input name="period_end" type="date" />
-            </div>
+            <label className="block space-y-1">
+              <span className="text-xs font-medium text-muted-foreground">Fecha de corte</span>
+              <Input name="period_end" type="date" required />
+            </label>
             <Button type="submit" disabled={importing} className="w-full gap-2">
               {importing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {importing ? "Importando..." : "Subir liquidacion"}
@@ -675,9 +679,15 @@ function SettlementsTab({
           <CardTitle className="text-base">
             {latestImport ? latestImport.file_name : "Sin liquidaciones importadas"}
           </CardTitle>
+          {latestImport?.file_name && (
+            <p className="text-xs text-muted-foreground">
+              Archivo registrado en Boxful: {latestImport.file_name}
+            </p>
+          )}
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-5">
+            <MiniStat label="Corte" value={latestImport?.period_end ? formatDate(latestImport.period_end) : "-"} />
             <MiniStat label="Filas" value={latestImport?.total_rows ?? 0} />
             <MiniStat label="Match Shopify" value={latestImport?.matched_rows ?? 0} />
             <MiniStat label="Sin match" value={latestImport?.unmatched_rows ?? 0} />
@@ -713,8 +723,9 @@ function SettlementsTab({
               <p className="mb-2 text-xs font-medium text-muted-foreground">Historial de liquidaciones</p>
               <div className="space-y-1 text-xs text-muted-foreground">
                 {imports.slice(0, 6).map((item) => (
-                  <div key={item.id} className="flex justify-between gap-3">
-                    <span>{item.file_name}</span>
+                  <div key={item.id} className="grid grid-cols-[1fr_auto_auto] gap-3">
+                    <span className="truncate" title={item.file_name}>{item.file_name}</span>
+                    <span>{item.period_end ? formatDate(item.period_end) : "Sin corte"}</span>
                     <span>{currency(item.total_to_liquidate)}</span>
                   </div>
                 ))}
@@ -1373,6 +1384,13 @@ function currency(value: number): string {
     currency: "CRC",
     maximumFractionDigits: 0,
   }).format(Number(value || 0));
+}
+
+function formatDate(value: string): string {
+  if (!value) return "-";
+  const [year, month, day] = value.slice(0, 10).split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
 }
 
 function money(value: number): number {

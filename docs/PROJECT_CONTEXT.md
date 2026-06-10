@@ -105,7 +105,7 @@ Navigation:
 Tabs:
 
 - `Pedidos`: upload Boxful logistics Excel files, inspect matched rows, and track operational follow-up state.
-- `Liquidaciones`: upload settlement/liquidation Excel files, inspect financial settlement rows, source Excel traceability, claim alerts, and anomalies.
+- `Liquidaciones`: upload settlement/liquidation Excel files by cutoff date, inspect financial settlement rows, source Excel traceability, claim alerts, and anomalies.
 - `Costos SKU`: loads Shopify products/variants and lets the user edit unit and packaging costs inline by SKU.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses.
 - `Rentabilidad`: shows the approved net-profit formula and missing SKU costs.
@@ -129,6 +129,8 @@ Excel parsing:
 - Boxful column M (`Estado`) is the source of truth for delivered/returned logistics status.
 - Settlement imports expect a sheet named `Envios`; if missing, the first sheet is used.
 - Optional `Consolidado` sheet is read for total collected and total to liquidate.
+- Settlement/liquidation imports do not use date ranges in the UI. The user provides one `fecha de corte`, stored in `settlement_imports.period_end`; `period_label` is automatically derived as `Corte YYYY-MM-DD` when not provided.
+- `settlement_imports.file_name` is a business identifier because Boxful references liquidations by Excel file name. The UI must keep this visible in latest import cards and history so the team can know which Boxful liquidation files are still missing in Kairo AI.
 - If the user does not enter `period_start`, the importer infers the earliest `Creado en` date from the Excel and uses that to limit Shopify order fetching. This prevents long Vercel imports and avoids opaque non-JSON server errors.
 - Shopify matching accepts exact order names, `#MCRC` order names, and numeric order numbers when reconciling imported files.
 
@@ -320,10 +322,11 @@ Anomalies:
 Purpose:
 
 - manage financial settlement files independently from shipment follow-up
-- upload weekly/period liquidation Excel files
+- upload liquidation Excel files using the Boxful file name plus one cutoff date
 - report delivered orders missing from liquidation as claim alerts
 - report double liquidation or any financial/logistics inconsistency as anomalies
 - show each settlement row with its source Excel file, status, Shopify match, and amount to liquidate
+- list imported liquidation file names and cutoff dates to compare against Boxful and identify missing imports
 
 Important rule:
 
