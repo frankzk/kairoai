@@ -15,6 +15,9 @@
     },
     "app/api/cron/retries/route.ts": {
       "maxDuration": 25
+    },
+    "app/api/finance/settlements/route.ts": {
+      "maxDuration": 60
     }
   }
 }

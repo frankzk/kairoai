@@ -1,0 +1,439 @@
+# Kairo AI Webapp Context
+
+Last updated: 2026-06-10
+
+## Purpose
+
+Kairo AI is an internal operations webapp for COD e-commerce in LATAM, currently focused on Costa Rica orders. It combines Shopify order data, voice-agent call outcomes, logistics settlement files, and business expenses so the team can understand:
+
+- which COD orders were delivered
+- which orders were not delivered or returned
+- which orders were annulled before dispatch because the customer was not confirmed
+- how much cash is expected from logistics settlements
+- urgent profitability after product costs, advertising spend, payroll, and miscellaneous expenses
+
+This document is the onboarding source for future devs and dev agents. Keep it updated whenever architecture, data model, workflows, integrations, or business logic changes.
+
+## Current Stack
+
+- Framework: Next.js 14 App Router
+- UI: React, Tailwind CSS, local shadcn-style components
+- Hosting: Vercel
+- Repository: `frankzk/kairoai`
+- Production URL: `https://kairoai-pearl.vercel.app`
+- Main production branch: `main`
+- Data/integrations:
+  - Shopify Admin API
+  - Retell AI
+  - ElevenLabs
+  - Google Gemini
+  - Supabase
+
+## Auth
+
+A simple admin login is active in production.
+
+Files:
+
+- `app/login/page.tsx`
+- `app/api/auth/login/route.ts`
+- `app/api/auth/logout/route.ts`
+- `lib/auth.ts`
+- `middleware.ts`
+
+Environment variables:
+
+- `ADMIN_PASSWORD`: password used to access the admin panel.
+- `AUTH_SECRET`: random secret used to sign the HTTP-only session cookie.
+
+Session details:
+
+- Cookie name: `kairo_session`
+- Cookie is HTTP-only.
+- Middleware protects the dashboard, admin pages, and internal APIs.
+- External webhooks remain public:
+  - `/api/shopify/webhook`
+  - `/api/retell/webhook`
+  - `/api/retell/llm`
+  - `/api/cron/retries`
+
+## Existing Product Areas
+
+### Dashboard
+
+Main file: `app/page.tsx`
+
+Current dashboard includes:
+
+- stats cards
+- recent calls
+- Shopify orders tab
+- carts/draft orders tab
+- agent status
+- links to upsell and settings admin pages
+- logout action
+
+### Upsell Admin
+
+Main file: `app/admin/upsell/page.tsx`
+
+Purpose:
+
+- define product-to-product upsell rules
+- select products from Shopify
+- set upsell SKU, name, price, pitch, and tier
+
+### Agent Settings
+
+Main file: `app/admin/settings/page.tsx`
+
+Purpose:
+
+- configure retry behavior
+- configure abandoned cart agent settings
+
+### Gestion financiera MVP
+
+Main file: `app/admin/finance/page.tsx`
+
+Status: implemented locally.
+
+Navigation:
+
+- Dashboard now links to `/admin/finance` with the label `Gestion`.
+
+Tabs:
+
+- `Pedidos`: upload weekly/period settlement Excel files and inspect matched rows.
+- `Costos SKU`: manual CRUD for product costs by SKU.
+- `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses.
+- `Rentabilidad`: shows the approved net-profit formula and missing SKU costs.
+
+APIs:
+
+- `GET/POST/DELETE /api/finance/product-costs`
+- `GET/POST/PATCH/DELETE /api/finance/expenses`
+- `GET/POST/DELETE /api/finance/settlements`
+- `GET /api/finance/summary`
+
+Core logic:
+
+- `lib/finance.ts`
+
+Excel parsing:
+
+- Uses the `xlsx` npm package.
+- Settlement imports expect a sheet named `Envios`; if missing, the first sheet is used.
+- Optional `Consolidado` sheet is read for total collected and total to liquidate.
+
+Database schema:
+
+- New migration file: `supabase/finance_schema.sql`
+- This SQL must be executed in Supabase SQL Editor before production finance APIs can persist data.
+- If tables are missing, `/admin/finance` shows a message instructing the user to run `supabase/finance_schema.sql`.
+
+Important implementation detail:
+
+- Product costs are applied only to rows whose internal status is `delivered`.
+- `No entregado` rows still affect profitability through their negative `A Liquidar` value.
+- Shopify matching currently uses exact settlement `Orden` to Shopify `order.name`.
+- Numeric-only settlement order values remain unmatched until their source is identified.
+
+## Shopify Integration
+
+Shopify is active in production.
+
+Validated endpoints:
+
+- `/api/shopify/products`: returns products and variants.
+- `/api/shopify/orders`: returns recent open orders.
+
+Important behavior:
+
+- Shopify order name values look like `#MCRC11518`.
+- The logistics settlement file uses an `Orden` column that often matches Shopify `order.name`.
+- Some settlement rows use numeric-only order values such as `3937`, which did not match the current Shopify `#MCRC...` naming pattern in the first analysis.
+
+## Logistics Settlement Analysis
+
+Latest settlement analyzed:
+
+- Local file: `C:\Users\Pc\Downloads\Liquidación 6EDBEA.xlsx`
+- Workbook sheets:
+  - `Envios`: 711 shipment rows
+  - `Consolidado`: settlement totals
+
+Important columns from `Envios`:
+
+- `No. Guia`
+- `Orden`
+- `No. Orden tienda`
+- `Nombre`
+- `Apellido`
+- `Telefono`
+- `Creado en`
+- `Courier`
+- `Tipo de Servicio`
+- `Monto COD`
+- `Monto de comision COD`
+- `Com. Tarjeta`
+- `Costo de entrega`
+- `Pick&Pack`
+- `Empaque`
+- `A Liquidar`
+- `Estado`
+
+Observed settlement states:
+
+- `Entregado`
+- `No entregado`
+
+Business meaning:
+
+- `Entregado`: customer received and paid COD order.
+- `No entregado`: logistics did not deliver or order returned; the settlement row often has negative logistics costs.
+- `Anulado`: not present in this settlement file by default. This should be inferred from Shopify/voice-agent flow when a COD order was not confirmed and therefore was not dispatched.
+
+First reconciliation result against Shopify:
+
+- Settlement rows: 711
+- Shopify orders fetched: 5,997
+- Matched rows: 558
+- Unmatched rows: 153
+- Match rate: 78.48%
+- Match key used successfully: settlement `Orden` to Shopify `order.name`
+
+Matched settlement summary:
+
+- `Entregado`: 343 rows, `₡6,866,683.29` to liquidate
+- `No entregado`: 215 rows, `-₡801,459.60` to liquidate
+
+Full settlement summary:
+
+- `Entregado`: 420 rows, `₡8,218,982.68` to liquidate
+- `No entregado`: 291 rows, `-₡1,023,802.40` to liquidate
+- `Total a recibir`: `₡7,195,180.28`
+
+Unmatched rows:
+
+- 153 total
+- 150 are numeric-only order values
+- 2 have `#MCRC` prefix
+- 1 has another pattern
+
+Next reconciliation work:
+
+- Identify whether numeric-only rows come from another Shopify store, a previous order naming format, or an external order source.
+- Build an importer that stores uploaded weekly/period settlement files instead of manually analyzing local Excel files.
+- Preserve source file name and import timestamp.
+- Keep raw row data for auditability.
+
+## Planned New Area: Gestion de Pedidos
+
+The next product area should be a business operations and profitability section, not only a shipment tracker.
+
+Confirmed MVP decisions:
+
+- Product costs will be managed by SKU.
+- Advertising spend will be entered manually at first.
+- Payroll will be entered as a complete monthly amount.
+- Miscellaneous expenses will be entered manually.
+- Logistics settlement files are generated weekly or by period and will be uploaded manually by the user.
+- Initial net profit formula is approved:
+
+```txt
+utilidad_neta = sum(A Liquidar) - product_costs - ads - payroll - miscellaneous_expenses
+```
+
+Recommended top-level navigation:
+
+1. Pedidos
+2. Costos de producto
+3. Gastos
+4. Rentabilidad
+
+### 1. Pedidos
+
+Purpose:
+
+- track order outcome and reconciliation status
+- show whether each order was delivered, returned/not delivered, annulled, pending, or unmatched
+
+Suggested columns:
+
+- Shopify order
+- guide number
+- customer name
+- partially masked phone
+- Shopify total
+- Shopify financial status
+- Shopify fulfillment status
+- logistics settlement status
+- internal operational status
+- courier
+- order date
+- settlement date
+- amount to liquidate
+- match status
+
+Internal statuses:
+
+- `Entregado`: appears as delivered in settlement.
+- `Devuelto / No entregado`: appears as not delivered in settlement.
+- `Anulado`: COD order was not confirmed and was not dispatched.
+- `Pendiente`: exists in Shopify but does not appear in any settlement yet.
+- `Sin match`: appears in settlement but was not found in Shopify.
+
+Important rule:
+
+- Shopify `fulfilled` does not necessarily mean financially successful. For profitability, settlement status and `A Liquidar` are the source of truth.
+
+### 2. Costos de Producto
+
+Purpose:
+
+- define cost of goods sold by product/SKU.
+- use SKU as the primary key for cost matching.
+
+Suggested fields:
+
+- SKU
+- product name
+- unit cost
+- optional packaging cost
+- currency
+- effective start date
+- active/inactive
+
+Used to calculate:
+
+```txt
+pedido_product_cost = sum(unit_cost * quantity)
+```
+
+### 3. Gastos
+
+Use tabs or sections inside one page:
+
+- Ads
+- Planilla
+- Varios
+
+#### Ads
+
+Suggested fields:
+
+- date
+- platform
+- optional campaign
+- amount
+- currency
+- notes
+
+Start with manual entry. Later, this can connect to Meta/TikTok/Google automatically.
+
+#### Planilla
+
+Suggested fields:
+
+- month
+- total monthly payroll amount
+- optional person or role
+- amount
+- type: fixed, commission, bonus
+- notes
+
+MVP rule:
+
+- Payroll is entered by full month.
+
+#### Gastos Varios
+
+Suggested fields:
+
+- date
+- category
+- provider
+- amount
+- recurring yes/no
+- notes
+
+Examples:
+
+- software
+- warehouse/storage
+- design
+- bank fees
+- tools
+- phone lines
+- domains
+- VAs
+- accounting
+
+### 4. Rentabilidad
+
+Purpose:
+
+- answer urgently: how much money did the business actually make?
+
+Initial formula:
+
+```txt
+resultado_logistico = sum(A Liquidar from all settlement rows)
+utilidad_neta = resultado_logistico - product_costs - ads - payroll - miscellaneous_expenses
+```
+
+Important:
+
+- In the settlement file, `No entregado` rows already contribute negative values through `A Liquidar`.
+- Product costs should usually be applied only to delivered orders unless inventory is lost or non-returnable. This needs a business rule before final profit calculations.
+
+Suggested KPIs:
+
+- delivered revenue
+- total to liquidate
+- product costs
+- advertising spend
+- payroll
+- miscellaneous expenses
+- net profit
+- net margin
+- real CPA
+- real ROAS
+- loss from not-delivered orders
+
+## MVP Recommendation
+
+Build in this order:
+
+1. Settlement importer and reconciliation table.
+2. Orders view with delivered/not delivered/annulled/pending/unmatched statuses.
+3. Product costs CRUD.
+4. Expenses CRUD with Ads, Planilla, and Varios tabs.
+5. Profitability summary using imported settlements plus manual costs/expenses.
+
+## Operational Notes
+
+- Do not commit `.env.local` or secrets.
+- `.vercel` is local metadata and should remain ignored.
+- Vercel production deploys from `main`.
+- Finance persistence requires running `supabase/finance_schema.sql` in Supabase before use.
+- After changing protected routes, verify:
+  - `/login` returns 200
+  - `/` redirects to `/login` when unauthenticated
+  - Shopify and Retell webhooks remain accessible
+
+## Validation Log
+
+2026-06-10:
+
+- `npm run lint`: passed
+- `npm run build`: passed
+- Added `dynamic = "force-dynamic"` to `/api/shopify/products` because that API should not fetch Shopify during static prerender.
+
+## Open Questions
+
+- Should product cost be counted only when an order is delivered?
+- How should inventory loss be handled for not-delivered orders?
+- Are numeric-only settlement orders from another store/source?
+- Should weekly settlements map to a calendar week, a custom date range, or both?

@@ -18,7 +18,8 @@
     "react": "^18",
     "react-dom": "^18",
     "retell-sdk": "^3.12.0",
-    "tailwind-merge": "^2.3.0"
+    "tailwind-merge": "^2.3.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^20",
