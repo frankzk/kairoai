@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Zap, TrendingUp, Settings, Phone, Package, ShoppingCart } from "lucide-react";
+import { RefreshCw, Zap, TrendingUp, Settings, Phone, Package, ShoppingCart, LogOut } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -71,6 +71,11 @@ export default function DashboardPage() {
   const calls = data?.calls ?? [];
   const pendingRetries = data?.pending_retries ?? [];
 
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
+  }
+
   const tabCls = (active: boolean) =>
     `flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
       active
@@ -115,6 +120,10 @@ export default function DashboardPage() {
                 <span className="hidden sm:inline">Config</span>
               </Button>
             </Link>
+            <Button variant="ghost" size="sm" onClick={logout} className="gap-2">
+              <LogOut className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Salir</span>
+            </Button>
           </div>
         </div>
       </header>
