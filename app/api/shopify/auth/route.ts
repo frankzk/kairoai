@@ -16,6 +16,7 @@ export async function GET() {
   const scopes = [
     "read_products",
     "read_orders",
+    "read_all_orders",
     "write_orders",
     "read_draft_orders",
     "write_draft_orders",
