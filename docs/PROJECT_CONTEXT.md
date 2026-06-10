@@ -133,7 +133,7 @@ Excel parsing:
 - `settlement_imports.file_name` is a business identifier because Boxful references liquidations by Excel file name. The UI must keep this visible in latest import cards and history so the team can know which Boxful liquidation files are still missing in Kairo AI.
 - If the user does not enter `period_start`, the importer infers the earliest `Creado en` date from the Excel and uses that to limit Shopify order fetching. This prevents long Vercel imports and avoids opaque non-JSON server errors.
 - Shopify matching accepts exact order names, `#MCRC` order names, and numeric order numbers when reconciling imported files.
-- `/admin/finance` requests Shopify orders with `status=any` from `2026-03-01T00:00:00-06:00` so the Pedidos tab can show store orders even before a Boxful logistics file is imported. Boxful rows replace/enrich matching Shopify rows instead of creating duplicates.
+- `/admin/finance` requests one bounded Shopify page with `status=any` from `2026-03-01T00:00:00-06:00` so the Pedidos tab can show recent store orders even before a Boxful logistics file is imported. It must not use `all=1` during normal page load because Shopify pagination can exceed Vercel serverless timeouts. Boxful rows replace/enrich matching Shopify rows instead of creating duplicates.
 
 Database schema:
 
@@ -188,7 +188,7 @@ Shopify is active in production.
 Validated endpoints:
 
 - `/api/shopify/products`: returns products and variants.
-- `/api/shopify/orders`: returns recent open orders by default; accepts `status`, `all=1`, `limit`, and `created_at_min` for finance tracking.
+- `/api/shopify/orders`: returns recent open orders by default; accepts `status`, `all=1`, `limit`, `created_at_min`, and `max_pages`. Even with `all=1`, pagination is capped to avoid Vercel `FUNCTION_INVOCATION_TIMEOUT`.
 
 Important behavior:
 
@@ -481,6 +481,7 @@ Implemented order-control KPIs:
 Important limitation:
 
 - Ads, payroll, and miscellaneous expenses are still allocated only at aggregate/month level. Per-order profitability is contribution margin before those shared expenses.
+- Shopify historical order sync is currently bounded during page load. Full historical persistence should be implemented as a separate background/admin sync into Supabase instead of paginating all Shopify orders from the browser page.
 
 ## MVP Recommendation
 

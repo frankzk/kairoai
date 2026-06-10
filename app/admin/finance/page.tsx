@@ -241,7 +241,7 @@ const emptyExpense = {
 };
 
 const FINANCE_SHOPIFY_ORDERS_URL =
-  "/api/shopify/orders?status=any&all=1&limit=250&created_at_min=2026-03-01T00%3A00%3A00-06%3A00";
+  "/api/shopify/orders?status=any&limit=250&created_at_min=2026-03-01T00%3A00%3A00-06%3A00";
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
@@ -290,14 +290,13 @@ export default function FinancePage() {
     setLoading(true);
     setError("");
     try {
-      const [settlementsRes, logisticsRes, costsRes, expensesRes, summaryRes, shopifyOrdersRes] =
+      const [settlementsRes, logisticsRes, costsRes, expensesRes, summaryRes] =
         await Promise.all([
           fetch("/api/finance/settlements", { cache: "no-store" }),
           fetch("/api/finance/logistics", { cache: "no-store" }),
           fetch("/api/finance/product-costs", { cache: "no-store" }),
           fetch("/api/finance/expenses", { cache: "no-store" }),
           fetch("/api/finance/summary", { cache: "no-store" }),
-          fetch(FINANCE_SHOPIFY_ORDERS_URL, { cache: "no-store" }),
         ]);
 
       const settlementsJson = await readApiJson(settlementsRes);
@@ -305,13 +304,19 @@ export default function FinancePage() {
       const costsJson = await readApiJson(costsRes);
       const expensesJson = await readApiJson(expensesRes);
       const summaryJson = await readApiJson(summaryRes);
-      const shopifyOrdersJson = await readApiJson(shopifyOrdersRes);
+      let shopifyOrdersJson: Record<string, unknown> = {};
+      try {
+        const shopifyOrdersRes = await fetch(FINANCE_SHOPIFY_ORDERS_URL, { cache: "no-store" });
+        shopifyOrdersJson = await readApiJson(shopifyOrdersRes);
+      } catch {
+        shopifyOrdersJson = {};
+      }
 
       setImports(settlementsJson.imports ?? []);
       setRows(settlementsJson.rows ?? []);
       setLogisticsImports(logisticsJson.imports ?? []);
       setLogisticsRows(logisticsJson.rows ?? []);
-      setShopifyOrders(shopifyOrdersJson.orders ?? []);
+      setShopifyOrders(Array.isArray(shopifyOrdersJson.orders) ? shopifyOrdersJson.orders as ShopifyOrderSummary[] : []);
       setCosts(costsJson.costs ?? []);
       setExpenses(expensesJson.expenses ?? []);
       setSummary(summaryJson.summary ?? null);
@@ -321,8 +326,7 @@ export default function FinancePage() {
         logisticsJson.error ??
         costsJson.error ??
         expensesJson.error ??
-        summaryJson.error ??
-        shopifyOrdersJson.error;
+        summaryJson.error;
       if (firstError) setError(firstError);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error cargando gestion financiera");

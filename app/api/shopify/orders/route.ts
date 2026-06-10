@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
   const shouldPaginate = req.nextUrl.searchParams.get("all") === "1";
   const requestedLimit = Number(req.nextUrl.searchParams.get("limit") || (shouldPaginate ? 250 : 50));
   const limit = Math.min(Math.max(requestedLimit || 50, 1), 250);
+  const requestedMaxPages = Number(req.nextUrl.searchParams.get("max_pages") || (shouldPaginate ? 6 : 1));
+  const maxPages = Math.min(Math.max(requestedMaxPages || 1, 1), 12);
   const createdAtMin = req.nextUrl.searchParams.get("created_at_min");
   const fields = [
     "id",
@@ -63,8 +65,6 @@ export async function GET(req: NextRequest) {
 
   try {
     const rawOrders: Array<Record<string, unknown>> = [];
-    const maxPages = shouldPaginate ? 80 : 1;
-
     for (let page = 0; page < maxPages && url; page++) {
       const res = await fetch(url, {
         headers: {
@@ -134,7 +134,12 @@ export async function GET(req: NextRequest) {
       }
     );
 
-    return NextResponse.json({ orders, total: orders.length });
+    return NextResponse.json({
+      orders,
+      total: orders.length,
+      partial: shouldPaginate && Boolean(url),
+      max_pages: maxPages,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Error desconocido";
     return NextResponse.json({ error: `Error al conectar con Shopify: ${msg}` }, { status: 500 });
