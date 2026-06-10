@@ -12,6 +12,7 @@ import {
   Plus,
   ReceiptText,
   RefreshCw,
+  Search,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -102,6 +103,17 @@ interface ProductCost {
   active: boolean;
 }
 
+interface ShopifyProductOption {
+  variant_id: number;
+  product_id: number;
+  product_title: string;
+  variant_title: string;
+  display_name: string;
+  sku: string;
+  price: number;
+  image_url?: string;
+}
+
 interface BusinessExpense {
   id: number;
   type: ExpenseType;
@@ -159,6 +171,10 @@ export default function FinancePage() {
   const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
   const [logisticsRows, setLogisticsRows] = useState<LogisticsRow[]>([]);
   const [costs, setCosts] = useState<ProductCost[]>([]);
+  const [shopifyProducts, setShopifyProducts] = useState<ShopifyProductOption[]>([]);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsError, setProductsError] = useState("");
+  const [productSearch, setProductSearch] = useState("");
   const [expenses, setExpenses] = useState<BusinessExpense[]>([]);
   const [summary, setSummary] = useState<ProfitabilitySummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -225,7 +241,23 @@ export default function FinancePage() {
 
   useEffect(() => {
     refresh();
+    loadShopifyProducts();
   }, []);
+
+  async function loadShopifyProducts() {
+    setProductsLoading(true);
+    setProductsError("");
+    try {
+      const res = await fetch("/api/shopify/products", { cache: "no-store" });
+      const json = await readApiJson(res);
+      if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar productos Shopify");
+      setShopifyProducts(json.products ?? []);
+    } catch (err) {
+      setProductsError(err instanceof Error ? err.message : "No se pudieron cargar productos Shopify");
+    } finally {
+      setProductsLoading(false);
+    }
+  }
 
   async function handleImport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -352,7 +384,15 @@ export default function FinancePage() {
               Liquidaciones, costos por SKU, gastos y utilidad neta
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={refresh} className="ml-auto gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              refresh();
+              loadShopifyProducts();
+            }}
+            className="ml-auto gap-2"
+          >
             <RefreshCw className="h-3.5 w-3.5" /> Actualizar
           </Button>
         </div>
@@ -423,6 +463,11 @@ export default function FinancePage() {
             {tab === "costs" && (
               <CostsTab
                 costs={costs}
+                products={shopifyProducts}
+                productsLoading={productsLoading}
+                productsError={productsError}
+                productSearch={productSearch}
+                setProductSearch={setProductSearch}
                 form={costForm}
                 setForm={setCostForm}
                 onSave={saveCost}
@@ -841,17 +886,50 @@ function DoubleSettlementTable({ anomalies }: { anomalies: DoubleSettlementAnoma
 
 function CostsTab({
   costs,
+  products,
+  productsLoading,
+  productsError,
+  productSearch,
+  setProductSearch,
   form,
   setForm,
   onSave,
   onDelete,
 }: {
   costs: ProductCost[];
+  products: ShopifyProductOption[];
+  productsLoading: boolean;
+  productsError: string;
+  productSearch: string;
+  setProductSearch: (value: string) => void;
   form: typeof emptyCost;
   setForm: (form: typeof emptyCost) => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
   onDelete: (id: number) => void;
 }) {
+  const costBySku = useMemo(
+    () => new Map(costs.map((cost) => [cost.sku.toLowerCase(), cost])),
+    [costs]
+  );
+  const filteredProducts = useMemo(() => {
+    const query = productSearch.trim().toLowerCase();
+    if (!query) return products;
+    return products.filter(
+      (product) =>
+        product.display_name.toLowerCase().includes(query) ||
+        product.sku.toLowerCase().includes(query)
+    );
+  }, [productSearch, products]);
+
+  function selectProduct(product: ShopifyProductOption) {
+    if (!product.sku) return;
+    setForm({
+      ...form,
+      sku: product.sku,
+      product_name: product.display_name,
+    });
+  }
+
   return (
     <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
       <Card>
@@ -871,41 +949,124 @@ function CostsTab({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Costos activos</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-auto border border-border">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead className="bg-card text-left text-xs text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2">SKU</th>
-                  <th className="px-3 py-2">Producto</th>
-                  <th className="px-3 py-2 text-right">Unitario</th>
-                  <th className="px-3 py-2 text-right">Empaque</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {costs.map((cost) => (
-                  <tr key={cost.id} className="border-t border-border/50">
-                    <td className="px-3 py-2 font-mono text-xs">{cost.sku}</td>
-                    <td className="px-3 py-2">{cost.product_name}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(cost.unit_cost)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(cost.packaging_cost)}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button onClick={() => onDelete(cost.id)} className="text-muted-foreground hover:text-red-400">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </td>
+      <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Productos Shopify</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-2 border border-input bg-background px-3">
+              <Search className="h-4 w-4 text-muted-foreground" />
+              <input
+                value={productSearch}
+                onChange={(event) => setProductSearch(event.target.value)}
+                placeholder="Buscar por producto o SKU"
+                className="h-10 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+            {productsError && (
+              <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-200">
+                {productsError}
+              </div>
+            )}
+            <div className="max-h-[360px] overflow-auto border border-border">
+              <table className="w-full min-w-[860px] text-sm">
+                <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2">Producto</th>
+                    <th className="px-3 py-2">SKU</th>
+                    <th className="px-3 py-2 text-right">Precio Shopify</th>
+                    <th className="px-3 py-2">Costo</th>
+                    <th className="px-3 py-2" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+                </thead>
+                <tbody>
+                  {productsLoading ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                        Cargando productos Shopify...
+                      </td>
+                    </tr>
+                  ) : filteredProducts.length ? (
+                    filteredProducts.slice(0, 250).map((product) => {
+                      const savedCost = product.sku ? costBySku.get(product.sku.toLowerCase()) : undefined;
+                      return (
+                        <tr key={product.variant_id} className="border-t border-border/50">
+                          <td className="px-3 py-2">{product.display_name}</td>
+                          <td className="px-3 py-2 font-mono text-xs">
+                            {product.sku || <span className="text-amber-300">Sin SKU</span>}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-xs">{currency(product.price)}</td>
+                          <td className="px-3 py-2">
+                            {savedCost ? (
+                              <Badge variant="success">{currency(savedCost.unit_cost)}</Badge>
+                            ) : (
+                              <Badge variant="warning">Sin costo</Badge>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={!product.sku}
+                              onClick={() => selectProduct(product)}
+                            >
+                              Usar
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                        No hay productos para mostrar.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Costos activos</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-auto border border-border">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead className="bg-card text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2">SKU</th>
+                    <th className="px-3 py-2">Producto</th>
+                    <th className="px-3 py-2 text-right">Unitario</th>
+                    <th className="px-3 py-2 text-right">Empaque</th>
+                    <th className="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {costs.map((cost) => (
+                    <tr key={cost.id} className="border-t border-border/50">
+                      <td className="px-3 py-2 font-mono text-xs">{cost.sku}</td>
+                      <td className="px-3 py-2">{cost.product_name}</td>
+                      <td className="px-3 py-2 text-right font-mono text-xs">{currency(cost.unit_cost)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-xs">{currency(cost.packaging_cost)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button onClick={() => onDelete(cost.id)} className="text-muted-foreground hover:text-red-400">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
