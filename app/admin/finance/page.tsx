@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 
 type Tab = "orders" | "settlements" | "costs" | "expenses" | "profit";
 type ExpenseType = "ads" | "payroll" | "misc";
+type FinancialAnomalySeverity = "high" | "medium" | "low";
 
 interface SettlementImport {
   id: number;
@@ -47,6 +48,7 @@ interface SettlementRow {
   settlement_status: string;
   internal_status: string;
   match_status: string;
+  cod_amount: number;
   amount_to_liquidate: number;
   shopify_order_name: string;
   shopify_financial_status: string;
@@ -116,7 +118,7 @@ interface ShopifyOrderSummary {
 
 interface TrackableOrderRow {
   row_key: string;
-  source: "boxful" | "shopify";
+  source: "boxful" | "shopify" | "liquidacion";
   guide_number: string;
   order_name: string;
   customer_name: string;
@@ -130,7 +132,7 @@ interface TrackableOrderRow {
   shopify_fulfillment_status: string;
   shopify_cancelled_at: string | null;
   shopify_created_at: string | null;
-  package_items: Array<{ title: string; quantity: number; price: number }>;
+  package_items: Array<{ sku?: string; title: string; quantity: number; price: number }>;
 }
 
 interface ProductCost {
@@ -186,6 +188,47 @@ interface ProfitabilitySummary {
   missing_cost_skus: string[];
 }
 
+interface OrderProfitabilityRow {
+  order_key: string;
+  order_name: string;
+  guide_number: string;
+  customer_name: string;
+  source: "shopify" | "boxful" | "liquidacion";
+  tracking_status: string;
+  tracking_label: string;
+  settlement_status: string;
+  settlement_files: string[];
+  amount_to_liquidate: number;
+  expected_cod: number;
+  product_cost: number;
+  contribution_margin: number;
+  missing_cost_skus: string[];
+  items_summary: string;
+  cash_status: "cobrado" | "por_cobrar" | "sin_caja";
+  issue_count: number;
+  created_at: string | null;
+  days_since_order: number | null;
+}
+
+interface FinancialAnomaly {
+  id: string;
+  severity: FinancialAnomalySeverity;
+  type: string;
+  order_name: string;
+  guide_number: string;
+  message: string;
+  action: string;
+}
+
+interface FinanceControlCenter {
+  orders: OrderProfitabilityRow[];
+  anomalies: FinancialAnomaly[];
+  cash_received: number;
+  cash_pending: number;
+  contribution_margin: number;
+  missing_cost_count: number;
+}
+
 const emptyExpense = {
   type: "ads" as ExpenseType,
   expense_date: new Date().toISOString().slice(0, 10),
@@ -237,6 +280,10 @@ export default function FinancePage() {
   const doubleSettlementAnomalies = useMemo(
     () => getDoubleSettlementAnomalies(settlementTraceByKey),
     [settlementTraceByKey]
+  );
+  const financeControl = useMemo(
+    () => buildFinanceControlCenter(visibleOrderRows, rows, imports, costs, settlementTraceByKey),
+    [visibleOrderRows, rows, imports, costs, settlementTraceByKey]
   );
 
   async function refresh() {
@@ -472,7 +519,7 @@ export default function FinancePage() {
           <MetricCard label="Anulados" value={String(orderStats.annulled)} />
           <MetricCard label="Pendientes" value={String(orderStats.pending)} />
           <MetricCard label="Por reclamar" value={String(orderStats.liquidationAlerts)} warning />
-          <MetricCard label="Anomalias" value={String(orderStats.anomalies)} warning />
+              <MetricCard label="Anomalias" value={String(financeControl.anomalies.length)} warning />
           <MetricCard label="Utilidad neta" value={currency(summary?.net_profit ?? 0)} accent />
         </section>
 
@@ -541,7 +588,7 @@ export default function FinancePage() {
                 onDelete={deleteExpense}
               />
             )}
-            {tab === "profit" && <ProfitTab summary={summary} />}
+            {tab === "profit" && <ProfitTab summary={summary} control={financeControl} />}
           </>
         )}
       </main>
@@ -1293,7 +1340,13 @@ function ExpensesTab({
   );
 }
 
-function ProfitTab({ summary }: { summary: ProfitabilitySummary | null }) {
+function ProfitTab({
+  summary,
+  control,
+}: {
+  summary: ProfitabilitySummary | null;
+  control: FinanceControlCenter;
+}) {
   const items = [
     ["COD cobrado", summary?.cod_collected ?? 0],
     ["Costos cobrados en liquidacion", -(summary?.settlement_charged_costs ?? 0)],
@@ -1304,40 +1357,69 @@ function ProfitTab({ summary }: { summary: ProfitabilitySummary | null }) {
     ["Gastos varios", -(summary?.misc ?? 0)],
     ["Utilidad neta", summary?.net_profit ?? 0],
   ];
+  const criticalAnomalies = control.anomalies.filter((anomaly) => anomaly.severity === "high").length;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Formula de utilidad</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="border border-border bg-background p-3 text-xs text-muted-foreground">
-            Los costos de entrega, Pick&Pack, empaque y comisiones vienen de la liquidacion.
-            Ya estan incluidos dentro de `A liquidar`, asi que se muestran como desglose y no se restan dos veces.
-          </div>
-          {items.map(([label, value]) => (
-            <div key={label as string} className="flex items-center justify-between border-b border-border/50 py-3">
-              <span className="text-sm text-muted-foreground">{label}</span>
-              <span className={`font-mono text-sm ${Number(value) < 0 ? "text-red-300" : "text-foreground"}`}>
-                {currency(Number(value))}
-              </span>
+    <div className="space-y-6">
+      <section className="grid gap-3 md:grid-cols-4">
+        <MiniStat label="Caja liquidada" value={currency(control.cash_received)} />
+        <MiniStat label="Caja por reclamar" value={currency(control.cash_pending)} />
+        <MiniStat label="Margen pedido" value={currency(control.contribution_margin)} />
+        <MiniStat label="Alertas criticas" value={criticalAnomalies} />
+      </section>
+
+      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Formula de utilidad</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="border border-border bg-background p-3 text-xs text-muted-foreground">
+              Los costos de entrega, Pick&Pack, empaque y comisiones vienen de la liquidacion.
+              Ya estan incluidos dentro de `A liquidar`, asi que se muestran como desglose y no se restan dos veces.
             </div>
-          ))}
-        </CardContent>
-      </Card>
+            {items.map(([label, value]) => (
+              <div key={label as string} className="flex items-center justify-between border-b border-border/50 py-3">
+                <span className="text-sm text-muted-foreground">{label}</span>
+                <span className={`font-mono text-sm ${Number(value) < 0 ? "text-red-300" : "text-foreground"}`}>
+                  {currency(Number(value))}
+                </span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Desglose liquidacion</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <BreakdownLine label="Comision COD" value={summary?.cod_commission ?? 0} />
+            <BreakdownLine label="Comision tarjeta" value={summary?.card_commission ?? 0} />
+            <BreakdownLine label="Costo entrega" value={summary?.delivery_cost ?? 0} />
+            <BreakdownLine label="Pick&Pack" value={summary?.pick_pack_cost ?? 0} />
+            <BreakdownLine label="Empaque liquidacion" value={summary?.settlement_packaging_cost ?? 0} />
+          </CardContent>
+        </Card>
+      </div>
+
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Desglose liquidacion</CardTitle>
+          <CardTitle className="text-base">Centro de anomalias</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <BreakdownLine label="Comision COD" value={summary?.cod_commission ?? 0} />
-          <BreakdownLine label="Comision tarjeta" value={summary?.card_commission ?? 0} />
-          <BreakdownLine label="Costo entrega" value={summary?.delivery_cost ?? 0} />
-          <BreakdownLine label="Pick&Pack" value={summary?.pick_pack_cost ?? 0} />
-          <BreakdownLine label="Empaque liquidacion" value={summary?.settlement_packaging_cost ?? 0} />
+        <CardContent>
+          <FinancialAnomaliesTable anomalies={control.anomalies} />
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Rentabilidad por pedido</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <OrderProfitabilityTable rows={control.orders} />
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">SKUs sin costo</CardTitle>
@@ -1354,6 +1436,137 @@ function ProfitTab({ summary }: { summary: ProfitabilitySummary | null }) {
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function FinancialAnomaliesTable({ anomalies }: { anomalies: FinancialAnomaly[] }) {
+  if (!anomalies.length) {
+    return <p className="text-sm text-muted-foreground">No hay anomalias financieras detectadas.</p>;
+  }
+
+  return (
+    <div className="max-h-[360px] overflow-auto border border-border">
+      <table className="w-full min-w-[980px] text-sm">
+        <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2">Severidad</th>
+            <th className="px-3 py-2">Tipo</th>
+            <th className="px-3 py-2">Orden</th>
+            <th className="px-3 py-2">Guia</th>
+            <th className="px-3 py-2">Hallazgo</th>
+            <th className="px-3 py-2">Accion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {anomalies.slice(0, 120).map((anomaly) => (
+            <tr key={anomaly.id} className="border-t border-border/50">
+              <td className="px-3 py-2">
+                <Badge
+                  variant={
+                    anomaly.severity === "high"
+                      ? "destructive"
+                      : anomaly.severity === "medium"
+                        ? "warning"
+                        : "muted"
+                  }
+                >
+                  {anomaly.severity === "high" ? "Alta" : anomaly.severity === "medium" ? "Media" : "Baja"}
+                </Badge>
+              </td>
+              <td className="px-3 py-2">{anomaly.type}</td>
+              <td className="px-3 py-2 font-mono text-xs">{anomaly.order_name || "-"}</td>
+              <td className="px-3 py-2 font-mono text-xs">{anomaly.guide_number || "-"}</td>
+              <td className="px-3 py-2">{anomaly.message}</td>
+              <td className="px-3 py-2 text-xs text-muted-foreground">{anomaly.action}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {anomalies.length > 120 && (
+        <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
+          Mostrando 120 de {anomalies.length} alertas.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OrderProfitabilityTable({ rows }: { rows: OrderProfitabilityRow[] }) {
+  if (!rows.length) {
+    return <p className="text-sm text-muted-foreground">No hay pedidos para calcular rentabilidad.</p>;
+  }
+
+  return (
+    <div className="max-h-[620px] overflow-auto border border-border">
+      <table className="w-full min-w-[1260px] text-sm">
+        <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2">Orden</th>
+            <th className="px-3 py-2">Cliente</th>
+            <th className="px-3 py-2">Seguimiento</th>
+            <th className="px-3 py-2">Caja</th>
+            <th className="px-3 py-2">Liquidacion</th>
+            <th className="px-3 py-2 text-right">A liquidar</th>
+            <th className="px-3 py-2 text-right">Costo producto</th>
+            <th className="px-3 py-2 text-right">Margen</th>
+            <th className="px-3 py-2">SKUs</th>
+            <th className="px-3 py-2">Archivo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 500).map((row) => (
+            <tr key={row.order_key} className="border-t border-border/50">
+              <td className="px-3 py-2">
+                <div className="font-mono text-xs">{row.order_name || "-"}</div>
+                <div className="text-xs text-muted-foreground">{row.guide_number || row.source}</div>
+              </td>
+              <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
+              <td className="px-3 py-2">
+                <StatusBadge status={row.tracking_status} label={row.tracking_label} />
+              </td>
+              <td className="px-3 py-2">
+                <Badge
+                  variant={
+                    row.cash_status === "cobrado"
+                      ? "success"
+                      : row.cash_status === "por_cobrar"
+                        ? "warning"
+                        : "muted"
+                  }
+                >
+                  {row.cash_status === "cobrado" ? "Liquidado" : row.cash_status === "por_cobrar" ? "Por cobrar" : "Sin caja"}
+                </Badge>
+              </td>
+              <td className="px-3 py-2">{row.settlement_status}</td>
+              <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.amount_to_liquidate)}</td>
+              <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.product_cost)}</td>
+              <td className={`px-3 py-2 text-right font-mono text-xs ${row.contribution_margin < 0 ? "text-red-300" : "text-emerald-300"}`}>
+                {currency(row.contribution_margin)}
+              </td>
+              <td className="px-3 py-2 text-xs">
+                {row.missing_cost_skus.length ? (
+                  <div className="flex flex-wrap gap-1">
+                    {row.missing_cost_skus.slice(0, 3).map((sku) => (
+                      <Badge key={sku} variant="warning">{sku}</Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-muted-foreground">{row.items_summary || "-"}</span>
+                )}
+              </td>
+              <td className="max-w-[260px] truncate px-3 py-2 text-xs text-muted-foreground" title={row.settlement_files.join(", ")}>
+                {row.settlement_files.join(", ") || "-"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length > 500 && (
+        <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
+          Mostrando 500 de {rows.length} pedidos.
+        </div>
+      )}
     </div>
   );
 }
@@ -1462,6 +1675,14 @@ function money(value: number): number {
   return Math.round(Number(value || 0) * 100) / 100;
 }
 
+function roundMoney(value: number): number {
+  return money(value);
+}
+
+function sum(values: number[]): number {
+  return values.reduce((acc, value) => acc + Number(value || 0), 0);
+}
+
 async function readApiJson(res: Response) {
   const text = await res.text();
   if (!text) return {};
@@ -1507,6 +1728,7 @@ function buildVisibleOrderRows(
       shopify_cancelled_at: order.cancelled_at,
       shopify_created_at: order.created_at,
       package_items: (order.line_items ?? []).map((item) => ({
+        sku: item.sku,
         title: `${item.quantity}x ${item.title}`,
         quantity: Number(item.quantity || 0),
         price: Number(item.price || 0),
@@ -1541,6 +1763,350 @@ function uniqueKeys(keys: string[]): string[] {
 
 function parseMoneyText(value: string): number {
   return Number(String(value || "").replace(/,/g, "").replace(/[^0-9.-]/g, "")) || 0;
+}
+
+function buildFinanceControlCenter(
+  visibleOrders: TrackableOrderRow[],
+  settlementRows: SettlementRow[],
+  imports: SettlementImport[],
+  costs: ProductCost[],
+  settlementTraceByKey: Map<string, SettlementTrace[]>
+): FinanceControlCenter {
+  const fileByImportId = new Map(imports.map((item) => [item.id, item.file_name]));
+  const settlementRowsByKey = buildSettlementRowsByKey(settlementRows);
+  const costBySku = new Map(
+    costs
+      .filter((cost) => cost.active)
+      .map((cost) => [cost.sku.toLowerCase(), cost])
+  );
+  const consumedSettlementIds = new Set<number>();
+  const orders: OrderProfitabilityRow[] = [];
+  const anomalies: FinancialAnomaly[] = [];
+
+  for (const order of visibleOrders) {
+    const matchedSettlementRows = getMatchedSettlementRowsForOrder(order, settlementRowsByKey);
+    matchedSettlementRows.forEach((row) => consumedSettlementIds.add(row.id));
+
+    const traces = getSettlementTracesForLogisticsRow(order, settlementTraceByKey);
+    const trackingStatus = getEffectiveTrackingStatus(order, traces);
+    const trackingLabel = getTrackingStatusLabel(order, traces, trackingStatus);
+    const financialRow = buildOrderProfitabilityRow({
+      order,
+      settlementRows: matchedSettlementRows,
+      fileByImportId,
+      costBySku,
+      trackingStatus,
+      trackingLabel,
+    });
+
+    orders.push(financialRow);
+    anomalies.push(...buildFinancialAnomalies(financialRow, matchedSettlementRows));
+  }
+
+  for (const settlementRow of settlementRows.filter((row) => !consumedSettlementIds.has(row.id))) {
+    const standaloneOrder = settlementRowToTrackableOrder(settlementRow);
+    const traces = getSettlementTracesForLogisticsRow(standaloneOrder, settlementTraceByKey);
+    const trackingStatus = getEffectiveTrackingStatus(standaloneOrder, traces);
+    const financialRow = buildOrderProfitabilityRow({
+      order: standaloneOrder,
+      settlementRows: [settlementRow],
+      fileByImportId,
+      costBySku,
+      trackingStatus,
+      trackingLabel: getTrackingStatusLabel(standaloneOrder, traces, trackingStatus),
+    });
+
+    orders.push(financialRow);
+    anomalies.push(...buildFinancialAnomalies(financialRow, [settlementRow]));
+  }
+
+  const uniqueAnomalies = uniqueFinancialAnomalies(anomalies).sort(sortAnomalies);
+  const sortedOrders = orders.sort((a, b) => {
+    if (b.issue_count !== a.issue_count) return b.issue_count - a.issue_count;
+    return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+  });
+
+  return {
+    orders: sortedOrders,
+    anomalies: uniqueAnomalies,
+    cash_received: roundMoney(sum(orders.filter((row) => row.cash_status === "cobrado").map((row) => row.amount_to_liquidate))),
+    cash_pending: roundMoney(sum(orders.filter((row) => row.cash_status === "por_cobrar").map((row) => row.expected_cod))),
+    contribution_margin: roundMoney(sum(orders.map((row) => row.contribution_margin))),
+    missing_cost_count: orders.filter((row) => row.missing_cost_skus.length > 0).length,
+  };
+}
+
+function buildSettlementRowsByKey(settlementRows: SettlementRow[]): Map<string, SettlementRow[]> {
+  const rowsByKey = new Map<string, SettlementRow[]>();
+  for (const row of settlementRows) {
+    for (const key of uniqueKeys([
+      normalizeMatchKey(row.order_name),
+      normalizeMatchKey(row.shopify_order_name),
+      normalizeMatchKey(row.guide_number),
+    ])) {
+      rowsByKey.set(key, [...(rowsByKey.get(key) ?? []), row]);
+    }
+  }
+  return rowsByKey;
+}
+
+function getMatchedSettlementRowsForOrder(
+  order: TrackableOrderRow,
+  rowsByKey: Map<string, SettlementRow[]>
+): SettlementRow[] {
+  const seen = new Set<number>();
+  const matches: SettlementRow[] = [];
+  const keys = uniqueKeys([
+    ...getOrderMatchKeys(order),
+    normalizeMatchKey(order.guide_number),
+  ]);
+
+  for (const key of keys) {
+    for (const row of rowsByKey.get(key) ?? []) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      matches.push(row);
+    }
+  }
+
+  return matches;
+}
+
+function buildOrderProfitabilityRow({
+  order,
+  settlementRows,
+  fileByImportId,
+  costBySku,
+  trackingStatus,
+  trackingLabel,
+}: {
+  order: TrackableOrderRow;
+  settlementRows: SettlementRow[];
+  fileByImportId: Map<number, string>;
+  costBySku: Map<string, ProductCost>;
+  trackingStatus: string;
+  trackingLabel: string;
+}): OrderProfitabilityRow {
+  const settlementFiles = uniqueKeys(
+    settlementRows.map((row) => fileByImportId.get(row.import_id) || `Import #${row.import_id}`)
+  );
+  const settlementStatuses = uniqueKeys(settlementRows.map((row) => row.settlement_status || row.internal_status));
+  const amountToLiquidate = sum(settlementRows.map((row) => row.amount_to_liquidate));
+  const expectedCod = order.cod_amount || sum(settlementRows.map((row) => row.cod_amount));
+  const items = getProfitabilityItems(order, settlementRows);
+  const productCostResult = calculateProductCost(items, costBySku, trackingStatus);
+  const hasSettlement = settlementRows.length > 0;
+  const cashStatus =
+    hasSettlement ? "cobrado" : trackingStatus === "delivered" ? "por_cobrar" : "sin_caja";
+
+  const issueCount =
+    (trackingStatus === "delivered" && !hasSettlement ? 1 : 0) +
+    (settlementRows.length > 1 ? 1 : 0) +
+    (productCostResult.missingCostSkus.length ? 1 : 0) +
+    (hasSettlement && amountToLiquidate - productCostResult.productCost < 0 ? 1 : 0);
+
+  return {
+    order_key: order.row_key,
+    order_name: order.order_name || order.shopify_order_name,
+    guide_number: order.guide_number,
+    customer_name: order.customer_name,
+    source: order.source,
+    tracking_status: trackingStatus,
+    tracking_label: trackingLabel,
+    settlement_status: settlementStatuses.join(", ") || "Sin liquidacion",
+    settlement_files: settlementFiles,
+    amount_to_liquidate: roundMoney(amountToLiquidate),
+    expected_cod: roundMoney(expectedCod),
+    product_cost: productCostResult.productCost,
+    contribution_margin: roundMoney(amountToLiquidate - productCostResult.productCost),
+    missing_cost_skus: productCostResult.missingCostSkus,
+    items_summary: summarizeItems(items),
+    cash_status: cashStatus,
+    issue_count: issueCount,
+    created_at: order.shopify_created_at,
+    days_since_order: order.shopify_created_at ? daysSince(order.shopify_created_at) : null,
+  };
+}
+
+function settlementRowToTrackableOrder(row: SettlementRow): TrackableOrderRow {
+  return {
+    row_key: `liquidacion-${row.id}`,
+    source: "liquidacion",
+    guide_number: row.guide_number,
+    order_name: row.order_name || row.shopify_order_name,
+    customer_name: row.customer_name,
+    boxful_status: row.settlement_status,
+    internal_status: row.internal_status,
+    match_status: row.match_status,
+    cod_amount: 0,
+    shopify_order_name: row.shopify_order_name,
+    shopify_order_number: null,
+    shopify_financial_status: row.shopify_financial_status,
+    shopify_fulfillment_status: row.shopify_fulfillment_status,
+    shopify_cancelled_at: null,
+    shopify_created_at: null,
+    package_items: row.order_items,
+  };
+}
+
+function getProfitabilityItems(
+  order: TrackableOrderRow,
+  settlementRows: SettlementRow[]
+): Array<{ sku?: string; title: string; quantity: number; price: number }> {
+  const settlementItems = settlementRows.flatMap((row) => row.order_items ?? []);
+  if (settlementItems.length) return settlementItems;
+  return order.package_items ?? [];
+}
+
+function calculateProductCost(
+  items: Array<{ sku?: string; title: string; quantity: number; price: number }>,
+  costBySku: Map<string, ProductCost>,
+  trackingStatus: string
+): { productCost: number; missingCostSkus: string[] } {
+  if (trackingStatus !== "delivered") return { productCost: 0, missingCostSkus: [] };
+
+  const missingCostSkus = new Set<string>();
+  let productCost = 0;
+
+  for (const item of items) {
+    const sku = String(item.sku ?? "").trim().toLowerCase();
+    if (!sku) continue;
+    const cost = costBySku.get(sku);
+    if (!cost) {
+      missingCostSkus.add(sku);
+      continue;
+    }
+    productCost += (Number(cost.unit_cost || 0) + Number(cost.packaging_cost || 0)) * Number(item.quantity || 0);
+  }
+
+  return {
+    productCost: roundMoney(productCost),
+    missingCostSkus: Array.from(missingCostSkus),
+  };
+}
+
+function buildFinancialAnomalies(
+  row: OrderProfitabilityRow,
+  settlementRows: SettlementRow[]
+): FinancialAnomaly[] {
+  const anomalies: FinancialAnomaly[] = [];
+  const hasSettlement = settlementRows.length > 0;
+
+  if (row.tracking_status === "delivered" && !hasSettlement) {
+    anomalies.push({
+      id: `${row.order_key}-delivered-without-settlement`,
+      severity: "high",
+      type: "Entregado sin liquidacion",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      message: "Boxful/seguimiento indica entregado pero no aparece en liquidacion.",
+      action: "Reclamar liquidacion a Boxful y revisar el corte faltante.",
+    });
+  }
+
+  if (settlementRows.length > 1) {
+    anomalies.push({
+      id: `${row.order_key}-duplicate-settlement`,
+      severity: "high",
+      type: "Doble liquidacion",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      message: `El pedido aparece ${settlementRows.length} veces en liquidaciones.`,
+      action: "Validar que no exista cobro duplicado o archivo repetido.",
+    });
+  }
+
+  if (hasSettlement && row.tracking_status !== "delivered" && settlementRows.some((item) => item.internal_status === "delivered")) {
+    anomalies.push({
+      id: `${row.order_key}-settlement-without-delivery`,
+      severity: "medium",
+      type: "Liquidado sin entrega confirmada",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      message: "Liquidacion reporta entregado pero seguimiento no esta entregado.",
+      action: "Comparar Boxful logistico contra liquidacion y corregir estado.",
+    });
+  }
+
+  if (row.tracking_status === "annulled" && hasSettlement) {
+    anomalies.push({
+      id: `${row.order_key}-annulled-settled`,
+      severity: "high",
+      type: "Anulado con liquidacion",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      message: "Shopify indica anulado/cancelado, pero el pedido aparece liquidado.",
+      action: "Revisar si el pedido se despacho por error o si Shopify esta desactualizado.",
+    });
+  }
+
+  if (row.missing_cost_skus.length) {
+    anomalies.push({
+      id: `${row.order_key}-missing-cost`,
+      severity: "medium",
+      type: "SKU sin costo",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      message: `Falta costo para ${row.missing_cost_skus.join(", ")}.`,
+      action: "Completar costo unitario/empaque en Costos SKU para cerrar margen.",
+    });
+  }
+
+  if (hasSettlement && row.contribution_margin < 0) {
+    anomalies.push({
+      id: `${row.order_key}-negative-margin`,
+      severity: "medium",
+      type: "Margen negativo",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      message: `El pedido queda con margen ${currency(row.contribution_margin)} antes de ads/planilla.`,
+      action: "Revisar precio, costo SKU, cobros logisticos y promociones.",
+    });
+  }
+
+  if (row.source === "shopify" && row.tracking_status === "pending" && Number(row.days_since_order ?? 0) >= 2) {
+    anomalies.push({
+      id: `${row.order_key}-shopify-without-boxful`,
+      severity: "low",
+      type: "Shopify sin Boxful",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      message: "Pedido Shopify sigue sin guia Boxful despues de 2 dias.",
+      action: "Confirmar si se despacho, si falta importar el archivo logistico o si fue anulado manualmente.",
+    });
+  }
+
+  return anomalies;
+}
+
+function uniqueFinancialAnomalies(anomalies: FinancialAnomaly[]): FinancialAnomaly[] {
+  const seen = new Set<string>();
+  const unique: FinancialAnomaly[] = [];
+  for (const anomaly of anomalies) {
+    if (seen.has(anomaly.id)) continue;
+    seen.add(anomaly.id);
+    unique.push(anomaly);
+  }
+  return unique;
+}
+
+function sortAnomalies(a: FinancialAnomaly, b: FinancialAnomaly): number {
+  const severityRank = { high: 3, medium: 2, low: 1 };
+  return severityRank[b.severity] - severityRank[a.severity] || a.type.localeCompare(b.type);
+}
+
+function summarizeItems(items: Array<{ sku?: string; title: string; quantity: number }>): string {
+  return items
+    .slice(0, 2)
+    .map((item) => `${item.quantity || 1}x ${item.sku || item.title}`)
+    .join(", ");
+}
+
+function daysSince(value: string): number {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 0;
+  const diff = Date.now() - parsed.getTime();
+  return Math.max(0, Math.floor(diff / (24 * 60 * 60 * 1000)));
 }
 
 function getDeliveredWithoutSettlement(

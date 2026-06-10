@@ -108,7 +108,7 @@ Tabs:
 - `Liquidaciones`: upload settlement/liquidation Excel files by cutoff date, inspect financial settlement rows, source Excel traceability, claim alerts, and anomalies.
 - `Costos SKU`: loads Shopify products/variants and lets the user edit unit and packaging costs inline by SKU.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses.
-- `Rentabilidad`: shows the approved net-profit formula and missing SKU costs.
+- `Rentabilidad`: shows the approved net-profit formula, cash/control KPIs, a financial anomaly center, order-level margin, and missing SKU costs.
 
 APIs:
 
@@ -157,6 +157,20 @@ Important implementation detail:
 - Claim alert rule: if a Boxful logistics row is `Entregado` but no settlement/liquidation row exists for the same order or guide number, `/admin/finance` flags it as `Entregados sin liquidacion` / `Por reclamar`. This is a revenue-control alert so the team can claim payment from the logistics provider.
 - Settlement traceability rule: whenever an order appears in a settlement/liquidation import, the order history/table must show the source Excel file name. The UI matches logistics rows to settlement rows by normalized order number or guide number and displays `settlement_imports.file_name`.
 - Anomaly reporting rule: every financial/logistics inconsistency should be surfaced in the UI, not hidden in secondary badges. Double settlement/liquidation is an anomaly and must be reported with the matching key, source Excel files, statuses, count, and total amount.
+- The `Rentabilidad` tab now builds an operational finance control center in the client from Shopify orders, Boxful logistics rows, settlement rows, product costs, and import filenames. It does not require an extra DB table yet.
+- Order-level profitability uses:
+  - `amount_to_liquidate`: sum of matched settlement rows for the order/guide.
+  - `product_cost`: SKU unit cost plus packaging cost, multiplied by quantity, only for delivered orders.
+  - `contribution_margin`: `amount_to_liquidate - product_cost`, before ads/payroll/misc allocation.
+  - `cash_status`: `cobrado` when there is a settlement row, `por_cobrar` when delivered but not settled, and `sin_caja` otherwise.
+- Financial anomaly rules currently implemented:
+  - delivered without settlement
+  - duplicate settlement/liquidation
+  - settlement says delivered but tracking is not delivered
+  - cancelled/voided Shopify order with settlement
+  - missing SKU cost
+  - negative order margin
+  - Shopify order without Boxful guide after 2 days
 - Settlement/liquidation files also include per-order charged logistics costs:
   - `Monto de comision COD`
   - `Com. Tarjeta`
@@ -428,6 +442,7 @@ Examples:
 Purpose:
 
 - answer urgently: how much money did the business actually make?
+- identify per-order profitability, cash pending from COD settlements, and operational anomalies that require action.
 
 Initial formula:
 
@@ -455,6 +470,17 @@ Suggested KPIs:
 - real CPA
 - real ROAS
 - loss from not-delivered orders
+
+Implemented order-control KPIs:
+
+- `Caja liquidada`: sum of settled `A Liquidar` rows currently visible in control.
+- `Caja por reclamar`: expected COD for delivered orders without settlement.
+- `Margen pedido`: sum of order-level contribution margin before ads/payroll/misc.
+- `Alertas criticas`: high-severity finance anomalies.
+
+Important limitation:
+
+- Ads, payroll, and miscellaneous expenses are still allocated only at aggregate/month level. Per-order profitability is contribution margin before those shared expenses.
 
 ## MVP Recommendation
 
