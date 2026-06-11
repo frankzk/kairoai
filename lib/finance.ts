@@ -98,7 +98,8 @@ export interface SettlementRow {
   shopify_total: number;
   shopify_created_at: string | null;
   order_items: SettlementOrderItem[];
-  raw_row: Record<string, unknown>;
+  // Guardado al importar; las lecturas lo omiten para no inflar la respuesta.
+  raw_row?: Record<string, unknown>;
   created_at: string;
 }
 
@@ -151,7 +152,8 @@ export interface LogisticsRow {
   shopify_cancelled_at: string | null;
   shopify_total: number;
   shopify_created_at: string | null;
-  raw_row: Record<string, unknown>;
+  // Guardado al importar; las lecturas lo omiten para no inflar la respuesta.
+  raw_row?: Record<string, unknown>;
   created_at: string;
 }
 
@@ -369,10 +371,13 @@ export async function insertSettlementRows(
   if (error) throw new Error(`insertSettlementRows: ${error.message}`);
 }
 
+const SETTLEMENT_ROW_COLUMNS =
+  "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, service_type, cod_amount, cod_commission, card_commission, delivery_cost, pick_pack_cost, packaging_cost, amount_to_liquidate, settlement_status, internal_status, match_status, shopify_order_id, shopify_order_name, shopify_financial_status, shopify_fulfillment_status, shopify_total, shopify_created_at, order_items, created_at";
+
 export async function listSettlementRows(importId?: number): Promise<SettlementRow[]> {
   let query = getDB()
     .from("settlement_rows")
-    .select("*")
+    .select(SETTLEMENT_ROW_COLUMNS)
     .order("created_on", { ascending: false, nullsFirst: false })
     .order("id", { ascending: false })
     .limit(10000);
@@ -416,10 +421,13 @@ export async function insertLogisticsRows(
   if (error) throw new Error(`insertLogisticsRows: ${error.message}`);
 }
 
+const LOGISTICS_ROW_COLUMNS =
+  "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, package_items, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
+
 export async function listLogisticsRows(importId?: number): Promise<LogisticsRow[]> {
   let query = getDB()
     .from("logistics_rows")
-    .select("*")
+    .select(LOGISTICS_ROW_COLUMNS)
     .order("created_on", { ascending: false, nullsFirst: false })
     .order("id", { ascending: false })
     .limit(10000);

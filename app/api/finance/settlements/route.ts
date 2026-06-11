@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { readWorkbook } from "@/lib/xlsx";
 import {
+  loadShopifyOrdersForMatching,
+  type MatchableShopifyOrder as ShopifySettlementOrder,
+} from "@/lib/finance-matching";
+import {
   createSettlementImport,
   deleteSettlementImport,
   insertSettlementRows,
@@ -15,6 +19,9 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+const INSERT_BATCH_SIZE = 500;
+const INSERT_CONCURRENCY = 4;
 
 interface ParsedSettlementRow {
   raw: Record<string, unknown>;
@@ -35,24 +42,6 @@ interface ParsedSettlementRow {
   amount_to_liquidate: number;
   settlement_status: string;
   internal_status: InternalOrderStatus;
-}
-
-interface ShopifySettlementOrder {
-  id: number;
-  name: string;
-  order_number: number;
-  note?: string | null;
-  note_attributes?: Array<{ name?: string | null; value?: string | null }>;
-  created_at: string;
-  financial_status: string;
-  fulfillment_status: string | null;
-  total_price: string;
-  line_items?: Array<{
-    sku?: string | null;
-    title?: string;
-    quantity?: number;
-    price?: string;
-  }>;
 }
 
 export async function GET(req: NextRequest) {
@@ -89,7 +78,9 @@ export async function POST(req: NextRequest) {
     }
 
     const consolidated = parseConsolidated(workbook);
-    const shopifyOrders = await fetchShopifyOrders(periodStart ?? inferEarliestDate(settlementRows));
+    const shopifyOrders = await loadShopifyOrdersForMatching(
+      periodStart ?? inferEarliestDate(settlementRows)
+    );
     const indexes = buildShopifyIndexes(shopifyOrders);
 
     const statusSummary: Record<string, { count: number; amount_to_liquidate: number }> = {};
@@ -140,8 +131,12 @@ export async function POST(req: NextRequest) {
       buildSettlementRow(settlementImport.id, row, shopify)
     );
 
-    for (let i = 0; i < rowsToInsert.length; i += 250) {
-      await insertSettlementRows(rowsToInsert.slice(i, i + 250));
+    const batches: (typeof rowsToInsert)[] = [];
+    for (let i = 0; i < rowsToInsert.length; i += INSERT_BATCH_SIZE) {
+      batches.push(rowsToInsert.slice(i, i + INSERT_BATCH_SIZE));
+    }
+    for (let i = 0; i < batches.length; i += INSERT_CONCURRENCY) {
+      await Promise.all(batches.slice(i, i + INSERT_CONCURRENCY).map(insertSettlementRows));
     }
 
     return NextResponse.json({
@@ -229,42 +224,6 @@ function parseConsolidated(workbook: XLSX.WorkBook): {
     }
   }
   return { total_collected: totalCollected, total_to_liquidate: totalToLiquidate };
-}
-
-async function fetchShopifyOrders(periodStart: string | null): Promise<ShopifySettlementOrder[]> {
-  const shop = process.env.SHOPIFY_SHOP_DOMAIN;
-  const token = process.env.SHOPIFY_ACCESS_TOKEN;
-  if (!shop || !token) return [];
-
-  const minDate = periodStart
-    ? new Date(new Date(periodStart).getTime() - 45 * 24 * 60 * 60 * 1000).toISOString()
-    : "2026-04-01T00:00:00-06:00";
-
-  let url =
-    `https://${shop}/admin/api/2024-01/orders.json` +
-    `?status=any&limit=250&order=created_at%20desc` +
-    `&created_at_min=${encodeURIComponent(minDate)}` +
-    `&fields=id,name,order_number,note,note_attributes,created_at,financial_status,fulfillment_status,total_price,line_items`;
-
-  const orders: ShopifySettlementOrder[] = [];
-  for (let page = 0; page < 30 && url; page++) {
-    const res = await fetch(url, {
-      headers: {
-        "X-Shopify-Access-Token": token,
-        "Content-Type": "application/json",
-      },
-      cache: "no-store",
-    });
-    if (!res.ok) break;
-
-    const json = (await res.json()) as { orders?: ShopifySettlementOrder[] };
-    orders.push(...(json.orders ?? []));
-
-    const link = res.headers.get("link") ?? "";
-    const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
-    url = nextMatch?.[1] ?? "";
-  }
-  return orders;
 }
 
 function buildShopifyIndexes(orders: ShopifySettlementOrder[]) {
