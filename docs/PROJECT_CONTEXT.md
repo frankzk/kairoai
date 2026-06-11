@@ -301,6 +301,7 @@ Next reconciliation work:
   Example: Shopify order `#MCRC11603` can include note `Pedido #4206 - Venta por bot - WhatsApp ...`.
   In that case Boxful/liquidation rows with order `4206` must match Shopify `#MCRC11603`.
 - Plain numeric Boxful order values should prefer the external bot-code alias from Shopify notes before falling back to `#MCRC{number}`.
+- Existing imported rows are also enriched in the admin UI from synced Shopify data, so old `sin match` rows can resolve after Shopify sync/refresh without re-uploading the Excel.
 - Build an importer that stores uploaded weekly/period settlement files instead of manually analyzing local Excel files.
 - Preserve source file name and import timestamp.
 - Keep raw row data for auditability.

@@ -880,6 +880,7 @@ export default function FinancePage() {
               <SettlementsTab
                 imports={imports}
                 rows={rows}
+                shopifyOrders={shopifyOrders}
                 liquidationAlertRows={liquidationAlertRows}
                 doubleSettlementAnomalies={doubleSettlementAnomalies}
                 importing={importing}
@@ -1410,6 +1411,7 @@ function OrdersTable({
 function SettlementsTab({
   imports,
   rows,
+  shopifyOrders,
   liquidationAlertRows,
   doubleSettlementAnomalies,
   importing,
@@ -1418,6 +1420,7 @@ function SettlementsTab({
 }: {
   imports: SettlementImport[];
   rows: SettlementRow[];
+  shopifyOrders: ShopifyOrderSummary[];
   liquidationAlertRows: LogisticsRow[];
   doubleSettlementAnomalies: DoubleSettlementAnomaly[];
   importing: boolean;
@@ -1431,6 +1434,10 @@ function SettlementsTab({
   const fileByImportId = useMemo(
     () => new Map(imports.map((item) => [item.id, item.file_name])),
     [imports]
+  );
+  const enrichedRows = useMemo(
+    () => enrichSettlementRowsWithShopify(rows, shopifyOrders),
+    [rows, shopifyOrders]
   );
   const sortedImports = useMemo(() => {
     return [...imports].sort((a, b) => {
@@ -1446,9 +1453,9 @@ function SettlementsTab({
   const selectedRows = useMemo(
     () =>
       activeSettlementImportId
-        ? rows.filter((row) => row.import_id === activeSettlementImportId)
+        ? enrichedRows.filter((row) => row.import_id === activeSettlementImportId)
         : [],
-    [activeSettlementImportId, rows]
+    [activeSettlementImportId, enrichedRows]
   );
   const settlementMatchCounts = useMemo(
     () => ({
@@ -3700,6 +3707,44 @@ function buildVisibleOrderRows(
   return [...logisticsDisplayRows, ...shopifyOnlyRows].sort((a, b) =>
     String(b.shopify_created_at || "").localeCompare(String(a.shopify_created_at || ""))
   );
+}
+
+function enrichSettlementRowsWithShopify(
+  rows: SettlementRow[],
+  shopifyOrders: ShopifyOrderSummary[]
+): SettlementRow[] {
+  if (!rows.length || !shopifyOrders.length) return rows;
+
+  const shopifyByMatchKey = buildShopifyOrderMatchIndex(shopifyOrders);
+  return rows.map((row) => {
+    const shopify = findShopifyOrderForRow(
+      {
+        order_name: row.order_name,
+        shopify_order_name: row.shopify_order_name,
+      },
+      shopifyByMatchKey
+    );
+    if (!shopify) return row;
+
+    return {
+      ...row,
+      match_status: "matched",
+      shopify_order_id: shopify.id,
+      shopify_order_name: shopify.name,
+      shopify_financial_status: shopify.financial_status,
+      shopify_fulfillment_status: shopify.fulfillment_status ?? "",
+      shopify_total: Number(shopify.total_price || parseMoneyText(shopify.total)),
+      shopify_created_at: shopify.created_at,
+      order_items: row.order_items?.length
+        ? row.order_items
+        : shopify.line_items.map((item) => ({
+            sku: String(item.sku ?? "").toLowerCase(),
+            title: String(item.title ?? ""),
+            quantity: Number(item.quantity || 0),
+            price: Number(item.price || 0),
+          })),
+    };
+  });
 }
 
 type OrderMatchKeySource = {
