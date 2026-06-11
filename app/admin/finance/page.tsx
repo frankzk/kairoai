@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 type Tab = "orders" | "settlements" | "costs" | "expenses" | "profit" | "monthly" | "files";
 type ExpenseType = "ads" | "payroll" | "misc";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
+type OrderTrackingFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
 
 interface SettlementImport {
   id: number;
@@ -307,6 +308,14 @@ const emptyExpense = {
   amount: "",
   notes: "",
 };
+
+const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string }> = [
+  { value: "all", label: "Todos" },
+  { value: "pending", label: "Pendientes" },
+  { value: "annulled", label: "Anulados" },
+  { value: "delivered", label: "Entregados" },
+  { value: "not_delivered", label: "No entregados" },
+];
 
 const EXPENSE_VIEW_CONFIG: Array<{
   type: ExpenseType;
@@ -910,10 +919,38 @@ function OrdersTab({
 }) {
   const [isLogisticsModalOpen, setIsLogisticsModalOpen] = useState(false);
   const [orderSearch, setOrderSearch] = useState("");
-  const filteredRows = useMemo(
+  const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>("all");
+  const searchedRows = useMemo(
     () => rows.filter((row) => matchesOrderSearch(row, orderSearch)),
     [rows, orderSearch]
   );
+  const trackingCounts = useMemo(() => {
+    const counts: Record<OrderTrackingFilter, number> = {
+      all: searchedRows.length,
+      pending: 0,
+      annulled: 0,
+      delivered: 0,
+      not_delivered: 0,
+    };
+
+    for (const row of searchedRows) {
+      const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
+      counts[getTrackingFilterFromStatus(status)] += 1;
+    }
+
+    return counts;
+  }, [searchedRows, settlementTraceByKey]);
+  const filteredRows = useMemo(
+    () =>
+      searchedRows.filter((row) => {
+        if (trackingFilter === "all") return true;
+        const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
+        return getTrackingFilterFromStatus(status) === trackingFilter;
+      }),
+    [searchedRows, settlementTraceByKey, trackingFilter]
+  );
+  const activeTrackingLabel =
+    ORDER_TRACKING_FILTERS.find((filter) => filter.value === trackingFilter)?.label ?? "pedidos";
 
   async function handleModalLogisticsImport(event: FormEvent<HTMLFormElement>) {
     const didImport = await onLogisticsImport(event);
@@ -925,9 +962,7 @@ function OrdersTab({
       <Card>
         <CardHeader className="gap-4 space-y-0 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-1.5">
-            <CardTitle className="text-base">
-              {latestLogisticsImport ? latestLogisticsImport.file_name : "Pedidos Shopify"}
-            </CardTitle>
+            <CardTitle className="text-base">Seguimiento de pedidos</CardTitle>
             <p className="text-xs text-muted-foreground">
               Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.
             </p>
@@ -950,12 +985,32 @@ function OrdersTab({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-5">
-            <MiniStat label="Pedidos Shopify" value={shopifyOrderCount} />
-            <MiniStat label="Filas Boxful" value={latestLogisticsImport?.total_rows ?? 0} />
-            <MiniStat label="Match Shopify" value={latestLogisticsImport?.matched_rows ?? 0} />
-            <MiniStat label="Sin match" value={latestLogisticsImport?.unmatched_rows ?? 0} />
-            <MiniStat label="Pedidos visibles" value={filteredRows.length} />
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {ORDER_TRACKING_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => setTrackingFilter(filter.value)}
+                  className={`min-w-[132px] border px-3 py-2 text-left text-sm transition-colors ${
+                    trackingFilter === filter.value
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                  }`}
+                >
+                  <span className="block text-xs">{filter.label}</span>
+                  <span className="mt-1 block font-mono text-lg font-semibold text-foreground">
+                    {trackingCounts[filter.value]}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Base Shopify: {shopifyOrderCount} pedidos
+              {latestLogisticsImport
+                ? ` · Ultimo Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match Shopify, ${latestLogisticsImport.unmatched_rows} sin match`
+                : " · Sin Boxful importado"}
+            </div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex w-full items-center gap-2 border border-input bg-background px-3 sm:max-w-xl">
@@ -979,14 +1034,20 @@ function OrdersTab({
             </div>
             {orderSearch && (
               <p className="text-xs text-muted-foreground">
-                {filteredRows.length} de {rows.length} pedidos
+                {filteredRows.length} de {searchedRows.length} pedidos encontrados
               </p>
             )}
           </div>
           <OrdersTable
             rows={filteredRows}
             settlementTraceByKey={settlementTraceByKey}
-            emptyLabel={orderSearch ? "No encontramos pedidos con ese codigo." : "No hay pedidos para mostrar."}
+            emptyLabel={
+              orderSearch
+                ? "No encontramos pedidos con ese codigo y estado."
+                : trackingFilter === "all"
+                  ? "No hay pedidos para mostrar."
+                  : `No hay pedidos en ${activeTrackingLabel.toLowerCase()}.`
+            }
           />
           {logisticsImports.length > 1 && (
             <div className="border-t border-border pt-3">
@@ -3418,6 +3479,13 @@ function getEffectiveTrackingStatus(
   const settlementStatus = traces.find((trace) => isFinalTrackingStatus(trace.internal_status));
   if (settlementStatus) return settlementStatus.internal_status;
 
+  return "pending";
+}
+
+function getTrackingFilterFromStatus(status: string): Exclude<OrderTrackingFilter, "all"> {
+  if (status === "annulled") return "annulled";
+  if (status === "delivered") return "delivered";
+  if (status === "not_delivered" || status === "returned") return "not_delivered";
   return "pending";
 }
 
