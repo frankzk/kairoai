@@ -1638,10 +1638,16 @@ function RateMeter({ value, tone }: { value: number; tone: "cyan" | "emerald" })
 
 function ShopifyNotesTab({ orders }: { orders: ShopifyOrderSummary[] }) {
   const [noteSearch, setNoteSearch] = useState("");
+  const [onlyRowsWithCode, setOnlyRowsWithCode] = useState(true);
   const noteAliasRows = useMemo(() => buildShopifyNoteAliasRows(orders), [orders]);
   const filteredRows = useMemo(
-    () => noteAliasRows.filter((row) => matchesShopifyNoteAliasSearch(row, noteSearch)),
-    [noteAliasRows, noteSearch]
+    () =>
+      noteAliasRows.filter(
+        (row) =>
+          (!onlyRowsWithCode || Boolean(row.note_order_number)) &&
+          matchesShopifyNoteAliasSearch(row, noteSearch)
+      ),
+    [noteAliasRows, noteSearch, onlyRowsWithCode]
   );
   const noteOrderCount = useMemo(
     () => new Set(noteAliasRows.map((row) => row.shopify_order_name)).size,
@@ -1681,24 +1687,50 @@ function ShopifyNotesTab({ orders }: { orders: ShopifyOrderSummary[] }) {
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex w-full items-center gap-2 border border-input bg-background px-3 sm:max-w-xl">
-            <Search className="h-4 w-4 text-muted-foreground" />
-            <input
-              value={noteSearch}
-              onChange={(event) => setNoteSearch(event.target.value)}
-              placeholder="Buscar por #MCRC10269 o por codigo de nota 3685"
-              className="h-10 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-            />
-            {noteSearch && (
+          <div className="flex w-full flex-col gap-2 lg:flex-row lg:items-center">
+            <div className="flex w-full items-center gap-2 border border-input bg-background px-3 lg:max-w-xl">
+              <Search className="h-4 w-4 text-muted-foreground" />
+              <input
+                value={noteSearch}
+                onChange={(event) => setNoteSearch(event.target.value)}
+                placeholder="Buscar por #MCRC10269 o por codigo de nota 3685"
+                className="h-10 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              />
+              {noteSearch && (
+                <button
+                  type="button"
+                  aria-label="Limpiar busqueda"
+                  onClick={() => setNoteSearch("")}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <div className="flex shrink-0 gap-2">
               <button
                 type="button"
-                aria-label="Limpiar busqueda"
-                onClick={() => setNoteSearch("")}
-                className="text-muted-foreground hover:text-foreground"
+                onClick={() => setOnlyRowsWithCode(true)}
+                className={`border px-3 py-2 text-xs transition-colors ${
+                  onlyRowsWithCode
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground"
+                }`}
               >
-                <X className="h-4 w-4" />
+                Con codigo {rowsWithCode}
               </button>
-            )}
+              <button
+                type="button"
+                onClick={() => setOnlyRowsWithCode(false)}
+                className={`border px-3 py-2 text-xs transition-colors ${
+                  !onlyRowsWithCode
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Todas {noteAliasRows.length}
+              </button>
+            </div>
           </div>
           <p className="text-xs text-muted-foreground">
             {filteredRows.length} de {noteAliasRows.length} notas

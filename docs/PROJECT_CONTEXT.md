@@ -588,6 +588,7 @@ Build in this order:
 - Added `Productos` analysis tab for product-level operational performance. It uses the same normalized finance order rows as `Pedidos`/`Cierre mensual`, preserves line items on `OrderProfitabilityRow`, and aggregates by SKU when available or by product title otherwise.
 - Product-level dispatch rule: a product order is `despachado` only when the Shopify order is not cancelled/voided and tracking has final movement (`Entregado` or `No entregado`). Dispatch rate = dispatched product-orders / total product-orders. Delivery effectiveness = delivered / dispatched.
 - Product-level status counts classify Shopify cancelled/voided first as `Anulado`; otherwise they follow tracking as `Entregado`, `No entregado`, or `Pendiente`. The `Productos` tab includes search by product/SKU, status filters, order/unit counts, rate bars, and CSV export.
+- `Notas Shopify` now defaults to the actionable alias view: only rows with an extracted bot/order code are shown first. The user can switch to `Todas` to audit notes without extracted codes.
 
 2026-06-10:
 
