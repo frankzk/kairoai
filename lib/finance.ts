@@ -22,6 +22,17 @@ export interface ProductCost {
   updated_at: string;
 }
 
+export interface ProductCostVersion {
+  id: number;
+  sku: string;
+  product_name: string;
+  unit_cost: number;
+  packaging_cost: number;
+  currency: string;
+  effective_from: string;
+  created_at: string;
+}
+
 export interface BusinessExpense {
   id: number;
   type: ExpenseType;
@@ -144,6 +155,53 @@ export interface LogisticsRow {
   created_at: string;
 }
 
+export interface PersistedShopifyOrder {
+  id: number;
+  shopify_order_id: string;
+  order_number: number | null;
+  name: string;
+  customer_name: string;
+  phone: string | null;
+  email: string | null;
+  financial_status: string;
+  fulfillment_status: string;
+  cancelled_at: string | null;
+  total_price: number;
+  currency: string;
+  line_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
+  raw_order: Record<string, unknown>;
+  shopify_created_at: string | null;
+  shopify_updated_at: string | null;
+  synced_at: string;
+}
+
+export interface FinanceClaim {
+  id: number;
+  anomaly_key: string;
+  order_name: string;
+  guide_number: string;
+  type: string;
+  status: "pendiente" | "reclamado" | "resuelto" | "descartado";
+  amount: number;
+  source_file: string;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BoxfulFileControl {
+  id: number;
+  file_name: string;
+  file_type: "logistica" | "liquidacion";
+  cutoff_date: string | null;
+  status: "esperado" | "importado" | "faltante" | "ignorado";
+  import_id: number | null;
+  notes: string;
+  imported_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ProfitabilitySummary {
   cod_collected: number;
   cod_commission: number;
@@ -175,6 +233,19 @@ export async function listProductCosts(): Promise<ProductCost[]> {
   return (data ?? []) as ProductCost[];
 }
 
+export async function listProductCostVersions(sku?: string): Promise<ProductCostVersion[]> {
+  let query = getDB()
+    .from("product_cost_versions")
+    .select("*")
+    .order("effective_from", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1000);
+  if (sku) query = query.eq("sku", sku.trim().toLowerCase());
+  const { data, error } = await query;
+  if (error) throw new Error(`listProductCostVersions: ${error.message}`);
+  return (data ?? []) as ProductCostVersion[];
+}
+
 export async function upsertProductCost(
   input: Partial<ProductCost> & { sku: string }
 ): Promise<ProductCost> {
@@ -195,6 +266,21 @@ export async function upsertProductCost(
     .select()
     .single();
   if (error) throw new Error(`upsertProductCost: ${error.message}`);
+
+  const { error: versionError } = await getDB()
+    .from("product_cost_versions")
+    .insert({
+      sku: payload.sku,
+      product_name: payload.product_name,
+      unit_cost: payload.unit_cost,
+      packaging_cost: payload.packaging_cost,
+      currency: payload.currency,
+      effective_from: payload.effective_from,
+    });
+  if (versionError) {
+    console.warn(`insertProductCostVersion: ${versionError.message}`);
+  }
+
   return data as ProductCost;
 }
 
@@ -341,6 +427,94 @@ export async function listLogisticsRows(importId?: number): Promise<LogisticsRow
   const { data, error } = await query;
   if (error) throw new Error(`listLogisticsRows: ${error.message}`);
   return (data ?? []) as LogisticsRow[];
+}
+
+export async function listPersistedShopifyOrders(limit = 1000): Promise<PersistedShopifyOrder[]> {
+  const { data, error } = await getDB()
+    .from("shopify_orders")
+    .select("*")
+    .order("shopify_created_at", { ascending: false, nullsFirst: false })
+    .limit(limit);
+  if (error) throw new Error(`listPersistedShopifyOrders: ${error.message}`);
+  return (data ?? []) as PersistedShopifyOrder[];
+}
+
+export async function upsertPersistedShopifyOrders(
+  orders: Omit<PersistedShopifyOrder, "id" | "synced_at">[]
+): Promise<void> {
+  if (!orders.length) return;
+  const payload = orders.map((order) => ({
+    ...order,
+    synced_at: new Date().toISOString(),
+  }));
+  const { error } = await getDB()
+    .from("shopify_orders")
+    .upsert(payload, { onConflict: "shopify_order_id" });
+  if (error) throw new Error(`upsertPersistedShopifyOrders: ${error.message}`);
+}
+
+export async function listFinanceClaims(): Promise<FinanceClaim[]> {
+  const { data, error } = await getDB()
+    .from("finance_claims")
+    .select("*")
+    .order("updated_at", { ascending: false });
+  if (error) throw new Error(`listFinanceClaims: ${error.message}`);
+  return (data ?? []) as FinanceClaim[];
+}
+
+export async function upsertFinanceClaim(
+  input: Partial<FinanceClaim> & { anomaly_key: string }
+): Promise<FinanceClaim> {
+  const payload = {
+    anomaly_key: input.anomaly_key,
+    order_name: input.order_name ?? "",
+    guide_number: input.guide_number ?? "",
+    type: input.type ?? "",
+    status: input.status ?? "pendiente",
+    amount: Number(input.amount ?? 0),
+    source_file: input.source_file ?? "",
+    notes: input.notes ?? "",
+    updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await getDB()
+    .from("finance_claims")
+    .upsert(payload, { onConflict: "anomaly_key" })
+    .select()
+    .single();
+  if (error) throw new Error(`upsertFinanceClaim: ${error.message}`);
+  return data as FinanceClaim;
+}
+
+export async function listBoxfulFileControls(): Promise<BoxfulFileControl[]> {
+  const { data, error } = await getDB()
+    .from("boxful_file_controls")
+    .select("*")
+    .order("cutoff_date", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`listBoxfulFileControls: ${error.message}`);
+  return (data ?? []) as BoxfulFileControl[];
+}
+
+export async function upsertBoxfulFileControl(
+  input: Partial<BoxfulFileControl> & { file_name: string; file_type: "logistica" | "liquidacion" }
+): Promise<BoxfulFileControl> {
+  const payload = {
+    file_name: input.file_name,
+    file_type: input.file_type,
+    cutoff_date: input.cutoff_date ?? null,
+    status: input.status ?? "importado",
+    import_id: input.import_id ?? null,
+    notes: input.notes ?? "",
+    imported_at: input.imported_at ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await getDB()
+    .from("boxful_file_controls")
+    .upsert(payload, { onConflict: "file_name" })
+    .select()
+    .single();
+  if (error) throw new Error(`upsertBoxfulFileControl: ${error.message}`);
+  return data as BoxfulFileControl;
 }
 
 export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {

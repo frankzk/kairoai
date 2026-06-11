@@ -7,6 +7,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   Banknote,
+  Database,
+  Download,
   FileSpreadsheet,
   Package,
   Plus,
@@ -21,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
-type Tab = "orders" | "settlements" | "costs" | "expenses" | "profit";
+type Tab = "orders" | "settlements" | "costs" | "expenses" | "profit" | "monthly" | "files";
 type ExpenseType = "ads" | "payroll" | "misc";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 
@@ -73,6 +75,8 @@ interface LogisticsImport {
   id: number;
   file_name: string;
   period_label: string;
+  period_start: string | null;
+  period_end: string | null;
   total_rows: number;
   matched_rows: number;
   unmatched_rows: number;
@@ -142,7 +146,42 @@ interface ProductCost {
   unit_cost: number;
   packaging_cost: number;
   currency: string;
+  effective_from: string;
   active: boolean;
+}
+
+interface ProductCostVersion {
+  id: number;
+  sku: string;
+  product_name: string;
+  unit_cost: number;
+  packaging_cost: number;
+  currency: string;
+  effective_from: string;
+  created_at: string;
+}
+
+interface FinanceClaim {
+  id: number;
+  anomaly_key: string;
+  order_name: string;
+  guide_number: string;
+  type: string;
+  status: "pendiente" | "reclamado" | "resuelto" | "descartado";
+  amount: number;
+  source_file: string;
+  notes: string;
+}
+
+interface BoxfulFileControl {
+  id: number;
+  file_name: string;
+  file_type: "logistica" | "liquidacion";
+  cutoff_date: string | null;
+  status: "esperado" | "importado" | "faltante" | "ignorado";
+  import_id: number | null;
+  notes: string;
+  imported_at: string | null;
 }
 
 interface ShopifyProductOption {
@@ -216,6 +255,8 @@ interface FinancialAnomaly {
   type: string;
   order_name: string;
   guide_number: string;
+  amount: number;
+  source_file: string;
   message: string;
   action: string;
 }
@@ -227,6 +268,22 @@ interface FinanceControlCenter {
   cash_pending: number;
   contribution_margin: number;
   missing_cost_count: number;
+}
+
+interface MonthlyCloseRow {
+  month: string;
+  orders: number;
+  delivered: number;
+  not_delivered: number;
+  annulled: number;
+  cash_received: number;
+  cash_pending: number;
+  product_costs: number;
+  ads: number;
+  payroll: number;
+  misc: number;
+  contribution_margin: number;
+  net_profit: number;
 }
 
 const emptyExpense = {
@@ -251,7 +308,10 @@ export default function FinancePage() {
   const [logisticsRows, setLogisticsRows] = useState<LogisticsRow[]>([]);
   const [shopifyOrders, setShopifyOrders] = useState<ShopifyOrderSummary[]>([]);
   const [costs, setCosts] = useState<ProductCost[]>([]);
+  const [costVersions, setCostVersions] = useState<ProductCostVersion[]>([]);
   const [shopifyProducts, setShopifyProducts] = useState<ShopifyProductOption[]>([]);
+  const [claims, setClaims] = useState<FinanceClaim[]>([]);
+  const [boxfulFiles, setBoxfulFiles] = useState<BoxfulFileControl[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsError, setProductsError] = useState("");
   const [productSearch, setProductSearch] = useState("");
@@ -261,6 +321,15 @@ export default function FinancePage() {
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
   const [importingLogistics, setImportingLogistics] = useState(false);
+  const [syncingShopify, setSyncingShopify] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
+  const [boxfulFileForm, setBoxfulFileForm] = useState({
+    file_name: "",
+    file_type: "liquidacion" as "logistica" | "liquidacion",
+    cutoff_date: "",
+    status: "esperado" as "esperado" | "importado" | "faltante" | "ignorado",
+    notes: "",
+  });
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
 
   const latestImport = imports[0];
@@ -282,8 +351,16 @@ export default function FinancePage() {
     [settlementTraceByKey]
   );
   const financeControl = useMemo(
-    () => buildFinanceControlCenter(visibleOrderRows, rows, imports, costs, settlementTraceByKey),
-    [visibleOrderRows, rows, imports, costs, settlementTraceByKey]
+    () => buildFinanceControlCenter(visibleOrderRows, rows, imports, costs, costVersions, settlementTraceByKey),
+    [visibleOrderRows, rows, imports, costs, costVersions, settlementTraceByKey]
+  );
+  const claimByAnomalyKey = useMemo(
+    () => new Map(claims.map((claim) => [claim.anomaly_key, claim])),
+    [claims]
+  );
+  const monthlyCloseRows = useMemo(
+    () => buildMonthlyCloseRows(financeControl.orders, expenses),
+    [financeControl.orders, expenses]
   );
 
   async function refresh() {
@@ -305,20 +382,48 @@ export default function FinancePage() {
       const expensesJson = await readApiJson(expensesRes);
       const summaryJson = await readApiJson(summaryRes);
       let shopifyOrdersJson: Record<string, unknown> = {};
+      let persistedShopifyJson: Record<string, unknown> = {};
+      let claimsJson: Record<string, unknown> = {};
+      let boxfulFilesJson: Record<string, unknown> = {};
       try {
         const shopifyOrdersRes = await fetch(FINANCE_SHOPIFY_ORDERS_URL, { cache: "no-store" });
         shopifyOrdersJson = await readApiJson(shopifyOrdersRes);
       } catch {
         shopifyOrdersJson = {};
       }
+      try {
+        const persistedShopifyRes = await fetch("/api/finance/shopify-sync?limit=5000", { cache: "no-store" });
+        persistedShopifyJson = await readApiJson(persistedShopifyRes);
+      } catch {
+        persistedShopifyJson = {};
+      }
+      try {
+        const claimsRes = await fetch("/api/finance/claims", { cache: "no-store" });
+        claimsJson = await readApiJson(claimsRes);
+      } catch {
+        claimsJson = {};
+      }
+      try {
+        const boxfulFilesRes = await fetch("/api/finance/boxful-files", { cache: "no-store" });
+        boxfulFilesJson = await readApiJson(boxfulFilesRes);
+      } catch {
+        boxfulFilesJson = {};
+      }
 
       setImports(settlementsJson.imports ?? []);
       setRows(settlementsJson.rows ?? []);
       setLogisticsImports(logisticsJson.imports ?? []);
       setLogisticsRows(logisticsJson.rows ?? []);
-      setShopifyOrders(Array.isArray(shopifyOrdersJson.orders) ? shopifyOrdersJson.orders as ShopifyOrderSummary[] : []);
+      const liveShopifyOrders = Array.isArray(shopifyOrdersJson.orders) ? shopifyOrdersJson.orders as ShopifyOrderSummary[] : [];
+      const persistedShopifyOrders = Array.isArray(persistedShopifyJson.orders)
+        ? (persistedShopifyJson.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
+        : [];
+      setShopifyOrders(mergeShopifyOrderSummaries(liveShopifyOrders, persistedShopifyOrders));
       setCosts(costsJson.costs ?? []);
+      setCostVersions(Array.isArray(costsJson.versions) ? costsJson.versions as ProductCostVersion[] : []);
       setExpenses(expensesJson.expenses ?? []);
+      setClaims(Array.isArray(claimsJson.claims) ? claimsJson.claims as FinanceClaim[] : []);
+      setBoxfulFiles(Array.isArray(boxfulFilesJson.files) ? boxfulFilesJson.files as BoxfulFileControl[] : []);
       setSummary(summaryJson.summary ?? null);
 
       const firstError =
@@ -423,9 +528,110 @@ export default function FinancePage() {
       );
       return [...withoutSku, savedCost].sort((a, b) => a.sku.localeCompare(b.sku));
     });
+    setCostVersions((current) => [
+      {
+        id: Date.now(),
+        sku: savedCost.sku,
+        product_name: savedCost.product_name,
+        unit_cost: savedCost.unit_cost,
+        packaging_cost: savedCost.packaging_cost,
+        currency: savedCost.currency,
+        effective_from: savedCost.effective_from ?? new Date().toISOString().slice(0, 10),
+        created_at: new Date().toISOString(),
+      },
+      ...current,
+    ]);
     const summaryRes = await fetch("/api/finance/summary", { cache: "no-store" });
     const summaryJson = await readApiJson(summaryRes);
     if (summaryRes.ok) setSummary(summaryJson.summary ?? null);
+  }
+
+  async function syncShopifyHistory() {
+    setSyncingShopify(true);
+    setSyncMessage("Sincronizando Shopify...");
+    setError("");
+    try {
+      let nextUrl: string | null = null;
+      let totalSynced = 0;
+      for (let batch = 0; batch < 8; batch++) {
+        const res = await fetch("/api/finance/shopify-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            created_at_min: "2026-03-01T00:00:00-06:00",
+            max_pages: 4,
+            next_url: nextUrl,
+          }),
+        });
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudo sincronizar Shopify");
+        totalSynced += Number(json.synced ?? 0);
+        nextUrl = typeof json.next_url === "string" ? json.next_url : null;
+        setSyncMessage(`Sincronizados ${totalSynced} pedidos...`);
+        if (!nextUrl) break;
+      }
+      setSyncMessage(`Sync listo: ${totalSynced} pedidos procesados.`);
+      await refresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "No se pudo sincronizar Shopify";
+      setError(message);
+      setSyncMessage(message);
+    } finally {
+      setSyncingShopify(false);
+    }
+  }
+
+  async function saveClaim(anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes = "") {
+    const res = await fetch("/api/finance/claims", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        anomaly_key: anomaly.id,
+        order_name: anomaly.order_name,
+        guide_number: anomaly.guide_number,
+        type: anomaly.type,
+        amount: anomaly.amount,
+        source_file: anomaly.source_file,
+        status,
+        notes,
+      }),
+    });
+    const json = await readApiJson(res);
+    if (!res.ok) {
+      setError(json.error ?? "No se pudo guardar reclamo");
+      return;
+    }
+    const savedClaim = json.claim as FinanceClaim;
+    setClaims((current) => [
+      savedClaim,
+      ...current.filter((claim) => claim.anomaly_key !== savedClaim.anomaly_key),
+    ]);
+  }
+
+  async function saveBoxfulFile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const res = await fetch("/api/finance/boxful-files", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(boxfulFileForm),
+    });
+    const json = await readApiJson(res);
+    if (!res.ok) {
+      setError(json.error ?? "No se pudo guardar archivo Boxful");
+      return;
+    }
+    const savedFile = json.file as BoxfulFileControl;
+    setBoxfulFiles((current) => [
+      savedFile,
+      ...current.filter((file) => file.file_name !== savedFile.file_name),
+    ]);
+    setBoxfulFileForm({
+      file_name: "",
+      file_type: "liquidacion",
+      cutoff_date: "",
+      status: "esperado",
+      notes: "",
+    });
   }
 
   async function saveExpense(event: FormEvent<HTMLFormElement>) {
@@ -543,6 +749,12 @@ export default function FinancePage() {
           <TabButton active={tab === "profit"} onClick={() => setTab("profit")} icon={<Banknote />}>
             Rentabilidad
           </TabButton>
+          <TabButton active={tab === "monthly"} onClick={() => setTab("monthly")} icon={<FileSpreadsheet />}>
+            Cierre mensual
+          </TabButton>
+          <TabButton active={tab === "files"} onClick={() => setTab("files")} icon={<Database />}>
+            Archivos Boxful
+          </TabButton>
         </div>
 
         {loading ? (
@@ -556,6 +768,9 @@ export default function FinancePage() {
                 latestLogisticsImport={latestLogisticsImport}
                 settlementTraceByKey={settlementTraceByKey}
                 shopifyOrderCount={shopifyOrders.length}
+                syncingShopify={syncingShopify}
+                syncMessage={syncMessage}
+                onSyncShopify={syncShopifyHistory}
                 importingLogistics={importingLogistics}
                 onLogisticsImport={handleLogisticsImport}
               />
@@ -579,6 +794,7 @@ export default function FinancePage() {
                 productsError={productsError}
                 productSearch={productSearch}
                 setProductSearch={setProductSearch}
+                versions={costVersions}
                 onSaveProductCost={saveProductCost}
                 onDelete={deleteCost}
               />
@@ -592,7 +808,27 @@ export default function FinancePage() {
                 onDelete={deleteExpense}
               />
             )}
-            {tab === "profit" && <ProfitTab summary={summary} control={financeControl} />}
+            {tab === "profit" && (
+              <ProfitTab
+                summary={summary}
+                control={financeControl}
+                claimByAnomalyKey={claimByAnomalyKey}
+                onSaveClaim={saveClaim}
+              />
+            )}
+            {tab === "monthly" && (
+              <MonthlyCloseTab rows={monthlyCloseRows} control={financeControl} />
+            )}
+            {tab === "files" && (
+              <BoxfulFilesTab
+                files={boxfulFiles}
+                imports={imports}
+                logisticsImports={logisticsImports}
+                form={boxfulFileForm}
+                setForm={setBoxfulFileForm}
+                onSave={saveBoxfulFile}
+              />
+            )}
           </>
         )}
       </main>
@@ -606,6 +842,9 @@ function OrdersTab({
   latestLogisticsImport,
   settlementTraceByKey,
   shopifyOrderCount,
+  syncingShopify,
+  syncMessage,
+  onSyncShopify,
   importingLogistics,
   onLogisticsImport,
 }: {
@@ -614,12 +853,31 @@ function OrdersTab({
   latestLogisticsImport?: LogisticsImport;
   settlementTraceByKey: Map<string, SettlementTrace[]>;
   shopifyOrderCount: number;
+  syncingShopify: boolean;
+  syncMessage: string;
+  onSyncShopify: () => void;
   importingLogistics: boolean;
   onLogisticsImport: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
     <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
       <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Sync Shopify</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Guarda pedidos Shopify historicos en Supabase por lotes para evitar timeouts.
+            </p>
+            <Button type="button" disabled={syncingShopify} onClick={onSyncShopify} className="w-full gap-2">
+              <Database className="h-4 w-4" />
+              {syncingShopify ? "Sincronizando..." : "Sincronizar Shopify"}
+            </Button>
+            {syncMessage && <p className="text-xs text-muted-foreground">{syncMessage}</p>}
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Importar Boxful logistico</CardTitle>
@@ -709,8 +967,8 @@ function OrdersTable({
               <tr key={row.row_key} className="border-b border-border/50">
                 <td className="px-3 py-2 font-mono text-xs">{row.order_name}</td>
                 <td className="px-3 py-2">
-                  <Badge variant={row.source === "boxful" ? "success" : "muted"}>
-                    {row.source === "boxful" ? "Boxful" : "Shopify"}
+                  <Badge variant={row.source === "boxful" ? "success" : row.source === "liquidacion" ? "warning" : "muted"}>
+                    {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
                   </Badge>
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">{row.guide_number || "-"}</td>
@@ -1021,6 +1279,7 @@ function CostsTab({
   productsError,
   productSearch,
   setProductSearch,
+  versions,
   onSaveProductCost,
   onDelete,
 }: {
@@ -1030,6 +1289,7 @@ function CostsTab({
   productsError: string;
   productSearch: string;
   setProductSearch: (value: string) => void;
+  versions: ProductCostVersion[];
   onSaveProductCost: (input: {
     sku: string;
     product_name: string;
@@ -1176,6 +1436,45 @@ function CostsTab({
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Historial de costos SKU</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="max-h-[300px] overflow-auto border border-border">
+              <table className="w-full min-w-[780px] text-sm">
+                <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2">Fecha efectiva</th>
+                    <th className="px-3 py-2">SKU</th>
+                    <th className="px-3 py-2">Producto</th>
+                    <th className="px-3 py-2 text-right">Unitario</th>
+                    <th className="px-3 py-2 text-right">Empaque</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {versions.slice(0, 300).map((version) => (
+                    <tr key={`${version.id}-${version.created_at}`} className="border-t border-border/50">
+                      <td className="px-3 py-2 font-mono text-xs">{formatDate(version.effective_from)}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{version.sku}</td>
+                      <td className="px-3 py-2">{version.product_name}</td>
+                      <td className="px-3 py-2 text-right font-mono text-xs">{currency(version.unit_cost)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-xs">{currency(version.packaging_cost)}</td>
+                    </tr>
+                  ))}
+                  {!versions.length && (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                        Aun no hay versiones registradas.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1347,9 +1646,13 @@ function ExpensesTab({
 function ProfitTab({
   summary,
   control,
+  claimByAnomalyKey,
+  onSaveClaim,
 }: {
   summary: ProfitabilitySummary | null;
   control: FinanceControlCenter;
+  claimByAnomalyKey: Map<string, FinanceClaim>;
+  onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
 }) {
   const items = [
     ["COD cobrado", summary?.cod_collected ?? 0],
@@ -1371,6 +1674,15 @@ function ProfitTab({
         <MiniStat label="Margen pedido" value={currency(control.contribution_margin)} />
         <MiniStat label="Alertas criticas" value={criticalAnomalies} />
       </section>
+
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("anomalias-financieras.csv", control.anomalies)}>
+          <Download className="h-4 w-4" /> Exportar anomalias
+        </Button>
+        <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("rentabilidad-pedidos.csv", control.orders)}>
+          <Download className="h-4 w-4" /> Exportar pedidos
+        </Button>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <Card>
@@ -1411,7 +1723,11 @@ function ProfitTab({
           <CardTitle className="text-base">Centro de anomalias</CardTitle>
         </CardHeader>
         <CardContent>
-          <FinancialAnomaliesTable anomalies={control.anomalies} />
+          <FinancialAnomaliesTable
+            anomalies={control.anomalies}
+            claimByAnomalyKey={claimByAnomalyKey}
+            onSaveClaim={onSaveClaim}
+          />
         </CardContent>
       </Card>
 
@@ -1444,7 +1760,15 @@ function ProfitTab({
   );
 }
 
-function FinancialAnomaliesTable({ anomalies }: { anomalies: FinancialAnomaly[] }) {
+function FinancialAnomaliesTable({
+  anomalies,
+  claimByAnomalyKey,
+  onSaveClaim,
+}: {
+  anomalies: FinancialAnomaly[];
+  claimByAnomalyKey: Map<string, FinanceClaim>;
+  onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
+}) {
   if (!anomalies.length) {
     return <p className="text-sm text-muted-foreground">No hay anomalias financieras detectadas.</p>;
   }
@@ -1460,31 +1784,59 @@ function FinancialAnomaliesTable({ anomalies }: { anomalies: FinancialAnomaly[] 
             <th className="px-3 py-2">Guia</th>
             <th className="px-3 py-2">Hallazgo</th>
             <th className="px-3 py-2">Accion</th>
+            <th className="px-3 py-2">Reclamo</th>
           </tr>
         </thead>
         <tbody>
-          {anomalies.slice(0, 120).map((anomaly) => (
-            <tr key={anomaly.id} className="border-t border-border/50">
-              <td className="px-3 py-2">
-                <Badge
-                  variant={
-                    anomaly.severity === "high"
-                      ? "destructive"
-                      : anomaly.severity === "medium"
-                        ? "warning"
-                        : "muted"
-                  }
-                >
-                  {anomaly.severity === "high" ? "Alta" : anomaly.severity === "medium" ? "Media" : "Baja"}
-                </Badge>
-              </td>
-              <td className="px-3 py-2">{anomaly.type}</td>
-              <td className="px-3 py-2 font-mono text-xs">{anomaly.order_name || "-"}</td>
-              <td className="px-3 py-2 font-mono text-xs">{anomaly.guide_number || "-"}</td>
-              <td className="px-3 py-2">{anomaly.message}</td>
-              <td className="px-3 py-2 text-xs text-muted-foreground">{anomaly.action}</td>
-            </tr>
-          ))}
+          {anomalies.slice(0, 120).map((anomaly) => {
+            const claim = claimByAnomalyKey.get(anomaly.id);
+            return (
+              <tr key={anomaly.id} className="border-t border-border/50">
+                <td className="px-3 py-2">
+                  <Badge
+                    variant={
+                      anomaly.severity === "high"
+                        ? "destructive"
+                        : anomaly.severity === "medium"
+                          ? "warning"
+                          : "muted"
+                    }
+                  >
+                    {anomaly.severity === "high" ? "Alta" : anomaly.severity === "medium" ? "Media" : "Baja"}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2">{anomaly.type}</td>
+                <td className="px-3 py-2 font-mono text-xs">{anomaly.order_name || "-"}</td>
+                <td className="px-3 py-2 font-mono text-xs">{anomaly.guide_number || "-"}</td>
+                <td className="px-3 py-2">{anomaly.message}</td>
+                <td className="px-3 py-2 text-xs text-muted-foreground">{anomaly.action}</td>
+                <td className="px-3 py-2">
+                  <div className="flex min-w-[260px] items-center gap-2">
+                    <select
+                      value={claim?.status ?? "pendiente"}
+                      onChange={(event) => onSaveClaim(anomaly, event.target.value as FinanceClaim["status"], claim?.notes ?? "")}
+                      className="h-8 border border-input bg-background px-2 text-xs"
+                    >
+                      <option value="pendiente">Pendiente</option>
+                      <option value="reclamado">Reclamado</option>
+                      <option value="resuelto">Resuelto</option>
+                      <option value="descartado">Descartado</option>
+                    </select>
+                    <input
+                      defaultValue={claim?.notes ?? ""}
+                      onBlur={(event) => {
+                        if (event.target.value !== (claim?.notes ?? "")) {
+                          onSaveClaim(anomaly, claim?.status ?? "pendiente", event.target.value);
+                        }
+                      }}
+                      placeholder="Nota"
+                      className="h-8 w-32 border border-input bg-background px-2 text-xs outline-none"
+                    />
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       {anomalies.length > 120 && (
@@ -1571,6 +1923,220 @@ function OrderProfitabilityTable({ rows }: { rows: OrderProfitabilityRow[] }) {
           Mostrando 500 de {rows.length} pedidos.
         </div>
       )}
+    </div>
+  );
+}
+
+function MonthlyCloseTab({
+  rows,
+  control,
+}: {
+  rows: MonthlyCloseRow[];
+  control: FinanceControlCenter;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">Cierre mensual</h2>
+          <p className="text-xs text-muted-foreground">
+            Vista devengada por mes: caja, costos, gastos y utilidad estimada.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("cierre-mensual.csv", rows)}>
+          <Download className="h-4 w-4" /> Exportar cierre
+        </Button>
+      </div>
+      <section className="grid gap-3 md:grid-cols-3">
+        <MiniStat label="Pedidos analizados" value={control.orders.length} />
+        <MiniStat label="Caja por reclamar" value={currency(control.cash_pending)} />
+        <MiniStat label="Margen antes de gastos" value={currency(control.contribution_margin)} />
+      </section>
+      <Card>
+        <CardContent className="p-0">
+          <div className="overflow-auto border border-border">
+            <table className="w-full min-w-[1080px] text-sm">
+              <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">Mes</th>
+                  <th className="px-3 py-2 text-right">Pedidos</th>
+                  <th className="px-3 py-2 text-right">Entregados</th>
+                  <th className="px-3 py-2 text-right">No entregados</th>
+                  <th className="px-3 py-2 text-right">Anulados</th>
+                  <th className="px-3 py-2 text-right">Liquidado</th>
+                  <th className="px-3 py-2 text-right">Por reclamar</th>
+                  <th className="px-3 py-2 text-right">Costo producto</th>
+                  <th className="px-3 py-2 text-right">Ads</th>
+                  <th className="px-3 py-2 text-right">Planilla</th>
+                  <th className="px-3 py-2 text-right">Varios</th>
+                  <th className="px-3 py-2 text-right">Utilidad neta</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.month} className="border-t border-border/50">
+                    <td className="px-3 py-2 font-mono text-xs">{row.month}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{row.orders}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{row.delivered}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{row.not_delivered}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{row.annulled}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.cash_received)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.cash_pending)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.product_costs)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.ads)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.payroll)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.misc)}</td>
+                    <td className={`px-3 py-2 text-right font-mono text-xs ${row.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
+                      {currency(row.net_profit)}
+                    </td>
+                  </tr>
+                ))}
+                {!rows.length && (
+                  <tr>
+                    <td colSpan={12} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                      No hay datos suficientes para cierre mensual.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function BoxfulFilesTab({
+  files,
+  imports,
+  logisticsImports,
+  form,
+  setForm,
+  onSave,
+}: {
+  files: BoxfulFileControl[];
+  imports: SettlementImport[];
+  logisticsImports: LogisticsImport[];
+  form: {
+    file_name: string;
+    file_type: "logistica" | "liquidacion";
+    cutoff_date: string;
+    status: "esperado" | "importado" | "faltante" | "ignorado";
+    notes: string;
+  };
+  setForm: (form: {
+    file_name: string;
+    file_type: "logistica" | "liquidacion";
+    cutoff_date: string;
+    status: "esperado" | "importado" | "faltante" | "ignorado";
+    notes: string;
+  }) => void;
+  onSave: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const mergedFiles = useMemo(
+    () => mergeBoxfulFiles(files, imports, logisticsImports),
+    [files, imports, logisticsImports]
+  );
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Registrar archivo Boxful</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={onSave} className="space-y-3">
+            <Input
+              value={form.file_name}
+              onChange={(event) => setForm({ ...form, file_name: event.target.value })}
+              placeholder="Nombre exacto del archivo"
+              required
+            />
+            <select
+              value={form.file_type}
+              onChange={(event) => setForm({ ...form, file_type: event.target.value as "logistica" | "liquidacion" })}
+              className="h-10 w-full border border-input bg-background px-3 text-sm"
+            >
+              <option value="liquidacion">Liquidacion</option>
+              <option value="logistica">Logistica</option>
+            </select>
+            <Input
+              type="date"
+              value={form.cutoff_date}
+              onChange={(event) => setForm({ ...form, cutoff_date: event.target.value })}
+            />
+            <select
+              value={form.status}
+              onChange={(event) => setForm({ ...form, status: event.target.value as BoxfulFileControl["status"] })}
+              className="h-10 w-full border border-input bg-background px-3 text-sm"
+            >
+              <option value="esperado">Esperado</option>
+              <option value="faltante">Faltante</option>
+              <option value="importado">Importado</option>
+              <option value="ignorado">Ignorado</option>
+            </select>
+            <Input
+              value={form.notes}
+              onChange={(event) => setForm({ ...form, notes: event.target.value })}
+              placeholder="Notas"
+            />
+            <Button type="submit" className="w-full gap-2">
+              <Plus className="h-4 w-4" /> Guardar archivo
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="text-base">Control de archivos</CardTitle>
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("archivos-boxful.csv", mergedFiles)}>
+              <Download className="h-4 w-4" /> Exportar
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="max-h-[620px] overflow-auto border border-border">
+            <table className="w-full min-w-[920px] text-sm">
+              <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">Archivo</th>
+                  <th className="px-3 py-2">Tipo</th>
+                  <th className="px-3 py-2">Corte</th>
+                  <th className="px-3 py-2">Estado</th>
+                  <th className="px-3 py-2">Import ID</th>
+                  <th className="px-3 py-2">Notas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mergedFiles.map((file) => (
+                  <tr key={`${file.file_type}-${file.file_name}`} className="border-t border-border/50">
+                    <td className="max-w-[360px] truncate px-3 py-2" title={file.file_name}>{file.file_name}</td>
+                    <td className="px-3 py-2"><Badge variant="muted">{file.file_type}</Badge></td>
+                    <td className="px-3 py-2 font-mono text-xs">{file.cutoff_date ? formatDate(file.cutoff_date) : "-"}</td>
+                    <td className="px-3 py-2">
+                      <Badge variant={file.status === "faltante" ? "destructive" : file.status === "esperado" ? "warning" : "success"}>
+                        {file.status}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs">{file.import_id ?? "-"}</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">{file.notes || "-"}</td>
+                  </tr>
+                ))}
+                {!mergedFiles.length && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                      No hay archivos registrados.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -1698,6 +2264,171 @@ async function readApiJson(res: Response) {
   }
 }
 
+function exportCsv(filename: string, rows: unknown[]) {
+  const csv = toCsv(rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function toCsv(rows: unknown[]): string {
+  if (!rows.length) return "";
+  const records = rows.map((row) => row && typeof row === "object" ? row as Record<string, unknown> : { value: row });
+  const headerSet = records.reduce<Set<string>>((set, row) => {
+    Object.keys(row).forEach((key) => set.add(key));
+    return set;
+  }, new Set<string>());
+  const headers = Array.from(headerSet);
+  const escape = (value: unknown) => {
+    const raw = Array.isArray(value) || (value && typeof value === "object")
+      ? JSON.stringify(value)
+      : String(value ?? "");
+    const text = raw == null ? "" : String(raw);
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+  return [headers.join(","), ...records.map((row) => headers.map((header) => escape(row[header])).join(","))].join("\n");
+}
+
+function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
+  const lineItems = (order.line_items as ShopifyOrderSummary["line_items"]) ?? [];
+  return {
+    id: String(order.shopify_order_id ?? order.id ?? ""),
+    order_number: Number(order.order_number ?? 0),
+    name: String(order.name ?? ""),
+    customer_name: String(order.customer_name ?? "Sin nombre"),
+    phone: (order.phone as string | null) ?? null,
+    products: lineItems.map((item) => `${item.quantity}x ${item.title}`).join(", "),
+    total: `${order.total_price ?? 0} ${order.currency ?? "CRC"}`,
+    total_price: Number(order.total_price ?? 0),
+    currency: String(order.currency ?? "CRC"),
+    financial_status: String(order.financial_status ?? ""),
+    fulfillment_status: String(order.fulfillment_status ?? ""),
+    cancelled_at: (order.cancelled_at as string | null) ?? null,
+    created_at: String(order.shopify_created_at ?? ""),
+    line_items: lineItems,
+  };
+}
+
+function mergeShopifyOrderSummaries(
+  liveOrders: ShopifyOrderSummary[],
+  persistedOrders: ShopifyOrderSummary[]
+): ShopifyOrderSummary[] {
+  const byKey = new Map<string, ShopifyOrderSummary>();
+  for (const order of persistedOrders) byKey.set(order.id || order.name, order);
+  for (const order of liveOrders) byKey.set(order.id || order.name, order);
+  return Array.from(byKey.values()).sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+function buildMonthlyCloseRows(
+  orders: OrderProfitabilityRow[],
+  expenses: BusinessExpense[]
+): MonthlyCloseRow[] {
+  const byMonth = new Map<string, MonthlyCloseRow>();
+  const ensureMonth = (month: string) => {
+    const existing = byMonth.get(month);
+    if (existing) return existing;
+    const row: MonthlyCloseRow = {
+      month,
+      orders: 0,
+      delivered: 0,
+      not_delivered: 0,
+      annulled: 0,
+      cash_received: 0,
+      cash_pending: 0,
+      product_costs: 0,
+      ads: 0,
+      payroll: 0,
+      misc: 0,
+      contribution_margin: 0,
+      net_profit: 0,
+    };
+    byMonth.set(month, row);
+    return row;
+  };
+
+  for (const order of orders) {
+    const month = getMonthKey(order.created_at) || "sin-fecha";
+    const row = ensureMonth(month);
+    row.orders += 1;
+    if (order.tracking_status === "delivered") row.delivered += 1;
+    if (order.tracking_status === "not_delivered" || order.tracking_status === "returned") row.not_delivered += 1;
+    if (order.tracking_status === "annulled") row.annulled += 1;
+    if (order.cash_status === "cobrado") row.cash_received += order.amount_to_liquidate;
+    if (order.cash_status === "por_cobrar") row.cash_pending += order.expected_cod;
+    row.product_costs += order.product_cost;
+    row.contribution_margin += order.contribution_margin;
+  }
+
+  for (const expense of expenses) {
+    const month = expense.month || getMonthKey(expense.expense_date) || "sin-fecha";
+    const row = ensureMonth(month);
+    if (expense.type === "ads") row.ads += Number(expense.amount || 0);
+    if (expense.type === "payroll") row.payroll += Number(expense.amount || 0);
+    if (expense.type === "misc") row.misc += Number(expense.amount || 0);
+  }
+
+  return Array.from(byMonth.values())
+    .map((row) => ({
+      ...row,
+      cash_received: roundMoney(row.cash_received),
+      cash_pending: roundMoney(row.cash_pending),
+      product_costs: roundMoney(row.product_costs),
+      ads: roundMoney(row.ads),
+      payroll: roundMoney(row.payroll),
+      misc: roundMoney(row.misc),
+      contribution_margin: roundMoney(row.contribution_margin),
+      net_profit: roundMoney(row.contribution_margin - row.ads - row.payroll - row.misc),
+    }))
+    .sort((a, b) => b.month.localeCompare(a.month));
+}
+
+function getMonthKey(value: string | null): string {
+  if (!value) return "";
+  return value.slice(0, 7);
+}
+
+function mergeBoxfulFiles(
+  files: BoxfulFileControl[],
+  imports: SettlementImport[],
+  logisticsImports: LogisticsImport[]
+): BoxfulFileControl[] {
+  const byName = new Map<string, BoxfulFileControl>();
+  for (const file of files) byName.set(file.file_name, file);
+  for (const item of imports) {
+    if (byName.has(item.file_name)) continue;
+    byName.set(item.file_name, {
+      id: -item.id,
+      file_name: item.file_name,
+      file_type: "liquidacion",
+      cutoff_date: item.period_end,
+      status: "importado",
+      import_id: item.id,
+      notes: "",
+      imported_at: item.created_at,
+    });
+  }
+  for (const item of logisticsImports) {
+    if (byName.has(item.file_name)) continue;
+    byName.set(item.file_name, {
+      id: -item.id,
+      file_name: item.file_name,
+      file_type: "logistica",
+      cutoff_date: item.period_end,
+      status: "importado",
+      import_id: item.id,
+      notes: "",
+      imported_at: item.created_at,
+    });
+  }
+  return Array.from(byName.values()).sort((a, b) =>
+    String(b.cutoff_date || b.imported_at || "").localeCompare(String(a.cutoff_date || a.imported_at || ""))
+  );
+}
+
 function buildVisibleOrderRows(
   logisticsRows: LogisticsRow[],
   shopifyOrders: ShopifyOrderSummary[]
@@ -1774,15 +2505,12 @@ function buildFinanceControlCenter(
   settlementRows: SettlementRow[],
   imports: SettlementImport[],
   costs: ProductCost[],
+  costVersions: ProductCostVersion[],
   settlementTraceByKey: Map<string, SettlementTrace[]>
 ): FinanceControlCenter {
   const fileByImportId = new Map(imports.map((item) => [item.id, item.file_name]));
   const settlementRowsByKey = buildSettlementRowsByKey(settlementRows);
-  const costBySku = new Map(
-    costs
-      .filter((cost) => cost.active)
-      .map((cost) => [cost.sku.toLowerCase(), cost])
-  );
+  const costVersionsBySku = buildCostVersionsBySku(costs, costVersions);
   const consumedSettlementIds = new Set<number>();
   const orders: OrderProfitabilityRow[] = [];
   const anomalies: FinancialAnomaly[] = [];
@@ -1798,7 +2526,7 @@ function buildFinanceControlCenter(
       order,
       settlementRows: matchedSettlementRows,
       fileByImportId,
-      costBySku,
+      costVersionsBySku,
       trackingStatus,
       trackingLabel,
     });
@@ -1815,7 +2543,7 @@ function buildFinanceControlCenter(
       order: standaloneOrder,
       settlementRows: [settlementRow],
       fileByImportId,
-      costBySku,
+      costVersionsBySku,
       trackingStatus,
       trackingLabel: getTrackingStatusLabel(standaloneOrder, traces, trackingStatus),
     });
@@ -1880,14 +2608,14 @@ function buildOrderProfitabilityRow({
   order,
   settlementRows,
   fileByImportId,
-  costBySku,
+  costVersionsBySku,
   trackingStatus,
   trackingLabel,
 }: {
   order: TrackableOrderRow;
   settlementRows: SettlementRow[];
   fileByImportId: Map<number, string>;
-  costBySku: Map<string, ProductCost>;
+  costVersionsBySku: Map<string, ProductCostVersion[]>;
   trackingStatus: string;
   trackingLabel: string;
 }): OrderProfitabilityRow {
@@ -1898,7 +2626,7 @@ function buildOrderProfitabilityRow({
   const amountToLiquidate = sum(settlementRows.map((row) => row.amount_to_liquidate));
   const expectedCod = order.cod_amount || sum(settlementRows.map((row) => row.cod_amount));
   const items = getProfitabilityItems(order, settlementRows);
-  const productCostResult = calculateProductCost(items, costBySku, trackingStatus);
+  const productCostResult = calculateProductCost(items, costVersionsBySku, trackingStatus, order.shopify_created_at);
   const hasSettlement = settlementRows.length > 0;
   const cashStatus =
     hasSettlement ? "cobrado" : trackingStatus === "delivered" ? "por_cobrar" : "sin_caja";
@@ -1962,10 +2690,48 @@ function getProfitabilityItems(
   return order.package_items ?? [];
 }
 
+function buildCostVersionsBySku(
+  costs: ProductCost[],
+  versions: ProductCostVersion[]
+): Map<string, ProductCostVersion[]> {
+  const bySku = new Map<string, ProductCostVersion[]>();
+  const allVersions: ProductCostVersion[] = [
+    ...versions,
+    ...costs
+      .filter((cost) => cost.active)
+      .map((cost) => ({
+        id: -cost.id,
+        sku: cost.sku,
+        product_name: cost.product_name,
+        unit_cost: cost.unit_cost,
+        packaging_cost: cost.packaging_cost,
+        currency: cost.currency,
+        effective_from: cost.effective_from || "1900-01-01",
+        created_at: "",
+      })),
+  ];
+
+  for (const version of allVersions) {
+    const key = version.sku.toLowerCase();
+    bySku.set(key, [...(bySku.get(key) ?? []), version]);
+  }
+
+  for (const [sku, skuVersions] of Array.from(bySku.entries())) {
+    bySku.set(
+      sku,
+      skuVersions.sort((a, b) =>
+        b.effective_from.localeCompare(a.effective_from) || b.created_at.localeCompare(a.created_at)
+      )
+    );
+  }
+  return bySku;
+}
+
 function calculateProductCost(
   items: Array<{ sku?: string; title: string; quantity: number; price: number }>,
-  costBySku: Map<string, ProductCost>,
-  trackingStatus: string
+  costVersionsBySku: Map<string, ProductCostVersion[]>,
+  trackingStatus: string,
+  orderDate: string | null
 ): { productCost: number; missingCostSkus: string[] } {
   if (trackingStatus !== "delivered") return { productCost: 0, missingCostSkus: [] };
 
@@ -1975,7 +2741,7 @@ function calculateProductCost(
   for (const item of items) {
     const sku = String(item.sku ?? "").trim().toLowerCase();
     if (!sku) continue;
-    const cost = costBySku.get(sku);
+    const cost = pickCostVersion(costVersionsBySku.get(sku) ?? [], orderDate);
     if (!cost) {
       missingCostSkus.add(sku);
       continue;
@@ -1989,12 +2755,19 @@ function calculateProductCost(
   };
 }
 
+function pickCostVersion(versions: ProductCostVersion[], orderDate: string | null): ProductCostVersion | undefined {
+  if (!versions.length) return undefined;
+  const date = (orderDate || new Date().toISOString()).slice(0, 10);
+  return versions.find((version) => version.effective_from <= date) ?? versions[versions.length - 1];
+}
+
 function buildFinancialAnomalies(
   row: OrderProfitabilityRow,
   settlementRows: SettlementRow[]
 ): FinancialAnomaly[] {
   const anomalies: FinancialAnomaly[] = [];
   const hasSettlement = settlementRows.length > 0;
+  const sourceFile = row.settlement_files[0] ?? "";
 
   if (row.tracking_status === "delivered" && !hasSettlement) {
     anomalies.push({
@@ -2003,6 +2776,8 @@ function buildFinancialAnomalies(
       type: "Entregado sin liquidacion",
       order_name: row.order_name,
       guide_number: row.guide_number,
+      amount: row.expected_cod,
+      source_file: sourceFile,
       message: "Boxful/seguimiento indica entregado pero no aparece en liquidacion.",
       action: "Reclamar liquidacion a Boxful y revisar el corte faltante.",
     });
@@ -2015,6 +2790,8 @@ function buildFinancialAnomalies(
       type: "Doble liquidacion",
       order_name: row.order_name,
       guide_number: row.guide_number,
+      amount: row.amount_to_liquidate,
+      source_file: sourceFile,
       message: `El pedido aparece ${settlementRows.length} veces en liquidaciones.`,
       action: "Validar que no exista cobro duplicado o archivo repetido.",
     });
@@ -2027,6 +2804,8 @@ function buildFinancialAnomalies(
       type: "Liquidado sin entrega confirmada",
       order_name: row.order_name,
       guide_number: row.guide_number,
+      amount: row.amount_to_liquidate,
+      source_file: sourceFile,
       message: "Liquidacion reporta entregado pero seguimiento no esta entregado.",
       action: "Comparar Boxful logistico contra liquidacion y corregir estado.",
     });
@@ -2039,6 +2818,8 @@ function buildFinancialAnomalies(
       type: "Anulado con liquidacion",
       order_name: row.order_name,
       guide_number: row.guide_number,
+      amount: row.amount_to_liquidate,
+      source_file: sourceFile,
       message: "Shopify indica anulado/cancelado, pero el pedido aparece liquidado.",
       action: "Revisar si el pedido se despacho por error o si Shopify esta desactualizado.",
     });
@@ -2051,6 +2832,8 @@ function buildFinancialAnomalies(
       type: "SKU sin costo",
       order_name: row.order_name,
       guide_number: row.guide_number,
+      amount: row.amount_to_liquidate,
+      source_file: sourceFile,
       message: `Falta costo para ${row.missing_cost_skus.join(", ")}.`,
       action: "Completar costo unitario/empaque en Costos SKU para cerrar margen.",
     });
@@ -2063,6 +2846,8 @@ function buildFinancialAnomalies(
       type: "Margen negativo",
       order_name: row.order_name,
       guide_number: row.guide_number,
+      amount: row.contribution_margin,
+      source_file: sourceFile,
       message: `El pedido queda con margen ${currency(row.contribution_margin)} antes de ads/planilla.`,
       action: "Revisar precio, costo SKU, cobros logisticos y promociones.",
     });
@@ -2075,6 +2860,8 @@ function buildFinancialAnomalies(
       type: "Shopify sin Boxful",
       order_name: row.order_name,
       guide_number: row.guide_number,
+      amount: row.expected_cod,
+      source_file: sourceFile,
       message: "Pedido Shopify sigue sin guia Boxful despues de 2 dias.",
       action: "Confirmar si se despacho, si falta importar el archivo logistico o si fue anulado manualmente.",
     });

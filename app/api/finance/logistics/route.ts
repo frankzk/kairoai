@@ -6,6 +6,7 @@ import {
   insertLogisticsRows,
   listLogisticsImports,
   listLogisticsRows,
+  upsertBoxfulFileControl,
   type InternalOrderStatus,
   type LogisticsPackageItem,
   type LogisticsRow,
@@ -104,6 +105,18 @@ export async function POST(req: NextRequest) {
       unmatched_rows: boxfulRows.length - matchedRows,
       status_summary: statusSummary,
     });
+    try {
+      await upsertBoxfulFileControl({
+        file_name: file.name,
+        file_type: "logistica",
+        cutoff_date: periodEnd,
+        status: "importado",
+        import_id: logisticsImport.id,
+        imported_at: logisticsImport.created_at,
+      });
+    } catch (fileControlError) {
+      console.warn("[finance/logistics file control]", fileControlError);
+    }
 
     const rowsToInsert = pendingRows.map(({ row, shopify }) =>
       buildLogisticsRow(logisticsImport.id, row, shopify)

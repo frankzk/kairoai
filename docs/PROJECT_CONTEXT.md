@@ -109,6 +109,8 @@ Tabs:
 - `Costos SKU`: loads Shopify products/variants and lets the user edit unit and packaging costs inline by SKU.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses.
 - `Rentabilidad`: shows the approved net-profit formula, cash/control KPIs, a financial anomaly center, order-level margin, and missing SKU costs.
+- `Cierre mensual`: aggregates orders, cash, product costs, ads, payroll, miscellaneous expenses, and estimated net profit by month.
+- `Archivos Boxful`: tracks imported/expected/missing/ignored Boxful logistics and liquidation files by exact file name.
 
 APIs:
 
@@ -116,6 +118,9 @@ APIs:
 - `GET/POST/DELETE /api/finance/product-costs`
 - `GET/POST/PATCH/DELETE /api/finance/expenses`
 - `GET/POST/DELETE /api/finance/settlements`
+- `GET/POST /api/finance/shopify-sync`
+- `GET/POST /api/finance/claims`
+- `GET/POST /api/finance/boxful-files`
 - `GET /api/finance/summary`
 
 Core logic:
@@ -140,6 +145,12 @@ Database schema:
 - New migration file: `supabase/finance_schema.sql`
 - This SQL must be executed in Supabase SQL Editor before production finance APIs can persist data.
 - If tables are missing, `/admin/finance` shows a message instructing the user to run `supabase/finance_schema.sql`.
+- Additional finance-control tables:
+  - `shopify_orders`: persisted Shopify order master, synced in batches.
+  - `shopify_order_syncs`: reserved sync audit table.
+  - `product_cost_versions`: SKU cost history by effective date.
+  - `finance_claims`: workflow state for financial anomalies/reclaims.
+  - `boxful_file_controls`: exact Boxful file-name registry and missing-file tracker.
 
 Important implementation detail:
 
@@ -153,6 +164,7 @@ Important implementation detail:
   - Liquidation fallback: if logistics is still pending/in-progress but a Boxful liquidation row says `Entregado` or `No entregado`, tracking can use that liquidation status to update the follow-up state.
   - `Pendiente`: the order is in progress and has none of the final states above.
 - Product costs are applied only to rows whose internal status is `delivered`.
+- Product cost lookup is versioned. For a delivered order, the UI chooses the SKU cost version whose `effective_from` date is closest to but not after the Shopify order date. Current `product_costs` remains the active/latest table; `product_cost_versions` is the audit/history table.
 - `No entregado` rows still affect profitability through their negative `A Liquidar` value.
 - Claim alert rule: if a Boxful logistics row is `Entregado` but no settlement/liquidation row exists for the same order or guide number, `/admin/finance` flags it as `Entregados sin liquidacion` / `Por reclamar`. This is a revenue-control alert so the team can claim payment from the logistics provider.
 - Settlement traceability rule: whenever an order appears in a settlement/liquidation import, the order history/table must show the source Excel file name. The UI matches logistics rows to settlement rows by normalized order number or guide number and displays `settlement_imports.file_name`.
@@ -171,6 +183,9 @@ Important implementation detail:
   - missing SKU cost
   - negative order margin
   - Shopify order without Boxful guide after 2 days
+- Financial anomalies can be moved through a claim workflow: `pendiente`, `reclamado`, `resuelto`, `descartado`, with notes. The key is `finance_claims.anomaly_key`.
+- Exportables are client-side CSV downloads for anomalies, order profitability, monthly close, and Boxful file control.
+- Shopify historical sync must be done via `/api/finance/shopify-sync` in bounded batches. The normal `/admin/finance` page load must not paginate all Shopify orders because Vercel can time out. The UI sync button loops through bounded batches and persists into `shopify_orders`.
 - Settlement/liquidation files also include per-order charged logistics costs:
   - `Monto de comision COD`
   - `Com. Tarjeta`

@@ -1,12 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteProductCost, listProductCosts, upsertProductCost } from "@/lib/finance";
+import {
+  deleteProductCost,
+  listProductCosts,
+  listProductCostVersions,
+  upsertProductCost,
+} from "@/lib/finance";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
     const costs = await listProductCosts();
-    return NextResponse.json({ costs });
+    let versions: unknown[] = [];
+    try {
+      versions = await listProductCostVersions();
+    } catch {
+      versions = [];
+    }
+    return NextResponse.json({ costs, versions });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer costos";
     return NextResponse.json({ costs: [], error: message }, { status: 500 });

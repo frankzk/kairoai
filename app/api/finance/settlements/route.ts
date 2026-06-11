@@ -6,6 +6,7 @@ import {
   insertSettlementRows,
   listSettlementImports,
   listSettlementRows,
+  upsertBoxfulFileControl,
   type InternalOrderStatus,
   type SettlementOrderItem,
   type SettlementRow,
@@ -119,6 +120,18 @@ export async function POST(req: NextRequest) {
         consolidated.total_to_liquidate || sum(settlementRows.map((r) => r.amount_to_liquidate)),
       status_summary: statusSummary,
     });
+    try {
+      await upsertBoxfulFileControl({
+        file_name: file.name,
+        file_type: "liquidacion",
+        cutoff_date: periodEnd,
+        status: "importado",
+        import_id: settlementImport.id,
+        imported_at: settlementImport.created_at,
+      });
+    } catch (fileControlError) {
+      console.warn("[finance/settlements file control]", fileControlError);
+    }
 
     const rowsToInsert = pendingRows.map(({ row, shopify }) =>
       buildSettlementRow(settlementImport.id, row, shopify)
