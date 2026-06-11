@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
+import { readWorkbook } from "@/lib/xlsx";
 import {
   createSettlementImport,
   deleteSettlementImport,
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
     const periodLabel =
       String(form.get("period_label") ?? "").trim() || (periodEnd ? `Corte ${periodEnd}` : "");
 
-    const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+    const workbook = readWorkbook(await file.arrayBuffer());
     const settlementRows = parseSettlementRows(workbook);
     if (!settlementRows.length) {
       return NextResponse.json({ error: "No se encontraron filas en la hoja Envios" }, { status: 400 });
