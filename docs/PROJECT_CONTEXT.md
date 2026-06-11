@@ -225,7 +225,8 @@ Important behavior:
 
 - Shopify order name values look like `#MCRC11518`.
 - The logistics settlement file uses an `Orden` column that often matches Shopify `order.name`.
-- Some settlement rows use numeric-only order values such as `3937` or `3685`. These often come from iConflate/chatbot and should match against Shopify order notes like `Pedido #3685`, not only against Shopify `#MCRC...`.
+- Some settlement rows use numeric-only order values such as `3937` or `3685`. These often come from iConflate/chatbot and should match only against explicit external aliases in Shopify notes/attributes, for example `Pedido #3685`.
+- A plain numeric Boxful order like `4206` must not be auto-converted to Shopify `#MCRC4206`; `#MCRC` matching requires an explicit `#MCRC...`/`MCRC...` value.
 - In `/admin/finance`, Shopify orders appear in the `Pedidos` tab. Rows with a matching Boxful logistics import show `Origen = Boxful`; Shopify-only rows show `Origen = Shopify` and remain `Pendiente` unless Shopify is cancelled/voided or a liquidation row provides a final status. If a cancelled/voided Shopify order has Boxful or liquidation movement, Boxful/liquidation state overrides pure annulment.
 
 ## Logistics Settlement Analysis
@@ -300,7 +301,7 @@ Next reconciliation work:
 - Numeric-only rows can come from the iConfly/iConflate bot code stored in Shopify notes.
   Example: Shopify order `#MCRC11603` can include note `Pedido #4206 - Venta por bot - WhatsApp ...`.
   In that case Boxful/liquidation rows with order `4206` must match Shopify `#MCRC11603`.
-- Plain numeric Boxful order values should prefer the external bot-code alias from Shopify notes before falling back to `#MCRC{number}`.
+- Plain numeric Boxful order values should not fall back to `#MCRC{number}`. They match Shopify only when that numeric code exists as an explicit external bot-code alias in Shopify notes/attributes.
 - Existing imported rows are also enriched in the admin UI from synced Shopify data, so old `sin match` rows can resolve after Shopify sync/refresh without re-uploading the Excel.
 - Build an importer that stores uploaded weekly/period settlement files instead of manually analyzing local Excel files.
 - Preserve source file name and import timestamp.

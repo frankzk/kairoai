@@ -270,9 +270,7 @@ function findShopifyMatch(
 
   return (
     indexes.byName.get(raw) ??
-    indexes.byExternalOrderCode.get(normalizeExternalOrderCode(raw)) ??
-    indexes.byMcrcNumber.get(toMcrcLookupKey(raw)) ??
-    indexes.byOrderNumber.get(raw.replace(/^#?MCRC/i, ""))
+    indexes.byExternalOrderCode.get(normalizeExternalOrderCode(raw))
   );
 }
 

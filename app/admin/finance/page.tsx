@@ -3788,7 +3788,6 @@ function getOrderMatchKeys(row: OrderMatchKeySource): string[] {
     normalizeMatchKey(row.order_name ?? ""),
     ...extractExternalOrderCodesFromText(row.shopify_note ?? "").map(normalizeMatchKey),
     normalizeMatchKey(row.shopify_order_name ?? ""),
-    orderNumber ? normalizeMatchKey(String(orderNumber)) : "",
     orderNumber ? normalizeMatchKey(`#MCRC${orderNumber}`) : "",
   ]);
 }
@@ -3804,7 +3803,6 @@ function getShopifyDirectOrderMatchKeys(order: ShopifyOrderSummary): string[] {
   const orderNumber = order.order_number;
   return uniqueKeys([
     normalizeMatchKey(order.name),
-    orderNumber ? normalizeMatchKey(String(orderNumber)) : "",
     orderNumber ? normalizeMatchKey(`#MCRC${orderNumber}`) : "",
   ]);
 }
