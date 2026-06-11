@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
+import { readWorkbook } from "@/lib/xlsx";
 import {
   createLogisticsImport,
   deleteLogisticsImport,
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest) {
     const periodStart = nullableDate(String(form.get("period_start") ?? ""));
     const periodEnd = nullableDate(String(form.get("period_end") ?? ""));
 
-    const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+    const workbook = readWorkbook(await file.arrayBuffer());
     const boxfulRows = parseBoxfulRows(workbook);
     if (!boxfulRows.length) {
       return NextResponse.json({ error: "No se encontraron filas logisticas" }, { status: 400 });
