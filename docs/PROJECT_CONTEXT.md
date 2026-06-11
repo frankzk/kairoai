@@ -1,6 +1,6 @@
 # Kairo AI Webapp Context
 
-Last updated: 2026-06-10
+Last updated: 2026-06-11
 
 ## Purpose
 
@@ -105,7 +105,7 @@ Navigation:
 Tabs:
 
 - `Pedidos`: shows Shopify orders as the baseline tracking list, filters by operational tracking state, includes a search box for order codes, guide numbers, and customers, opens Boxful logistics Excel upload from the table header action button/modal, inspects matched rows, and tracks operational follow-up state.
-- `Liquidaciones`: upload settlement/liquidation Excel files by cutoff date, inspect financial settlement rows, source Excel traceability, claim alerts, and anomalies.
+- `Liquidaciones`: upload settlement/liquidation Excel files by cutoff date, select previously imported files, sort them by recent/oldest, delete imports when needed, inspect financial settlement rows, filter Shopify match state, source Excel traceability, claim alerts, and anomalies.
 - `Costos SKU`: loads Shopify products/variants and manages product costs by SKU with explicit edit/save rows, saved/missing cost tabs, and versioned effective dates.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses, organized into three internal tabs with contextual modal buttons.
 - `Rentabilidad`: shows the approved net-profit formula, cash/control KPIs, a financial anomaly center, order-level margin, and missing SKU costs.
@@ -136,6 +136,8 @@ Excel parsing:
 - Optional `Consolidado` sheet is read for total collected and total to liquidate.
 - Settlement/liquidation imports do not use date ranges in the UI. The user provides one `fecha de corte`, stored in `settlement_imports.period_end`; `period_label` is automatically derived as `Corte YYYY-MM-DD` when not provided.
 - `settlement_imports.file_name` is a business identifier because Boxful references liquidations by Excel file name. The UI must keep this visible in latest import cards and history so the team can know which Boxful liquidation files are still missing in Kairo AI.
+- In the `Liquidaciones` tab, imported files appear below the upload form as selectable file rows. Selecting a file changes the active state and drives the right-side settlement table. Imports can be sorted by `Recientes` or `Antiguas`; deleting an import removes the import record and its settlement rows.
+- Settlement rows can be filtered by Shopify match status: `Todos`, `Con match`, and `Sin match`. `Sin match` means the Boxful liquidation row did not match a Shopify order by order name, `#MCRC`/numeric variants, guide/order identifiers, or iConflate/chatbot note code.
 - If the user does not enter `period_start`, the importer infers the earliest `Creado en` date from the Excel and uses that to limit Shopify order fetching. This prevents long Vercel imports and avoids opaque non-JSON server errors.
 - Shopify matching accepts exact order names, `#MCRC` order names, and numeric order numbers when reconciling imported files.
 - Shopify matching also accepts iConflate/chatbot order codes stored in Shopify order notes, for example `Pedido #3685 - Venta por bot - WhatsApp ...`. Importers fetch `note` and `note_attributes`, extract `Pedido #NNN`, and use it as an alternate match key before falling back to Shopify numeric `order_number`.
@@ -362,6 +364,10 @@ Purpose:
 
 - manage financial settlement files independently from shipment follow-up
 - upload liquidation Excel files using the Boxful file name plus one cutoff date
+- select any imported liquidation from the list under the import form
+- sort imported liquidation files by newest or oldest cutoff/import date
+- delete an imported liquidation with confirmation when it needs to be reprocessed
+- filter settlement rows by Shopify match: all rows, matched rows, or unmatched rows only
 - report delivered orders missing from liquidation as claim alerts
 - report double liquidation or any financial/logistics inconsistency as anomalies
 - show each settlement row with its source Excel file, status, Shopify match, and amount to liquidate
@@ -544,6 +550,12 @@ Build in this order:
   - Shopify and Retell webhooks remain accessible
 
 ## Validation Log
+
+2026-06-11:
+
+- `npm run lint`: passed
+- `npm run build`: passed
+- `Liquidaciones` now has an imported-file selector below the upload form, recent/oldest sorting, delete-with-confirmation, and Shopify match filters (`Todos`, `Con match`, `Sin match`) for the active settlement file.
 
 2026-06-10:
 

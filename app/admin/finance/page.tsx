@@ -28,6 +28,8 @@ type Tab = "orders" | "settlements" | "costs" | "expenses" | "profit" | "monthly
 type ExpenseType = "ads" | "payroll" | "misc";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 type OrderTrackingFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
+type SettlementImportSort = "recent" | "oldest";
+type SettlementShopifyFilter = "all" | "matched" | "unmatched";
 
 interface SettlementImport {
   id: number;
@@ -319,6 +321,17 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "not_delivered", label: "No entregados" },
 ];
 
+const SETTLEMENT_IMPORT_SORTS: Array<{ value: SettlementImportSort; label: string }> = [
+  { value: "recent", label: "Recientes" },
+  { value: "oldest", label: "Antiguas" },
+];
+
+const SETTLEMENT_SHOPIFY_FILTERS: Array<{ value: SettlementShopifyFilter; label: string }> = [
+  { value: "all", label: "Todos" },
+  { value: "matched", label: "Con match" },
+  { value: "unmatched", label: "Sin match" },
+];
+
 const EXPENSE_VIEW_CONFIG: Array<{
   type: ExpenseType;
   label: string;
@@ -400,7 +413,6 @@ export default function FinancePage() {
   });
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
 
-  const latestImport = imports[0];
   const latestLogisticsImport = logisticsImports[0];
   const liquidationAlertRows = useMemo(
     () => getDeliveredWithoutSettlement(logisticsRows, rows),
@@ -548,6 +560,16 @@ export default function FinancePage() {
     } finally {
       setImporting(false);
     }
+  }
+
+  async function deleteSettlementImport(id: number) {
+    const res = await fetch(`/api/finance/settlements?id=${id}`, { method: "DELETE" });
+    const json = await readApiJson(res);
+    if (!res.ok) {
+      setError(json.error ?? "No se pudo eliminar liquidacion");
+      return;
+    }
+    await refresh();
   }
 
   async function handleLogisticsImport(event: FormEvent<HTMLFormElement>): Promise<boolean> {
@@ -840,11 +862,11 @@ export default function FinancePage() {
               <SettlementsTab
                 imports={imports}
                 rows={rows}
-                latestImport={latestImport}
                 liquidationAlertRows={liquidationAlertRows}
                 doubleSettlementAnomalies={doubleSettlementAnomalies}
                 importing={importing}
                 onImport={handleImport}
+                onDeleteImport={deleteSettlementImport}
               />
             )}
             {tab === "costs" && (
@@ -1202,24 +1224,84 @@ function OrdersTable({
 function SettlementsTab({
   imports,
   rows,
-  latestImport,
   liquidationAlertRows,
   doubleSettlementAnomalies,
   importing,
   onImport,
+  onDeleteImport,
 }: {
   imports: SettlementImport[];
   rows: SettlementRow[];
-  latestImport?: SettlementImport;
   liquidationAlertRows: LogisticsRow[];
   doubleSettlementAnomalies: DoubleSettlementAnomaly[];
   importing: boolean;
   onImport: (event: FormEvent<HTMLFormElement>) => void;
+  onDeleteImport: (id: number) => Promise<void>;
 }) {
+  const [selectedImportId, setSelectedImportId] = useState<number | null>(imports[0]?.id ?? null);
+  const [importSort, setImportSort] = useState<SettlementImportSort>("recent");
+  const [shopifyFilter, setShopifyFilter] = useState<SettlementShopifyFilter>("all");
+  const [deletingImportId, setDeletingImportId] = useState<number | null>(null);
   const fileByImportId = useMemo(
     () => new Map(imports.map((item) => [item.id, item.file_name])),
     [imports]
   );
+  const sortedImports = useMemo(() => {
+    return [...imports].sort((a, b) => {
+      const aDate = a.period_end || a.created_at || "";
+      const bDate = b.period_end || b.created_at || "";
+      const dateSort = bDate.localeCompare(aDate) || b.created_at.localeCompare(a.created_at);
+      return importSort === "recent" ? dateSort : -dateSort;
+    });
+  }, [importSort, imports]);
+  const selectedImport =
+    imports.find((item) => item.id === selectedImportId) ?? sortedImports[0] ?? null;
+  const activeSettlementImportId = selectedImport?.id ?? null;
+  const selectedRows = useMemo(
+    () =>
+      activeSettlementImportId
+        ? rows.filter((row) => row.import_id === activeSettlementImportId)
+        : [],
+    [activeSettlementImportId, rows]
+  );
+  const settlementMatchCounts = useMemo(
+    () => ({
+      all: selectedRows.length,
+      matched: selectedRows.filter((row) => row.match_status === "matched").length,
+      unmatched: selectedRows.filter((row) => row.match_status !== "matched").length,
+    }),
+    [selectedRows]
+  );
+  const visibleSettlementRows = useMemo(
+    () =>
+      selectedRows.filter((row) => {
+        if (shopifyFilter === "all") return true;
+        if (shopifyFilter === "matched") return row.match_status === "matched";
+        return row.match_status !== "matched";
+      }),
+    [selectedRows, shopifyFilter]
+  );
+
+  useEffect(() => {
+    if (!imports.length) {
+      setSelectedImportId(null);
+      return;
+    }
+    if (!imports.some((item) => item.id === selectedImportId)) {
+      setSelectedImportId(sortedImports[0]?.id ?? imports[0].id);
+    }
+  }, [imports, selectedImportId, sortedImports]);
+
+  async function handleDeleteImport(item: SettlementImport) {
+    const ok = window.confirm(`Eliminar la liquidacion "${item.file_name}" y sus filas importadas?`);
+    if (!ok) return;
+    setDeletingImportId(item.id);
+    try {
+      await onDeleteImport(item.id);
+    } finally {
+      setDeletingImportId(null);
+    }
+  }
 
   return (
     <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
@@ -1242,27 +1324,90 @@ function SettlementsTab({
               {importing ? "Importando..." : "Subir liquidacion"}
             </Button>
           </form>
+          <div className="mt-5 border-t border-border pt-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-xs font-medium text-muted-foreground">Liquidaciones importadas</p>
+              <div className="flex gap-1">
+                {SETTLEMENT_IMPORT_SORTS.map((sort) => (
+                  <button
+                    key={sort.value}
+                    type="button"
+                    onClick={() => setImportSort(sort.value)}
+                    className={`border px-2 py-1 text-xs transition-colors ${
+                      importSort === sort.value
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {sort.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="max-h-[360px] space-y-2 overflow-auto pr-1">
+              {sortedImports.map((item) => {
+                const active = selectedImport?.id === item.id;
+                const deleting = deletingImportId === item.id;
+                return (
+                  <div
+                    key={item.id}
+                    className={`grid grid-cols-[1fr_auto] gap-2 border p-2 transition-colors ${
+                      active ? "border-primary bg-primary/10" : "border-border bg-background"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelectedImportId(item.id)}
+                      className="min-w-0 text-left"
+                    >
+                      <span className={`block truncate text-xs font-semibold ${active ? "text-primary" : "text-foreground"}`} title={item.file_name}>
+                        {item.file_name}
+                      </span>
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        {item.period_end ? formatDate(item.period_end) : "Sin corte"} - {item.total_rows} filas - {currency(item.total_to_liquidate)}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      title="Eliminar liquidacion"
+                      aria-label={`Eliminar ${item.file_name}`}
+                      disabled={deleting}
+                      onClick={() => handleDeleteImport(item)}
+                      className="self-start text-muted-foreground transition-colors hover:text-red-300 disabled:opacity-50"
+                    >
+                      {deleting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    </button>
+                  </div>
+                );
+              })}
+              {!sortedImports.length && (
+                <p className="border border-dashed border-border px-3 py-4 text-xs text-muted-foreground">
+                  Aun no hay liquidaciones importadas.
+                </p>
+              )}
+            </div>
+          </div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
-            {latestImport ? latestImport.file_name : "Sin liquidaciones importadas"}
+            {selectedImport ? selectedImport.file_name : "Sin liquidaciones importadas"}
           </CardTitle>
-          {latestImport?.file_name && (
+          {selectedImport?.file_name && (
             <p className="text-xs text-muted-foreground">
-              Archivo registrado en Boxful: {latestImport.file_name}
+              Archivo registrado en Boxful: {selectedImport.file_name}
             </p>
           )}
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-5">
-            <MiniStat label="Corte" value={latestImport?.period_end ? formatDate(latestImport.period_end) : "-"} />
-            <MiniStat label="Filas" value={latestImport?.total_rows ?? 0} />
-            <MiniStat label="Match Shopify" value={latestImport?.matched_rows ?? 0} />
-            <MiniStat label="Sin match" value={latestImport?.unmatched_rows ?? 0} />
-            <MiniStat label="A liquidar" value={currency(latestImport?.total_to_liquidate ?? 0)} />
+            <MiniStat label="Corte" value={selectedImport?.period_end ? formatDate(selectedImport.period_end) : "-"} />
+            <MiniStat label="Filas" value={selectedImport?.total_rows ?? 0} />
+            <MiniStat label="Match Shopify" value={settlementMatchCounts.matched} />
+            <MiniStat label="Sin match" value={settlementMatchCounts.unmatched} />
+            <MiniStat label="A liquidar" value={currency(selectedImport?.total_to_liquidate ?? 0)} />
           </div>
           {liquidationAlertRows.length > 0 && (
             <div className="border border-amber-500/40 bg-amber-500/10 p-4">
@@ -1288,21 +1433,37 @@ function SettlementsTab({
               <DoubleSettlementTable anomalies={doubleSettlementAnomalies} />
             </div>
           )}
-          <SettlementRowsTable rows={rows} fileByImportId={fileByImportId} />
-          {imports.length > 0 && (
-            <div className="border-t border-border pt-3">
-              <p className="mb-2 text-xs font-medium text-muted-foreground">Historial de liquidaciones</p>
-              <div className="space-y-1 text-xs text-muted-foreground">
-                {imports.slice(0, 6).map((item) => (
-                  <div key={item.id} className="grid grid-cols-[1fr_auto_auto] gap-3">
-                    <span className="truncate" title={item.file_name}>{item.file_name}</span>
-                    <span>{item.period_end ? formatDate(item.period_end) : "Sin corte"}</span>
-                    <span>{currency(item.total_to_liquidate)}</span>
-                  </div>
-                ))}
-              </div>
+          <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">
+              Mostrando {visibleSettlementRows.length} de {selectedRows.length} filas de esta liquidacion.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">Shopify</span>
+              {SETTLEMENT_SHOPIFY_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => setShopifyFilter(filter.value)}
+                  className={`border px-3 py-1.5 text-xs transition-colors ${
+                    shopifyFilter === filter.value
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {filter.label} ({settlementMatchCounts[filter.value]})
+                </button>
+              ))}
             </div>
-          )}
+          </div>
+          <SettlementRowsTable
+            rows={visibleSettlementRows}
+            fileByImportId={fileByImportId}
+            emptyLabel={
+              selectedImport
+                ? "No hay filas con ese filtro de Shopify."
+                : "Selecciona o importa una liquidacion para ver sus filas."
+            }
+          />
         </CardContent>
       </Card>
     </div>
@@ -1312,9 +1473,11 @@ function SettlementsTab({
 function SettlementRowsTable({
   rows,
   fileByImportId,
+  emptyLabel = "No hay filas para mostrar.",
 }: {
   rows: SettlementRow[];
   fileByImportId: Map<number, string>;
+  emptyLabel?: string;
 }) {
   return (
     <div className="max-h-[560px] overflow-auto border border-border">
@@ -1350,6 +1513,13 @@ function SettlementRowsTable({
               <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.amount_to_liquidate)}</td>
             </tr>
           ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                {emptyLabel}
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
