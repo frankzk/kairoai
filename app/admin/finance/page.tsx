@@ -17,6 +17,7 @@ import {
   Search,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -482,7 +483,7 @@ export default function FinancePage() {
     }
   }
 
-  async function handleLogisticsImport(event: FormEvent<HTMLFormElement>) {
+  async function handleLogisticsImport(event: FormEvent<HTMLFormElement>): Promise<boolean> {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
@@ -497,8 +498,10 @@ export default function FinancePage() {
       if (!res.ok) throw new Error(json.error ?? "No se pudo importar logistica");
       form.reset();
       await refresh();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo importar logistica");
+      return false;
     } finally {
       setImportingLogistics(false);
     }
@@ -857,56 +860,43 @@ function OrdersTab({
   syncMessage: string;
   onSyncShopify: () => void;
   importingLogistics: boolean;
-  onLogisticsImport: (event: FormEvent<HTMLFormElement>) => void;
+  onLogisticsImport: (event: FormEvent<HTMLFormElement>) => Promise<boolean>;
 }) {
+  const [isLogisticsModalOpen, setIsLogisticsModalOpen] = useState(false);
+
+  async function handleModalLogisticsImport(event: FormEvent<HTMLFormElement>) {
+    const didImport = await onLogisticsImport(event);
+    if (didImport) setIsLogisticsModalOpen(false);
+  }
+
   return (
-    <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
-      <div className="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Sync Shopify</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-xs text-muted-foreground">
-              Guarda pedidos Shopify historicos en Supabase por lotes para evitar timeouts.
-            </p>
-            <Button type="button" disabled={syncingShopify} onClick={onSyncShopify} className="w-full gap-2">
-              <Database className="h-4 w-4" />
-              {syncingShopify ? "Sincronizando..." : "Sincronizar Shopify"}
-            </Button>
-            {syncMessage && <p className="text-xs text-muted-foreground">{syncMessage}</p>}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Importar Boxful logistico</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={onLogisticsImport} className="space-y-3">
-              <Input name="file" type="file" accept=".xlsx,.xls" required />
-              <Input name="period_label" placeholder="Periodo, ej: 13 marzo - 10 junio" />
-              <div className="grid grid-cols-2 gap-2">
-                <Input name="period_start" type="date" />
-                <Input name="period_end" type="date" />
-              </div>
-              <Button type="submit" disabled={importingLogistics} className="w-full gap-2">
-                {importingLogistics ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                {importingLogistics ? "Importando..." : "Subir Boxful"}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      </div>
-
+    <div className="space-y-4">
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            {latestLogisticsImport ? latestLogisticsImport.file_name : "Pedidos Shopify"}
-          </CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.
-          </p>
+        <CardHeader className="gap-4 space-y-0 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1.5">
+            <CardTitle className="text-base">
+              {latestLogisticsImport ? latestLogisticsImport.file_name : "Pedidos Shopify"}
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.
+            </p>
+            {syncMessage && <p className="text-xs text-muted-foreground">{syncMessage}</p>}
+          </div>
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" disabled={syncingShopify} onClick={onSyncShopify} className="gap-2">
+              <Database className="h-4 w-4" />
+              {syncingShopify ? "Sincronizando..." : "Sync Shopify"}
+            </Button>
+            <Button
+              type="button"
+              disabled={importingLogistics}
+              onClick={() => setIsLogisticsModalOpen(true)}
+              className="gap-2"
+            >
+              {importingLogistics ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {importingLogistics ? "Importando..." : "Importar Boxful"}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-5">
@@ -932,6 +922,60 @@ function OrdersTab({
           )}
         </CardContent>
       </Card>
+
+      {isLogisticsModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="logistics-import-title"
+        >
+          <div className="w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-2xl">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <h3 id="logistics-import-title" className="text-base font-semibold">
+                  Importar Boxful logistico
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Sube el Excel logistico para actualizar entregados, no entregados y matches Shopify.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={importingLogistics}
+                aria-label="Cerrar importacion Boxful"
+                onClick={() => setIsLogisticsModalOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <form onSubmit={handleModalLogisticsImport} className="space-y-3">
+              <Input name="file" type="file" accept=".xlsx,.xls" required />
+              <Input name="period_label" placeholder="Periodo, ej: 13 marzo - 10 junio" />
+              <div className="grid grid-cols-2 gap-2">
+                <Input name="period_start" type="date" />
+                <Input name="period_end" type="date" />
+              </div>
+              <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={importingLogistics}
+                  onClick={() => setIsLogisticsModalOpen(false)}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={importingLogistics} className="gap-2">
+                  {importingLogistics ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {importingLogistics ? "Importando..." : "Subir Boxful"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
