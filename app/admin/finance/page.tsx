@@ -444,6 +444,7 @@ const EXPENSE_VIEW_CONFIG: Array<{
 const FINANCE_SHOPIFY_CREATED_AT_MIN = "2025-09-16T00:00:00-06:00";
 const FINANCE_SHOPIFY_ORDERS_URL =
   `/api/shopify/orders?status=any&limit=250&created_at_min=${encodeURIComponent(FINANCE_SHOPIFY_CREATED_AT_MIN)}`;
+const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
@@ -519,6 +520,7 @@ export default function FinancePage() {
       const expensesJson = await readApiJson(expensesRes);
       const summaryJson = await readApiJson(summaryRes);
       let shopifyOrdersJson: Record<string, unknown> = {};
+      let shopifyNoteOrdersJson: Record<string, unknown> = {};
       let persistedShopifyJson: Record<string, unknown> = {};
       let claimsJson: Record<string, unknown> = {};
       let boxfulFilesJson: Record<string, unknown> = {};
@@ -527,6 +529,15 @@ export default function FinancePage() {
         shopifyOrdersJson = await readApiJson(shopifyOrdersRes);
       } catch {
         shopifyOrdersJson = {};
+      }
+      try {
+        const shopifyNoteOrdersRes = await fetch(
+          `/api/shopify/note-orders?created_at_min=${encodeURIComponent(getShopifyNotesCreatedAtMin())}&max_pages=30`,
+          { cache: "no-store" }
+        );
+        shopifyNoteOrdersJson = await readApiJson(shopifyNoteOrdersRes);
+      } catch {
+        shopifyNoteOrdersJson = {};
       }
       try {
         const persistedShopifyRes = await fetch("/api/finance/shopify-sync?limit=20000", { cache: "no-store" });
@@ -552,10 +563,13 @@ export default function FinancePage() {
       setLogisticsImports(logisticsJson.imports ?? []);
       setLogisticsRows(logisticsJson.rows ?? []);
       const liveShopifyOrders = Array.isArray(shopifyOrdersJson.orders) ? shopifyOrdersJson.orders as ShopifyOrderSummary[] : [];
+      const noteShopifyOrders = Array.isArray(shopifyNoteOrdersJson.orders)
+        ? shopifyNoteOrdersJson.orders as ShopifyOrderSummary[]
+        : [];
       const persistedShopifyOrders = Array.isArray(persistedShopifyJson.orders)
         ? (persistedShopifyJson.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
         : [];
-      setShopifyOrders(mergeShopifyOrderSummaries(liveShopifyOrders, persistedShopifyOrders));
+      setShopifyOrders(mergeShopifyOrderSummaries(noteShopifyOrders, persistedShopifyOrders, liveShopifyOrders));
       setCosts(costsJson.costs ?? []);
       setCostVersions(Array.isArray(costsJson.versions) ? costsJson.versions as ProductCostVersion[] : []);
       setExpenses(expensesJson.expenses ?? []);
@@ -1453,7 +1467,7 @@ function ShopifyNotesTab({ orders }: { orders: ShopifyOrderSummary[] }) {
         <div className="space-y-1.5">
           <CardTitle className="text-base">Notas Shopify</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Tabla de alias para cruzar codigos del bot contra pedidos Shopify.
+            Alias de notas Shopify de los ultimos {FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS} dias para cruzar codigos del bot.
           </p>
         </div>
         <Button type="button" variant="outline" onClick={exportAliases} className="gap-2">
@@ -3532,14 +3546,41 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
   };
 }
 
-function mergeShopifyOrderSummaries(
-  liveOrders: ShopifyOrderSummary[],
-  persistedOrders: ShopifyOrderSummary[]
-): ShopifyOrderSummary[] {
+function mergeShopifyOrderSummaries(...orderGroups: ShopifyOrderSummary[][]): ShopifyOrderSummary[] {
   const byKey = new Map<string, ShopifyOrderSummary>();
-  for (const order of persistedOrders) byKey.set(order.id || order.name, order);
-  for (const order of liveOrders) byKey.set(order.id || order.name, order);
+  for (const orders of orderGroups) {
+    for (const order of orders) {
+      const key = order.id || order.name;
+      const existing = byKey.get(key);
+      byKey.set(key, existing ? mergeShopifyOrderSummary(existing, order) : order);
+    }
+  }
   return Array.from(byKey.values()).sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+function mergeShopifyOrderSummary(
+  existing: ShopifyOrderSummary,
+  incoming: ShopifyOrderSummary
+): ShopifyOrderSummary {
+  return {
+    ...existing,
+    ...incoming,
+    customer_name: incoming.customer_name || existing.customer_name,
+    phone: incoming.phone ?? existing.phone,
+    products: incoming.products || existing.products,
+    total: incoming.total || existing.total,
+    total_price: incoming.total_price || existing.total_price,
+    currency: incoming.currency || existing.currency,
+    note: incoming.note || existing.note,
+    note_attributes: incoming.note_attributes?.length ? incoming.note_attributes : existing.note_attributes,
+    line_items: incoming.line_items?.length ? incoming.line_items : existing.line_items,
+    created_at: incoming.created_at || existing.created_at,
+  };
+}
+
+function getShopifyNotesCreatedAtMin(): string {
+  const date = new Date(Date.now() - FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  return date.toISOString();
 }
 
 function buildMonthlyCloseRows(

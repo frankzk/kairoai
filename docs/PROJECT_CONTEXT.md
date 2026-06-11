@@ -227,7 +227,7 @@ Important behavior:
 - The logistics settlement file uses an `Orden` column that often matches Shopify `order.name`.
 - Some settlement rows use numeric-only order values such as `3937` or `3685`. These often come from iConflate/chatbot and should match only against explicit external aliases in Shopify notes/attributes, for example `Pedido #3685`.
 - A plain numeric Boxful order like `4206` must not be auto-converted to Shopify `#MCRC4206`; `#MCRC` matching requires an explicit `#MCRC...`/`MCRC...` value.
-- `/admin/finance` includes a `Notas Shopify` tab that lists Shopify order code to note alias pairs, for example `#MCRC10269 -> 3685`. This is the audit table used to explain and verify liquidation/logistics matches by bot order code.
+- `/admin/finance` includes a `Notas Shopify` tab that lists Shopify order code to note alias pairs, for example `#MCRC10269 -> 3685`. The admin fetches a lightweight 90-day Shopify notes backfill so recent liquidation/logistics matches by bot order code do not depend only on the full historical sync.
 - In `/admin/finance`, Shopify orders appear in the `Pedidos` tab. Rows with a matching Boxful logistics import show `Origen = Boxful`; Shopify-only rows show `Origen = Shopify` and remain `Pendiente` unless Shopify is cancelled/voided or a liquidation row provides a final status. If a cancelled/voided Shopify order has Boxful or liquidation movement, Boxful/liquidation state overrides pure annulment.
 
 ## Logistics Settlement Analysis
