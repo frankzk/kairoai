@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowLeft,
+  BarChart3,
   ChevronDown,
   ChevronRight,
   Database,
@@ -27,10 +28,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
-type Tab = "orders" | "notes" | "settlements" | "costs" | "expenses" | "monthly" | "files";
+type Tab = "orders" | "products" | "notes" | "settlements" | "costs" | "expenses" | "monthly" | "files";
 type ExpenseType = "ads" | "payroll" | "misc";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 type OrderTrackingFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
+type ProductAnalysisFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
 type OrderSettlementFilter = "all" | "settled" | "unsettled" | "to_claim" | "duplicate";
 type OrderPeriodMode = "all" | "month" | "range";
 type MonthlyOrderFilter =
@@ -45,6 +47,7 @@ type MonthlyOrderFilter =
   | "duplicate";
 type SettlementImportSort = "recent" | "oldest";
 type SettlementShopifyFilter = "all" | "matched" | "unmatched";
+type ProductLineItem = { sku?: string; title: string; quantity: number; price: number };
 
 interface SettlementImport {
   id: number;
@@ -79,7 +82,7 @@ interface SettlementRow {
   shopify_order_name: string;
   shopify_financial_status: string;
   shopify_fulfillment_status: string;
-  order_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
+  order_items: ProductLineItem[];
 }
 
 interface SettlementTrace {
@@ -143,7 +146,7 @@ interface ShopifyOrderSummary {
   note?: string;
   note_attributes?: Array<{ name?: string | null; value?: string | null }>;
   created_at: string;
-  line_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
+  line_items: ProductLineItem[];
 }
 
 interface ShopifyNoteAliasRow {
@@ -171,7 +174,7 @@ interface TrackableOrderRow {
   shopify_cancelled_at: string | null;
   shopify_note?: string;
   shopify_created_at: string | null;
-  package_items: Array<{ sku?: string; title: string; quantity: number; price: number }>;
+  package_items: ProductLineItem[];
 }
 
 interface ProductCost {
@@ -289,11 +292,27 @@ interface OrderProfitabilityRow {
   product_cost: number;
   contribution_margin: number;
   missing_cost_skus: string[];
+  items: ProductLineItem[];
   items_summary: string;
   cash_status: "cobrado" | "por_cobrar" | "sin_caja";
   issue_count: number;
   created_at: string | null;
   days_since_order: number | null;
+}
+
+interface ProductAnalysisRow {
+  key: string;
+  product_name: string;
+  sku: string;
+  orders: number;
+  units: number;
+  dispatched: number;
+  dispatch_rate: number;
+  delivery_effectiveness: number;
+  delivered: number;
+  not_delivered: number;
+  annulled: number;
+  pending: number;
 }
 
 interface FinancialAnomaly {
@@ -351,6 +370,14 @@ const emptyExpense = {
 };
 
 const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string }> = [
+  { value: "all", label: "Todos" },
+  { value: "pending", label: "Pendientes" },
+  { value: "annulled", label: "Anulados" },
+  { value: "delivered", label: "Entregados" },
+  { value: "not_delivered", label: "No entregados" },
+];
+
+const PRODUCT_ANALYSIS_FILTERS: Array<{ value: ProductAnalysisFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "pending", label: "Pendientes" },
   { value: "annulled", label: "Anulados" },
@@ -491,6 +518,10 @@ export default function FinancePage() {
   const financeControl = useMemo(
     () => buildFinanceControlCenter(visibleOrderRows, rows, imports, costs, costVersions, settlementTraceByKey),
     [visibleOrderRows, rows, imports, costs, costVersions, settlementTraceByKey]
+  );
+  const productAnalysisRows = useMemo(
+    () => buildProductAnalysisRows(financeControl.orders),
+    [financeControl.orders]
   );
   const claimByAnomalyKey = useMemo(
     () => new Map(claims.map((claim) => [claim.anomaly_key, claim])),
@@ -865,6 +896,9 @@ export default function FinancePage() {
           <TabButton active={tab === "orders"} onClick={() => setTab("orders")} icon={<FileSpreadsheet />}>
             Pedidos
           </TabButton>
+          <TabButton active={tab === "products"} onClick={() => setTab("products")} icon={<BarChart3 />}>
+            Productos
+          </TabButton>
           <TabButton active={tab === "notes"} onClick={() => setTab("notes")} icon={<StickyNote />}>
             Notas Shopify
           </TabButton>
@@ -902,6 +936,9 @@ export default function FinancePage() {
                 importingLogistics={importingLogistics}
                 onLogisticsImport={handleLogisticsImport}
               />
+            )}
+            {tab === "products" && (
+              <ProductAnalysisTab rows={productAnalysisRows} />
             )}
             {tab === "notes" && (
               <ShopifyNotesTab orders={shopifyOrders} />
@@ -1434,6 +1471,167 @@ function OrdersTable({
           )}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ProductAnalysisFilter>("all");
+  const filteredRows = useMemo(
+    () =>
+      rows.filter((row) => {
+        const haystack = `${row.product_name} ${row.sku}`.toLowerCase();
+        const matchesSearch = haystack.includes(search.trim().toLowerCase());
+        return matchesSearch && matchesProductAnalysisFilter(row, statusFilter);
+      }),
+    [rows, search, statusFilter]
+  );
+  const summary = useMemo(() => summarizeProductAnalysisRows(filteredRows), [filteredRows]);
+  const filterCounts = useMemo(() => getProductAnalysisFilterCounts(rows), [rows]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <CardTitle className="text-base">Analisis por producto</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Despacho = no anulado en Shopify y con movimiento Boxful: entregado o no entregado.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() =>
+              exportCsv(
+                "analisis-productos.csv",
+                filteredRows.map((row) => ({
+                  producto: row.product_name,
+                  sku: row.sku,
+                  pedidos: row.orders,
+                  unidades: row.units,
+                  despachados: row.dispatched,
+                  tasa_despacho: formatPercent(row.dispatch_rate),
+                  efectividad_entrega: formatPercent(row.delivery_effectiveness),
+                  entregados: row.delivered,
+                  no_entregados: row.not_delivered,
+                  anulados: row.annulled,
+                  pendientes: row.pending,
+                }))
+              )
+            }
+          >
+            <Download className="h-4 w-4" /> Exportar
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <MiniStat label="Productos visibles" value={filteredRows.length} />
+          <MiniStat label="Pedidos-producto" value={summary.orders} />
+          <MiniStat label="Tasa despacho" value={formatPercent(summary.dispatch_rate)} />
+          <MiniStat label="Efectividad entrega" value={formatPercent(summary.delivery_effectiveness)} />
+        </div>
+
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="relative xl:w-[420px]">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar por producto o SKU"
+              className="pl-9"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {PRODUCT_ANALYSIS_FILTERS.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                onClick={() => setStatusFilter(filter.value)}
+                className={`border px-3 py-2 text-sm transition-colors ${
+                  statusFilter === filter.value
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {filter.label} {filterCounts[filter.value]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="max-h-[640px] overflow-auto border border-border">
+          <table className="w-full min-w-[1180px] text-sm">
+            <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">Producto</th>
+                <th className="px-3 py-2">SKU</th>
+                <th className="px-3 py-2 text-right">Pedidos</th>
+                <th className="px-3 py-2 text-right">Unid.</th>
+                <th className="px-3 py-2">Tasa despacho</th>
+                <th className="px-3 py-2">Efectividad entrega</th>
+                <th className="px-3 py-2 text-right">Desp.</th>
+                <th className="px-3 py-2 text-right">Entreg.</th>
+                <th className="px-3 py-2 text-right">No entreg.</th>
+                <th className="px-3 py-2 text-right">Anul.</th>
+                <th className="px-3 py-2 text-right">Pend.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRows.slice(0, 800).map((row) => (
+                <tr key={row.key} className="border-t border-border/50">
+                  <td className="max-w-[360px] truncate px-3 py-2 font-medium" title={row.product_name}>
+                    {row.product_name}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{row.sku || "-"}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">{row.orders}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">{row.units}</td>
+                  <td className="px-3 py-2">
+                    <RateMeter value={row.dispatch_rate} tone="cyan" />
+                  </td>
+                  <td className="px-3 py-2">
+                    <RateMeter value={row.delivery_effectiveness} tone="emerald" />
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">{row.dispatched}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs text-emerald-300">{row.delivered}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs text-red-300">{row.not_delivered}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs text-amber-300">{row.annulled}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">{row.pending}</td>
+                </tr>
+              ))}
+              {!filteredRows.length && (
+                <tr>
+                  <td colSpan={11} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    No hay productos para este filtro.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          {filteredRows.length > 800 && (
+            <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
+              Mostrando 800 de {filteredRows.length} productos.
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RateMeter({ value, tone }: { value: number; tone: "cyan" | "emerald" }) {
+  const clampedValue = Math.max(0, Math.min(100, Number(value || 0)));
+  const barClass = tone === "emerald" ? "bg-emerald-400" : "bg-cyan-400";
+
+  return (
+    <div className="flex min-w-[150px] items-center gap-3">
+      <div className="h-2 flex-1 overflow-hidden bg-muted">
+        <div className={`h-full ${barClass}`} style={{ width: `${clampedValue}%` }} />
+      </div>
+      <span className="w-10 text-right font-mono text-xs">{formatPercent(clampedValue)}</span>
     </div>
   );
 }
@@ -4047,6 +4245,130 @@ function buildFinanceControlCenter(
   };
 }
 
+function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnalysisRow[] {
+  const byProduct = new Map<string, ProductAnalysisRow>();
+
+  for (const order of orders) {
+    const itemsByProduct = new Map<string, { sku: string; title: string; quantity: number }>();
+    const items = order.items.length
+      ? order.items
+      : [{ title: order.items_summary || "Producto sin registrar", quantity: 1, price: 0 }];
+
+    for (const item of items) {
+      const normalized = normalizeProductLineItem(item);
+      const existing = itemsByProduct.get(normalized.key);
+      if (existing) {
+        existing.quantity += normalized.quantity;
+        continue;
+      }
+      itemsByProduct.set(normalized.key, {
+        sku: normalized.sku,
+        title: normalized.title,
+        quantity: normalized.quantity,
+      });
+    }
+
+    const status = getProductOrderAnalysisStatus(order);
+    for (const [key, item] of Array.from(itemsByProduct.entries())) {
+      const existing = byProduct.get(key) ?? {
+        key,
+        product_name: item.title,
+        sku: item.sku,
+        orders: 0,
+        units: 0,
+        dispatched: 0,
+        dispatch_rate: 0,
+        delivery_effectiveness: 0,
+        delivered: 0,
+        not_delivered: 0,
+        annulled: 0,
+        pending: 0,
+      };
+
+      existing.orders += 1;
+      existing.units += item.quantity;
+      existing[status] += 1;
+      existing.dispatched = existing.delivered + existing.not_delivered;
+      existing.dispatch_rate = existing.orders ? (existing.dispatched / existing.orders) * 100 : 0;
+      existing.delivery_effectiveness = existing.dispatched
+        ? (existing.delivered / existing.dispatched) * 100
+        : 0;
+      byProduct.set(key, existing);
+    }
+  }
+
+  return Array.from(byProduct.values()).sort(
+    (a, b) =>
+      b.orders - a.orders ||
+      a.delivery_effectiveness - b.delivery_effectiveness ||
+      a.product_name.localeCompare(b.product_name)
+  );
+}
+
+function normalizeProductLineItem(item: ProductLineItem): { key: string; sku: string; title: string; quantity: number } {
+  const sku = String(item.sku ?? "").trim();
+  const title = cleanProductTitle(item.title || sku || "Producto sin registrar");
+  const key = sku ? `sku:${sku.toLowerCase()}` : `title:${title.toLowerCase()}`;
+  return {
+    key,
+    sku,
+    title,
+    quantity: Math.max(1, Number(item.quantity || 1)),
+  };
+}
+
+function cleanProductTitle(title: string): string {
+  return String(title || "Producto sin registrar")
+    .replace(/^\s*\d+\s*x\s*/i, "")
+    .trim() || "Producto sin registrar";
+}
+
+function getProductOrderAnalysisStatus(
+  row: Pick<OrderProfitabilityRow, "tracking_status" | "shopify_cancelled_at" | "shopify_financial_status">
+): Exclude<ProductAnalysisFilter, "all"> {
+  if (isShopifyCancelled(row)) return "annulled";
+  if (row.tracking_status === "delivered") return "delivered";
+  if (row.tracking_status === "not_delivered" || row.tracking_status === "returned") return "not_delivered";
+  return "pending";
+}
+
+function matchesProductAnalysisFilter(row: ProductAnalysisRow, filter: ProductAnalysisFilter): boolean {
+  if (filter === "all") return true;
+  return row[filter] > 0;
+}
+
+function summarizeProductAnalysisRows(rows: ProductAnalysisRow[]): Pick<
+  ProductAnalysisRow,
+  "orders" | "dispatched" | "delivered" | "not_delivered" | "annulled" | "pending" | "dispatch_rate" | "delivery_effectiveness"
+> {
+  const orders = sum(rows.map((row) => row.orders));
+  const dispatched = sum(rows.map((row) => row.dispatched));
+  const delivered = sum(rows.map((row) => row.delivered));
+  const notDelivered = sum(rows.map((row) => row.not_delivered));
+  const annulled = sum(rows.map((row) => row.annulled));
+  const pending = sum(rows.map((row) => row.pending));
+  return {
+    orders,
+    dispatched,
+    delivered,
+    not_delivered: notDelivered,
+    annulled,
+    pending,
+    dispatch_rate: orders ? (dispatched / orders) * 100 : 0,
+    delivery_effectiveness: dispatched ? (delivered / dispatched) * 100 : 0,
+  };
+}
+
+function getProductAnalysisFilterCounts(rows: ProductAnalysisRow[]): Record<ProductAnalysisFilter, number> {
+  return {
+    all: rows.length,
+    pending: rows.filter((row) => row.pending > 0).length,
+    annulled: rows.filter((row) => row.annulled > 0).length,
+    delivered: rows.filter((row) => row.delivered > 0).length,
+    not_delivered: rows.filter((row) => row.not_delivered > 0).length,
+  };
+}
+
 function buildSettlementRowsByKey(settlementRows: SettlementRow[]): Map<string, SettlementRow[]> {
   const rowsByKey = new Map<string, SettlementRow[]>();
   for (const row of settlementRows) {
@@ -4148,6 +4470,7 @@ function buildOrderProfitabilityRow({
     product_cost: productCostResult.productCost,
     contribution_margin: roundMoney(amountToLiquidate - productCostResult.productCost),
     missing_cost_skus: productCostResult.missingCostSkus,
+    items,
     items_summary: summarizeItems(items),
     cash_status: cashStatus,
     issue_count: issueCount,

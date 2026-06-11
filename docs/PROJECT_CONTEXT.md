@@ -585,6 +585,9 @@ Build in this order:
 - The first screen of `Cierre mensual` now avoids month tables and giant detail grids by default. It shows only the selected month result, `Que revisar primero`, `Costos registrados`, and expandable sections for orders, anomalies, missing SKUs, and month comparison.
 - Shopify historical sync now uses a 2025-09-16 lower bound, reads up to 20,000 persisted orders, and syncs in larger bounded batches for complete monthly close coverage.
 - `Archivos Boxful` was renamed to `Logistica Boxful` and now only registers/displays logistics files. Liquidation files stay in `Liquidaciones`.
+- Added `Productos` analysis tab for product-level operational performance. It uses the same normalized finance order rows as `Pedidos`/`Cierre mensual`, preserves line items on `OrderProfitabilityRow`, and aggregates by SKU when available or by product title otherwise.
+- Product-level dispatch rule: a product order is `despachado` only when the Shopify order is not cancelled/voided and tracking has final movement (`Entregado` or `No entregado`). Dispatch rate = dispatched product-orders / total product-orders. Delivery effectiveness = delivered / dispatched.
+- Product-level status counts classify Shopify cancelled/voided first as `Anulado`; otherwise they follow tracking as `Entregado`, `No entregado`, or `Pendiente`. The `Productos` tab includes search by product/SKU, status filters, order/unit counts, rate bars, and CSV export.
 
 2026-06-10:
 
