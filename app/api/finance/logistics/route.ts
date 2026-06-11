@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { readWorkbook } from "@/lib/xlsx";
 import {
+  loadShopifyOrdersForMatching,
+  type MatchableShopifyOrder as ShopifyOrder,
+} from "@/lib/finance-matching";
+import {
   createLogisticsImport,
   deleteLogisticsImport,
   insertLogisticsRows,
@@ -15,6 +19,9 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+const INSERT_BATCH_SIZE = 500;
+const INSERT_CONCURRENCY = 4;
 
 interface ParsedLogisticsRow {
   raw: Record<string, unknown>;
@@ -35,19 +42,6 @@ interface ParsedLogisticsRow {
   finalized_on: string | null;
   label_url: string;
   package_items: LogisticsPackageItem[];
-}
-
-interface ShopifyOrder {
-  id: number;
-  name: string;
-  order_number: number;
-  note?: string | null;
-  note_attributes?: Array<{ name?: string | null; value?: string | null }>;
-  created_at: string;
-  financial_status: string;
-  fulfillment_status: string | null;
-  cancelled_at: string | null;
-  total_price: string;
 }
 
 export async function GET(req: NextRequest) {
@@ -82,7 +76,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No se encontraron filas logisticas" }, { status: 400 });
     }
 
-    const shopifyOrders = await fetchShopifyOrders(periodStart ?? inferEarliestDate(boxfulRows));
+    const shopifyOrders = await loadShopifyOrdersForMatching(
+      periodStart ?? inferEarliestDate(boxfulRows)
+    );
     const indexes = buildShopifyIndexes(shopifyOrders);
     const statusSummary: Record<string, { count: number }> = {};
     let matchedRows = 0;
@@ -125,8 +121,12 @@ export async function POST(req: NextRequest) {
       buildLogisticsRow(logisticsImport.id, row, shopify)
     );
 
-    for (let i = 0; i < rowsToInsert.length; i += 250) {
-      await insertLogisticsRows(rowsToInsert.slice(i, i + 250));
+    const batches: (typeof rowsToInsert)[] = [];
+    for (let i = 0; i < rowsToInsert.length; i += INSERT_BATCH_SIZE) {
+      batches.push(rowsToInsert.slice(i, i + INSERT_BATCH_SIZE));
+    }
+    for (let i = 0; i < batches.length; i += INSERT_CONCURRENCY) {
+      await Promise.all(batches.slice(i, i + INSERT_CONCURRENCY).map(insertLogisticsRows));
     }
 
     return NextResponse.json({
@@ -202,42 +202,6 @@ function parsePackageItems(raw: Record<string, unknown>): LogisticsPackageItem[]
     });
   }
   return items;
-}
-
-async function fetchShopifyOrders(periodStart: string | null): Promise<ShopifyOrder[]> {
-  const shop = process.env.SHOPIFY_SHOP_DOMAIN;
-  const token = process.env.SHOPIFY_ACCESS_TOKEN;
-  if (!shop || !token) return [];
-
-  const minDate = periodStart
-    ? new Date(new Date(periodStart).getTime() - 45 * 24 * 60 * 60 * 1000).toISOString()
-    : "2026-01-01T00:00:00-06:00";
-
-  let url =
-    `https://${shop}/admin/api/2024-01/orders.json` +
-    `?status=any&limit=250&order=created_at%20desc` +
-    `&created_at_min=${encodeURIComponent(minDate)}` +
-    `&fields=id,name,order_number,note,note_attributes,created_at,financial_status,fulfillment_status,cancelled_at,total_price`;
-
-  const orders: ShopifyOrder[] = [];
-  for (let page = 0; page < 80 && url; page++) {
-    const res = await fetch(url, {
-      headers: {
-        "X-Shopify-Access-Token": token,
-        "Content-Type": "application/json",
-      },
-      cache: "no-store",
-    });
-    if (!res.ok) break;
-
-    const json = (await res.json()) as { orders?: ShopifyOrder[] };
-    orders.push(...(json.orders ?? []));
-
-    const link = res.headers.get("link") ?? "";
-    const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
-    url = nextMatch?.[1] ?? "";
-  }
-  return orders;
 }
 
 function buildShopifyIndexes(orders: ShopifyOrder[]) {
