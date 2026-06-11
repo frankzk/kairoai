@@ -298,6 +298,52 @@ const emptyExpense = {
   notes: "",
 };
 
+const EXPENSE_VIEW_CONFIG: Array<{
+  type: ExpenseType;
+  label: string;
+  tableTitle: string;
+  buttonLabel: string;
+  modalTitle: string;
+  emptyLabel: string;
+  platformPlaceholder: string;
+  categoryPlaceholder: string;
+  descriptionPlaceholder: string;
+}> = [
+  {
+    type: "ads",
+    label: "Ads",
+    tableTitle: "Gastos Ads",
+    buttonLabel: "Registrar Gasto Ads",
+    modalTitle: "Registrar Gasto Ads",
+    emptyLabel: "No hay gastos Ads registrados.",
+    platformPlaceholder: "Plataforma / canal",
+    categoryPlaceholder: "Campana / categoria",
+    descriptionPlaceholder: "Descripcion",
+  },
+  {
+    type: "payroll",
+    label: "Planilla",
+    tableTitle: "Planilla",
+    buttonLabel: "Registrar Planilla",
+    modalTitle: "Registrar Planilla",
+    emptyLabel: "No hay planilla registrada.",
+    platformPlaceholder: "Persona / rol",
+    categoryPlaceholder: "Tipo: fijo, comision, bono",
+    descriptionPlaceholder: "Descripcion",
+  },
+  {
+    type: "misc",
+    label: "Varios",
+    tableTitle: "Gastos Varios",
+    buttonLabel: "Registrar Gastos Varios",
+    modalTitle: "Registrar Gastos Varios",
+    emptyLabel: "No hay gastos varios registrados.",
+    platformPlaceholder: "Proveedor",
+    categoryPlaceholder: "Categoria",
+    descriptionPlaceholder: "Descripcion",
+  },
+];
+
 const FINANCE_SHOPIFY_ORDERS_URL =
   "/api/shopify/orders?status=any&limit=250&created_at_min=2026-03-01T00%3A00%3A00-06%3A00";
 
@@ -637,7 +683,7 @@ export default function FinancePage() {
     });
   }
 
-  async function saveExpense(event: FormEvent<HTMLFormElement>) {
+  async function saveExpense(event: FormEvent<HTMLFormElement>): Promise<boolean> {
     event.preventDefault();
     const res = await fetch("/api/finance/expenses", {
       method: "POST",
@@ -647,10 +693,11 @@ export default function FinancePage() {
     const json = await readApiJson(res);
     if (!res.ok) {
       setError(json.error ?? "No se pudo guardar gasto");
-      return;
+      return false;
     }
     setExpenseForm({ ...emptyExpense, type: expenseForm.type });
     await refresh();
+    return true;
   }
 
   async function deleteCost(id: number) {
@@ -1613,76 +1660,195 @@ function ExpensesTab({
   expenses: BusinessExpense[];
   form: typeof emptyExpense;
   setForm: (form: typeof emptyExpense) => void;
-  onSave: (event: FormEvent<HTMLFormElement>) => void;
+  onSave: (event: FormEvent<HTMLFormElement>) => Promise<boolean>;
   onDelete: (id: number) => void;
 }) {
-  return (
-    <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Registrar gasto</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={onSave} className="space-y-3">
-            <select
-              value={form.type}
-              onChange={(e) => setForm({ ...form, type: e.target.value as ExpenseType })}
-              className="h-10 w-full border border-input bg-background px-3 text-sm"
-            >
-              <option value="ads">Ads</option>
-              <option value="payroll">Planilla</option>
-              <option value="misc">Varios</option>
-            </select>
-            <Input type="date" value={form.expense_date} onChange={(e) => setForm({ ...form, expense_date: e.target.value })} />
-            <Input type="month" value={form.month} onChange={(e) => setForm({ ...form, month: e.target.value })} />
-            <Input placeholder="Plataforma / proveedor" value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value })} />
-            <Input placeholder="Categoria" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
-            <Input placeholder="Descripcion" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-            <Input type="number" placeholder="Monto" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
-            <Button type="submit" className="w-full gap-2">
-              <Plus className="h-4 w-4" /> Guardar gasto
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+  const [activeType, setActiveType] = useState<ExpenseType>("ads");
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const activeView =
+    EXPENSE_VIEW_CONFIG.find((view) => view.type === activeType) ?? EXPENSE_VIEW_CONFIG[0];
+  const visibleExpenses = expenses.filter((expense) => expense.type === activeType);
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonthTotal = sum(
+    visibleExpenses
+      .filter((expense) => expense.month === currentMonth)
+      .map((expense) => Number(expense.amount || 0))
+  );
+  const total = sum(visibleExpenses.map((expense) => Number(expense.amount || 0)));
 
+  function selectExpenseType(type: ExpenseType) {
+    setActiveType(type);
+    setForm({ ...form, type });
+  }
+
+  function openExpenseModal(type: ExpenseType) {
+    setActiveType(type);
+    setForm({ ...form, type });
+    setIsExpenseModalOpen(true);
+  }
+
+  async function handleExpenseSubmit(event: FormEvent<HTMLFormElement>) {
+    const didSave = await onSave(event);
+    if (didSave) setIsExpenseModalOpen(false);
+  }
+
+  return (
+    <div className="space-y-4">
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Gastos registrados</CardTitle>
+        <CardHeader className="gap-4 space-y-0 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1.5">
+            <CardTitle className="text-base">{activeView.tableTitle}</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Registra y revisa gastos por tipo para alimentar la rentabilidad mensual.
+            </p>
+          </div>
+          <Button type="button" onClick={() => openExpenseModal(activeType)} className="gap-2">
+            <Plus className="h-4 w-4" />
+            {activeView.buttonLabel}
+          </Button>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2 border-b border-border">
+            {EXPENSE_VIEW_CONFIG.map((view) => (
+              <button
+                key={view.type}
+                type="button"
+                onClick={() => selectExpenseType(view.type)}
+                className={`border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                  activeType === view.type
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {view.label}
+              </button>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <MiniStat label="Registros" value={visibleExpenses.length} />
+            <MiniStat label="Mes actual" value={currency(currentMonthTotal)} />
+            <MiniStat label="Total" value={currency(total)} />
+          </div>
           <div className="overflow-auto border border-border">
-            <table className="w-full min-w-[780px] text-sm">
+            <table className="w-full min-w-[920px] text-sm">
               <thead className="bg-card text-left text-xs text-muted-foreground">
                 <tr>
-                  <th className="px-3 py-2">Tipo</th>
                   <th className="px-3 py-2">Fecha</th>
                   <th className="px-3 py-2">Mes</th>
+                  <th className="px-3 py-2">Plataforma / proveedor</th>
+                  <th className="px-3 py-2">Categoria</th>
                   <th className="px-3 py-2">Descripcion</th>
                   <th className="px-3 py-2 text-right">Monto</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
               <tbody>
-                {expenses.map((expense) => (
+                {visibleExpenses.map((expense) => (
                   <tr key={expense.id} className="border-t border-border/50">
-                    <td className="px-3 py-2"><Badge variant="muted">{expense.type}</Badge></td>
                     <td className="px-3 py-2 font-mono text-xs">{expense.expense_date}</td>
                     <td className="px-3 py-2 font-mono text-xs">{expense.month}</td>
-                    <td className="px-3 py-2">{expense.description || expense.category || expense.platform}</td>
+                    <td className="px-3 py-2">{expense.platform || "-"}</td>
+                    <td className="px-3 py-2">{expense.category || "-"}</td>
+                    <td className="px-3 py-2">{expense.description || "-"}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{currency(expense.amount)}</td>
                     <td className="px-3 py-2 text-right">
-                      <button onClick={() => onDelete(expense.id)} className="text-muted-foreground hover:text-red-400">
+                      <button
+                        type="button"
+                        aria-label="Eliminar gasto"
+                        onClick={() => onDelete(expense.id)}
+                        className="text-muted-foreground hover:text-red-400"
+                      >
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </td>
                   </tr>
                 ))}
+                {!visibleExpenses.length && (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                      {activeView.emptyLabel}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         </CardContent>
       </Card>
+
+      {isExpenseModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="expense-modal-title"
+        >
+          <div className="w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-2xl">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <h3 id="expense-modal-title" className="text-base font-semibold">
+                  {activeView.modalTitle}
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  El gasto queda clasificado automaticamente en {activeView.label}.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Cerrar registro de gasto"
+                onClick={() => setIsExpenseModalOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <form onSubmit={handleExpenseSubmit} className="space-y-3">
+              <Input
+                type="date"
+                value={form.expense_date}
+                onChange={(e) => setForm({ ...form, expense_date: e.target.value, type: activeType })}
+              />
+              <Input
+                type="month"
+                value={form.month}
+                onChange={(e) => setForm({ ...form, month: e.target.value, type: activeType })}
+              />
+              <Input
+                placeholder={activeView.platformPlaceholder}
+                value={form.platform}
+                onChange={(e) => setForm({ ...form, platform: e.target.value, type: activeType })}
+              />
+              <Input
+                placeholder={activeView.categoryPlaceholder}
+                value={form.category}
+                onChange={(e) => setForm({ ...form, category: e.target.value, type: activeType })}
+              />
+              <Input
+                placeholder={activeView.descriptionPlaceholder}
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value, type: activeType })}
+              />
+              <Input
+                type="number"
+                placeholder="Monto"
+                value={form.amount}
+                onChange={(e) => setForm({ ...form, amount: e.target.value, type: activeType })}
+                required
+              />
+              <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+                <Button type="button" variant="outline" onClick={() => setIsExpenseModalOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button type="submit" className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Guardar
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

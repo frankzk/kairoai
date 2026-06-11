@@ -107,7 +107,7 @@ Tabs:
 - `Pedidos`: shows Shopify orders as the baseline tracking list, opens Boxful logistics Excel upload from the table header action button/modal, inspects matched rows, and tracks operational follow-up state.
 - `Liquidaciones`: upload settlement/liquidation Excel files by cutoff date, inspect financial settlement rows, source Excel traceability, claim alerts, and anomalies.
 - `Costos SKU`: loads Shopify products/variants and lets the user edit unit and packaging costs inline by SKU.
-- `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses.
+- `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses, organized into three internal tabs with contextual modal buttons.
 - `Rentabilidad`: shows the approved net-profit formula, cash/control KPIs, a financial anomaly center, order-level margin, and missing SKU costs.
 - `Cierre mensual`: aggregates orders, cash, product costs, ads, payroll, miscellaneous expenses, and estimated net profit by month.
 - `Archivos Boxful`: tracks imported/expected/missing/ignored Boxful logistics and liquidation files by exact file name.
@@ -396,11 +396,21 @@ Important:
 
 ### 3. Gastos
 
-Use tabs or sections inside one page:
+Use three internal tabs inside one page:
 
 - Ads
 - Planilla
 - Varios
+
+UI rule:
+
+- Each tab owns its own list/view.
+- The registration form is not a persistent side-panel.
+- The action button lives in the top-right of the active tab view and opens a modal:
+  - Ads: `Registrar Gasto Ads`
+  - Planilla: `Registrar Planilla`
+  - Varios: `Registrar Gastos Varios`
+- The active tab determines the stored `business_expenses.type`, so the modal does not need a type dropdown.
 
 #### Ads
 
