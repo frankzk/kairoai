@@ -1910,7 +1910,7 @@ function ProfitTab({
 }) {
   const items = [
     ["COD cobrado", summary?.cod_collected ?? 0],
-    ["Costos cobrados en liquidacion", -(summary?.settlement_charged_costs ?? 0)],
+    ["Costos Boxful descontados", -(summary?.settlement_charged_costs ?? 0)],
     ["A liquidar neto", summary?.settlement_total ?? 0],
     ["Costo producto", -(summary?.product_costs ?? 0)],
     ["Ads", -(summary?.ads ?? 0)],
@@ -1945,8 +1945,8 @@ function ProfitTab({
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="border border-border bg-background p-3 text-xs text-muted-foreground">
-              Los costos de entrega, Pick&Pack, empaque y comisiones vienen de la liquidacion.
-              Ya estan incluidos dentro de `A liquidar`, asi que se muestran como desglose y no se restan dos veces.
+              A liquidar = Monto COD - Comision COD - Costo entrega - Pick&Pack - Empaque.
+              Esos costos Boxful ya estan descontados dentro de `A liquidar`, asi que no se restan dos veces.
             </div>
             {items.map(([label, value]) => (
               <div key={label as string} className="flex items-center justify-between border-b border-border/50 py-3">
@@ -1964,10 +1964,10 @@ function ProfitTab({
           </CardHeader>
           <CardContent className="space-y-3">
             <BreakdownLine label="Comision COD" value={summary?.cod_commission ?? 0} />
-            <BreakdownLine label="Comision tarjeta" value={summary?.card_commission ?? 0} />
             <BreakdownLine label="Costo entrega" value={summary?.delivery_cost ?? 0} />
             <BreakdownLine label="Pick&Pack" value={summary?.pick_pack_cost ?? 0} />
             <BreakdownLine label="Empaque liquidacion" value={summary?.settlement_packaging_cost ?? 0} />
+            <BreakdownLine label="Comision tarjeta (informativa)" value={summary?.card_commission ?? 0} />
           </CardContent>
         </Card>
       </div>

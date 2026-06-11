@@ -188,13 +188,14 @@ Important implementation detail:
 - Financial anomalies can be moved through a claim workflow: `pendiente`, `reclamado`, `resuelto`, `descartado`, with notes. The key is `finance_claims.anomaly_key`.
 - Exportables are client-side CSV downloads for anomalies, order profitability, monthly close, and Boxful file control.
 - Shopify historical sync must be done via `/api/finance/shopify-sync` in bounded batches. The normal `/admin/finance` page load must not paginate all Shopify orders because Vercel can time out. The UI sync button loops through bounded batches and persists into `shopify_orders`.
-- Settlement/liquidation files also include per-order charged logistics costs:
+- Settlement/liquidation files also include per-order Boxful charged service costs:
   - `Monto de comision COD`
-  - `Com. Tarjeta`
   - `Costo de entrega`
   - `Pick&Pack`
   - `Empaque`
-- These charged costs are imported and shown in profitability as a settlement breakdown. They must not be subtracted again from net profit because `A Liquidar` already represents the net logistics result after those charges.
+- Business rule: `A Liquidar = Monto COD - Monto de comision COD - Costo de entrega - Pick&Pack - Empaque`.
+- `Com. Tarjeta` is imported and can be shown as an informational settlement field, but it is not included in the Boxful service-cost total unless the business later confirms otherwise.
+- These Boxful service costs are imported and shown in profitability as a settlement breakdown. They must not be subtracted again from net profit because `A Liquidar` already represents the net logistics result after those charges.
 - Shopify matching currently uses exact settlement `Orden` to Shopify `order.name`.
 - Numeric-only settlement order values remain unmatched until their source is identified.
 
@@ -481,7 +482,8 @@ utilidad_neta = resultado_logistico - product_costs - ads - payroll - miscellane
 Important:
 
 - In the settlement file, `No entregado` rows already contribute negative values through `A Liquidar`.
-- In the settlement file, delivery, Pick&Pack, empaque, COD commission, and card commission are visible per order. These explain the difference between COD collected and `A Liquidar`, but they are not additional deductions after `A Liquidar`.
+- In the settlement file, delivery, Pick&Pack, empaque, and COD commission explain the difference between COD collected and `A Liquidar`, but they are not additional deductions after `A Liquidar`.
+- `Com. Tarjeta` is tracked separately as informational unless confirmed as part of the Boxful service-cost formula.
 - Product costs should usually be applied only to delivered orders unless inventory is lost or non-returnable. This needs a business rule before final profit calculations.
 
 Suggested KPIs:
@@ -558,10 +560,10 @@ Build in this order:
 - Profitability summary now exposes settlement charged-cost breakdown:
   - COD collected
   - COD commission
-  - card commission
   - delivery cost
   - Pick&Pack
   - settlement packaging
+  - card commission as informational, outside the Boxful charged-cost total
   - net `A Liquidar`
 
 ## Open Questions

@@ -538,7 +538,7 @@ export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {
   const pickPackCost = sum(rows.map((row) => row.pick_pack_cost));
   const settlementPackagingCost = sum(rows.map((row) => row.packaging_cost));
   const settlementChargedCosts =
-    codCommission + cardCommission + deliveryCost + pickPackCost + settlementPackagingCost;
+    codCommission + deliveryCost + pickPackCost + settlementPackagingCost;
   const settlementTotal = sum(rows.map((row) => row.amount_to_liquidate));
   let productCosts = 0;
 
