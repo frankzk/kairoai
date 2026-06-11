@@ -2978,6 +2978,9 @@ function CostCompositionBar({
   );
 }
 
+const MONTH_ROW_GRID =
+  "grid grid-cols-[2rem_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.3fr)] items-center gap-2 lg:grid-cols-[2rem_minmax(110px,1.3fr)_repeat(7,minmax(0,1fr))_minmax(0,1.2fr)]";
+
 function MonthlyCloseTab({
   rows,
   control,
@@ -2991,85 +2994,7 @@ function MonthlyCloseTab({
   claimByAnomalyKey: Map<string, FinanceClaim>;
   onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
 }) {
-  const monthOptions = useMemo(() => rows.map((row) => row.month), [rows]);
-  const preferredMonth = useMemo(
-    () => monthOptions.find((month) => month !== "sin-fecha") ?? monthOptions[0] ?? "all",
-    [monthOptions]
-  );
-  const [selectedMonth, setSelectedMonth] = useState(preferredMonth);
-  const [orderFilter, setOrderFilter] = useState<MonthlyOrderFilter>("all");
-  const [showOrders, setShowOrders] = useState(false);
-  const [showAnomalies, setShowAnomalies] = useState(false);
-  const [showSkus, setShowSkus] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
-  const selectedClose = useMemo(
-    () => getMonthlyCloseTotals(rows, selectedMonth),
-    [rows, selectedMonth]
-  );
-  const monthOrders = useMemo(
-    () =>
-      control.orders.filter((order) => {
-        if (selectedMonth === "all") return true;
-        return (getMonthKey(order.created_at) || "sin-fecha") === selectedMonth;
-      }),
-    [control.orders, selectedMonth]
-  );
-  const selectedAnomalies = useMemo(
-    () =>
-      control.anomalies.filter((anomaly) => {
-        if (selectedMonth === "all") return true;
-        const order = control.orders.find(
-          (item) =>
-            item.order_name === anomaly.order_name ||
-            (item.guide_number && item.guide_number === anomaly.guide_number)
-        );
-        return (getMonthKey(order?.created_at ?? null) || "sin-fecha") === selectedMonth;
-      }),
-    [control.anomalies, control.orders, selectedMonth]
-  );
-  const orderFilterCounts = useMemo(
-    () => getMonthlyOrderFilterCounts(monthOrders),
-    [monthOrders]
-  );
-  const visibleOrders = useMemo(
-    () => monthOrders.filter((order) => matchesMonthlyOrderFilter(order, orderFilter)),
-    [monthOrders, orderFilter]
-  );
-  const selectedMissingCostSkus = useMemo(
-    () => uniqueKeys(monthOrders.flatMap((order) => order.missing_cost_skus)),
-    [monthOrders]
-  );
-  const selectedMonthLabel = formatMonthLabel(selectedMonth);
-  const criticalAnomalies = selectedAnomalies.filter((anomaly) => anomaly.severity === "high").length;
-  const totalRegisteredCosts =
-    selectedClose.boxful_costs +
-    selectedClose.product_costs +
-    selectedClose.ads +
-    selectedClose.payroll +
-    selectedClose.misc;
-  const directCosts = selectedClose.boxful_costs + selectedClose.product_costs;
-  const operatingExpenses = selectedClose.ads + selectedClose.payroll + selectedClose.misc;
-  const deliveredRate = selectedClose.orders ? (selectedClose.delivered / selectedClose.orders) * 100 : 0;
-  const settledRate = selectedClose.orders ? (selectedClose.settled / selectedClose.orders) * 100 : 0;
-  const claimBase = selectedClose.cash_received + selectedClose.cash_pending;
-  const claimShare = claimBase ? (selectedClose.cash_pending / claimBase) * 100 : 0;
-  const costSegments = [
-    { label: "Costos Boxful", value: selectedClose.boxful_costs, className: "bg-sky-400" },
-    { label: "Costo producto", value: selectedClose.product_costs, className: "bg-emerald-400" },
-    { label: "Ads", value: selectedClose.ads, className: "bg-violet-400" },
-    { label: "Planilla", value: selectedClose.payroll, className: "bg-amber-400" },
-    { label: "Varios", value: selectedClose.misc, className: "bg-rose-400" },
-  ];
-
-  useEffect(() => {
-    if (!monthOptions.length) {
-      setSelectedMonth("all");
-      return;
-    }
-    if (selectedMonth === "all" || !monthOptions.includes(selectedMonth)) {
-      setSelectedMonth(preferredMonth);
-    }
-  }, [monthOptions, preferredMonth, selectedMonth]);
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
 
   return (
     <div className="space-y-4">
@@ -3077,29 +3002,12 @@ function MonthlyCloseTab({
         <div>
           <h2 className="text-base font-semibold">Cierre mensual</h2>
           <p className="text-xs text-muted-foreground">
-            Una lectura por mes: resultado, acciones pendientes y costos registrados.
+            Un mes por fila. Despliega cualquier mes para ver su detalle.
           </p>
         </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="grid gap-1 text-xs text-muted-foreground">
-            Mes a revisar
-            <select
-              value={selectedMonth}
-              onChange={(event) => setSelectedMonth(event.target.value)}
-              className="h-9 min-w-[220px] border border-input bg-background px-3 text-sm text-foreground"
-            >
-              {monthOptions.map((month) => (
-                <option key={month} value={month}>
-                  {formatMonthLabel(month)}
-                </option>
-              ))}
-              {!monthOptions.length && <option value="all">Sin datos</option>}
-            </select>
-          </label>
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("cierre-mensual.csv", rows)}>
-            <Download className="h-4 w-4" /> Exportar cierre
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("cierre-mensual.csv", rows)}>
+          <Download className="h-4 w-4" /> Exportar cierre
+        </Button>
       </div>
 
       {!rows.length ? (
@@ -3109,106 +3017,247 @@ function MonthlyCloseTab({
           </CardContent>
         </Card>
       ) : (
-        <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-          <Card className="border-primary/30">
-            <CardHeader>
-              <CardTitle className="text-base">Resultado de {selectedMonthLabel}</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Lo que queda despues de costos de producto, Boxful y gastos registrados.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div>
-                <p className="text-xs text-muted-foreground">Utilidad neta estimada</p>
-                <p className={`mt-1 font-mono text-4xl font-semibold ${selectedClose.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
-                  {currency(selectedClose.net_profit)}
-                </p>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <MiniStat label="Pedidos" value={selectedClose.orders} />
-                <MiniStat label="Entregados" value={`${selectedClose.delivered} (${formatPercent(deliveredRate)})`} />
-                <MiniStat label="Liquidados" value={`${selectedClose.settled} (${formatPercent(settledRate)})`} />
-                <MiniStat label="Pendientes" value={selectedClose.pending} />
-              </div>
-              <div className="grid gap-3 md:grid-cols-3">
-                <MiniStat label="Caja liquidada" value={currency(selectedClose.cash_received)} />
-                <MiniStat label="Caja por reclamar" value={currency(selectedClose.cash_pending)} />
-                <MiniStat label="Margen pedidos" value={currency(selectedClose.contribution_margin)} />
-              </div>
-              <div>
-                <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>Caja por reclamar</span>
-                  <span>{formatPercent(claimShare)} del total pendiente + liquidado</span>
-                </div>
-                <div className="h-2 overflow-hidden border border-border bg-background">
-                  <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, claimShare)}%` }} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Que revisar primero</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Lista corta de acciones para cerrar el mes sin perder dinero.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <CloseSignalRow
-                label="Pedidos operativos pendientes"
-                value={selectedClose.pending}
-                hint="Aun no son entregados, devueltos ni anulados."
-                tone={selectedClose.pending ? "warning" : "ok"}
-              />
-              <CloseSignalRow
-                label="Entregados sin liquidacion"
-                value={selectedClose.to_claim}
-                hint="Si Boxful ya los entrego, toca reclamar pago."
-                tone={selectedClose.to_claim ? "warning" : "ok"}
-              />
-              <CloseSignalRow
-                label="Liquidaciones duplicadas"
-                value={selectedClose.duplicate_settlements}
-                hint="Un pedido no deberia aparecer dos veces."
-                tone={selectedClose.duplicate_settlements ? "danger" : "ok"}
-              />
-              <CloseSignalRow
-                label="SKUs sin costo"
-                value={selectedMissingCostSkus.length}
-                hint="Sin costo de producto, la utilidad queda incompleta."
-                tone={selectedMissingCostSkus.length ? "warning" : "ok"}
-              />
-              <CloseSignalRow
-                label="Alertas criticas"
-                value={criticalAnomalies}
-                hint="Casos de alta prioridad en anomalias."
-                tone={criticalAnomalies ? "danger" : "ok"}
-              />
-            </CardContent>
-          </Card>
-        </section>
+        <div className="border border-border">
+          <div className={`${MONTH_ROW_GRID} border-b border-border bg-card px-3 py-2 text-xs text-muted-foreground`}>
+            <span />
+            <span>Mes</span>
+            <span className="text-right">Pedidos</span>
+            <span className="hidden text-right lg:block">Entregados</span>
+            <span className="hidden text-right lg:block">Pendientes</span>
+            <span className="hidden text-right lg:block">Liquidados</span>
+            <span className="hidden text-right lg:block">Sin liquidacion</span>
+            <span className="hidden text-right lg:block">Por reclamar</span>
+            <span className="hidden text-right lg:block">Costos</span>
+            <span className="text-right">Utilidad neta</span>
+          </div>
+          {rows.map((row) => (
+            <MonthlyCloseMonthRow
+              key={row.month}
+              row={row}
+              open={expandedMonth === row.month}
+              onToggle={() =>
+                setExpandedMonth((value) => (value === row.month ? null : row.month))
+              }
+              control={control}
+              summary={summary}
+              claimByAnomalyKey={claimByAnomalyKey}
+              onSaveClaim={onSaveClaim}
+            />
+          ))}
+        </div>
       )}
+    </div>
+  );
+}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Costos registrados</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            {selectedMonthLabel}: participacion de cada costo dentro del 100% de costos registrados.
+function MonthlyCloseMonthRow({
+  row,
+  open,
+  onToggle,
+  control,
+  summary,
+  claimByAnomalyKey,
+  onSaveClaim,
+}: {
+  row: MonthlyCloseRow;
+  open: boolean;
+  onToggle: () => void;
+  control: FinanceControlCenter;
+  summary: ProfitabilitySummary | null;
+  claimByAnomalyKey: Map<string, FinanceClaim>;
+  onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
+}) {
+  const registeredCosts = row.boxful_costs + row.product_costs + row.ads + row.payroll + row.misc;
+
+  return (
+    <div className="border-t border-border/50 first:border-t-0">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className={`${MONTH_ROW_GRID} w-full px-3 py-3 text-left transition-colors hover:bg-primary/5 ${open ? "bg-primary/5" : ""}`}
+      >
+        <span className="flex h-6 w-6 items-center justify-center border border-border bg-background">
+          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </span>
+        <span className="truncate font-mono text-xs font-semibold">{formatMonthLabel(row.month)}</span>
+        <span className="text-right font-mono text-xs">{row.orders}</span>
+        <span className="hidden text-right font-mono text-xs lg:block">{row.delivered}</span>
+        <span className="hidden text-right font-mono text-xs lg:block">{row.pending}</span>
+        <span className="hidden text-right font-mono text-xs lg:block">{row.settled}</span>
+        <span className="hidden text-right font-mono text-xs lg:block">{row.unsettled}</span>
+        <span className="hidden text-right font-mono text-xs lg:block">{row.to_claim}</span>
+        <span className="hidden text-right font-mono text-xs lg:block">{currency(registeredCosts)}</span>
+        <span className={`text-right font-mono text-xs ${row.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
+          {currency(row.net_profit)}
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-border/50 bg-background/40 p-3 sm:p-4">
+          <MonthCloseDetail
+            close={row}
+            control={control}
+            summary={summary}
+            claimByAnomalyKey={claimByAnomalyKey}
+            onSaveClaim={onSaveClaim}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MonthCloseDetail({
+  close,
+  control,
+  summary,
+  claimByAnomalyKey,
+  onSaveClaim,
+}: {
+  close: MonthlyCloseRow;
+  control: FinanceControlCenter;
+  summary: ProfitabilitySummary | null;
+  claimByAnomalyKey: Map<string, FinanceClaim>;
+  onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
+}) {
+  const [orderFilter, setOrderFilter] = useState<MonthlyOrderFilter>("all");
+  const [showOrders, setShowOrders] = useState(false);
+  const [showAnomalies, setShowAnomalies] = useState(false);
+  const [showSkus, setShowSkus] = useState(false);
+
+  const monthOrders = useMemo(
+    () =>
+      control.orders.filter(
+        (order) => (getMonthKey(order.created_at) || "sin-fecha") === close.month
+      ),
+    [control.orders, close.month]
+  );
+  const monthAnomalies = useMemo(
+    () =>
+      control.anomalies.filter((anomaly) => {
+        const order = control.orders.find(
+          (item) =>
+            item.order_name === anomaly.order_name ||
+            (item.guide_number && item.guide_number === anomaly.guide_number)
+        );
+        return (getMonthKey(order?.created_at ?? null) || "sin-fecha") === close.month;
+      }),
+    [control.anomalies, control.orders, close.month]
+  );
+  const orderFilterCounts = useMemo(
+    () => getMonthlyOrderFilterCounts(monthOrders),
+    [monthOrders]
+  );
+  const visibleOrders = useMemo(
+    () => monthOrders.filter((order) => matchesMonthlyOrderFilter(order, orderFilter)),
+    [monthOrders, orderFilter]
+  );
+  const missingCostSkus = useMemo(
+    () => uniqueKeys(monthOrders.flatMap((order) => order.missing_cost_skus)),
+    [monthOrders]
+  );
+
+  const criticalAnomalies = monthAnomalies.filter((anomaly) => anomaly.severity === "high").length;
+  const totalRegisteredCosts =
+    close.boxful_costs + close.product_costs + close.ads + close.payroll + close.misc;
+  const directCosts = close.boxful_costs + close.product_costs;
+  const operatingExpenses = close.ads + close.payroll + close.misc;
+  const deliveredRate = close.orders ? (close.delivered / close.orders) * 100 : 0;
+  const settledRate = close.orders ? (close.settled / close.orders) * 100 : 0;
+  const claimBase = close.cash_received + close.cash_pending;
+  const claimShare = claimBase ? (close.cash_pending / claimBase) * 100 : 0;
+  const costSegments = [
+    { label: "Costos Boxful", value: close.boxful_costs, className: "bg-sky-400" },
+    { label: "Costo producto", value: close.product_costs, className: "bg-emerald-400" },
+    { label: "Ads", value: close.ads, className: "bg-violet-400" },
+    { label: "Planilla", value: close.payroll, className: "bg-amber-400" },
+    { label: "Varios", value: close.misc, className: "bg-rose-400" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground">Utilidad neta estimada</p>
+          <p className={`mt-1 font-mono text-3xl font-semibold ${close.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
+            {currency(close.net_profit)}
           </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <CostCompositionBar segments={costSegments} />
-          <div className="grid gap-3 md:grid-cols-3">
-            <MiniStat label="Costos directos" value={currency(directCosts)} />
-            <MiniStat label="Gastos operativos" value={currency(operatingExpenses)} />
-            <MiniStat label="Total costos registrados" value={currency(totalRegisteredCosts)} />
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <MiniStat label="Margen pedidos" value={currency(close.contribution_margin)} />
+            <MiniStat label="Caja liquidada" value={currency(close.cash_received)} />
+            <MiniStat label="Caja por reclamar" value={currency(close.cash_pending)} />
+            <MiniStat label="Entregados" value={`${close.delivered} (${formatPercent(deliveredRate)})`} />
+            <MiniStat label="Liquidados" value={`${close.settled} (${formatPercent(settledRate)})`} />
+            <MiniStat label="No entregados / Anulados" value={`${close.not_delivered} / ${close.annulled}`} />
           </div>
-          <div className="border border-border bg-background p-3 text-xs text-muted-foreground">
-            A liquidar = Monto COD - Comision COD - Costo entrega - Pick&Pack - Empaque. La comision tarjeta queda solo como dato informativo cuando aplica: {currency(summary?.card_commission ?? 0)}.
+          <div className="mt-4">
+            <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+              <span>Caja por reclamar</span>
+              <span>{formatPercent(claimShare)} del total pendiente + liquidado</span>
+            </div>
+            <div className="h-2 overflow-hidden border border-border bg-background">
+              <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, claimShare)}%` }} />
+            </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+
+        <div className="space-y-2 border border-border bg-card p-4">
+          <div>
+            <p className="text-sm font-semibold">Que revisar primero</p>
+            <p className="text-xs text-muted-foreground">
+              Lista corta de acciones para cerrar el mes sin perder dinero.
+            </p>
+          </div>
+          <CloseSignalRow
+            label="Pedidos operativos pendientes"
+            value={close.pending}
+            hint="Aun no son entregados, devueltos ni anulados."
+            tone={close.pending ? "warning" : "ok"}
+          />
+          <CloseSignalRow
+            label="Entregados sin liquidacion"
+            value={close.to_claim}
+            hint="Si Boxful ya los entrego, toca reclamar pago."
+            tone={close.to_claim ? "warning" : "ok"}
+          />
+          <CloseSignalRow
+            label="Liquidaciones duplicadas"
+            value={close.duplicate_settlements}
+            hint="Un pedido no deberia aparecer dos veces."
+            tone={close.duplicate_settlements ? "danger" : "ok"}
+          />
+          <CloseSignalRow
+            label="SKUs sin costo"
+            value={missingCostSkus.length}
+            hint="Sin costo de producto, la utilidad queda incompleta."
+            tone={missingCostSkus.length ? "warning" : "ok"}
+          />
+          <CloseSignalRow
+            label="Alertas criticas"
+            value={criticalAnomalies}
+            hint="Casos de alta prioridad en anomalias."
+            tone={criticalAnomalies ? "danger" : "ok"}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-4 border border-border bg-card p-4">
+        <div>
+          <p className="text-sm font-semibold">Costos registrados</p>
+          <p className="text-xs text-muted-foreground">
+            Participacion de cada costo dentro del 100% de costos registrados.
+          </p>
+        </div>
+        <CostCompositionBar segments={costSegments} />
+        <div className="grid gap-3 md:grid-cols-3">
+          <MiniStat label="Costos directos" value={currency(directCosts)} />
+          <MiniStat label="Gastos operativos" value={currency(operatingExpenses)} />
+          <MiniStat label="Total costos registrados" value={currency(totalRegisteredCosts)} />
+        </div>
+        <div className="border border-border bg-background p-3 text-xs text-muted-foreground">
+          A liquidar = Monto COD - Comision COD - Costo entrega - Pick&Pack - Empaque. La comision tarjeta queda solo como dato informativo cuando aplica: {currency(summary?.card_commission ?? 0)}.
+        </div>
+      </div>
 
       <CloseDetailCard
         title="Pedidos que explican el cierre"
@@ -3222,7 +3271,7 @@ function MonthlyCloseTab({
             className="gap-2"
             onClick={(event) => {
               event.stopPropagation();
-              exportCsv(`pedidos-cierre-${selectedMonth}.csv`, visibleOrders);
+              exportCsv(`pedidos-cierre-${close.month}.csv`, visibleOrders);
             }}
           >
             <Download className="h-4 w-4" /> Exportar pedidos
@@ -3253,7 +3302,7 @@ function MonthlyCloseTab({
 
       <CloseDetailCard
         title="Anomalias y reclamos"
-        meta={`${selectedAnomalies.length} alertas del mes`}
+        meta={`${monthAnomalies.length} alertas del mes`}
         open={showAnomalies}
         onToggle={() => setShowAnomalies((value) => !value)}
         action={
@@ -3263,7 +3312,7 @@ function MonthlyCloseTab({
             className="gap-2"
             onClick={(event) => {
               event.stopPropagation();
-              exportCsv(`anomalias-${selectedMonth}.csv`, selectedAnomalies);
+              exportCsv(`anomalias-${close.month}.csv`, monthAnomalies);
             }}
           >
             <Download className="h-4 w-4" /> Exportar anomalias
@@ -3271,7 +3320,7 @@ function MonthlyCloseTab({
         }
       >
         <FinancialAnomaliesTable
-          anomalies={selectedAnomalies}
+          anomalies={monthAnomalies}
           claimByAnomalyKey={claimByAnomalyKey}
           onSaveClaim={onSaveClaim}
         />
@@ -3279,28 +3328,19 @@ function MonthlyCloseTab({
 
       <CloseDetailCard
         title="SKUs sin costo"
-        meta={`${selectedMissingCostSkus.length} pendientes`}
+        meta={`${missingCostSkus.length} pendientes`}
         open={showSkus}
         onToggle={() => setShowSkus((value) => !value)}
       >
-        {selectedMissingCostSkus.length ? (
+        {missingCostSkus.length ? (
           <div className="flex flex-wrap gap-2">
-            {selectedMissingCostSkus.slice(0, 120).map((sku) => (
+            {missingCostSkus.slice(0, 120).map((sku) => (
               <Badge key={sku} variant="warning">{sku}</Badge>
             ))}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">No hay SKUs pendientes de costo en este mes.</p>
         )}
-      </CloseDetailCard>
-
-      <CloseDetailCard
-        title="Comparar meses"
-        meta={`${rows.length} periodos disponibles`}
-        open={showHistory}
-        onToggle={() => setShowHistory((value) => !value)}
-      >
-        <MonthlyCloseHistoryTable rows={rows} />
       </CloseDetailCard>
     </div>
   );
@@ -3373,52 +3413,6 @@ function CloseDetailCard({
       </CardHeader>
       {open && <CardContent>{children}</CardContent>}
     </Card>
-  );
-}
-
-function MonthlyCloseHistoryTable({ rows }: { rows: MonthlyCloseRow[] }) {
-  if (!rows.length) {
-    return <p className="text-sm text-muted-foreground">No hay meses para comparar todavia.</p>;
-  }
-
-  return (
-    <div className="overflow-auto border border-border">
-      <table className="w-full min-w-[1120px] text-sm">
-        <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
-          <tr>
-            <th className="px-3 py-2">Mes</th>
-            <th className="px-3 py-2 text-right">Pedidos</th>
-            <th className="px-3 py-2 text-right">Entregados</th>
-            <th className="px-3 py-2 text-right">Pendientes</th>
-            <th className="px-3 py-2 text-right">Liquidados</th>
-            <th className="px-3 py-2 text-right">Sin liquidacion</th>
-            <th className="px-3 py-2 text-right">Por reclamar</th>
-            <th className="px-3 py-2 text-right">Costos</th>
-            <th className="px-3 py-2 text-right">Utilidad neta</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const registeredCosts = row.boxful_costs + row.product_costs + row.ads + row.payroll + row.misc;
-            return (
-              <tr key={row.month} className="border-t border-border/50">
-                <td className="px-3 py-2 font-mono text-xs">{formatMonthLabel(row.month)}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs">{row.orders}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs">{row.delivered}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs">{row.pending}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs">{row.settled}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs">{row.unsettled}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs">{row.to_claim}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs">{currency(registeredCosts)}</td>
-                <td className={`px-3 py-2 text-right font-mono text-xs ${row.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
-                  {currency(row.net_profit)}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
   );
 }
 
@@ -3887,65 +3881,6 @@ function buildMonthlyCloseRows(
       net_profit: roundMoney(row.contribution_margin - row.ads - row.payroll - row.misc),
     }))
     .sort((a, b) => b.month.localeCompare(a.month));
-}
-
-function getMonthlyCloseTotals(rows: MonthlyCloseRow[], selectedMonth: string): MonthlyCloseRow {
-  const sourceRows = selectedMonth === "all" ? rows : rows.filter((row) => row.month === selectedMonth);
-  const total: MonthlyCloseRow = {
-    month: selectedMonth,
-    orders: 0,
-    delivered: 0,
-    not_delivered: 0,
-    annulled: 0,
-    pending: 0,
-    settled: 0,
-    unsettled: 0,
-    to_claim: 0,
-    duplicate_settlements: 0,
-    boxful_costs: 0,
-    cash_received: 0,
-    cash_pending: 0,
-    product_costs: 0,
-    ads: 0,
-    payroll: 0,
-    misc: 0,
-    contribution_margin: 0,
-    net_profit: 0,
-  };
-
-  for (const row of sourceRows) {
-    total.orders += row.orders;
-    total.delivered += row.delivered;
-    total.not_delivered += row.not_delivered;
-    total.annulled += row.annulled;
-    total.pending += row.pending;
-    total.settled += row.settled;
-    total.unsettled += row.unsettled;
-    total.to_claim += row.to_claim;
-    total.duplicate_settlements += row.duplicate_settlements;
-    total.boxful_costs += row.boxful_costs;
-    total.cash_received += row.cash_received;
-    total.cash_pending += row.cash_pending;
-    total.product_costs += row.product_costs;
-    total.ads += row.ads;
-    total.payroll += row.payroll;
-    total.misc += row.misc;
-    total.contribution_margin += row.contribution_margin;
-    total.net_profit += row.net_profit;
-  }
-
-  return {
-    ...total,
-    cash_received: roundMoney(total.cash_received),
-    cash_pending: roundMoney(total.cash_pending),
-    boxful_costs: roundMoney(total.boxful_costs),
-    product_costs: roundMoney(total.product_costs),
-    ads: roundMoney(total.ads),
-    payroll: roundMoney(total.payroll),
-    misc: roundMoney(total.misc),
-    contribution_margin: roundMoney(total.contribution_margin),
-    net_profit: roundMoney(total.net_profit),
-  };
 }
 
 function getMonthlyOrderFilterCounts(orders: OrderProfitabilityRow[]): Record<MonthlyOrderFilter, number> {
