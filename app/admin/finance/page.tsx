@@ -17,6 +17,7 @@ import {
   ReceiptText,
   RefreshCw,
   Search,
+  StickyNote,
   Trash2,
   Upload,
   X,
@@ -26,7 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
-type Tab = "orders" | "settlements" | "costs" | "expenses" | "monthly" | "files";
+type Tab = "orders" | "notes" | "settlements" | "costs" | "expenses" | "monthly" | "files";
 type ExpenseType = "ads" | "payroll" | "misc";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 type OrderTrackingFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
@@ -140,8 +141,17 @@ interface ShopifyOrderSummary {
   fulfillment_status: string | null;
   cancelled_at: string | null;
   note?: string;
+  note_attributes?: Array<{ name?: string | null; value?: string | null }>;
   created_at: string;
   line_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
+}
+
+interface ShopifyNoteAliasRow {
+  row_key: string;
+  shopify_order_name: string;
+  note_order_number: string;
+  note: string;
+  created_at: string;
 }
 
 interface TrackableOrderRow {
@@ -841,6 +851,9 @@ export default function FinancePage() {
           <TabButton active={tab === "orders"} onClick={() => setTab("orders")} icon={<FileSpreadsheet />}>
             Pedidos
           </TabButton>
+          <TabButton active={tab === "notes"} onClick={() => setTab("notes")} icon={<StickyNote />}>
+            Notas Shopify
+          </TabButton>
           <TabButton active={tab === "settlements"} onClick={() => setTab("settlements")} icon={<ReceiptText />}>
             Liquidaciones
           </TabButton>
@@ -875,6 +888,9 @@ export default function FinancePage() {
                 importingLogistics={importingLogistics}
                 onLogisticsImport={handleLogisticsImport}
               />
+            )}
+            {tab === "notes" && (
+              <ShopifyNotesTab orders={shopifyOrders} />
             )}
             {tab === "settlements" && (
               <SettlementsTab
@@ -1405,6 +1421,111 @@ function OrdersTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ShopifyNotesTab({ orders }: { orders: ShopifyOrderSummary[] }) {
+  const [noteSearch, setNoteSearch] = useState("");
+  const noteAliasRows = useMemo(() => buildShopifyNoteAliasRows(orders), [orders]);
+  const filteredRows = useMemo(
+    () => noteAliasRows.filter((row) => matchesShopifyNoteAliasSearch(row, noteSearch)),
+    [noteAliasRows, noteSearch]
+  );
+  const noteOrderCount = useMemo(
+    () => new Set(noteAliasRows.map((row) => row.shopify_order_name)).size,
+    [noteAliasRows]
+  );
+  const rowsWithCode = noteAliasRows.filter((row) => row.note_order_number).length;
+
+  function exportAliases() {
+    exportCsv(
+      `shopify-notas-alias-${new Date().toISOString().slice(0, 10)}.csv`,
+      filteredRows.map((row) => ({
+        codigo_pedido_shopify: row.shopify_order_name,
+        numero_pedido_en_nota: row.note_order_number || "Sin codigo",
+      }))
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader className="gap-4 space-y-0 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1.5">
+          <CardTitle className="text-base">Notas Shopify</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Tabla de alias para cruzar codigos del bot contra pedidos Shopify.
+          </p>
+        </div>
+        <Button type="button" variant="outline" onClick={exportAliases} className="gap-2">
+          <Download className="h-4 w-4" />
+          Exportar alias
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <MiniStat label="Pedidos Shopify" value={orders.length} />
+          <MiniStat label="Pedidos con nota" value={noteOrderCount} />
+          <MiniStat label="Alias extraidos" value={rowsWithCode} />
+        </div>
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex w-full items-center gap-2 border border-input bg-background px-3 sm:max-w-xl">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <input
+              value={noteSearch}
+              onChange={(event) => setNoteSearch(event.target.value)}
+              placeholder="Buscar por #MCRC10269 o por codigo de nota 3685"
+              className="h-10 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+            />
+            {noteSearch && (
+              <button
+                type="button"
+                aria-label="Limpiar busqueda"
+                onClick={() => setNoteSearch("")}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {filteredRows.length} de {noteAliasRows.length} notas
+          </p>
+        </div>
+
+        <div className="max-h-[620px] overflow-auto border border-border">
+          <table className="w-full min-w-[720px] text-sm">
+            <thead className="sticky top-0 bg-card">
+              <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                <th className="px-3 py-2">Codigo del pedido</th>
+                <th className="px-3 py-2">Numero de pedido en la nota</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRows.slice(0, 1000).map((row) => (
+                <tr key={row.row_key} className="border-b border-border/50">
+                  <td className="px-3 py-2 font-mono text-xs">{row.shopify_order_name}</td>
+                  <td className="px-3 py-2 font-mono text-xs">
+                    {row.note_order_number ? (
+                      row.note_order_number
+                    ) : (
+                      <Badge variant="warning">Sin codigo</Badge>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {!filteredRows.length && (
+                <tr>
+                  <td colSpan={2} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    No hay notas Shopify con ese codigo.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -3390,6 +3511,7 @@ function toCsv(rows: unknown[]): string {
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
   const lineItems = (order.line_items as ShopifyOrderSummary["line_items"]) ?? [];
   const rawOrder = (order.raw_order as Record<string, unknown> | null) ?? {};
+  const noteAttributes = (rawOrder.note_attributes as ShopifyOrderSummary["note_attributes"]) ?? [];
   return {
     id: String(order.shopify_order_id ?? order.id ?? ""),
     order_number: Number(order.order_number ?? 0),
@@ -3404,6 +3526,7 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     fulfillment_status: String(order.fulfillment_status ?? ""),
     cancelled_at: (order.cancelled_at as string | null) ?? null,
     note: String(rawOrder.note ?? ""),
+    note_attributes: noteAttributes,
     created_at: String(order.shopify_created_at ?? ""),
     line_items: lineItems,
   };
@@ -3758,7 +3881,7 @@ function buildShopifyOrderMatchIndex(orders: ShopifyOrderSummary[]): Map<string,
   const byKey = new Map<string, ShopifyOrderSummary>();
 
   for (const order of orders) {
-    for (const key of extractExternalOrderCodesFromText(order.note ?? "").map(normalizeMatchKey)) {
+    for (const key of extractExternalOrderCodesFromText(getShopifyNoteText(order)).map(normalizeMatchKey)) {
       if (!byKey.has(key)) byKey.set(key, order);
     }
   }
@@ -3794,7 +3917,7 @@ function getOrderMatchKeys(row: OrderMatchKeySource): string[] {
 
 function getShopifyOrderMatchKeys(order: ShopifyOrderSummary): string[] {
   return uniqueKeys([
-    ...extractExternalOrderCodesFromText(order.note ?? "").map(normalizeMatchKey),
+    ...extractExternalOrderCodesFromText(getShopifyNoteText(order)).map(normalizeMatchKey),
     ...getShopifyDirectOrderMatchKeys(order),
   ]);
 }
@@ -4391,6 +4514,63 @@ function extractExternalOrderCodesFromText(value: string): string[] {
     }
   }
   return Array.from(codes);
+}
+
+function getShopifyNoteText(order: Pick<ShopifyOrderSummary, "note" | "note_attributes">): string {
+  const attributeText = (order.note_attributes ?? [])
+    .flatMap((attribute) => [attribute.name ?? "", attribute.value ?? ""])
+    .filter(Boolean)
+    .join("\n");
+  return [order.note ?? "", attributeText].filter(Boolean).join("\n");
+}
+
+function buildShopifyNoteAliasRows(orders: ShopifyOrderSummary[]): ShopifyNoteAliasRow[] {
+  return orders
+    .flatMap((order) => {
+      const note = getShopifyNoteText(order).trim();
+      if (!note) return [];
+
+      const externalCodes = extractExternalOrderCodesFromText(note);
+      if (!externalCodes.length) {
+        return [{
+          row_key: `${order.id}-note`,
+          shopify_order_name: order.name,
+          note_order_number: "",
+          note,
+          created_at: order.created_at,
+        }];
+      }
+
+      return externalCodes.map((code, index) => ({
+        row_key: `${order.id}-${code}-${index}`,
+        shopify_order_name: order.name,
+        note_order_number: code,
+        note,
+        created_at: order.created_at,
+      }));
+    })
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+}
+
+function matchesShopifyNoteAliasSearch(row: ShopifyNoteAliasRow, query: string): boolean {
+  const rawQuery = query.trim().toLowerCase();
+  const compactQuery = normalizeSearchText(query);
+  if (!rawQuery && !compactQuery) return true;
+
+  const values = [
+    row.shopify_order_name,
+    row.note_order_number,
+    row.note,
+  ];
+
+  return values.some((value) => {
+    const text = String(value || "").toLowerCase();
+    const compactText = normalizeSearchText(String(value || ""));
+    return Boolean(
+      (rawQuery && text.includes(rawQuery)) ||
+      (compactQuery && compactText.includes(compactQuery))
+    );
+  });
 }
 
 function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {

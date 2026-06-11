@@ -17,6 +17,7 @@ export interface ShopifyOrderSummary {
   fulfillment_status: string | null;
   cancelled_at: string | null;
   note: string;
+  note_attributes: Array<{ name: string; value: string }>;
   created_at: string;
   line_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
 }
@@ -110,6 +111,7 @@ export async function GET(req: NextRequest) {
           null;
 
         const lineItems = (o.line_items as Array<Record<string, unknown>>) ?? [];
+        const noteAttributes = (o.note_attributes as Array<Record<string, unknown>>) ?? [];
         const products = lineItems.map((li) => `${li.quantity}x ${li.title}`).join(", ");
         const normalizedLineItems = lineItems.map((li) => ({
           sku: String(li.sku ?? ""),
@@ -132,6 +134,10 @@ export async function GET(req: NextRequest) {
           fulfillment_status: (o.fulfillment_status as string | null) ?? null,
           cancelled_at: (o.cancelled_at as string | null) ?? null,
           note: String(o.note ?? ""),
+          note_attributes: noteAttributes.map((attribute) => ({
+            name: String(attribute.name ?? ""),
+            value: String(attribute.value ?? ""),
+          })),
           created_at: o.created_at as string,
           line_items: normalizedLineItems,
         };
