@@ -104,7 +104,7 @@ Navigation:
 
 Tabs:
 
-- `Pedidos`: shows Shopify orders as the baseline tracking list, filters by operational tracking state, includes a search box for order codes, guide numbers, and customers, opens Boxful logistics Excel upload from the table header action button/modal, inspects matched rows, and tracks operational follow-up state.
+- `Pedidos`: shows Shopify orders as the baseline tracking list, filters by operational tracking state and liquidation state, includes a search box for order codes, guide numbers, and customers, opens Boxful logistics Excel upload from the table header action button/modal, inspects matched rows, and tracks operational follow-up state.
 - `Liquidaciones`: upload settlement/liquidation Excel files by cutoff date, select previously imported files, sort them by recent/oldest, delete imports when needed, inspect financial settlement rows, filter Shopify match state, source Excel traceability, claim alerts, and anomalies.
 - `Costos SKU`: loads Shopify products/variants and manages product costs by SKU with explicit edit/save rows, saved/missing cost tabs, and versioned effective dates.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses, organized into three internal tabs with contextual modal buttons.
@@ -145,6 +145,8 @@ Excel parsing:
 - The `Pedidos` tab keeps the Shopify/Boxful table as the main surface. The Boxful logistics importer is an action button on the right side of the table header and opens a modal; it should not return to a persistent side-panel form.
 - The `Pedidos` tab search filters the visible table client-side by order code (`#MCRC...`, `MCRC...`, iConflate note code, or numeric partials), guide number, customer name, SKU, and item title. The search should remain above the table because it is the primary lookup workflow during reconciliation.
 - The `Pedidos` tab main controls are tracking-state filters: `Todos`, `Pendientes`, `Anulados`, `Entregados`, and `No entregados`. Technical import counts such as Boxful rows, Shopify matches, and unmatched rows are diagnostic context only, not primary KPIs.
+- The `Pedidos` tab also has liquidation filters: `Todos`, `Liquidados`, `Sin liquidacion`, `Por reclamar`, and `Duplicados`. These filters are used for corrective work, especially `Entregados` + `Por reclamar`.
+- In the `Pedidos` table, `Estado liquidacion` must stay as a simple financial state: `Liquidada`, `Sin liquidacion`, or `Doble liquidacion`. The source Excel belongs in a separate `Archivo liquidacion` column so the team can audit which Boxful file paid or charged that order. The settlement amount belongs in a separate `A liquidar` column.
 - Existing imported Excel rows are not automatically rematched after a matching-rule code change. To apply the new iConflate-note match rule to an already imported liquidation/logistics file, delete that import and upload the Excel again, unless a future rematch tool is added.
 
 Database schema:
@@ -177,6 +179,7 @@ Important implementation detail:
 - Claim alert rule: if a Boxful logistics row is `Entregado` but no settlement/liquidation row exists for the same order or guide number, `/admin/finance` flags it as `Entregados sin liquidacion` / `Por reclamar`. This is a revenue-control alert so the team can claim payment from the logistics provider.
 - Settlement traceability rule: whenever an order appears in a settlement/liquidation import, the order history/table must show the source Excel file name. The UI matches logistics rows to settlement rows by normalized order number or guide number and displays `settlement_imports.file_name`.
 - Anomaly reporting rule: every financial/logistics inconsistency should be surfaced in the UI, not hidden in secondary badges. Double settlement/liquidation is an anomaly and must be reported with the matching key, source Excel files, statuses, count, and total amount.
+- In normal operation each order should have zero or one liquidation trace. More than one liquidation trace for the same normalized order or guide must show as `Doble liquidacion` in `Pedidos` and as a high-severity anomaly for review.
 - The `Rentabilidad` tab now builds an operational finance control center in the client from Shopify orders, Boxful logistics rows, settlement rows, product costs, and import filenames. It does not require an extra DB table yet.
 - Order-level profitability uses:
   - `amount_to_liquidate`: sum of matched settlement rows for the order/guide.
@@ -556,6 +559,7 @@ Build in this order:
 - `npm run lint`: passed
 - `npm run build`: passed
 - `Liquidaciones` now has an imported-file selector below the upload form, recent/oldest sorting, delete-with-confirmation, and Shopify match filters (`Todos`, `Con match`, `Sin match`) for the active settlement file.
+- `Pedidos` now separates liquidation state, source file, and amount: `Estado liquidacion` shows only the state, `Archivo liquidacion` shows the exact Excel source, `A liquidar` shows the settlement amount, and liquidation filters support corrective views like `Por reclamar` and `Duplicados`.
 
 2026-06-10:
 

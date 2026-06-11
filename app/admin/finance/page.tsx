@@ -28,6 +28,7 @@ type Tab = "orders" | "settlements" | "costs" | "expenses" | "profit" | "monthly
 type ExpenseType = "ads" | "payroll" | "misc";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 type OrderTrackingFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
+type OrderSettlementFilter = "all" | "settled" | "unsettled" | "to_claim" | "duplicate";
 type SettlementImportSort = "recent" | "oldest";
 type SettlementShopifyFilter = "all" | "matched" | "unmatched";
 
@@ -319,6 +320,14 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "annulled", label: "Anulados" },
   { value: "delivered", label: "Entregados" },
   { value: "not_delivered", label: "No entregados" },
+];
+
+const ORDER_SETTLEMENT_FILTERS: Array<{ value: OrderSettlementFilter; label: string }> = [
+  { value: "all", label: "Todos" },
+  { value: "settled", label: "Liquidados" },
+  { value: "unsettled", label: "Sin liquidacion" },
+  { value: "to_claim", label: "Por reclamar" },
+  { value: "duplicate", label: "Duplicados" },
 ];
 
 const SETTLEMENT_IMPORT_SORTS: Array<{ value: SettlementImportSort; label: string }> = [
@@ -944,6 +953,7 @@ function OrdersTab({
   const [isLogisticsModalOpen, setIsLogisticsModalOpen] = useState(false);
   const [orderSearch, setOrderSearch] = useState("");
   const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>("all");
+  const [settlementFilter, setSettlementFilter] = useState<OrderSettlementFilter>("all");
   const searchedRows = useMemo(
     () => rows.filter((row) => matchesOrderSearch(row, orderSearch)),
     [rows, orderSearch]
@@ -964,7 +974,7 @@ function OrdersTab({
 
     return counts;
   }, [searchedRows, settlementTraceByKey]);
-  const filteredRows = useMemo(
+  const trackingFilteredRows = useMemo(
     () =>
       searchedRows.filter((row) => {
         if (trackingFilter === "all") return true;
@@ -973,8 +983,43 @@ function OrdersTab({
       }),
     [searchedRows, settlementTraceByKey, trackingFilter]
   );
+  const settlementCounts = useMemo(() => {
+    const counts: Record<OrderSettlementFilter, number> = {
+      all: trackingFilteredRows.length,
+      settled: 0,
+      unsettled: 0,
+      to_claim: 0,
+      duplicate: 0,
+    };
+
+    for (const row of trackingFilteredRows) {
+      const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
+      const trackingStatus = getEffectiveTrackingStatus(row, traces);
+      if (traces.length === 1) counts.settled += 1;
+      if (traces.length === 0) counts.unsettled += 1;
+      if (traces.length === 0 && trackingStatus === "delivered") counts.to_claim += 1;
+      if (traces.length > 1) counts.duplicate += 1;
+    }
+
+    return counts;
+  }, [settlementTraceByKey, trackingFilteredRows]);
+  const filteredRows = useMemo(
+    () =>
+      trackingFilteredRows.filter((row) => {
+        if (settlementFilter === "all") return true;
+        const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
+        const trackingStatus = getEffectiveTrackingStatus(row, traces);
+        if (settlementFilter === "settled") return traces.length === 1;
+        if (settlementFilter === "unsettled") return traces.length === 0;
+        if (settlementFilter === "to_claim") return traces.length === 0 && trackingStatus === "delivered";
+        return traces.length > 1;
+      }),
+    [settlementFilter, settlementTraceByKey, trackingFilteredRows]
+  );
   const activeTrackingLabel =
     ORDER_TRACKING_FILTERS.find((filter) => filter.value === trackingFilter)?.label ?? "pedidos";
+  const activeSettlementLabel =
+    ORDER_SETTLEMENT_FILTERS.find((filter) => filter.value === settlementFilter)?.label ?? "liquidacion";
 
   async function handleModalLogisticsImport(event: FormEvent<HTMLFormElement>) {
     const didImport = await onLogisticsImport(event);
@@ -1032,8 +1077,38 @@ function OrdersTab({
             <div className="text-xs text-muted-foreground">
               Base Shopify: {shopifyOrderCount} pedidos
               {latestLogisticsImport
-                ? ` · Ultimo Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match Shopify, ${latestLogisticsImport.unmatched_rows} sin match`
-                : " · Sin Boxful importado"}
+                ? ` - Ultimo Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match Shopify, ${latestLogisticsImport.unmatched_rows} sin match`
+                : " - Sin Boxful importado"}
+            </div>
+          </div>
+          <div className="space-y-2 border-t border-border pt-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-medium text-muted-foreground">Liquidacion</p>
+              {settlementFilter !== "all" && (
+                <button
+                  type="button"
+                  onClick={() => setSettlementFilter("all")}
+                  className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Limpiar filtro
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {ORDER_SETTLEMENT_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => setSettlementFilter(filter.value)}
+                  className={`border px-3 py-1.5 text-sm transition-colors ${
+                    settlementFilter === filter.value
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                  }`}
+                >
+                  {filter.label} <span className="ml-1 font-mono text-xs text-foreground">{settlementCounts[filter.value]}</span>
+                </button>
+              ))}
             </div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -1068,9 +1143,13 @@ function OrdersTab({
             emptyLabel={
               orderSearch
                 ? "No encontramos pedidos con ese codigo y estado."
-                : trackingFilter === "all"
+                : trackingFilter === "all" && settlementFilter === "all"
                   ? "No hay pedidos para mostrar."
-                  : `No hay pedidos en ${activeTrackingLabel.toLowerCase()}.`
+                  : trackingFilter === "all"
+                  ? `No hay pedidos en ${activeSettlementLabel.toLowerCase()}.`
+                  : settlementFilter === "all"
+                    ? `No hay pedidos en ${activeTrackingLabel.toLowerCase()}.`
+                  : `No hay pedidos en ${activeTrackingLabel.toLowerCase()} con ${activeSettlementLabel.toLowerCase()}.`
             }
           />
           {logisticsImports.length > 1 && (
@@ -1157,7 +1236,7 @@ function OrdersTable({
 }) {
   return (
     <div className="max-h-[620px] overflow-auto border border-border">
-      <table className="w-full min-w-[1120px] text-sm">
+      <table className="w-full min-w-[1340px] text-sm">
         <thead className="sticky top-0 bg-card">
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
             <th className="px-3 py-2">Orden</th>
@@ -1167,6 +1246,8 @@ function OrdersTable({
             <th className="px-3 py-2">Estado seguimiento</th>
             <th className="px-3 py-2">Shopify</th>
             <th className="px-3 py-2">Estado liquidacion</th>
+            <th className="px-3 py-2">Archivo liquidacion</th>
+            <th className="px-3 py-2 text-right">A liquidar</th>
             <th className="px-3 py-2">Items</th>
             <th className="px-3 py-2 text-right">COD</th>
           </tr>
@@ -1197,7 +1278,13 @@ function OrdersTable({
                   </Badge>
                 </td>
                 <td className="px-3 py-2">
-                  <SettlementTraceBadge traces={traces} />
+                  <SettlementStatusBadge traces={traces} />
+                </td>
+                <td className="px-3 py-2">
+                  <SettlementFileBadge traces={traces} />
+                </td>
+                <td className="px-3 py-2 text-right font-mono text-xs">
+                  {traces.length ? currency(sum(traces.map((trace) => trace.amount_to_liquidate))) : "-"}
                 </td>
                 <td className="px-3 py-2 text-xs text-muted-foreground">
                   {(row.package_items ?? []).slice(0, 2).map((item) => item.title).join(", ") || "-"}
@@ -1210,7 +1297,7 @@ function OrdersTable({
           })}
           {!rows.length && (
             <tr>
-              <td colSpan={9} className="px-3 py-8 text-center text-sm text-muted-foreground">
+              <td colSpan={11} className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {emptyLabel}
               </td>
             </tr>
@@ -1526,22 +1613,29 @@ function SettlementRowsTable({
   );
 }
 
-function SettlementTraceBadge({ traces }: { traces: SettlementTrace[] }) {
+function SettlementStatusBadge({ traces }: { traces: SettlementTrace[] }) {
   if (!traces.length) {
     return <Badge variant="muted">Sin liquidacion</Badge>;
+  }
+  if (traces.length > 1) {
+    return <Badge variant="warning">Doble liquidacion</Badge>;
+  }
+
+  return <Badge variant="success">Liquidada</Badge>;
+}
+
+function SettlementFileBadge({ traces }: { traces: SettlementTrace[] }) {
+  if (!traces.length) {
+    return <span className="text-xs text-muted-foreground">-</span>;
   }
 
   const [firstTrace, ...extraTraces] = traces;
   return (
-    <div className="max-w-[260px] space-y-1">
-      <div className="truncate text-xs font-medium" title={firstTrace.file_name}>
+    <div className="flex max-w-[260px] items-center gap-2">
+      <span className="truncate text-xs font-medium" title={firstTrace.file_name}>
         {firstTrace.file_name}
-      </div>
-      <div className="flex flex-wrap items-center gap-1">
-        <Badge variant="success">{currency(firstTrace.amount_to_liquidate)}</Badge>
-        {firstTrace.settlement_status && <Badge variant="muted">{firstTrace.settlement_status}</Badge>}
-        {extraTraces.length > 0 && <Badge variant="warning">+{extraTraces.length}</Badge>}
-      </div>
+      </span>
+      {extraTraces.length > 0 && <Badge variant="warning">+{extraTraces.length}</Badge>}
     </div>
   );
 }
