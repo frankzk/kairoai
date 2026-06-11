@@ -6,6 +6,8 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowLeft,
+  ChevronDown,
+  ChevronRight,
   Database,
   Download,
   FileSpreadsheet,
@@ -28,6 +30,7 @@ type ExpenseType = "ads" | "payroll" | "misc";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 type OrderTrackingFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
 type OrderSettlementFilter = "all" | "settled" | "unsettled" | "to_claim" | "duplicate";
+type OrderPeriodMode = "all" | "month" | "range";
 type MonthlyOrderFilter =
   | "all"
   | "pending"
@@ -348,8 +351,14 @@ const ORDER_SETTLEMENT_FILTERS: Array<{ value: OrderSettlementFilter; label: str
   { value: "all", label: "Todos" },
   { value: "settled", label: "Liquidados" },
   { value: "unsettled", label: "Sin liquidacion" },
-  { value: "to_claim", label: "Por reclamar" },
+  { value: "to_claim", label: "Pend. liquidacion" },
   { value: "duplicate", label: "Duplicados" },
+];
+
+const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
+  { value: "all", label: "Todo" },
+  { value: "month", label: "Mes" },
+  { value: "range", label: "Rango" },
 ];
 
 const MONTHLY_ORDER_FILTERS: Array<{ value: MonthlyOrderFilter; label: string }> = [
@@ -360,7 +369,7 @@ const MONTHLY_ORDER_FILTERS: Array<{ value: MonthlyOrderFilter; label: string }>
   { value: "annulled", label: "Anulados" },
   { value: "settled", label: "Liquidados" },
   { value: "unsettled", label: "Sin liquidacion" },
-  { value: "to_claim", label: "Por reclamar" },
+  { value: "to_claim", label: "Pend. liquidacion" },
   { value: "duplicate", label: "Duplicados" },
 ];
 
@@ -448,13 +457,6 @@ export default function FinancePage() {
   const [importingLogistics, setImportingLogistics] = useState(false);
   const [syncingShopify, setSyncingShopify] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
-  const [boxfulFileForm, setBoxfulFileForm] = useState({
-    file_name: "",
-    file_type: "logistica" as "logistica" | "liquidacion",
-    cutoff_date: "",
-    status: "esperado" as "esperado" | "importado" | "faltante" | "ignorado",
-    notes: "",
-  });
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
 
   const latestLogisticsImport = logisticsImports[0];
@@ -739,32 +741,6 @@ export default function FinancePage() {
     ]);
   }
 
-  async function saveBoxfulFile(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const res = await fetch("/api/finance/boxful-files", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...boxfulFileForm, file_type: "logistica" }),
-    });
-    const json = await readApiJson(res);
-    if (!res.ok) {
-      setError(json.error ?? "No se pudo guardar archivo Boxful");
-      return;
-    }
-    const savedFile = json.file as BoxfulFileControl;
-    setBoxfulFiles((current) => [
-      savedFile,
-      ...current.filter((file) => file.file_name !== savedFile.file_name),
-    ]);
-    setBoxfulFileForm({
-      file_name: "",
-      file_type: "logistica",
-      cutoff_date: "",
-      status: "esperado",
-      notes: "",
-    });
-  }
-
   async function saveExpense(event: FormEvent<HTMLFormElement>): Promise<boolean> {
     event.preventDefault();
     const res = await fetch("/api/finance/expenses", {
@@ -944,9 +920,6 @@ export default function FinancePage() {
               <BoxfulFilesTab
                 files={boxfulFiles}
                 logisticsImports={logisticsImports}
-                form={boxfulFileForm}
-                setForm={setBoxfulFileForm}
-                onSave={saveBoxfulFile}
               />
             )}
           </>
@@ -981,11 +954,28 @@ function OrdersTab({
 }) {
   const [isLogisticsModalOpen, setIsLogisticsModalOpen] = useState(false);
   const [orderSearch, setOrderSearch] = useState("");
+  const [periodMode, setPeriodMode] = useState<OrderPeriodMode>("all");
+  const [selectedOrderMonth, setSelectedOrderMonth] = useState("");
+  const [rangeStart, setRangeStart] = useState("");
+  const [rangeEnd, setRangeEnd] = useState("");
   const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>("all");
   const [settlementFilter, setSettlementFilter] = useState<OrderSettlementFilter>("all");
+  const orderMonthOptions = useMemo(
+    () =>
+      uniqueKeys(rows.map((row) => getMonthKey(row.shopify_created_at)).filter(Boolean))
+        .sort((a, b) => b.localeCompare(a)),
+    [rows]
+  );
+  const periodFilteredRows = useMemo(
+    () =>
+      rows.filter((row) =>
+        matchesOrderPeriod(row, periodMode, selectedOrderMonth, rangeStart, rangeEnd)
+      ),
+    [periodMode, rangeEnd, rangeStart, rows, selectedOrderMonth]
+  );
   const searchedRows = useMemo(
-    () => rows.filter((row) => matchesOrderSearch(row, orderSearch)),
-    [rows, orderSearch]
+    () => periodFilteredRows.filter((row) => matchesOrderSearch(row, orderSearch)),
+    [periodFilteredRows, orderSearch]
   );
   const trackingCounts = useMemo(() => {
     const counts: Record<OrderTrackingFilter, number> = {
@@ -1050,6 +1040,16 @@ function OrdersTab({
   const activeSettlementLabel =
     ORDER_SETTLEMENT_FILTERS.find((filter) => filter.value === settlementFilter)?.label ?? "liquidacion";
 
+  useEffect(() => {
+    if (!orderMonthOptions.length) {
+      setSelectedOrderMonth("");
+      return;
+    }
+    if (!selectedOrderMonth || !orderMonthOptions.includes(selectedOrderMonth)) {
+      setSelectedOrderMonth(orderMonthOptions[0]);
+    }
+  }, [orderMonthOptions, selectedOrderMonth]);
+
   async function handleModalLogisticsImport(event: FormEvent<HTMLFormElement>) {
     const didImport = await onLogisticsImport(event);
     if (didImport) setIsLogisticsModalOpen(false);
@@ -1083,6 +1083,75 @@ function OrdersTab({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="border border-border bg-background/60 p-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Periodo</p>
+                <div className="flex flex-wrap gap-2">
+                  {ORDER_PERIOD_MODES.map((mode) => (
+                    <button
+                      key={mode.value}
+                      type="button"
+                      onClick={() => setPeriodMode(mode.value)}
+                      className={`border px-3 py-1.5 text-sm transition-colors ${
+                        periodMode === mode.value
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-card text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                      }`}
+                    >
+                      {mode.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {periodMode === "month" && (
+                <label className="w-full space-y-1 lg:max-w-xs">
+                  <span className="text-xs font-medium text-muted-foreground">Mes</span>
+                  <select
+                    value={selectedOrderMonth}
+                    onChange={(event) => setSelectedOrderMonth(event.target.value)}
+                    className="h-10 w-full border border-input bg-background px-3 text-sm outline-none"
+                  >
+                    {orderMonthOptions.map((month) => (
+                      <option key={month} value={month}>
+                        {formatMonthLabel(month)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              {periodMode === "range" && (
+                <div className="grid w-full gap-2 sm:grid-cols-2 lg:max-w-md">
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-muted-foreground">Desde</span>
+                    <Input
+                      type="date"
+                      value={rangeStart}
+                      onChange={(event) => setRangeStart(event.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-muted-foreground">Hasta</span>
+                    <Input
+                      type="date"
+                      value={rangeEnd}
+                      onChange={(event) => setRangeEnd(event.target.value)}
+                    />
+                  </label>
+                </div>
+              )}
+
+              <div className="border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+                Vista actual
+                <span className="ml-2 font-mono text-sm font-semibold text-foreground">
+                  {periodFilteredRows.length}
+                </span>
+              </div>
+            </div>
+          </div>
+
           <div className="space-y-3">
             <div className="flex flex-wrap gap-2">
               {ORDER_TRACKING_FILTERS.map((filter) => (
@@ -1104,7 +1173,7 @@ function OrdersTab({
               ))}
             </div>
             <div className="text-xs text-muted-foreground">
-              Base Shopify: {shopifyOrderCount} pedidos desde 16/09/2025
+              Base Shopify: {shopifyOrderCount} pedidos desde 16/09/2025 | vista: {periodFilteredRows.length} pedidos
               {latestLogisticsImport
                 ? ` - Ultimo Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match Shopify, ${latestLogisticsImport.unmatched_rows} sin match`
                 : " - Sin Boxful importado"}
@@ -1736,7 +1805,7 @@ function DoubleSettlementTable({ anomalies }: { anomalies: DoubleSettlementAnoma
                 <td className="px-3 py-2 text-xs">
                   {anomaly.traces.slice(0, 3).map((trace) => (
                     <div key={`${trace.file_name}-${trace.amount_to_liquidate}`} className="max-w-[320px] truncate" title={trace.file_name}>
-                      {trace.file_name} · {trace.settlement_status || "sin estado"} · {currency(trace.amount_to_liquidate)}
+                      {trace.file_name} - {trace.settlement_status || "sin estado"} - {currency(trace.amount_to_liquidate)}
                     </div>
                   ))}
                   {anomaly.traces.length > 3 && (
@@ -2447,7 +2516,7 @@ function CostCompositionBar({
                 <span className="text-xs text-muted-foreground">{segment.label}</span>
               </div>
               <div className="mt-2 font-mono text-sm">{currency(segment.value)}</div>
-              <div className="text-xs text-muted-foreground">{percentage.toFixed(1)}% del costo</div>
+              <div className="text-xs text-muted-foreground">{percentage.toFixed(1)}% del total</div>
             </div>
           );
         })}
@@ -2469,9 +2538,17 @@ function MonthlyCloseTab({
   claimByAnomalyKey: Map<string, FinanceClaim>;
   onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
 }) {
-  const [selectedMonth, setSelectedMonth] = useState("all");
-  const [orderFilter, setOrderFilter] = useState<MonthlyOrderFilter>("all");
   const monthOptions = useMemo(() => rows.map((row) => row.month), [rows]);
+  const preferredMonth = useMemo(
+    () => monthOptions.find((month) => month !== "sin-fecha") ?? monthOptions[0] ?? "all",
+    [monthOptions]
+  );
+  const [selectedMonth, setSelectedMonth] = useState(preferredMonth);
+  const [orderFilter, setOrderFilter] = useState<MonthlyOrderFilter>("all");
+  const [showOrders, setShowOrders] = useState(false);
+  const [showAnomalies, setShowAnomalies] = useState(false);
+  const [showSkus, setShowSkus] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const selectedClose = useMemo(
     () => getMonthlyCloseTotals(rows, selectedMonth),
     [rows, selectedMonth]
@@ -2509,207 +2586,197 @@ function MonthlyCloseTab({
     () => uniqueKeys(monthOrders.flatMap((order) => order.missing_cost_skus)),
     [monthOrders]
   );
-  const selectedMonthLabel = selectedMonth === "all" ? "Todos los meses" : selectedMonth;
+  const selectedMonthLabel = formatMonthLabel(selectedMonth);
   const criticalAnomalies = selectedAnomalies.filter((anomaly) => anomaly.severity === "high").length;
+  const totalRegisteredCosts =
+    selectedClose.boxful_costs +
+    selectedClose.product_costs +
+    selectedClose.ads +
+    selectedClose.payroll +
+    selectedClose.misc;
+  const directCosts = selectedClose.boxful_costs + selectedClose.product_costs;
+  const operatingExpenses = selectedClose.ads + selectedClose.payroll + selectedClose.misc;
+  const deliveredRate = selectedClose.orders ? (selectedClose.delivered / selectedClose.orders) * 100 : 0;
+  const settledRate = selectedClose.orders ? (selectedClose.settled / selectedClose.orders) * 100 : 0;
+  const claimBase = selectedClose.cash_received + selectedClose.cash_pending;
+  const claimShare = claimBase ? (selectedClose.cash_pending / claimBase) * 100 : 0;
   const costSegments = [
-    { label: "Boxful", value: selectedClose.boxful_costs, className: "bg-sky-400" },
-    { label: "Producto", value: selectedClose.product_costs, className: "bg-emerald-400" },
+    { label: "Costos Boxful", value: selectedClose.boxful_costs, className: "bg-sky-400" },
+    { label: "Costo producto", value: selectedClose.product_costs, className: "bg-emerald-400" },
     { label: "Ads", value: selectedClose.ads, className: "bg-violet-400" },
     { label: "Planilla", value: selectedClose.payroll, className: "bg-amber-400" },
     { label: "Varios", value: selectedClose.misc, className: "bg-rose-400" },
   ];
 
   useEffect(() => {
-    if (selectedMonth !== "all" && !monthOptions.includes(selectedMonth)) {
+    if (!monthOptions.length) {
       setSelectedMonth("all");
+      return;
     }
-  }, [monthOptions, selectedMonth]);
+    if (selectedMonth === "all" || !monthOptions.includes(selectedMonth)) {
+      setSelectedMonth(preferredMonth);
+    }
+  }, [monthOptions, preferredMonth, selectedMonth]);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold">Cierre mensual</h2>
           <p className="text-xs text-muted-foreground">
-            Vista devengada por mes: estado de pedidos, caja, costos, gastos y utilidad estimada.
+            Una lectura por mes: resultado, acciones pendientes y costos registrados.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Mes a revisar
+            <select
+              value={selectedMonth}
+              onChange={(event) => setSelectedMonth(event.target.value)}
+              className="h-9 min-w-[220px] border border-input bg-background px-3 text-sm text-foreground"
+            >
+              {monthOptions.map((month) => (
+                <option key={month} value={month}>
+                  {formatMonthLabel(month)}
+                </option>
+              ))}
+              {!monthOptions.length && <option value="all">Sin datos</option>}
+            </select>
+          </label>
           <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("cierre-mensual.csv", rows)}>
             <Download className="h-4 w-4" /> Exportar cierre
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={() => exportCsv(`anomalias-${selectedMonth}.csv`, selectedAnomalies)}
-          >
-            <Download className="h-4 w-4" /> Exportar anomalias
-          </Button>
         </div>
       </div>
-      <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <MiniStat label="Pedidos analizados" value={selectedClose.orders} />
-        <MiniStat label="Entregados" value={selectedClose.delivered} />
-        <MiniStat label="No entregados" value={selectedClose.not_delivered} />
-        <MiniStat label="Anulados" value={selectedClose.annulled} />
-        <MiniStat label="Pendientes" value={selectedClose.pending} />
-        <MiniStat label="Por reclamar" value={selectedClose.to_claim} />
-      </section>
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MiniStat label="Caja liquidada" value={currency(selectedClose.cash_received)} />
-        <MiniStat label="Caja por reclamar" value={currency(selectedClose.cash_pending)} />
-        <MiniStat label="Margen pedido" value={currency(selectedClose.contribution_margin)} />
-        <MiniStat label="Alertas criticas" value={criticalAnomalies} />
-      </section>
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => setSelectedMonth("all")}
-          className={`border px-3 py-2 text-left text-sm transition-colors ${
-            selectedMonth === "all"
-              ? "border-primary bg-primary/10 text-primary"
-              : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
-          }`}
-        >
-          Todos <span className="ml-1 font-mono text-xs text-foreground">{control.orders.length}</span>
-        </button>
-        {rows.map((row) => (
-          <button
-            key={row.month}
-            type="button"
-            onClick={() => setSelectedMonth(row.month)}
-            className={`border px-3 py-2 text-left text-sm transition-colors ${
-              selectedMonth === row.month
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
-            }`}
-          >
-            {row.month} <span className="ml-1 font-mono text-xs text-foreground">{row.orders}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+      {!rows.length ? (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Composicion de costos</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              {selectedMonthLabel}: participacion de cada concepto dentro del 100% de costos registrados.
-            </p>
-          </CardHeader>
-          <CardContent>
-            <CostCompositionBar segments={costSegments} />
+          <CardContent className="p-8 text-center text-sm text-muted-foreground">
+            No hay datos suficientes para cierre mensual.
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Formula y Boxful</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="border border-border bg-background p-3 text-xs text-muted-foreground">
-              A liquidar = Monto COD - Comision COD - Costo entrega - Pick&Pack - Empaque.
-              Esos cargos Boxful ya vienen descontados en A liquidar.
-            </div>
-            <BreakdownLine label="Comision COD" value={summary?.cod_commission ?? 0} />
-            <BreakdownLine label="Costo entrega" value={summary?.delivery_cost ?? 0} />
-            <BreakdownLine label="Pick&Pack" value={summary?.pick_pack_cost ?? 0} />
-            <BreakdownLine label="Empaque liquidacion" value={summary?.settlement_packaging_cost ?? 0} />
-            <BreakdownLine label="Comision tarjeta (info)" value={summary?.card_commission ?? 0} />
-          </CardContent>
-        </Card>
-      </div>
+      ) : (
+        <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+          <Card className="border-primary/30">
+            <CardHeader>
+              <CardTitle className="text-base">Resultado de {selectedMonthLabel}</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Lo que queda despues de costos de producto, Boxful y gastos registrados.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div>
+                <p className="text-xs text-muted-foreground">Utilidad neta estimada</p>
+                <p className={`mt-1 font-mono text-4xl font-semibold ${selectedClose.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
+                  {currency(selectedClose.net_profit)}
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <MiniStat label="Pedidos" value={selectedClose.orders} />
+                <MiniStat label="Entregados" value={`${selectedClose.delivered} (${formatPercent(deliveredRate)})`} />
+                <MiniStat label="Liquidados" value={`${selectedClose.settled} (${formatPercent(settledRate)})`} />
+                <MiniStat label="Pendientes" value={selectedClose.pending} />
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <MiniStat label="Caja liquidada" value={currency(selectedClose.cash_received)} />
+                <MiniStat label="Caja por reclamar" value={currency(selectedClose.cash_pending)} />
+                <MiniStat label="Margen pedidos" value={currency(selectedClose.contribution_margin)} />
+              </div>
+              <div>
+                <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Caja por reclamar</span>
+                  <span>{formatPercent(claimShare)} del total pendiente + liquidado</span>
+                </div>
+                <div className="h-2 overflow-hidden border border-border bg-background">
+                  <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, claimShare)}%` }} />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Que revisar primero</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Lista corta de acciones para cerrar el mes sin perder dinero.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <CloseSignalRow
+                label="Pedidos operativos pendientes"
+                value={selectedClose.pending}
+                hint="Aun no son entregados, devueltos ni anulados."
+                tone={selectedClose.pending ? "warning" : "ok"}
+              />
+              <CloseSignalRow
+                label="Entregados sin liquidacion"
+                value={selectedClose.to_claim}
+                hint="Si Boxful ya los entrego, toca reclamar pago."
+                tone={selectedClose.to_claim ? "warning" : "ok"}
+              />
+              <CloseSignalRow
+                label="Liquidaciones duplicadas"
+                value={selectedClose.duplicate_settlements}
+                hint="Un pedido no deberia aparecer dos veces."
+                tone={selectedClose.duplicate_settlements ? "danger" : "ok"}
+              />
+              <CloseSignalRow
+                label="SKUs sin costo"
+                value={selectedMissingCostSkus.length}
+                hint="Sin costo de producto, la utilidad queda incompleta."
+                tone={selectedMissingCostSkus.length ? "warning" : "ok"}
+              />
+              <CloseSignalRow
+                label="Alertas criticas"
+                value={criticalAnomalies}
+                hint="Casos de alta prioridad en anomalias."
+                tone={criticalAnomalies ? "danger" : "ok"}
+              />
+            </CardContent>
+          </Card>
+        </section>
+      )}
 
       <Card>
-        <CardContent className="p-0">
-          <div className="overflow-auto border border-border">
-            <table className="w-full min-w-[1580px] text-sm">
-              <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2">Mes</th>
-                  <th className="px-3 py-2 text-right">Pedidos</th>
-                  <th className="px-3 py-2 text-right">Pendientes</th>
-                  <th className="px-3 py-2 text-right">Entregados</th>
-                  <th className="px-3 py-2 text-right">No entregados</th>
-                  <th className="px-3 py-2 text-right">Anulados</th>
-                  <th className="px-3 py-2 text-right">Pedidos liquidados</th>
-                  <th className="px-3 py-2 text-right">Sin liquidacion</th>
-                  <th className="px-3 py-2 text-right">Por reclamar</th>
-                  <th className="px-3 py-2 text-right">Duplicados</th>
-                  <th className="px-3 py-2 text-right">Caja liquidada</th>
-                  <th className="px-3 py-2 text-right">Caja por reclamar</th>
-                  <th className="px-3 py-2 text-right">Costos Boxful</th>
-                  <th className="px-3 py-2 text-right">Costo producto</th>
-                  <th className="px-3 py-2 text-right">Ads</th>
-                  <th className="px-3 py-2 text-right">Planilla</th>
-                  <th className="px-3 py-2 text-right">Varios</th>
-                  <th className="px-3 py-2 text-right">Utilidad neta</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr
-                    key={row.month}
-                    onClick={() => setSelectedMonth(row.month)}
-                    className={`cursor-pointer border-t border-border/50 transition-colors ${
-                      selectedMonth === row.month ? "bg-primary/5" : "hover:bg-muted/30"
-                    }`}
-                  >
-                    <td className="px-3 py-2 font-mono text-xs">{row.month}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{row.orders}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{row.pending}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{row.delivered}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{row.not_delivered}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{row.annulled}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{row.settled}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{row.unsettled}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{row.to_claim}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{row.duplicate_settlements}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.cash_received)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.cash_pending)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.boxful_costs)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.product_costs)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.ads)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.payroll)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.misc)}</td>
-                    <td className={`px-3 py-2 text-right font-mono text-xs ${row.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
-                      {currency(row.net_profit)}
-                    </td>
-                  </tr>
-                ))}
-                {!rows.length && (
-                  <tr>
-                    <td colSpan={18} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                      No hay datos suficientes para cierre mensual.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+        <CardHeader>
+          <CardTitle className="text-base">Costos registrados</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            {selectedMonthLabel}: participacion de cada costo dentro del 100% de costos registrados.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <CostCompositionBar segments={costSegments} />
+          <div className="grid gap-3 md:grid-cols-3">
+            <MiniStat label="Costos directos" value={currency(directCosts)} />
+            <MiniStat label="Gastos operativos" value={currency(operatingExpenses)} />
+            <MiniStat label="Total costos registrados" value={currency(totalRegisteredCosts)} />
+          </div>
+          <div className="border border-border bg-background p-3 text-xs text-muted-foreground">
+            A liquidar = Monto COD - Comision COD - Costo entrega - Pick&Pack - Empaque. La comision tarjeta queda solo como dato informativo cuando aplica: {currency(summary?.card_commission ?? 0)}.
           </div>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <CardTitle className="text-base">Pedidos del cierre</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              {selectedMonthLabel}: {visibleOrders.length} de {monthOrders.length} pedidos visibles.
-            </p>
-          </div>
+      <CloseDetailCard
+        title="Pedidos que explican el cierre"
+        meta={`${visibleOrders.length} de ${monthOrders.length} pedidos visibles`}
+        open={showOrders}
+        onToggle={() => setShowOrders((value) => !value)}
+        action={
           <Button
             variant="outline"
             size="sm"
             className="gap-2"
-            onClick={() => exportCsv(`pedidos-cierre-${selectedMonth}.csv`, visibleOrders)}
+            onClick={(event) => {
+              event.stopPropagation();
+              exportCsv(`pedidos-cierre-${selectedMonth}.csv`, visibleOrders);
+            }}
           >
             <Download className="h-4 w-4" /> Exportar pedidos
           </Button>
-        </CardHeader>
-        <CardContent className="space-y-3">
+        }
+      >
+        <div className="space-y-3">
           <div className="flex flex-wrap gap-2">
             {MONTHLY_ORDER_FILTERS.map((filter) => (
               <button
@@ -2722,49 +2789,182 @@ function MonthlyCloseTab({
                     : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
                 }`}
               >
-                {filter.label} <span className="ml-1 font-mono text-xs text-foreground">{orderFilterCounts[filter.value]}</span>
+                {filter.label}{" "}
+                <span className="ml-1 font-mono text-xs text-foreground">{orderFilterCounts[filter.value]}</span>
               </button>
             ))}
           </div>
           <MonthlyOrdersTable rows={visibleOrders} />
-        </CardContent>
-      </Card>
+        </div>
+      </CloseDetailCard>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Centro de anomalias</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            {selectedMonthLabel}: reclamos, liquidaciones duplicadas, movimientos inconsistentes y costos faltantes.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <FinancialAnomaliesTable
-            anomalies={selectedAnomalies}
-            claimByAnomalyKey={claimByAnomalyKey}
-            onSaveClaim={onSaveClaim}
-          />
-        </CardContent>
-      </Card>
+      <CloseDetailCard
+        title="Anomalias y reclamos"
+        meta={`${selectedAnomalies.length} alertas del mes`}
+        open={showAnomalies}
+        onToggle={() => setShowAnomalies((value) => !value)}
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={(event) => {
+              event.stopPropagation();
+              exportCsv(`anomalias-${selectedMonth}.csv`, selectedAnomalies);
+            }}
+          >
+            <Download className="h-4 w-4" /> Exportar anomalias
+          </Button>
+        }
+      >
+        <FinancialAnomaliesTable
+          anomalies={selectedAnomalies}
+          claimByAnomalyKey={claimByAnomalyKey}
+          onSaveClaim={onSaveClaim}
+        />
+      </CloseDetailCard>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">SKUs sin costo</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Completar estos costos desbloquea el margen real del cierre seleccionado.
-          </p>
-        </CardHeader>
-        <CardContent>
-          {selectedMissingCostSkus.length ? (
-            <div className="flex flex-wrap gap-2">
-              {selectedMissingCostSkus.slice(0, 80).map((sku) => (
-                <Badge key={sku} variant="warning">{sku}</Badge>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No hay SKUs pendientes de costo en este cierre.</p>
-          )}
-        </CardContent>
-      </Card>
+      <CloseDetailCard
+        title="SKUs sin costo"
+        meta={`${selectedMissingCostSkus.length} pendientes`}
+        open={showSkus}
+        onToggle={() => setShowSkus((value) => !value)}
+      >
+        {selectedMissingCostSkus.length ? (
+          <div className="flex flex-wrap gap-2">
+            {selectedMissingCostSkus.slice(0, 120).map((sku) => (
+              <Badge key={sku} variant="warning">{sku}</Badge>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">No hay SKUs pendientes de costo en este mes.</p>
+        )}
+      </CloseDetailCard>
+
+      <CloseDetailCard
+        title="Comparar meses"
+        meta={`${rows.length} periodos disponibles`}
+        open={showHistory}
+        onToggle={() => setShowHistory((value) => !value)}
+      >
+        <MonthlyCloseHistoryTable rows={rows} />
+      </CloseDetailCard>
+    </div>
+  );
+}
+
+function CloseSignalRow({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: number;
+  hint: string;
+  tone: "ok" | "warning" | "danger";
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "border-red-500/40 bg-red-500/10 text-red-200"
+      : tone === "warning"
+        ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+        : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+
+  return (
+    <div className="grid gap-3 border border-border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+      <div>
+        <p className="text-sm font-medium">{label}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+      </div>
+      <span className={`inline-flex min-w-12 justify-center border px-3 py-1 font-mono text-sm font-semibold ${toneClass}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function CloseDetailCard({
+  title,
+  meta,
+  open,
+  onToggle,
+  action,
+  children,
+}: {
+  title: string;
+  meta: string;
+  open: boolean;
+  onToggle: () => void;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card>
+      <CardHeader className="gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          aria-expanded={open}
+        >
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center border border-border bg-background">
+            {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </span>
+          <span className="min-w-0">
+            <span className="block text-base font-semibold">{title}</span>
+            <span className="mt-1 block text-xs text-muted-foreground">{meta}</span>
+          </span>
+        </button>
+        {action}
+      </CardHeader>
+      {open && <CardContent>{children}</CardContent>}
+    </Card>
+  );
+}
+
+function MonthlyCloseHistoryTable({ rows }: { rows: MonthlyCloseRow[] }) {
+  if (!rows.length) {
+    return <p className="text-sm text-muted-foreground">No hay meses para comparar todavia.</p>;
+  }
+
+  return (
+    <div className="overflow-auto border border-border">
+      <table className="w-full min-w-[1120px] text-sm">
+        <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2">Mes</th>
+            <th className="px-3 py-2 text-right">Pedidos</th>
+            <th className="px-3 py-2 text-right">Entregados</th>
+            <th className="px-3 py-2 text-right">Pendientes</th>
+            <th className="px-3 py-2 text-right">Liquidados</th>
+            <th className="px-3 py-2 text-right">Sin liquidacion</th>
+            <th className="px-3 py-2 text-right">Por reclamar</th>
+            <th className="px-3 py-2 text-right">Costos</th>
+            <th className="px-3 py-2 text-right">Utilidad neta</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const registeredCosts = row.boxful_costs + row.product_costs + row.ads + row.payroll + row.misc;
+            return (
+              <tr key={row.month} className="border-t border-border/50">
+                <td className="px-3 py-2 font-mono text-xs">{formatMonthLabel(row.month)}</td>
+                <td className="px-3 py-2 text-right font-mono text-xs">{row.orders}</td>
+                <td className="px-3 py-2 text-right font-mono text-xs">{row.delivered}</td>
+                <td className="px-3 py-2 text-right font-mono text-xs">{row.pending}</td>
+                <td className="px-3 py-2 text-right font-mono text-xs">{row.settled}</td>
+                <td className="px-3 py-2 text-right font-mono text-xs">{row.unsettled}</td>
+                <td className="px-3 py-2 text-right font-mono text-xs">{row.to_claim}</td>
+                <td className="px-3 py-2 text-right font-mono text-xs">{currency(registeredCosts)}</td>
+                <td className={`px-3 py-2 text-right font-mono text-xs ${row.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
+                  {currency(row.net_profit)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -2855,84 +3055,51 @@ function MonthlyOrdersTable({ rows }: { rows: OrderProfitabilityRow[] }) {
 function BoxfulFilesTab({
   files,
   logisticsImports,
-  form,
-  setForm,
-  onSave,
 }: {
   files: BoxfulFileControl[];
   logisticsImports: LogisticsImport[];
-  form: {
-    file_name: string;
-    file_type: "logistica" | "liquidacion";
-    cutoff_date: string;
-    status: "esperado" | "importado" | "faltante" | "ignorado";
-    notes: string;
-  };
-  setForm: (form: {
-    file_name: string;
-    file_type: "logistica" | "liquidacion";
-    cutoff_date: string;
-    status: "esperado" | "importado" | "faltante" | "ignorado";
-    notes: string;
-  }) => void;
-  onSave: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const mergedFiles = useMemo(
     () => mergeLogisticsBoxfulFiles(files, logisticsImports),
     [files, logisticsImports]
   );
+  const importedCount = mergedFiles.filter((file) => file.status === "importado").length;
+  const expectedCount = mergedFiles.filter((file) => file.status === "esperado").length;
+  const missingCount = mergedFiles.filter((file) => file.status === "faltante").length;
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
+    <div className="space-y-4">
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Registrar logistica Boxful</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Solo archivos logisticos. Las liquidaciones se manejan en la pestaña Liquidaciones.
-          </p>
+        <CardHeader className="gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle className="text-base">Repositorio Boxful</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Consulta de archivos logisticos y liquidaciones ya registrados. Para subir logistica usa Importar Boxful en Pedidos; para subir cobros usa Liquidaciones.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("archivos-boxful.csv", mergedFiles)}>
+            <Download className="h-4 w-4" /> Exportar
+          </Button>
         </CardHeader>
         <CardContent>
-          <form onSubmit={onSave} className="space-y-3">
-            <Input
-              value={form.file_name}
-              onChange={(event) => setForm({ ...form, file_name: event.target.value })}
-              placeholder="Nombre exacto del archivo"
-              required
-            />
-            <Input
-              type="date"
-              value={form.cutoff_date}
-              onChange={(event) => setForm({ ...form, cutoff_date: event.target.value })}
-            />
-            <select
-              value={form.status}
-              onChange={(event) => setForm({ ...form, status: event.target.value as BoxfulFileControl["status"] })}
-              className="h-10 w-full border border-input bg-background px-3 text-sm"
-            >
-              <option value="esperado">Esperado</option>
-              <option value="faltante">Faltante</option>
-              <option value="importado">Importado</option>
-              <option value="ignorado">Ignorado</option>
-            </select>
-            <Input
-              value={form.notes}
-              onChange={(event) => setForm({ ...form, notes: event.target.value })}
-              placeholder="Notas"
-            />
-            <Button type="submit" className="w-full gap-2">
-              <Plus className="h-4 w-4" /> Guardar logistica
-            </Button>
-          </form>
+          <section className="grid gap-3 md:grid-cols-4">
+            <MiniStat label="Total archivos" value={mergedFiles.length} />
+            <MiniStat label="Importados" value={importedCount} />
+            <MiniStat label="Esperados" value={expectedCount} />
+            <MiniStat label="Faltantes" value={missingCount} />
+          </section>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <CardTitle className="text-base">Control de logistica</CardTitle>
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("logistica-boxful.csv", mergedFiles)}>
-              <Download className="h-4 w-4" /> Exportar
-            </Button>
+            <div>
+              <CardTitle className="text-base">Control de archivos</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Esta vista no crea archivos nuevos; solo consolida lo importado desde los flujos operativos.
+              </p>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -2964,7 +3131,7 @@ function BoxfulFilesTab({
                 {!mergedFiles.length && (
                   <tr>
                     <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                      No hay archivos logisticos registrados.
+                      No hay archivos Boxful registrados todavia.
                     </td>
                   </tr>
                 )}
@@ -2976,7 +3143,6 @@ function BoxfulFilesTab({
     </div>
   );
 }
-
 function BreakdownLine({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center justify-between border-b border-border/50 pb-2 last:border-0">
@@ -3068,6 +3234,10 @@ function currency(value: number): string {
     currency: "CRC",
     maximumFractionDigits: 0,
   }).format(Number(value || 0));
+}
+
+function formatPercent(value: number): string {
+  return `${Number(value || 0).toFixed(0)}%`;
 }
 
 function formatDate(value: string): string {
@@ -3340,6 +3510,16 @@ function matchesMonthlyOrderFilter(order: OrderProfitabilityRow, filter: Monthly
 function getMonthKey(value: string | null): string {
   if (!value) return "";
   return value.slice(0, 7);
+}
+
+function formatMonthLabel(month: string): string {
+  if (month === "all") return "Todos los meses";
+  if (month === "sin-fecha") return "Sin fecha Shopify";
+  const [year, monthNumber] = month.split("-").map((part) => Number(part));
+  if (!year || !monthNumber) return month;
+  const date = new Date(year, monthNumber - 1, 1);
+  if (Number.isNaN(date.getTime())) return month;
+  return date.toLocaleDateString("es-CR", { month: "long", year: "numeric" });
 }
 
 function mergeLogisticsBoxfulFiles(
@@ -4044,6 +4224,31 @@ function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {
       (compactQuery && compactText.includes(compactQuery))
     );
   });
+}
+
+function matchesOrderPeriod(
+  row: TrackableOrderRow,
+  mode: OrderPeriodMode,
+  month: string,
+  startDate: string,
+  endDate: string
+): boolean {
+  if (mode === "all") return true;
+  const orderDate = getOrderDateKey(row);
+  if (!orderDate) return false;
+
+  if (mode === "month") {
+    if (!month) return true;
+    return getMonthKey(orderDate) === month;
+  }
+
+  if (startDate && orderDate < startDate) return false;
+  if (endDate && orderDate > endDate) return false;
+  return true;
+}
+
+function getOrderDateKey(row: Pick<TrackableOrderRow, "shopify_created_at">): string {
+  return row.shopify_created_at ? row.shopify_created_at.slice(0, 10) : "";
 }
 
 function getEffectiveTrackingStatus(
