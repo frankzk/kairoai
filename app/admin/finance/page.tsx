@@ -3072,9 +3072,9 @@ function BoxfulFilesTab({
       <Card>
         <CardHeader className="gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <CardTitle className="text-base">Repositorio Boxful</CardTitle>
+            <CardTitle className="text-base">Logistica Boxful</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Consulta de archivos logisticos y liquidaciones ya registrados. Para subir logistica usa Importar Boxful en Pedidos; para subir cobros usa Liquidaciones.
+              Solo lectura. La logistica se registra al importar Boxful desde Pedidos; las liquidaciones se registran en Liquidaciones.
             </p>
           </div>
           <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("archivos-boxful.csv", mergedFiles)}>
@@ -3095,9 +3095,9 @@ function BoxfulFilesTab({
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <CardTitle className="text-base">Control de archivos</CardTitle>
+              <CardTitle className="text-base">Historial logistico</CardTitle>
               <p className="text-xs text-muted-foreground">
-                Esta vista no crea archivos nuevos; solo consolida lo importado desde los flujos operativos.
+                Consolida los archivos logisticos que ya entraron por el flujo operativo de Pedidos.
               </p>
             </div>
           </div>
@@ -3131,7 +3131,7 @@ function BoxfulFilesTab({
                 {!mergedFiles.length && (
                   <tr>
                     <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                      No hay archivos Boxful registrados todavia.
+                      No hay archivos logisticos importados todavia.
                     </td>
                   </tr>
                 )}

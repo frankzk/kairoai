@@ -109,7 +109,7 @@ Tabs:
 - `Costos SKU`: loads Shopify products/variants and manages product costs by SKU with explicit edit/save rows, saved/missing cost tabs, and versioned effective dates.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses, organized into three internal tabs with contextual modal buttons.
 - `Cierre mensual`: single profitability and monthly-close surface. It must stay simple: month selector, executive result, first-priority issues, registered-cost composition, then collapsible details for orders, anomalies, missing SKU costs, and month comparison.
-- `Logistica Boxful`: tracks imported/expected/missing/ignored Boxful logistics files by exact file name. It must not show or register liquidation files.
+- `Logistica Boxful`: read-only logistics file history. It consolidates files imported from the `Pedidos` Boxful logistics modal. It must not upload/register files manually and must not show liquidation-file controls.
 
 APIs:
 
@@ -119,7 +119,7 @@ APIs:
 - `GET/POST/DELETE /api/finance/settlements`
 - `GET/POST /api/finance/shopify-sync`
 - `GET/POST /api/finance/claims`
-- `GET/POST /api/finance/boxful-files`
+- `GET /api/finance/boxful-files`
 - `GET /api/finance/summary`
 
 Core logic:
