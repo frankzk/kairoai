@@ -444,7 +444,7 @@ export default function FinancePage() {
   const [syncMessage, setSyncMessage] = useState("");
   const [boxfulFileForm, setBoxfulFileForm] = useState({
     file_name: "",
-    file_type: "liquidacion" as "logistica" | "liquidacion",
+    file_type: "logistica" as "logistica" | "liquidacion",
     cutoff_date: "",
     status: "esperado" as "esperado" | "importado" | "faltante" | "ignorado",
     notes: "",
@@ -738,7 +738,7 @@ export default function FinancePage() {
     const res = await fetch("/api/finance/boxful-files", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(boxfulFileForm),
+      body: JSON.stringify({ ...boxfulFileForm, file_type: "logistica" }),
     });
     const json = await readApiJson(res);
     if (!res.ok) {
@@ -752,7 +752,7 @@ export default function FinancePage() {
     ]);
     setBoxfulFileForm({
       file_name: "",
-      file_type: "liquidacion",
+      file_type: "logistica",
       cutoff_date: "",
       status: "esperado",
       notes: "",
@@ -874,7 +874,7 @@ export default function FinancePage() {
             Cierre mensual
           </TabButton>
           <TabButton active={tab === "files"} onClick={() => setTab("files")} icon={<Database />}>
-            Archivos Boxful
+            Logistica Boxful
           </TabButton>
         </div>
 
@@ -942,7 +942,6 @@ export default function FinancePage() {
             {tab === "files" && (
               <BoxfulFilesTab
                 files={boxfulFiles}
-                imports={imports}
                 logisticsImports={logisticsImports}
                 form={boxfulFileForm}
                 setForm={setBoxfulFileForm}
@@ -2882,14 +2881,12 @@ function MonthlyOrdersTable({ rows }: { rows: OrderProfitabilityRow[] }) {
 
 function BoxfulFilesTab({
   files,
-  imports,
   logisticsImports,
   form,
   setForm,
   onSave,
 }: {
   files: BoxfulFileControl[];
-  imports: SettlementImport[];
   logisticsImports: LogisticsImport[];
   form: {
     file_name: string;
@@ -2908,15 +2905,18 @@ function BoxfulFilesTab({
   onSave: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const mergedFiles = useMemo(
-    () => mergeBoxfulFiles(files, imports, logisticsImports),
-    [files, imports, logisticsImports]
+    () => mergeLogisticsBoxfulFiles(files, logisticsImports),
+    [files, logisticsImports]
   );
 
   return (
     <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Registrar archivo Boxful</CardTitle>
+          <CardTitle className="text-base">Registrar logistica Boxful</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Solo archivos logisticos. Las liquidaciones se manejan en la pestaña Liquidaciones.
+          </p>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSave} className="space-y-3">
@@ -2926,14 +2926,6 @@ function BoxfulFilesTab({
               placeholder="Nombre exacto del archivo"
               required
             />
-            <select
-              value={form.file_type}
-              onChange={(event) => setForm({ ...form, file_type: event.target.value as "logistica" | "liquidacion" })}
-              className="h-10 w-full border border-input bg-background px-3 text-sm"
-            >
-              <option value="liquidacion">Liquidacion</option>
-              <option value="logistica">Logistica</option>
-            </select>
             <Input
               type="date"
               value={form.cutoff_date}
@@ -2955,7 +2947,7 @@ function BoxfulFilesTab({
               placeholder="Notas"
             />
             <Button type="submit" className="w-full gap-2">
-              <Plus className="h-4 w-4" /> Guardar archivo
+              <Plus className="h-4 w-4" /> Guardar logistica
             </Button>
           </form>
         </CardContent>
@@ -2964,8 +2956,8 @@ function BoxfulFilesTab({
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <CardTitle className="text-base">Control de archivos</CardTitle>
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("archivos-boxful.csv", mergedFiles)}>
+            <CardTitle className="text-base">Control de logistica</CardTitle>
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("logistica-boxful.csv", mergedFiles)}>
               <Download className="h-4 w-4" /> Exportar
             </Button>
           </div>
@@ -2976,7 +2968,6 @@ function BoxfulFilesTab({
               <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2">Archivo</th>
-                  <th className="px-3 py-2">Tipo</th>
                   <th className="px-3 py-2">Corte</th>
                   <th className="px-3 py-2">Estado</th>
                   <th className="px-3 py-2">Import ID</th>
@@ -2985,9 +2976,8 @@ function BoxfulFilesTab({
               </thead>
               <tbody>
                 {mergedFiles.map((file) => (
-                  <tr key={`${file.file_type}-${file.file_name}`} className="border-t border-border/50">
+                  <tr key={file.file_name} className="border-t border-border/50">
                     <td className="max-w-[360px] truncate px-3 py-2" title={file.file_name}>{file.file_name}</td>
-                    <td className="px-3 py-2"><Badge variant="muted">{file.file_type}</Badge></td>
                     <td className="px-3 py-2 font-mono text-xs">{file.cutoff_date ? formatDate(file.cutoff_date) : "-"}</td>
                     <td className="px-3 py-2">
                       <Badge variant={file.status === "faltante" ? "destructive" : file.status === "esperado" ? "warning" : "success"}>
@@ -3000,8 +2990,8 @@ function BoxfulFilesTab({
                 ))}
                 {!mergedFiles.length && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                      No hay archivos registrados.
+                    <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                      No hay archivos logisticos registrados.
                     </td>
                   </tr>
                 )}
@@ -3373,25 +3363,14 @@ function getMonthKey(value: string | null): string {
   return value.slice(0, 7);
 }
 
-function mergeBoxfulFiles(
+function mergeLogisticsBoxfulFiles(
   files: BoxfulFileControl[],
-  imports: SettlementImport[],
   logisticsImports: LogisticsImport[]
 ): BoxfulFileControl[] {
   const byName = new Map<string, BoxfulFileControl>();
-  for (const file of files) byName.set(file.file_name, file);
-  for (const item of imports) {
-    if (byName.has(item.file_name)) continue;
-    byName.set(item.file_name, {
-      id: -item.id,
-      file_name: item.file_name,
-      file_type: "liquidacion",
-      cutoff_date: item.period_end,
-      status: "importado",
-      import_id: item.id,
-      notes: "",
-      imported_at: item.created_at,
-    });
+  for (const file of files) {
+    if (file.file_type !== "logistica") continue;
+    byName.set(file.file_name, { ...file, file_type: "logistica" });
   }
   for (const item of logisticsImports) {
     if (byName.has(item.file_name)) continue;
