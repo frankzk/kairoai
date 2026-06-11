@@ -40,6 +40,8 @@ interface ShopifySettlementOrder {
   id: number;
   name: string;
   order_number: number;
+  note?: string | null;
+  note_attributes?: Array<{ name?: string | null; value?: string | null }>;
   created_at: string;
   financial_status: string;
   fulfillment_status: string | null;
@@ -241,7 +243,7 @@ async function fetchShopifyOrders(periodStart: string | null): Promise<ShopifySe
     `https://${shop}/admin/api/2024-01/orders.json` +
     `?status=any&limit=250&order=created_at%20desc` +
     `&created_at_min=${encodeURIComponent(minDate)}` +
-    `&fields=id,name,order_number,created_at,financial_status,fulfillment_status,total_price,line_items`;
+    `&fields=id,name,order_number,note,note_attributes,created_at,financial_status,fulfillment_status,total_price,line_items`;
 
   const orders: ShopifySettlementOrder[] = [];
   for (let page = 0; page < 30 && url; page++) {
@@ -265,10 +267,17 @@ async function fetchShopifyOrders(periodStart: string | null): Promise<ShopifySe
 }
 
 function buildShopifyIndexes(orders: ShopifySettlementOrder[]) {
+  const byExternalOrderCode = new Map<string, ShopifySettlementOrder>();
+  for (const order of orders) {
+    for (const code of getExternalOrderCodes(order)) {
+      if (!byExternalOrderCode.has(code)) byExternalOrderCode.set(code, order);
+    }
+  }
   return {
     byName: new Map(orders.map((order) => [order.name, order])),
     byMcrcNumber: new Map(orders.map((order) => [`#MCRC${order.order_number}`, order])),
     byOrderNumber: new Map(orders.map((order) => [String(order.order_number), order])),
+    byExternalOrderCode,
   };
 }
 
@@ -280,8 +289,46 @@ function findShopifyMatch(
   return (
     indexes.byName.get(raw) ??
     indexes.byMcrcNumber.get(raw.startsWith("#") ? raw : `#MCRC${raw}`) ??
+    indexes.byExternalOrderCode.get(normalizeExternalOrderCode(raw)) ??
     indexes.byOrderNumber.get(raw.replace(/^#?MCRC/i, ""))
   );
+}
+
+function getExternalOrderCodes(order: ShopifySettlementOrder): string[] {
+  const sources = [
+    order.note ?? "",
+    ...(order.note_attributes ?? []).flatMap((attribute) => [
+      attribute.name ?? "",
+      attribute.value ?? "",
+    ]),
+  ];
+  return extractExternalOrderCodes(sources.join("\n"));
+}
+
+function extractExternalOrderCodes(value: string): string[] {
+  const codes = new Set<string>();
+  const patterns = [
+    /\bpedido\s*#?\s*([0-9]{3,})\b/gi,
+    /\border\s*#?\s*([0-9]{3,})\b/gi,
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(value)) !== null) {
+      const code = normalizeExternalOrderCode(match[1] ?? "");
+      if (code) codes.add(code);
+    }
+  }
+  return Array.from(codes);
+}
+
+function normalizeExternalOrderCode(value: string): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^#/, "")
+    .replace(/^mcrc/i, "")
+    .replace(/\s+/g, "")
+    .replace(/[^0-9]/g, "");
 }
 
 function buildSettlementRow(

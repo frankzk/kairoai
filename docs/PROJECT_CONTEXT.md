@@ -138,9 +138,11 @@ Excel parsing:
 - `settlement_imports.file_name` is a business identifier because Boxful references liquidations by Excel file name. The UI must keep this visible in latest import cards and history so the team can know which Boxful liquidation files are still missing in Kairo AI.
 - If the user does not enter `period_start`, the importer infers the earliest `Creado en` date from the Excel and uses that to limit Shopify order fetching. This prevents long Vercel imports and avoids opaque non-JSON server errors.
 - Shopify matching accepts exact order names, `#MCRC` order names, and numeric order numbers when reconciling imported files.
+- Shopify matching also accepts iConflate/chatbot order codes stored in Shopify order notes, for example `Pedido #3685 - Venta por bot - WhatsApp ...`. Importers fetch `note` and `note_attributes`, extract `Pedido #NNN`, and use it as an alternate match key before falling back to Shopify numeric `order_number`.
 - `/admin/finance` requests one bounded Shopify page with `status=any` from `2026-03-01T00:00:00-06:00` so the Pedidos tab can show recent store orders even before a Boxful logistics file is imported. It must not use `all=1` during normal page load because Shopify pagination can exceed Vercel serverless timeouts. Boxful rows replace/enrich matching Shopify rows instead of creating duplicates.
 - The `Pedidos` tab keeps the Shopify/Boxful table as the main surface. The Boxful logistics importer is an action button on the right side of the table header and opens a modal; it should not return to a persistent side-panel form.
-- The `Pedidos` tab search filters the visible table client-side by order code (`#MCRC...`, `MCRC...`, or numeric partials), guide number, customer name, SKU, and item title. The search should remain above the table because it is the primary lookup workflow during reconciliation.
+- The `Pedidos` tab search filters the visible table client-side by order code (`#MCRC...`, `MCRC...`, iConflate note code, or numeric partials), guide number, customer name, SKU, and item title. The search should remain above the table because it is the primary lookup workflow during reconciliation.
+- Existing imported Excel rows are not automatically rematched after a matching-rule code change. To apply the new iConflate-note match rule to an already imported liquidation/logistics file, delete that import and upload the Excel again, unless a future rematch tool is added.
 
 Database schema:
 
@@ -196,8 +198,8 @@ Important implementation detail:
 - Business rule: `A Liquidar = Monto COD - Monto de comision COD - Costo de entrega - Pick&Pack - Empaque`.
 - `Com. Tarjeta` is imported and can be shown as an informational settlement field, but it is not included in the Boxful service-cost total unless the business later confirms otherwise.
 - These Boxful service costs are imported and shown in profitability as a settlement breakdown. They must not be subtracted again from net profit because `A Liquidar` already represents the net logistics result after those charges.
-- Shopify matching currently uses exact settlement `Orden` to Shopify `order.name`.
-- Numeric-only settlement order values remain unmatched until their source is identified.
+- Shopify matching uses exact settlement `Orden` to Shopify `order.name`, `#MCRC`/numeric variants, and iConflate/chatbot note codes such as `Pedido #3685`.
+- Numeric-only settlement order values can be iConflate/chatbot order codes. Shopify notes containing `Pedido #NNN` are now the primary source for matching those values.
 
 ## Shopify Integration
 
@@ -212,7 +214,7 @@ Important behavior:
 
 - Shopify order name values look like `#MCRC11518`.
 - The logistics settlement file uses an `Orden` column that often matches Shopify `order.name`.
-- Some settlement rows use numeric-only order values such as `3937`, which did not match the current Shopify `#MCRC...` naming pattern in the first analysis.
+- Some settlement rows use numeric-only order values such as `3937` or `3685`. These often come from iConflate/chatbot and should match against Shopify order notes like `Pedido #3685`, not only against Shopify `#MCRC...`.
 - In `/admin/finance`, Shopify orders appear in the `Pedidos` tab. Rows with a matching Boxful logistics import show `Origen = Boxful`; Shopify-only rows show `Origen = Shopify` and remain `Pendiente` unless Shopify is cancelled/voided or a liquidation row provides a final status.
 
 ## Logistics Settlement Analysis

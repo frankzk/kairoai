@@ -16,6 +16,7 @@ export interface ShopifyOrderSummary {
   financial_status: string;
   fulfillment_status: string | null;
   cancelled_at: string | null;
+  note: string;
   created_at: string;
   line_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
 }
@@ -44,6 +45,8 @@ export async function GET(req: NextRequest) {
     "financial_status",
     "fulfillment_status",
     "cancelled_at",
+    "note",
+    "note_attributes",
     "total_price",
     "currency",
     "line_items",
@@ -128,6 +131,7 @@ export async function GET(req: NextRequest) {
           financial_status: o.financial_status as string,
           fulfillment_status: (o.fulfillment_status as string | null) ?? null,
           cancelled_at: (o.cancelled_at as string | null) ?? null,
+          note: String(o.note ?? ""),
           created_at: o.created_at as string,
           line_items: normalizedLineItems,
         };

@@ -80,6 +80,8 @@ function buildInitialUrl(createdAtMin: string): string {
     "financial_status",
     "fulfillment_status",
     "cancelled_at",
+    "note",
+    "note_attributes",
     "total_price",
     "currency",
     "line_items",

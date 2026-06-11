@@ -117,6 +117,7 @@ interface ShopifyOrderSummary {
   financial_status: string;
   fulfillment_status: string | null;
   cancelled_at: string | null;
+  note?: string;
   created_at: string;
   line_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
 }
@@ -136,6 +137,7 @@ interface TrackableOrderRow {
   shopify_financial_status: string;
   shopify_fulfillment_status: string;
   shopify_cancelled_at: string | null;
+  shopify_note?: string;
   shopify_created_at: string | null;
   package_items: Array<{ sku?: string; title: string; quantity: number; price: number }>;
 }
@@ -2549,6 +2551,7 @@ function toCsv(rows: unknown[]): string {
 
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
   const lineItems = (order.line_items as ShopifyOrderSummary["line_items"]) ?? [];
+  const rawOrder = (order.raw_order as Record<string, unknown> | null) ?? {};
   return {
     id: String(order.shopify_order_id ?? order.id ?? ""),
     order_number: Number(order.order_number ?? 0),
@@ -2562,6 +2565,7 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     financial_status: String(order.financial_status ?? ""),
     fulfillment_status: String(order.fulfillment_status ?? ""),
     cancelled_at: (order.cancelled_at as string | null) ?? null,
+    note: String(rawOrder.note ?? ""),
     created_at: String(order.shopify_created_at ?? ""),
     line_items: lineItems,
   };
@@ -2715,6 +2719,7 @@ function buildVisibleOrderRows(
       shopify_financial_status: order.financial_status,
       shopify_fulfillment_status: order.fulfillment_status ?? "",
       shopify_cancelled_at: order.cancelled_at,
+      shopify_note: order.note ?? "",
       shopify_created_at: order.created_at,
       package_items: (order.line_items ?? []).map((item) => ({
         sku: item.sku,
@@ -2743,6 +2748,7 @@ function getShopifyOrderMatchKeys(order: ShopifyOrderSummary): string[] {
     normalizeMatchKey(order.name),
     normalizeMatchKey(String(order.order_number ?? "")),
     normalizeMatchKey(`#MCRC${order.order_number ?? ""}`),
+    ...extractExternalOrderCodesFromText(order.note ?? "").map(normalizeMatchKey),
   ]);
 }
 
@@ -3290,6 +3296,23 @@ function normalizeSearchText(value: string): string {
     .replace(/[^a-z0-9]/g, "");
 }
 
+function extractExternalOrderCodesFromText(value: string): string[] {
+  const codes = new Set<string>();
+  const patterns = [
+    /\bpedido\s*#?\s*([0-9]{3,})\b/gi,
+    /\border\s*#?\s*([0-9]{3,})\b/gi,
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    const text = String(value || "");
+    while ((match = pattern.exec(text)) !== null) {
+      const code = normalizeSearchText(match[1] ?? "").replace(/[^0-9]/g, "");
+      if (code) codes.add(code);
+    }
+  }
+  return Array.from(codes);
+}
+
 function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {
   const rawQuery = query.trim().toLowerCase();
   const compactQuery = normalizeSearchText(query);
@@ -3302,6 +3325,7 @@ function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {
     row.shopify_order_number ? `#MCRC${row.shopify_order_number}` : "",
     row.guide_number,
     row.customer_name,
+    row.shopify_note ?? "",
     ...(row.package_items ?? []).flatMap((item) => [item.sku ?? "", item.title]),
   ];
 
