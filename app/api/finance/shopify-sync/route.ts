@@ -8,10 +8,14 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const DEFAULT_CREATED_AT_MIN = "2025-09-16T00:00:00-06:00";
+const DEFAULT_SYNC_PAGES_PER_REQUEST = 8;
+const MAX_SYNC_PAGES_PER_REQUEST = 12;
+
 export async function GET(req: NextRequest) {
   try {
     const limit = Number(req.nextUrl.searchParams.get("limit") || 1000);
-    const orders = await listPersistedShopifyOrders(Math.min(Math.max(limit, 1), 5000));
+    const orders = await listPersistedShopifyOrders(Math.min(Math.max(limit, 1), 20000));
     return NextResponse.json({ orders, total: orders.length });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer pedidos Shopify sincronizados";
@@ -22,11 +26,15 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const maxPages = Math.min(Math.max(Number(body.max_pages ?? 4), 1), 8);
-    const createdAtMin = String(body.created_at_min ?? "2026-03-01T00:00:00-06:00");
+    const maxPages = Math.min(
+      Math.max(Number(body.max_pages ?? DEFAULT_SYNC_PAGES_PER_REQUEST), 1),
+      MAX_SYNC_PAGES_PER_REQUEST
+    );
+    const createdAtMin = String(body.created_at_min ?? DEFAULT_CREATED_AT_MIN);
     let url = typeof body.next_url === "string" && body.next_url ? body.next_url : buildInitialUrl(createdAtMin);
 
     const rawOrders: Array<Record<string, unknown>> = [];
+    let pagesChecked = 0;
     for (let page = 0; page < maxPages && url; page++) {
       const res = await fetch(url, {
         headers: {
@@ -46,6 +54,7 @@ export async function POST(req: NextRequest) {
 
       const data = await res.json();
       rawOrders.push(...((data.orders as Array<Record<string, unknown>>) ?? []));
+      pagesChecked += 1;
 
       const link = res.headers.get("link") ?? "";
       const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
@@ -59,6 +68,8 @@ export async function POST(req: NextRequest) {
       synced: orders.length,
       next_url: url || null,
       partial: Boolean(url),
+      created_at_min: createdAtMin,
+      pages_checked: pagesChecked,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error sincronizando Shopify";

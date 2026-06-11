@@ -109,7 +109,7 @@ Tabs:
 - `Costos SKU`: loads Shopify products/variants and manages product costs by SKU with explicit edit/save rows, saved/missing cost tabs, and versioned effective dates.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses, organized into three internal tabs with contextual modal buttons.
 - `Rentabilidad`: shows the approved net-profit formula, cash/control KPIs, a financial anomaly center, order-level margin, and missing SKU costs.
-- `Cierre mensual`: aggregates orders, cash, product costs, ads, payroll, miscellaneous expenses, and estimated net profit by month.
+- `Cierre mensual`: aggregates orders, operational statuses, settlement statuses, cash, product costs, ads, payroll, miscellaneous expenses, estimated net profit by month, and lists the underlying orders for each month.
 - `Archivos Boxful`: tracks imported/expected/missing/ignored Boxful logistics and liquidation files by exact file name.
 
 APIs:
@@ -141,7 +141,7 @@ Excel parsing:
 - If the user does not enter `period_start`, the importer infers the earliest `Creado en` date from the Excel and uses that to limit Shopify order fetching. This prevents long Vercel imports and avoids opaque non-JSON server errors.
 - Shopify matching accepts exact order names, `#MCRC` order names, and numeric order numbers when reconciling imported files.
 - Shopify matching also accepts iConflate/chatbot order codes stored in Shopify order notes, for example `Pedido #3685 - Venta por bot - WhatsApp ...`. Importers fetch `note` and `note_attributes`, extract `Pedido #NNN`, and use it as an alternate match key before falling back to Shopify numeric `order_number`.
-- `/admin/finance` requests one bounded Shopify page with `status=any` from `2026-03-01T00:00:00-06:00` so the Pedidos tab can show recent store orders even before a Boxful logistics file is imported. It must not use `all=1` during normal page load because Shopify pagination can exceed Vercel serverless timeouts. Boxful rows replace/enrich matching Shopify rows instead of creating duplicates.
+- `/admin/finance` requests one bounded live Shopify page with `status=any` from `2025-09-16T00:00:00-06:00` so the Pedidos tab can show recent store orders even before a Boxful logistics file is imported. It also reads up to 20,000 persisted Shopify orders from Supabase. It must not use `all=1` during normal page load because Shopify pagination can exceed Vercel serverless timeouts. Boxful rows replace/enrich matching Shopify rows instead of creating duplicates.
 - The `Pedidos` tab keeps the Shopify/Boxful table as the main surface. The Boxful logistics importer is an action button on the right side of the table header and opens a modal; it should not return to a persistent side-panel form.
 - The `Pedidos` tab search filters the visible table client-side by order code (`#MCRC...`, `MCRC...`, iConflate note code, or numeric partials), guide number, customer name, SKU, and item title. The search should remain above the table because it is the primary lookup workflow during reconciliation.
 - The `Pedidos` tab main controls are tracking-state filters: `Todos`, `Pendientes`, `Anulados`, `Entregados`, and `No entregados`. Technical import counts such as Boxful rows, Shopify matches, and unmatched rows are diagnostic context only, not primary KPIs.
@@ -197,7 +197,8 @@ Important implementation detail:
 - Stripe / non-COD settlement rule: if a matched liquidation row has `Monto COD = 0`, a negative `A Liquidar` is expected because Boxful is only charging logistics/fulfillment services. That negative logistics balance affects profitability, but it is not a `Margen negativo` anomaly by itself.
 - Financial anomalies can be moved through a claim workflow: `pendiente`, `reclamado`, `resuelto`, `descartado`, with notes. The key is `finance_claims.anomaly_key`.
 - Exportables are client-side CSV downloads for anomalies, order profitability, monthly close, and Boxful file control.
-- Shopify historical sync must be done via `/api/finance/shopify-sync` in bounded batches. The normal `/admin/finance` page load must not paginate all Shopify orders because Vercel can time out. The UI sync button loops through bounded batches and persists into `shopify_orders`.
+- The monthly close tab must not be only a summary. It should let the user select `Todos` or a month, see counts for `Pendientes`, `Entregados`, `No entregados`, `Anulados`, liquidated/unliquidated orders, claim candidates, duplicate settlement rows, and inspect/export the order list behind that month.
+- Shopify historical sync must be done via `/api/finance/shopify-sync` in bounded batches. The normal `/admin/finance` page load must not paginate all Shopify orders because Vercel can time out. The UI sync button loops through bounded batches from `2025-09-16T00:00:00-06:00` and persists into `shopify_orders`.
 - Settlement/liquidation files also include per-order Boxful charged service costs:
   - `Monto de comision COD`
   - `Costo de entrega`
@@ -529,7 +530,7 @@ Implemented order-control KPIs:
 Important limitation:
 
 - Ads, payroll, and miscellaneous expenses are still allocated only at aggregate/month level. Per-order profitability is contribution margin before those shared expenses.
-- Shopify historical order sync is currently bounded during page load. Full historical persistence should be implemented as a separate background/admin sync into Supabase instead of paginating all Shopify orders from the browser page.
+- Shopify historical order sync is bounded and persisted through `/api/finance/shopify-sync`. Page load reads persisted orders from Supabase and only fetches one live Shopify page for freshness, avoiding browser-triggered full pagination.
 
 ## MVP Recommendation
 
@@ -560,6 +561,8 @@ Build in this order:
 - `npm run build`: passed
 - `Liquidaciones` now has an imported-file selector below the upload form, recent/oldest sorting, delete-with-confirmation, and Shopify match filters (`Todos`, `Con match`, `Sin match`) for the active settlement file.
 - `Pedidos` now separates liquidation state, source file, and amount: `Estado liquidacion` shows only the state, `Archivo liquidacion` shows the exact Excel source, `A liquidar` shows the settlement amount, and liquidation filters support corrective views like `Por reclamar` and `Duplicados`.
+- `Cierre mensual` now lists the order-level data behind each month, with month selection, operational/settlement filters, status counts, and CSV export for the visible order list.
+- Shopify historical sync now uses a 2025-09-16 lower bound, reads up to 20,000 persisted orders, and syncs in larger bounded batches for complete monthly close coverage.
 
 2026-06-10:
 

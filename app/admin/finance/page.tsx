@@ -29,6 +29,16 @@ type ExpenseType = "ads" | "payroll" | "misc";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 type OrderTrackingFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
 type OrderSettlementFilter = "all" | "settled" | "unsettled" | "to_claim" | "duplicate";
+type MonthlyOrderFilter =
+  | "all"
+  | "pending"
+  | "delivered"
+  | "not_delivered"
+  | "annulled"
+  | "settled"
+  | "unsettled"
+  | "to_claim"
+  | "duplicate";
 type SettlementImportSort = "recent" | "oldest";
 type SettlementShopifyFilter = "all" | "matched" | "unmatched";
 
@@ -254,6 +264,7 @@ interface OrderProfitabilityRow {
   tracking_label: string;
   settlement_status: string;
   settlement_files: string[];
+  settlement_count: number;
   amount_to_liquidate: number;
   expected_cod: number;
   product_cost: number;
@@ -293,6 +304,11 @@ interface MonthlyCloseRow {
   delivered: number;
   not_delivered: number;
   annulled: number;
+  pending: number;
+  settled: number;
+  unsettled: number;
+  to_claim: number;
+  duplicate_settlements: number;
   cash_received: number;
   cash_pending: number;
   product_costs: number;
@@ -324,6 +340,18 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
 
 const ORDER_SETTLEMENT_FILTERS: Array<{ value: OrderSettlementFilter; label: string }> = [
   { value: "all", label: "Todos" },
+  { value: "settled", label: "Liquidados" },
+  { value: "unsettled", label: "Sin liquidacion" },
+  { value: "to_claim", label: "Por reclamar" },
+  { value: "duplicate", label: "Duplicados" },
+];
+
+const MONTHLY_ORDER_FILTERS: Array<{ value: MonthlyOrderFilter; label: string }> = [
+  { value: "all", label: "Todos" },
+  { value: "pending", label: "Pendientes" },
+  { value: "delivered", label: "Entregados" },
+  { value: "not_delivered", label: "No entregados" },
+  { value: "annulled", label: "Anulados" },
   { value: "settled", label: "Liquidados" },
   { value: "unsettled", label: "Sin liquidacion" },
   { value: "to_claim", label: "Por reclamar" },
@@ -387,8 +415,9 @@ const EXPENSE_VIEW_CONFIG: Array<{
   },
 ];
 
+const FINANCE_SHOPIFY_CREATED_AT_MIN = "2025-09-16T00:00:00-06:00";
 const FINANCE_SHOPIFY_ORDERS_URL =
-  "/api/shopify/orders?status=any&limit=250&created_at_min=2026-03-01T00%3A00%3A00-06%3A00";
+  `/api/shopify/orders?status=any&limit=250&created_at_min=${encodeURIComponent(FINANCE_SHOPIFY_CREATED_AT_MIN)}`;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
@@ -481,7 +510,7 @@ export default function FinancePage() {
         shopifyOrdersJson = {};
       }
       try {
-        const persistedShopifyRes = await fetch("/api/finance/shopify-sync?limit=5000", { cache: "no-store" });
+        const persistedShopifyRes = await fetch("/api/finance/shopify-sync?limit=20000", { cache: "no-store" });
         persistedShopifyJson = await readApiJson(persistedShopifyRes);
       } catch {
         persistedShopifyJson = {};
@@ -649,13 +678,13 @@ export default function FinancePage() {
     try {
       let nextUrl: string | null = null;
       let totalSynced = 0;
-      for (let batch = 0; batch < 8; batch++) {
+      for (let batch = 0; batch < 40; batch++) {
         const res = await fetch("/api/finance/shopify-sync", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            created_at_min: "2026-03-01T00:00:00-06:00",
-            max_pages: 4,
+            created_at_min: FINANCE_SHOPIFY_CREATED_AT_MIN,
+            max_pages: 8,
             next_url: nextUrl,
           }),
         });
@@ -663,7 +692,7 @@ export default function FinancePage() {
         if (!res.ok) throw new Error(json.error ?? "No se pudo sincronizar Shopify");
         totalSynced += Number(json.synced ?? 0);
         nextUrl = typeof json.next_url === "string" ? json.next_url : null;
-        setSyncMessage(`Sincronizados ${totalSynced} pedidos...`);
+        setSyncMessage(`Sincronizados ${totalSynced} pedidos desde 16/09/2025...`);
         if (!nextUrl) break;
       }
       setSyncMessage(`Sync listo: ${totalSynced} pedidos procesados.`);
@@ -2578,37 +2607,105 @@ function MonthlyCloseTab({
   rows: MonthlyCloseRow[];
   control: FinanceControlCenter;
 }) {
+  const [selectedMonth, setSelectedMonth] = useState("all");
+  const [orderFilter, setOrderFilter] = useState<MonthlyOrderFilter>("all");
+  const monthOptions = useMemo(() => rows.map((row) => row.month), [rows]);
+  const selectedClose = useMemo(
+    () => getMonthlyCloseTotals(rows, selectedMonth),
+    [rows, selectedMonth]
+  );
+  const monthOrders = useMemo(
+    () =>
+      control.orders.filter((order) => {
+        if (selectedMonth === "all") return true;
+        return (getMonthKey(order.created_at) || "sin-fecha") === selectedMonth;
+      }),
+    [control.orders, selectedMonth]
+  );
+  const orderFilterCounts = useMemo(
+    () => getMonthlyOrderFilterCounts(monthOrders),
+    [monthOrders]
+  );
+  const visibleOrders = useMemo(
+    () => monthOrders.filter((order) => matchesMonthlyOrderFilter(order, orderFilter)),
+    [monthOrders, orderFilter]
+  );
+  const selectedMonthLabel = selectedMonth === "all" ? "Todos los meses" : selectedMonth;
+
+  useEffect(() => {
+    if (selectedMonth !== "all" && !monthOptions.includes(selectedMonth)) {
+      setSelectedMonth("all");
+    }
+  }, [monthOptions, selectedMonth]);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold">Cierre mensual</h2>
           <p className="text-xs text-muted-foreground">
-            Vista devengada por mes: caja, costos, gastos y utilidad estimada.
+            Vista devengada por mes: estado de pedidos, caja, costos, gastos y utilidad estimada.
           </p>
         </div>
         <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("cierre-mensual.csv", rows)}>
           <Download className="h-4 w-4" /> Exportar cierre
         </Button>
       </div>
-      <section className="grid gap-3 md:grid-cols-3">
-        <MiniStat label="Pedidos analizados" value={control.orders.length} />
-        <MiniStat label="Caja por reclamar" value={currency(control.cash_pending)} />
-        <MiniStat label="Margen antes de gastos" value={currency(control.contribution_margin)} />
+      <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <MiniStat label="Pedidos analizados" value={selectedClose.orders} />
+        <MiniStat label="Entregados" value={selectedClose.delivered} />
+        <MiniStat label="No entregados" value={selectedClose.not_delivered} />
+        <MiniStat label="Anulados" value={selectedClose.annulled} />
+        <MiniStat label="Pendientes" value={selectedClose.pending} />
+        <MiniStat label="Por reclamar" value={selectedClose.to_claim} />
       </section>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setSelectedMonth("all")}
+          className={`border px-3 py-2 text-left text-sm transition-colors ${
+            selectedMonth === "all"
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+          }`}
+        >
+          Todos <span className="ml-1 font-mono text-xs text-foreground">{control.orders.length}</span>
+        </button>
+        {rows.map((row) => (
+          <button
+            key={row.month}
+            type="button"
+            onClick={() => setSelectedMonth(row.month)}
+            className={`border px-3 py-2 text-left text-sm transition-colors ${
+              selectedMonth === row.month
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+            }`}
+          >
+            {row.month} <span className="ml-1 font-mono text-xs text-foreground">{row.orders}</span>
+          </button>
+        ))}
+      </div>
+
       <Card>
         <CardContent className="p-0">
           <div className="overflow-auto border border-border">
-            <table className="w-full min-w-[1080px] text-sm">
+            <table className="w-full min-w-[1500px] text-sm">
               <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2">Mes</th>
                   <th className="px-3 py-2 text-right">Pedidos</th>
+                  <th className="px-3 py-2 text-right">Pendientes</th>
                   <th className="px-3 py-2 text-right">Entregados</th>
                   <th className="px-3 py-2 text-right">No entregados</th>
                   <th className="px-3 py-2 text-right">Anulados</th>
-                  <th className="px-3 py-2 text-right">Liquidado</th>
+                  <th className="px-3 py-2 text-right">Pedidos liquidados</th>
+                  <th className="px-3 py-2 text-right">Sin liquidacion</th>
                   <th className="px-3 py-2 text-right">Por reclamar</th>
+                  <th className="px-3 py-2 text-right">Duplicados</th>
+                  <th className="px-3 py-2 text-right">Caja liquidada</th>
+                  <th className="px-3 py-2 text-right">Caja por reclamar</th>
                   <th className="px-3 py-2 text-right">Costo producto</th>
                   <th className="px-3 py-2 text-right">Ads</th>
                   <th className="px-3 py-2 text-right">Planilla</th>
@@ -2618,12 +2715,23 @@ function MonthlyCloseTab({
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.month} className="border-t border-border/50">
+                  <tr
+                    key={row.month}
+                    onClick={() => setSelectedMonth(row.month)}
+                    className={`cursor-pointer border-t border-border/50 transition-colors ${
+                      selectedMonth === row.month ? "bg-primary/5" : "hover:bg-muted/30"
+                    }`}
+                  >
                     <td className="px-3 py-2 font-mono text-xs">{row.month}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{row.orders}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{row.pending}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{row.delivered}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{row.not_delivered}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{row.annulled}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{row.settled}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{row.unsettled}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{row.to_claim}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{row.duplicate_settlements}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.cash_received)}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.cash_pending)}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.product_costs)}</td>
@@ -2637,7 +2745,7 @@ function MonthlyCloseTab({
                 ))}
                 {!rows.length && (
                   <tr>
-                    <td colSpan={12} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    <td colSpan={17} className="px-3 py-8 text-center text-sm text-muted-foreground">
                       No hay datos suficientes para cierre mensual.
                     </td>
                   </tr>
@@ -2647,6 +2755,127 @@ function MonthlyCloseTab({
           </div>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader className="gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle className="text-base">Pedidos del cierre</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              {selectedMonthLabel}: {visibleOrders.length} de {monthOrders.length} pedidos visibles.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => exportCsv(`pedidos-cierre-${selectedMonth}.csv`, visibleOrders)}
+          >
+            <Download className="h-4 w-4" /> Exportar pedidos
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {MONTHLY_ORDER_FILTERS.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                onClick={() => setOrderFilter(filter.value)}
+                className={`border px-3 py-1.5 text-sm transition-colors ${
+                  orderFilter === filter.value
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                }`}
+              >
+                {filter.label} <span className="ml-1 font-mono text-xs text-foreground">{orderFilterCounts[filter.value]}</span>
+              </button>
+            ))}
+          </div>
+          <MonthlyOrdersTable rows={visibleOrders} />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function MonthlyOrdersTable({ rows }: { rows: OrderProfitabilityRow[] }) {
+  if (!rows.length) {
+    return (
+      <p className="border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
+        No hay pedidos con este mes y filtro.
+      </p>
+    );
+  }
+
+  return (
+    <div className="max-h-[620px] overflow-auto border border-border">
+      <table className="w-full min-w-[1420px] text-sm">
+        <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2">Fecha</th>
+            <th className="px-3 py-2">Origen</th>
+            <th className="px-3 py-2">Orden</th>
+            <th className="px-3 py-2">Cliente</th>
+            <th className="px-3 py-2">Seguimiento</th>
+            <th className="px-3 py-2">Liquidacion</th>
+            <th className="px-3 py-2">Archivo</th>
+            <th className="px-3 py-2 text-right">A liquidar</th>
+            <th className="px-3 py-2 text-right">Costo producto</th>
+            <th className="px-3 py-2 text-right">Margen</th>
+            <th className="px-3 py-2">Items</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 800).map((row) => {
+            const settlementLabel =
+              row.settlement_count > 1
+                ? "Doble liquidacion"
+                : row.settlement_count === 1
+                  ? "Liquidada"
+                  : "Sin liquidacion";
+            const settlementVariant =
+              row.settlement_count > 1 ? "warning" : row.settlement_count === 1 ? "success" : "muted";
+            return (
+              <tr key={row.order_key} className="border-t border-border/50">
+                <td className="px-3 py-2 font-mono text-xs">
+                  {row.created_at ? formatDate(row.created_at) : "sin fecha"}
+                </td>
+                <td className="px-3 py-2">
+                  <Badge variant={row.source === "boxful" ? "success" : row.source === "liquidacion" ? "warning" : "muted"}>
+                    {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2">
+                  <div className="font-mono text-xs">{row.order_name || "-"}</div>
+                  <div className="font-mono text-xs text-muted-foreground">{row.guide_number || "-"}</div>
+                </td>
+                <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
+                <td className="px-3 py-2">
+                  <StatusBadge status={row.tracking_status} label={row.tracking_label} />
+                </td>
+                <td className="px-3 py-2">
+                  <Badge variant={settlementVariant}>{settlementLabel}</Badge>
+                </td>
+                <td className="max-w-[240px] truncate px-3 py-2 text-xs text-muted-foreground" title={row.settlement_files.join(", ")}>
+                  {row.settlement_files.join(", ") || "-"}
+                </td>
+                <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.amount_to_liquidate)}</td>
+                <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.product_cost)}</td>
+                <td className={`px-3 py-2 text-right font-mono text-xs ${row.contribution_margin < 0 ? "text-red-300" : "text-emerald-300"}`}>
+                  {currency(row.contribution_margin)}
+                </td>
+                <td className="max-w-[340px] truncate px-3 py-2 text-xs text-muted-foreground" title={row.items_summary}>
+                  {row.items_summary || "-"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {rows.length > 800 && (
+        <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
+          Mostrando 800 de {rows.length} pedidos.
+        </div>
+      )}
     </div>
   );
 }
@@ -2983,6 +3212,11 @@ function buildMonthlyCloseRows(
       delivered: 0,
       not_delivered: 0,
       annulled: 0,
+      pending: 0,
+      settled: 0,
+      unsettled: 0,
+      to_claim: 0,
+      duplicate_settlements: 0,
       cash_received: 0,
       cash_pending: 0,
       product_costs: 0,
@@ -3003,6 +3237,11 @@ function buildMonthlyCloseRows(
     if (order.tracking_status === "delivered") row.delivered += 1;
     if (order.tracking_status === "not_delivered" || order.tracking_status === "returned") row.not_delivered += 1;
     if (order.tracking_status === "annulled") row.annulled += 1;
+    if (order.tracking_status === "pending") row.pending += 1;
+    if (order.settlement_count === 1) row.settled += 1;
+    if (!order.settlement_count) row.unsettled += 1;
+    if (order.tracking_status === "delivered" && !order.settlement_count) row.to_claim += 1;
+    if (order.settlement_count > 1) row.duplicate_settlements += 1;
     if (order.cash_status === "cobrado") row.cash_received += order.amount_to_liquidate;
     if (order.cash_status === "por_cobrar") row.cash_pending += order.expected_cod;
     row.product_costs += order.product_cost;
@@ -3030,6 +3269,103 @@ function buildMonthlyCloseRows(
       net_profit: roundMoney(row.contribution_margin - row.ads - row.payroll - row.misc),
     }))
     .sort((a, b) => b.month.localeCompare(a.month));
+}
+
+function getMonthlyCloseTotals(rows: MonthlyCloseRow[], selectedMonth: string): MonthlyCloseRow {
+  const sourceRows = selectedMonth === "all" ? rows : rows.filter((row) => row.month === selectedMonth);
+  const total: MonthlyCloseRow = {
+    month: selectedMonth,
+    orders: 0,
+    delivered: 0,
+    not_delivered: 0,
+    annulled: 0,
+    pending: 0,
+    settled: 0,
+    unsettled: 0,
+    to_claim: 0,
+    duplicate_settlements: 0,
+    cash_received: 0,
+    cash_pending: 0,
+    product_costs: 0,
+    ads: 0,
+    payroll: 0,
+    misc: 0,
+    contribution_margin: 0,
+    net_profit: 0,
+  };
+
+  for (const row of sourceRows) {
+    total.orders += row.orders;
+    total.delivered += row.delivered;
+    total.not_delivered += row.not_delivered;
+    total.annulled += row.annulled;
+    total.pending += row.pending;
+    total.settled += row.settled;
+    total.unsettled += row.unsettled;
+    total.to_claim += row.to_claim;
+    total.duplicate_settlements += row.duplicate_settlements;
+    total.cash_received += row.cash_received;
+    total.cash_pending += row.cash_pending;
+    total.product_costs += row.product_costs;
+    total.ads += row.ads;
+    total.payroll += row.payroll;
+    total.misc += row.misc;
+    total.contribution_margin += row.contribution_margin;
+    total.net_profit += row.net_profit;
+  }
+
+  return {
+    ...total,
+    cash_received: roundMoney(total.cash_received),
+    cash_pending: roundMoney(total.cash_pending),
+    product_costs: roundMoney(total.product_costs),
+    ads: roundMoney(total.ads),
+    payroll: roundMoney(total.payroll),
+    misc: roundMoney(total.misc),
+    contribution_margin: roundMoney(total.contribution_margin),
+    net_profit: roundMoney(total.net_profit),
+  };
+}
+
+function getMonthlyOrderFilterCounts(orders: OrderProfitabilityRow[]): Record<MonthlyOrderFilter, number> {
+  const counts: Record<MonthlyOrderFilter, number> = {
+    all: orders.length,
+    pending: 0,
+    delivered: 0,
+    not_delivered: 0,
+    annulled: 0,
+    settled: 0,
+    unsettled: 0,
+    to_claim: 0,
+    duplicate: 0,
+  };
+
+  for (const order of orders) {
+    if (matchesMonthlyOrderFilter(order, "pending")) counts.pending += 1;
+    if (matchesMonthlyOrderFilter(order, "delivered")) counts.delivered += 1;
+    if (matchesMonthlyOrderFilter(order, "not_delivered")) counts.not_delivered += 1;
+    if (matchesMonthlyOrderFilter(order, "annulled")) counts.annulled += 1;
+    if (matchesMonthlyOrderFilter(order, "settled")) counts.settled += 1;
+    if (matchesMonthlyOrderFilter(order, "unsettled")) counts.unsettled += 1;
+    if (matchesMonthlyOrderFilter(order, "to_claim")) counts.to_claim += 1;
+    if (matchesMonthlyOrderFilter(order, "duplicate")) counts.duplicate += 1;
+  }
+
+  return counts;
+}
+
+function matchesMonthlyOrderFilter(order: OrderProfitabilityRow, filter: MonthlyOrderFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "pending") return order.tracking_status === "pending";
+  if (filter === "delivered") return order.tracking_status === "delivered";
+  if (filter === "not_delivered") {
+    return order.tracking_status === "not_delivered" || order.tracking_status === "returned";
+  }
+  if (filter === "annulled") return order.tracking_status === "annulled";
+  if (filter === "settled") return order.settlement_count === 1;
+  if (filter === "unsettled") return order.settlement_count === 0;
+  if (filter === "to_claim") return order.tracking_status === "delivered" && order.settlement_count === 0;
+  return order.settlement_count > 1;
 }
 
 function getMonthKey(value: string | null): string {
@@ -3300,6 +3636,7 @@ function buildOrderProfitabilityRow({
     tracking_label: trackingLabel,
     settlement_status: settlementStatuses.join(", ") || "Sin liquidacion",
     settlement_files: settlementFiles,
+    settlement_count: settlementRows.length,
     amount_to_liquidate: roundMoney(amountToLiquidate),
     expected_cod: roundMoney(expectedCod),
     product_cost: productCostResult.productCost,
