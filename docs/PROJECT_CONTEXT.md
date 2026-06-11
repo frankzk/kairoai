@@ -106,7 +106,7 @@ Tabs:
 
 - `Pedidos`: shows Shopify orders as the baseline tracking list, includes a search box for order codes, guide numbers, and customers, opens Boxful logistics Excel upload from the table header action button/modal, inspects matched rows, and tracks operational follow-up state.
 - `Liquidaciones`: upload settlement/liquidation Excel files by cutoff date, inspect financial settlement rows, source Excel traceability, claim alerts, and anomalies.
-- `Costos SKU`: loads Shopify products/variants and lets the user edit unit and packaging costs inline by SKU.
+- `Costos SKU`: loads Shopify products/variants and manages product costs by SKU with explicit edit/save rows, saved/missing cost tabs, and versioned effective dates.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses, organized into three internal tabs with contextual modal buttons.
 - `Rentabilidad`: shows the approved net-profit formula, cash/control KPIs, a financial anomaly center, order-level margin, and missing SKU costs.
 - `Cierre mensual`: aggregates orders, cash, product costs, ads, payroll, miscellaneous expenses, and estimated net profit by month.
@@ -389,14 +389,18 @@ Suggested fields:
 Used to calculate:
 
 ```txt
-pedido_product_cost = sum(unit_cost * quantity)
+pedido_product_cost = sum((unit_cost + packaging_cost) * quantity)
 ```
 
 Important:
 
 - Shopify variants without SKU are shown as `Sin SKU` and cannot be used for automatic cost matching until a SKU is added in Shopify.
-- Unit cost and packaging cost are editable inline. Values save on blur or Enter through `/api/finance/product-costs`.
-- The `SKUs con costo guardado` table is an audit list of saved cost records that are currently used in profitability calculations.
+- Cost rows are not free-editing. The user clicks `Editar`, enters the draft values, then the same action changes to `Guardar`.
+- `Costo unitario` must be greater than zero before a SKU can be validated as `Con costo`.
+- `Empaque propio` is the merchant-side packaging/product handling cost per unit. It is separate from the `Empaque` charged by Boxful in settlement files.
+- Every save writes the active product cost and a `product_cost_versions` history row through `/api/finance/product-costs`.
+- `effective_from` controls when the new cost starts applying. The UI defaults it to today, and historical rows should use the version effective on the order date when the profitability logic is extended for date-sensitive COGS.
+- The operational table uses internal views: `Sin costo` for Shopify variants still missing unit cost, and `Con costo` for validated SKUs. The historical audit remains below as `Historial de cambios de costos`.
 
 ### 3. Gastos
 
@@ -558,7 +562,7 @@ Build in this order:
 - Added settlement source trace in `Pedidos`: when a logistics row matches a settlement row by order or guide, the table shows the liquidation Excel file name, status, and amount to liquidate. If multiple settlement rows match, the UI shows the first file plus a `+N` badge.
 - Added anomaly reporting in `Pedidos`: double settlements are counted in the top metric `Anomalias` and shown in a `Doble liquidacion detectada` table.
 - Improved import reliability: finance upload handlers now surface non-JSON server responses with a readable message, and importers infer date ranges from Excel rows when period dates are omitted.
-- `Costos SKU` now fetches `/api/shopify/products` and displays Shopify variants with SKU, Shopify price, inline unit cost, inline packaging cost, and saved/missing cost state.
+- `Costos SKU` now fetches `/api/shopify/products` and displays Shopify variants with SKU, Shopify price, explicit row editing, `Sin costo` / `Con costo` internal views, `Empaque propio`, effective dates, and saved/missing cost state.
 - Profitability summary now exposes settlement charged-cost breakdown:
   - COD collected
   - COD commission

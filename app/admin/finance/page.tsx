@@ -164,6 +164,14 @@ interface ProductCostVersion {
   created_at: string;
 }
 
+type ProductCostSaveInput = {
+  sku: string;
+  product_name: string;
+  unit_cost: number;
+  packaging_cost: number;
+  effective_from?: string;
+};
+
 interface FinanceClaim {
   id: number;
   anomaly_key: string;
@@ -555,12 +563,7 @@ export default function FinancePage() {
     }
   }
 
-  async function saveProductCost(input: {
-    sku: string;
-    product_name: string;
-    unit_cost: number;
-    packaging_cost: number;
-  }) {
+  async function saveProductCost(input: ProductCostSaveInput) {
     const res = await fetch("/api/finance/product-costs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -700,11 +703,6 @@ export default function FinancePage() {
     setExpenseForm({ ...emptyExpense, type: expenseForm.type });
     await refresh();
     return true;
-  }
-
-  async function deleteCost(id: number) {
-    await fetch(`/api/finance/product-costs?id=${id}`, { method: "DELETE" });
-    await refresh();
   }
 
   async function deleteExpense(id: number) {
@@ -848,7 +846,6 @@ export default function FinancePage() {
                 setProductSearch={setProductSearch}
                 versions={costVersions}
                 onSaveProductCost={saveProductCost}
-                onDelete={deleteCost}
               />
             )}
             {tab === "expenses" && (
@@ -1418,7 +1415,6 @@ function CostsTab({
   setProductSearch,
   versions,
   onSaveProductCost,
-  onDelete,
 }: {
   costs: ProductCost[];
   products: ShopifyProductOption[];
@@ -1427,14 +1423,10 @@ function CostsTab({
   productSearch: string;
   setProductSearch: (value: string) => void;
   versions: ProductCostVersion[];
-  onSaveProductCost: (input: {
-    sku: string;
-    product_name: string;
-    unit_cost: number;
-    packaging_cost: number;
-  }) => Promise<void>;
-  onDelete: (id: number) => void;
+  onSaveProductCost: (input: ProductCostSaveInput) => Promise<void>;
 }) {
+  const [activeCostView, setActiveCostView] = useState<"missing" | "saved">("missing");
+  const [editingSku, setEditingSku] = useState("");
   const costBySku = useMemo(
     () => new Map(costs.map((cost) => [cost.sku.toLowerCase(), cost])),
     [costs]
@@ -1448,6 +1440,20 @@ function CostsTab({
         product.sku.toLowerCase().includes(query)
     );
   }, [productSearch, products]);
+  const productRows = useMemo(
+    () =>
+      filteredProducts.map((product) => {
+        const savedCost = product.sku ? costBySku.get(product.sku.toLowerCase()) : undefined;
+        const hasSavedCost = Boolean(product.sku && savedCost && Number(savedCost.unit_cost || 0) > 0);
+        return { product, savedCost, hasSavedCost };
+      }),
+    [costBySku, filteredProducts]
+  );
+  const missingCostCount = productRows.filter((row) => !row.hasSavedCost).length;
+  const savedCostCount = productRows.filter((row) => row.hasSavedCost).length;
+  const visibleProductRows = productRows.filter((row) =>
+    activeCostView === "saved" ? row.hasSavedCost : !row.hasSavedCost
+  );
 
   return (
     <div className="space-y-4">
@@ -1455,6 +1461,10 @@ function CostsTab({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Productos Shopify</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Edita una fila, define costo unitario y fecha efectiva, y guarda para validar. Empaque propio
+              es tu costo interno de empaque por unidad, separado del empaque cobrado por Boxful.
+            </p>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-center gap-2 border border-input bg-background px-3">
@@ -1471,69 +1481,70 @@ function CostsTab({
                 {productsError}
               </div>
             )}
+            <div className="flex flex-wrap gap-2 border-b border-border">
+              <button
+                type="button"
+                onClick={() => setActiveCostView("missing")}
+                className={`border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                  activeCostView === "missing"
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Sin costo ({missingCostCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveCostView("saved")}
+                className={`border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                  activeCostView === "saved"
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Con costo ({savedCostCount})
+              </button>
+            </div>
             <div className="max-h-[360px] overflow-auto border border-border">
-              <table className="w-full min-w-[860px] text-sm">
+              <table className="w-full min-w-[1080px] text-sm">
                 <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2">Producto</th>
                     <th className="px-3 py-2">SKU</th>
                     <th className="px-3 py-2 text-right">Precio Shopify</th>
-                    <th className="px-3 py-2">Costo unitario</th>
-                    <th className="px-3 py-2">Empaque</th>
+                    <th className="px-3 py-2 text-right">Costo unitario</th>
+                    <th className="px-3 py-2 text-right">Empaque propio</th>
+                    <th className="px-3 py-2">Vigente desde</th>
                     <th className="px-3 py-2">Estado</th>
+                    <th className="px-3 py-2 text-right">Accion</th>
                   </tr>
                 </thead>
                 <tbody>
                   {productsLoading ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      <td colSpan={8} className="px-3 py-6 text-center text-sm text-muted-foreground">
                         Cargando productos Shopify...
                       </td>
                     </tr>
-                  ) : filteredProducts.length ? (
-                    filteredProducts.slice(0, 250).map((product) => {
-                      const savedCost = product.sku ? costBySku.get(product.sku.toLowerCase()) : undefined;
-                      return (
-                        <tr key={product.variant_id} className="border-t border-border/50">
-                          <td className="px-3 py-2">{product.display_name}</td>
-                          <td className="px-3 py-2 font-mono text-xs">
-                            {product.sku || <span className="text-amber-300">Sin SKU</span>}
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono text-xs">{currency(product.price)}</td>
-                          <td className="px-3 py-2">
-                            <InlineCostEditor
-                              product={product}
-                              savedCost={savedCost}
-                              field="unit_cost"
-                              disabled={!product.sku}
-                              onSave={onSaveProductCost}
-                            />
-                          </td>
-                          <td className="px-3 py-2">
-                            <InlineCostEditor
-                              product={product}
-                              savedCost={savedCost}
-                              field="packaging_cost"
-                              disabled={!product.sku}
-                              onSave={onSaveProductCost}
-                            />
-                          </td>
-                          <td className="px-3 py-2">
-                            {!product.sku ? (
-                              <Badge variant="warning">Sin SKU</Badge>
-                            ) : savedCost ? (
-                              <Badge variant="success">Guardado</Badge>
-                            ) : (
-                              <Badge variant="warning">Sin costo</Badge>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })
+                  ) : visibleProductRows.length ? (
+                    visibleProductRows.slice(0, 250).map(({ product, savedCost, hasSavedCost }) => (
+                      <ProductCostRow
+                        key={product.variant_id}
+                        product={product}
+                        savedCost={savedCost}
+                        hasSavedCost={hasSavedCost}
+                        isEditing={Boolean(product.sku && editingSku === product.sku)}
+                        onEdit={() => product.sku && setEditingSku(product.sku)}
+                        onSaved={() => setEditingSku("")}
+                        onSave={onSaveProductCost}
+                      />
+                    ))
                   ) : (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-sm text-muted-foreground">
-                        No hay productos para mostrar.
+                      <td colSpan={8} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                        {activeCostView === "saved"
+                          ? "No hay SKUs con costo guardado en esta busqueda."
+                          : "No hay SKUs pendientes de costo en esta busqueda."}
                       </td>
                     </tr>
                   )}
@@ -1545,43 +1556,7 @@ function CostsTab({
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">SKUs con costo guardado</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-auto border border-border">
-              <table className="w-full min-w-[720px] text-sm">
-                <thead className="bg-card text-left text-xs text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2">SKU</th>
-                    <th className="px-3 py-2">Producto</th>
-                    <th className="px-3 py-2 text-right">Unitario</th>
-                    <th className="px-3 py-2 text-right">Empaque</th>
-                    <th className="px-3 py-2" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {costs.map((cost) => (
-                    <tr key={cost.id} className="border-t border-border/50">
-                      <td className="px-3 py-2 font-mono text-xs">{cost.sku}</td>
-                      <td className="px-3 py-2">{cost.product_name}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs">{currency(cost.unit_cost)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs">{currency(cost.packaging_cost)}</td>
-                      <td className="px-3 py-2 text-right">
-                        <button onClick={() => onDelete(cost.id)} className="text-muted-foreground hover:text-red-400">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Historial de costos SKU</CardTitle>
+            <CardTitle className="text-base">Historial de cambios de costos</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="max-h-[300px] overflow-auto border border-border">
@@ -1592,7 +1567,7 @@ function CostsTab({
                     <th className="px-3 py-2">SKU</th>
                     <th className="px-3 py-2">Producto</th>
                     <th className="px-3 py-2 text-right">Unitario</th>
-                    <th className="px-3 py-2 text-right">Empaque</th>
+                    <th className="px-3 py-2 text-right">Empaque propio</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1622,77 +1597,163 @@ function CostsTab({
   );
 }
 
-function InlineCostEditor({
+function ProductCostRow({
   product,
   savedCost,
-  field,
-  disabled,
+  hasSavedCost,
+  isEditing,
+  onEdit,
+  onSaved,
   onSave,
 }: {
   product: ShopifyProductOption;
   savedCost?: ProductCost;
-  field: "unit_cost" | "packaging_cost";
-  disabled: boolean;
-  onSave: (input: {
-    sku: string;
-    product_name: string;
-    unit_cost: number;
-    packaging_cost: number;
-  }) => Promise<void>;
+  hasSavedCost: boolean;
+  isEditing: boolean;
+  onEdit: () => void;
+  onSaved: () => void;
+  onSave: (input: ProductCostSaveInput) => Promise<void>;
 }) {
-  const initialValue =
-    field === "unit_cost" ? savedCost?.unit_cost ?? 0 : savedCost?.packaging_cost ?? 0;
-  const [value, setValue] = useState(String(initialValue || ""));
+  const [unitCost, setUnitCost] = useState(String(savedCost?.unit_cost || ""));
+  const [packagingCost, setPackagingCost] = useState(String(savedCost?.packaging_cost || ""));
+  const [effectiveFrom, setEffectiveFrom] = useState(
+    savedCost?.effective_from || new Date().toISOString().slice(0, 10)
+  );
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [validationMessage, setValidationMessage] = useState("");
 
   useEffect(() => {
-    setValue(String(initialValue || ""));
-  }, [initialValue]);
+    if (!isEditing) return;
+    setUnitCost(String(savedCost?.unit_cost || ""));
+    setPackagingCost(String(savedCost?.packaging_cost || ""));
+    setEffectiveFrom(savedCost?.effective_from || new Date().toISOString().slice(0, 10));
+    setValidationMessage("");
+  }, [isEditing, savedCost?.effective_from, savedCost?.packaging_cost, savedCost?.unit_cost]);
 
-  async function persist() {
-    if (disabled || !product.sku) return;
-    const numericValue = Number(value || 0);
-    const currentValue = field === "unit_cost" ? savedCost?.unit_cost ?? 0 : savedCost?.packaging_cost ?? 0;
-    if (numericValue === currentValue && savedCost) return;
+  async function handleAction() {
+    if (!product.sku) return;
+    if (!isEditing) {
+      setValidationMessage("");
+      onEdit();
+      return;
+    }
+
+    const parsedUnitCost = Number(unitCost);
+    const parsedPackagingCost = Number(packagingCost || 0);
+    if (!Number.isFinite(parsedUnitCost) || parsedUnitCost <= 0) {
+      setValidationMessage("El costo unitario debe ser mayor que cero para validar el SKU.");
+      return;
+    }
+    if (!Number.isFinite(parsedPackagingCost) || parsedPackagingCost < 0) {
+      setValidationMessage("El empaque propio no puede ser negativo.");
+      return;
+    }
+    if (!effectiveFrom) {
+      setValidationMessage("Selecciona la fecha desde la que aplica este costo.");
+      return;
+    }
 
     setSaving(true);
-    setSaved(false);
     try {
       await onSave({
         sku: product.sku,
         product_name: product.display_name,
-        unit_cost: field === "unit_cost" ? numericValue : savedCost?.unit_cost ?? 0,
-        packaging_cost: field === "packaging_cost" ? numericValue : savedCost?.packaging_cost ?? 0,
+        unit_cost: parsedUnitCost,
+        packaging_cost: parsedPackagingCost,
+        effective_from: effectiveFrom,
       });
-      setSaved(true);
-      window.setTimeout(() => setSaved(false), 1200);
+      setValidationMessage("");
+      onSaved();
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <Input
-        type="number"
-        min="0"
-        step="1"
-        disabled={disabled || saving}
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        onBlur={persist}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.currentTarget.blur();
-          }
-        }}
-        className="h-8 w-28 px-2 text-right font-mono text-xs"
-        placeholder="0"
-      />
-      {saving && <span className="text-xs text-muted-foreground">Guardando</span>}
-      {saved && <span className="text-xs text-emerald-300">OK</span>}
-    </div>
+    <>
+      <tr className="border-t border-border/50">
+        <td className="px-3 py-2">{product.display_name}</td>
+        <td className="px-3 py-2 font-mono text-xs">
+          {product.sku || <span className="text-amber-300">Sin SKU</span>}
+        </td>
+        <td className="px-3 py-2 text-right font-mono text-xs">{currency(product.price)}</td>
+        <td className="px-3 py-2 text-right">
+          {isEditing ? (
+            <Input
+              type="number"
+              min="0"
+              step="1"
+              value={unitCost}
+              onChange={(event) => setUnitCost(event.target.value)}
+              className="ml-auto h-8 w-28 px-2 text-right font-mono text-xs"
+              placeholder="0"
+            />
+          ) : savedCost ? (
+            <span className="font-mono text-xs">{currency(savedCost.unit_cost)}</span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )}
+        </td>
+        <td className="px-3 py-2 text-right">
+          {isEditing ? (
+            <Input
+              type="number"
+              min="0"
+              step="1"
+              value={packagingCost}
+              onChange={(event) => setPackagingCost(event.target.value)}
+              className="ml-auto h-8 w-28 px-2 text-right font-mono text-xs"
+              placeholder="0"
+            />
+          ) : savedCost ? (
+            <span className="font-mono text-xs">{currency(savedCost.packaging_cost)}</span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )}
+        </td>
+        <td className="px-3 py-2">
+          {isEditing ? (
+            <Input
+              type="date"
+              value={effectiveFrom}
+              onChange={(event) => setEffectiveFrom(event.target.value)}
+              className="h-8 w-36 px-2 font-mono text-xs"
+            />
+          ) : savedCost?.effective_from ? (
+            <span className="font-mono text-xs">{formatDate(savedCost.effective_from)}</span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )}
+        </td>
+        <td className="px-3 py-2">
+          {!product.sku ? (
+            <Badge variant="warning">Sin SKU</Badge>
+          ) : hasSavedCost ? (
+            <Badge variant="success">Con costo</Badge>
+          ) : (
+            <Badge variant="warning">Sin costo</Badge>
+          )}
+        </td>
+        <td className="px-3 py-2 text-right">
+          <Button
+            type="button"
+            size="sm"
+            variant={isEditing ? "default" : "outline"}
+            disabled={!product.sku || saving}
+            onClick={handleAction}
+          >
+            {saving ? "Guardando..." : isEditing ? "Guardar" : "Editar"}
+          </Button>
+        </td>
+      </tr>
+      {isEditing && validationMessage && (
+        <tr className="border-t border-border/50 bg-amber-950/20">
+          <td colSpan={8} className="px-3 py-2 text-xs text-amber-200">
+            {validationMessage}
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
