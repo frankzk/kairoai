@@ -910,6 +910,11 @@ function OrdersTab({
   onLogisticsImport: (event: FormEvent<HTMLFormElement>) => Promise<boolean>;
 }) {
   const [isLogisticsModalOpen, setIsLogisticsModalOpen] = useState(false);
+  const [orderSearch, setOrderSearch] = useState("");
+  const filteredRows = useMemo(
+    () => rows.filter((row) => matchesOrderSearch(row, orderSearch)),
+    [rows, orderSearch]
+  );
 
   async function handleModalLogisticsImport(event: FormEvent<HTMLFormElement>) {
     const didImport = await onLogisticsImport(event);
@@ -951,9 +956,39 @@ function OrdersTab({
             <MiniStat label="Filas Boxful" value={latestLogisticsImport?.total_rows ?? 0} />
             <MiniStat label="Match Shopify" value={latestLogisticsImport?.matched_rows ?? 0} />
             <MiniStat label="Sin match" value={latestLogisticsImport?.unmatched_rows ?? 0} />
-            <MiniStat label="Pedidos visibles" value={rows.length} />
+            <MiniStat label="Pedidos visibles" value={filteredRows.length} />
           </div>
-          <OrdersTable rows={rows} settlementTraceByKey={settlementTraceByKey} />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex w-full items-center gap-2 border border-input bg-background px-3 sm:max-w-xl">
+              <Search className="h-4 w-4 text-muted-foreground" />
+              <input
+                value={orderSearch}
+                onChange={(event) => setOrderSearch(event.target.value)}
+                placeholder="Buscar pedido: #MCRC11566, 11566, guia o cliente"
+                className="h-10 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              />
+              {orderSearch && (
+                <button
+                  type="button"
+                  aria-label="Limpiar busqueda"
+                  onClick={() => setOrderSearch("")}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            {orderSearch && (
+              <p className="text-xs text-muted-foreground">
+                {filteredRows.length} de {rows.length} pedidos
+              </p>
+            )}
+          </div>
+          <OrdersTable
+            rows={filteredRows}
+            settlementTraceByKey={settlementTraceByKey}
+            emptyLabel={orderSearch ? "No encontramos pedidos con ese codigo." : "No hay pedidos para mostrar."}
+          />
           {logisticsImports.length > 1 && (
             <div className="border-t border-border pt-3">
               <p className="mb-2 text-xs font-medium text-muted-foreground">Historial de Boxful</p>
@@ -1030,9 +1065,11 @@ function OrdersTab({
 function OrdersTable({
   rows,
   settlementTraceByKey,
+  emptyLabel = "No hay pedidos para mostrar.",
 }: {
   rows: TrackableOrderRow[];
   settlementTraceByKey: Map<string, SettlementTrace[]>;
+  emptyLabel?: string;
 }) {
   return (
     <div className="max-h-[620px] overflow-auto border border-border">
@@ -1087,6 +1124,13 @@ function OrdersTable({
               </tr>
             );
           })}
+          {!rows.length && (
+            <tr>
+              <td colSpan={9} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                {emptyLabel}
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
@@ -3235,6 +3279,40 @@ function normalizeMatchKey(value: string): string {
     .toLowerCase()
     .replace(/^#/, "")
     .replace(/\s+/g, "");
+}
+
+function normalizeSearchText(value: string): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^#/, "")
+    .replace(/\s+/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {
+  const rawQuery = query.trim().toLowerCase();
+  const compactQuery = normalizeSearchText(query);
+  if (!rawQuery && !compactQuery) return true;
+
+  const values = [
+    row.order_name,
+    row.shopify_order_name,
+    row.shopify_order_number ? String(row.shopify_order_number) : "",
+    row.shopify_order_number ? `#MCRC${row.shopify_order_number}` : "",
+    row.guide_number,
+    row.customer_name,
+    ...(row.package_items ?? []).flatMap((item) => [item.sku ?? "", item.title]),
+  ];
+
+  return values.some((value) => {
+    const text = String(value || "").toLowerCase();
+    const compactText = normalizeSearchText(String(value || ""));
+    return Boolean(
+      (rawQuery && text.includes(rawQuery)) ||
+      (compactQuery && compactText.includes(compactQuery))
+    );
+  });
 }
 
 function getEffectiveTrackingStatus(

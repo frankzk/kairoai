@@ -104,7 +104,7 @@ Navigation:
 
 Tabs:
 
-- `Pedidos`: shows Shopify orders as the baseline tracking list, opens Boxful logistics Excel upload from the table header action button/modal, inspects matched rows, and tracks operational follow-up state.
+- `Pedidos`: shows Shopify orders as the baseline tracking list, includes a search box for order codes, guide numbers, and customers, opens Boxful logistics Excel upload from the table header action button/modal, inspects matched rows, and tracks operational follow-up state.
 - `Liquidaciones`: upload settlement/liquidation Excel files by cutoff date, inspect financial settlement rows, source Excel traceability, claim alerts, and anomalies.
 - `Costos SKU`: loads Shopify products/variants and lets the user edit unit and packaging costs inline by SKU.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses, organized into three internal tabs with contextual modal buttons.
@@ -140,6 +140,7 @@ Excel parsing:
 - Shopify matching accepts exact order names, `#MCRC` order names, and numeric order numbers when reconciling imported files.
 - `/admin/finance` requests one bounded Shopify page with `status=any` from `2026-03-01T00:00:00-06:00` so the Pedidos tab can show recent store orders even before a Boxful logistics file is imported. It must not use `all=1` during normal page load because Shopify pagination can exceed Vercel serverless timeouts. Boxful rows replace/enrich matching Shopify rows instead of creating duplicates.
 - The `Pedidos` tab keeps the Shopify/Boxful table as the main surface. The Boxful logistics importer is an action button on the right side of the table header and opens a modal; it should not return to a persistent side-panel form.
+- The `Pedidos` tab search filters the visible table client-side by order code (`#MCRC...`, `MCRC...`, or numeric partials), guide number, customer name, SKU, and item title. The search should remain above the table because it is the primary lookup workflow during reconciliation.
 
 Database schema:
 
