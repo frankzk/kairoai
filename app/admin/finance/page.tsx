@@ -6,7 +6,6 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowLeft,
-  Banknote,
   Database,
   Download,
   FileSpreadsheet,
@@ -24,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
-type Tab = "orders" | "settlements" | "costs" | "expenses" | "profit" | "monthly" | "files";
+type Tab = "orders" | "settlements" | "costs" | "expenses" | "monthly" | "files";
 type ExpenseType = "ads" | "payroll" | "misc";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 type OrderTrackingFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
@@ -66,6 +65,11 @@ interface SettlementRow {
   internal_status: string;
   match_status: string;
   cod_amount: number;
+  cod_commission: number;
+  card_commission: number;
+  delivery_cost: number;
+  pick_pack_cost: number;
+  packaging_cost: number;
   amount_to_liquidate: number;
   shopify_order_name: string;
   shopify_financial_status: string;
@@ -265,6 +269,7 @@ interface OrderProfitabilityRow {
   settlement_status: string;
   settlement_files: string[];
   settlement_count: number;
+  settlement_charged_costs: number;
   amount_to_liquidate: number;
   expected_cod: number;
   product_cost: number;
@@ -309,6 +314,7 @@ interface MonthlyCloseRow {
   unsettled: number;
   to_claim: number;
   duplicate_settlements: number;
+  boxful_costs: number;
   cash_received: number;
   cash_pending: number;
   product_costs: number;
@@ -867,9 +873,6 @@ export default function FinancePage() {
           <TabButton active={tab === "expenses"} onClick={() => setTab("expenses")} icon={<ReceiptText />}>
             Gastos
           </TabButton>
-          <TabButton active={tab === "profit"} onClick={() => setTab("profit")} icon={<Banknote />}>
-            Rentabilidad
-          </TabButton>
           <TabButton active={tab === "monthly"} onClick={() => setTab("monthly")} icon={<FileSpreadsheet />}>
             Cierre mensual
           </TabButton>
@@ -928,16 +931,14 @@ export default function FinancePage() {
                 onDelete={deleteExpense}
               />
             )}
-            {tab === "profit" && (
-              <ProfitTab
-                summary={summary}
+            {tab === "monthly" && (
+              <MonthlyCloseTab
+                rows={monthlyCloseRows}
                 control={financeControl}
+                summary={summary}
                 claimByAnomalyKey={claimByAnomalyKey}
                 onSaveClaim={saveClaim}
               />
-            )}
-            {tab === "monthly" && (
-              <MonthlyCloseTab rows={monthlyCloseRows} control={financeControl} />
             )}
             {tab === "files" && (
               <BoxfulFilesTab
@@ -1103,7 +1104,7 @@ function OrdersTab({
               ))}
             </div>
             <div className="text-xs text-muted-foreground">
-              Base Shopify: {shopifyOrderCount} pedidos
+              Base Shopify: {shopifyOrderCount} pedidos desde 16/09/2025
               {latestLogisticsImport
                 ? ` - Ultimo Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match Shopify, ${latestLogisticsImport.unmatched_rows} sin match`
                 : " - Sin Boxful importado"}
@@ -2315,123 +2316,6 @@ function ExpensesTab({
   );
 }
 
-function ProfitTab({
-  summary,
-  control,
-  claimByAnomalyKey,
-  onSaveClaim,
-}: {
-  summary: ProfitabilitySummary | null;
-  control: FinanceControlCenter;
-  claimByAnomalyKey: Map<string, FinanceClaim>;
-  onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
-}) {
-  const items = [
-    ["COD cobrado", summary?.cod_collected ?? 0],
-    ["Costos Boxful descontados", -(summary?.settlement_charged_costs ?? 0)],
-    ["A liquidar neto", summary?.settlement_total ?? 0],
-    ["Costo producto", -(summary?.product_costs ?? 0)],
-    ["Ads", -(summary?.ads ?? 0)],
-    ["Planilla", -(summary?.payroll ?? 0)],
-    ["Gastos varios", -(summary?.misc ?? 0)],
-    ["Utilidad neta", summary?.net_profit ?? 0],
-  ];
-  const criticalAnomalies = control.anomalies.filter((anomaly) => anomaly.severity === "high").length;
-
-  return (
-    <div className="space-y-6">
-      <section className="grid gap-3 md:grid-cols-4">
-        <MiniStat label="Caja liquidada" value={currency(control.cash_received)} />
-        <MiniStat label="Caja por reclamar" value={currency(control.cash_pending)} />
-        <MiniStat label="Margen pedido" value={currency(control.contribution_margin)} />
-        <MiniStat label="Alertas criticas" value={criticalAnomalies} />
-      </section>
-
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("anomalias-financieras.csv", control.anomalies)}>
-          <Download className="h-4 w-4" /> Exportar anomalias
-        </Button>
-        <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("rentabilidad-pedidos.csv", control.orders)}>
-          <Download className="h-4 w-4" /> Exportar pedidos
-        </Button>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Formula de utilidad</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="border border-border bg-background p-3 text-xs text-muted-foreground">
-              A liquidar = Monto COD - Comision COD - Costo entrega - Pick&Pack - Empaque.
-              Esos costos Boxful ya estan descontados dentro de `A liquidar`, asi que no se restan dos veces.
-            </div>
-            {items.map(([label, value]) => (
-              <div key={label as string} className="flex items-center justify-between border-b border-border/50 py-3">
-                <span className="text-sm text-muted-foreground">{label}</span>
-                <span className={`font-mono text-sm ${Number(value) < 0 ? "text-red-300" : "text-foreground"}`}>
-                  {currency(Number(value))}
-                </span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Desglose liquidacion</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <BreakdownLine label="Comision COD" value={summary?.cod_commission ?? 0} />
-            <BreakdownLine label="Costo entrega" value={summary?.delivery_cost ?? 0} />
-            <BreakdownLine label="Pick&Pack" value={summary?.pick_pack_cost ?? 0} />
-            <BreakdownLine label="Empaque liquidacion" value={summary?.settlement_packaging_cost ?? 0} />
-            <BreakdownLine label="Comision tarjeta (informativa)" value={summary?.card_commission ?? 0} />
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Centro de anomalias</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <FinancialAnomaliesTable
-            anomalies={control.anomalies}
-            claimByAnomalyKey={claimByAnomalyKey}
-            onSaveClaim={onSaveClaim}
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Rentabilidad por pedido</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <OrderProfitabilityTable rows={control.orders} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">SKUs sin costo</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {summary?.missing_cost_skus?.length ? (
-            <div className="flex flex-wrap gap-2">
-              {summary.missing_cost_skus.slice(0, 40).map((sku) => (
-                <Badge key={sku} variant="warning">{sku}</Badge>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No hay SKUs pendientes de costo.</p>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
 function FinancialAnomaliesTable({
   anomalies,
   claimByAnomalyKey,
@@ -2520,81 +2404,54 @@ function FinancialAnomaliesTable({
   );
 }
 
-function OrderProfitabilityTable({ rows }: { rows: OrderProfitabilityRow[] }) {
-  if (!rows.length) {
-    return <p className="text-sm text-muted-foreground">No hay pedidos para calcular rentabilidad.</p>;
+function CostCompositionBar({
+  segments,
+}: {
+  segments: Array<{ label: string; value: number; className: string }>;
+}) {
+  const visibleSegments = segments
+    .map((segment) => ({ ...segment, value: Math.max(0, Number(segment.value || 0)) }))
+    .filter((segment) => segment.value > 0);
+  const total = sum(visibleSegments.map((segment) => segment.value));
+
+  if (!total) {
+    return (
+      <p className="border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
+        No hay costos registrados para este cierre.
+      </p>
+    );
   }
 
   return (
-    <div className="max-h-[620px] overflow-auto border border-border">
-      <table className="w-full min-w-[1260px] text-sm">
-        <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
-          <tr>
-            <th className="px-3 py-2">Orden</th>
-            <th className="px-3 py-2">Cliente</th>
-            <th className="px-3 py-2">Seguimiento</th>
-            <th className="px-3 py-2">Caja</th>
-            <th className="px-3 py-2">Liquidacion</th>
-            <th className="px-3 py-2 text-right">A liquidar</th>
-            <th className="px-3 py-2 text-right">Costo producto</th>
-            <th className="px-3 py-2 text-right">Margen</th>
-            <th className="px-3 py-2">SKUs</th>
-            <th className="px-3 py-2">Archivo</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.slice(0, 500).map((row) => (
-            <tr key={row.order_key} className="border-t border-border/50">
-              <td className="px-3 py-2">
-                <div className="font-mono text-xs">{row.order_name || "-"}</div>
-                <div className="text-xs text-muted-foreground">{row.guide_number || row.source}</div>
-              </td>
-              <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
-              <td className="px-3 py-2">
-                <StatusBadge status={row.tracking_status} label={row.tracking_label} />
-              </td>
-              <td className="px-3 py-2">
-                <Badge
-                  variant={
-                    row.cash_status === "cobrado"
-                      ? "success"
-                      : row.cash_status === "por_cobrar"
-                        ? "warning"
-                        : "muted"
-                  }
-                >
-                  {row.cash_status === "cobrado" ? "Liquidado" : row.cash_status === "por_cobrar" ? "Por cobrar" : "Sin caja"}
-                </Badge>
-              </td>
-              <td className="px-3 py-2">{row.settlement_status}</td>
-              <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.amount_to_liquidate)}</td>
-              <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.product_cost)}</td>
-              <td className={`px-3 py-2 text-right font-mono text-xs ${row.contribution_margin < 0 ? "text-red-300" : "text-emerald-300"}`}>
-                {currency(row.contribution_margin)}
-              </td>
-              <td className="px-3 py-2 text-xs">
-                {row.missing_cost_skus.length ? (
-                  <div className="flex flex-wrap gap-1">
-                    {row.missing_cost_skus.slice(0, 3).map((sku) => (
-                      <Badge key={sku} variant="warning">{sku}</Badge>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="text-muted-foreground">{row.items_summary || "-"}</span>
-                )}
-              </td>
-              <td className="max-w-[260px] truncate px-3 py-2 text-xs text-muted-foreground" title={row.settlement_files.join(", ")}>
-                {row.settlement_files.join(", ") || "-"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length > 500 && (
-        <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-          Mostrando 500 de {rows.length} pedidos.
-        </div>
-      )}
+    <div className="space-y-4">
+      <div className="flex h-5 overflow-hidden border border-border bg-background">
+        {visibleSegments.map((segment) => {
+          const percentage = (segment.value / total) * 100;
+          return (
+            <div
+              key={segment.label}
+              className={`${segment.className} h-full`}
+              style={{ width: `${percentage}%` }}
+              title={`${segment.label}: ${currency(segment.value)} (${percentage.toFixed(1)}%)`}
+            />
+          );
+        })}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        {visibleSegments.map((segment) => {
+          const percentage = (segment.value / total) * 100;
+          return (
+            <div key={segment.label} className="border border-border bg-background p-3">
+              <div className="flex items-center gap-2">
+                <span className={`h-2.5 w-2.5 ${segment.className}`} />
+                <span className="text-xs text-muted-foreground">{segment.label}</span>
+              </div>
+              <div className="mt-2 font-mono text-sm">{currency(segment.value)}</div>
+              <div className="text-xs text-muted-foreground">{percentage.toFixed(1)}% del costo</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2602,9 +2459,15 @@ function OrderProfitabilityTable({ rows }: { rows: OrderProfitabilityRow[] }) {
 function MonthlyCloseTab({
   rows,
   control,
+  summary,
+  claimByAnomalyKey,
+  onSaveClaim,
 }: {
   rows: MonthlyCloseRow[];
   control: FinanceControlCenter;
+  summary: ProfitabilitySummary | null;
+  claimByAnomalyKey: Map<string, FinanceClaim>;
+  onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
 }) {
   const [selectedMonth, setSelectedMonth] = useState("all");
   const [orderFilter, setOrderFilter] = useState<MonthlyOrderFilter>("all");
@@ -2621,6 +2484,19 @@ function MonthlyCloseTab({
       }),
     [control.orders, selectedMonth]
   );
+  const selectedAnomalies = useMemo(
+    () =>
+      control.anomalies.filter((anomaly) => {
+        if (selectedMonth === "all") return true;
+        const order = control.orders.find(
+          (item) =>
+            item.order_name === anomaly.order_name ||
+            (item.guide_number && item.guide_number === anomaly.guide_number)
+        );
+        return (getMonthKey(order?.created_at ?? null) || "sin-fecha") === selectedMonth;
+      }),
+    [control.anomalies, control.orders, selectedMonth]
+  );
   const orderFilterCounts = useMemo(
     () => getMonthlyOrderFilterCounts(monthOrders),
     [monthOrders]
@@ -2629,7 +2505,19 @@ function MonthlyCloseTab({
     () => monthOrders.filter((order) => matchesMonthlyOrderFilter(order, orderFilter)),
     [monthOrders, orderFilter]
   );
+  const selectedMissingCostSkus = useMemo(
+    () => uniqueKeys(monthOrders.flatMap((order) => order.missing_cost_skus)),
+    [monthOrders]
+  );
   const selectedMonthLabel = selectedMonth === "all" ? "Todos los meses" : selectedMonth;
+  const criticalAnomalies = selectedAnomalies.filter((anomaly) => anomaly.severity === "high").length;
+  const costSegments = [
+    { label: "Boxful", value: selectedClose.boxful_costs, className: "bg-sky-400" },
+    { label: "Producto", value: selectedClose.product_costs, className: "bg-emerald-400" },
+    { label: "Ads", value: selectedClose.ads, className: "bg-violet-400" },
+    { label: "Planilla", value: selectedClose.payroll, className: "bg-amber-400" },
+    { label: "Varios", value: selectedClose.misc, className: "bg-rose-400" },
+  ];
 
   useEffect(() => {
     if (selectedMonth !== "all" && !monthOptions.includes(selectedMonth)) {
@@ -2646,9 +2534,19 @@ function MonthlyCloseTab({
             Vista devengada por mes: estado de pedidos, caja, costos, gastos y utilidad estimada.
           </p>
         </div>
-        <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("cierre-mensual.csv", rows)}>
-          <Download className="h-4 w-4" /> Exportar cierre
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => exportCsv("cierre-mensual.csv", rows)}>
+            <Download className="h-4 w-4" /> Exportar cierre
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => exportCsv(`anomalias-${selectedMonth}.csv`, selectedAnomalies)}
+          >
+            <Download className="h-4 w-4" /> Exportar anomalias
+          </Button>
+        </div>
       </div>
       <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
         <MiniStat label="Pedidos analizados" value={selectedClose.orders} />
@@ -2657,6 +2555,13 @@ function MonthlyCloseTab({
         <MiniStat label="Anulados" value={selectedClose.annulled} />
         <MiniStat label="Pendientes" value={selectedClose.pending} />
         <MiniStat label="Por reclamar" value={selectedClose.to_claim} />
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <MiniStat label="Caja liquidada" value={currency(selectedClose.cash_received)} />
+        <MiniStat label="Caja por reclamar" value={currency(selectedClose.cash_pending)} />
+        <MiniStat label="Margen pedido" value={currency(selectedClose.contribution_margin)} />
+        <MiniStat label="Alertas criticas" value={criticalAnomalies} />
       </section>
 
       <div className="flex flex-wrap gap-2">
@@ -2687,10 +2592,40 @@ function MonthlyCloseTab({
         ))}
       </div>
 
+      <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Composicion de costos</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              {selectedMonthLabel}: participacion de cada concepto dentro del 100% de costos registrados.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <CostCompositionBar segments={costSegments} />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Formula y Boxful</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="border border-border bg-background p-3 text-xs text-muted-foreground">
+              A liquidar = Monto COD - Comision COD - Costo entrega - Pick&Pack - Empaque.
+              Esos cargos Boxful ya vienen descontados en A liquidar.
+            </div>
+            <BreakdownLine label="Comision COD" value={summary?.cod_commission ?? 0} />
+            <BreakdownLine label="Costo entrega" value={summary?.delivery_cost ?? 0} />
+            <BreakdownLine label="Pick&Pack" value={summary?.pick_pack_cost ?? 0} />
+            <BreakdownLine label="Empaque liquidacion" value={summary?.settlement_packaging_cost ?? 0} />
+            <BreakdownLine label="Comision tarjeta (info)" value={summary?.card_commission ?? 0} />
+          </CardContent>
+        </Card>
+      </div>
+
       <Card>
         <CardContent className="p-0">
           <div className="overflow-auto border border-border">
-            <table className="w-full min-w-[1500px] text-sm">
+            <table className="w-full min-w-[1580px] text-sm">
               <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2">Mes</th>
@@ -2705,6 +2640,7 @@ function MonthlyCloseTab({
                   <th className="px-3 py-2 text-right">Duplicados</th>
                   <th className="px-3 py-2 text-right">Caja liquidada</th>
                   <th className="px-3 py-2 text-right">Caja por reclamar</th>
+                  <th className="px-3 py-2 text-right">Costos Boxful</th>
                   <th className="px-3 py-2 text-right">Costo producto</th>
                   <th className="px-3 py-2 text-right">Ads</th>
                   <th className="px-3 py-2 text-right">Planilla</th>
@@ -2733,6 +2669,7 @@ function MonthlyCloseTab({
                     <td className="px-3 py-2 text-right font-mono text-xs">{row.duplicate_settlements}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.cash_received)}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.cash_pending)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.boxful_costs)}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.product_costs)}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.ads)}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.payroll)}</td>
@@ -2744,7 +2681,7 @@ function MonthlyCloseTab({
                 ))}
                 {!rows.length && (
                   <tr>
-                    <td colSpan={17} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    <td colSpan={18} className="px-3 py-8 text-center text-sm text-muted-foreground">
                       No hay datos suficientes para cierre mensual.
                     </td>
                   </tr>
@@ -2790,6 +2727,42 @@ function MonthlyCloseTab({
             ))}
           </div>
           <MonthlyOrdersTable rows={visibleOrders} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Centro de anomalias</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            {selectedMonthLabel}: reclamos, liquidaciones duplicadas, movimientos inconsistentes y costos faltantes.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <FinancialAnomaliesTable
+            anomalies={selectedAnomalies}
+            claimByAnomalyKey={claimByAnomalyKey}
+            onSaveClaim={onSaveClaim}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">SKUs sin costo</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Completar estos costos desbloquea el margen real del cierre seleccionado.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {selectedMissingCostSkus.length ? (
+            <div className="flex flex-wrap gap-2">
+              {selectedMissingCostSkus.slice(0, 80).map((sku) => (
+                <Badge key={sku} variant="warning">{sku}</Badge>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No hay SKUs pendientes de costo en este cierre.</p>
+          )}
         </CardContent>
       </Card>
     </div>
@@ -3207,6 +3180,7 @@ function buildMonthlyCloseRows(
       unsettled: 0,
       to_claim: 0,
       duplicate_settlements: 0,
+      boxful_costs: 0,
       cash_received: 0,
       cash_pending: 0,
       product_costs: 0,
@@ -3234,6 +3208,7 @@ function buildMonthlyCloseRows(
     if (order.settlement_count > 1) row.duplicate_settlements += 1;
     if (order.cash_status === "cobrado") row.cash_received += order.amount_to_liquidate;
     if (order.cash_status === "por_cobrar") row.cash_pending += order.expected_cod;
+    row.boxful_costs += order.settlement_charged_costs;
     row.product_costs += order.product_cost;
     row.contribution_margin += order.contribution_margin;
   }
@@ -3251,6 +3226,7 @@ function buildMonthlyCloseRows(
       ...row,
       cash_received: roundMoney(row.cash_received),
       cash_pending: roundMoney(row.cash_pending),
+      boxful_costs: roundMoney(row.boxful_costs),
       product_costs: roundMoney(row.product_costs),
       ads: roundMoney(row.ads),
       payroll: roundMoney(row.payroll),
@@ -3274,6 +3250,7 @@ function getMonthlyCloseTotals(rows: MonthlyCloseRow[], selectedMonth: string): 
     unsettled: 0,
     to_claim: 0,
     duplicate_settlements: 0,
+    boxful_costs: 0,
     cash_received: 0,
     cash_pending: 0,
     product_costs: 0,
@@ -3294,6 +3271,7 @@ function getMonthlyCloseTotals(rows: MonthlyCloseRow[], selectedMonth: string): 
     total.unsettled += row.unsettled;
     total.to_claim += row.to_claim;
     total.duplicate_settlements += row.duplicate_settlements;
+    total.boxful_costs += row.boxful_costs;
     total.cash_received += row.cash_received;
     total.cash_pending += row.cash_pending;
     total.product_costs += row.product_costs;
@@ -3308,6 +3286,7 @@ function getMonthlyCloseTotals(rows: MonthlyCloseRow[], selectedMonth: string): 
     ...total,
     cash_received: roundMoney(total.cash_received),
     cash_pending: roundMoney(total.cash_pending),
+    boxful_costs: roundMoney(total.boxful_costs),
     product_costs: roundMoney(total.product_costs),
     ads: roundMoney(total.ads),
     payroll: roundMoney(total.payroll),
@@ -3587,6 +3566,16 @@ function buildOrderProfitabilityRow({
   );
   const settlementStatuses = uniqueKeys(settlementRows.map((row) => row.settlement_status || row.internal_status));
   const amountToLiquidate = sum(settlementRows.map((row) => row.amount_to_liquidate));
+  const settlementChargedCosts = sum(
+    settlementRows.map(
+      (row) =>
+        Number(row.cod_commission || 0) +
+        Number(row.card_commission || 0) +
+        Number(row.delivery_cost || 0) +
+        Number(row.pick_pack_cost || 0) +
+        Number(row.packaging_cost || 0)
+    )
+  );
   const settlementCodAmount = sum(settlementRows.map((row) => row.cod_amount));
   const expectedCod = order.cod_amount || sum(settlementRows.map((row) => row.cod_amount));
   const items = getProfitabilityItems(order, settlementRows);
@@ -3616,6 +3605,7 @@ function buildOrderProfitabilityRow({
     settlement_status: settlementStatuses.join(", ") || "Sin liquidacion",
     settlement_files: settlementFiles,
     settlement_count: settlementRows.length,
+    settlement_charged_costs: roundMoney(settlementChargedCosts),
     amount_to_liquidate: roundMoney(amountToLiquidate),
     expected_cod: roundMoney(expectedCod),
     product_cost: productCostResult.productCost,

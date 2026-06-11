@@ -108,8 +108,7 @@ Tabs:
 - `Liquidaciones`: upload settlement/liquidation Excel files by cutoff date, select previously imported files, sort them by recent/oldest, delete imports when needed, inspect financial settlement rows, filter Shopify match state, source Excel traceability, claim alerts, and anomalies. Liquidation Boxful files belong here, not in the logistics file-control tab.
 - `Costos SKU`: loads Shopify products/variants and manages product costs by SKU with explicit edit/save rows, saved/missing cost tabs, and versioned effective dates.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses, organized into three internal tabs with contextual modal buttons.
-- `Rentabilidad`: shows the approved net-profit formula, cash/control KPIs, a financial anomaly center, order-level margin, and missing SKU costs.
-- `Cierre mensual`: aggregates orders, operational statuses, settlement statuses, cash, product costs, ads, payroll, miscellaneous expenses, estimated net profit by month, and lists the underlying orders for each month.
+- `Cierre mensual`: single profitability and monthly-close surface. It aggregates operational statuses, settlement statuses, cash, Boxful service costs, product costs, ads, payroll, miscellaneous expenses, estimated net profit by month, order-level rows, financial anomalies, missing SKU costs, and a stacked horizontal cost-composition bar.
 - `Logistica Boxful`: tracks imported/expected/missing/ignored Boxful logistics files by exact file name. It must not show or register liquidation files.
 
 APIs:
@@ -181,7 +180,8 @@ Important implementation detail:
 - Settlement traceability rule: whenever an order appears in a settlement/liquidation import, the order history/table must show the source Excel file name. The UI matches logistics rows to settlement rows by normalized order number or guide number and displays `settlement_imports.file_name`.
 - Anomaly reporting rule: every financial/logistics inconsistency should be surfaced in the UI, not hidden in secondary badges. Double settlement/liquidation is an anomaly and must be reported with the matching key, source Excel files, statuses, count, and total amount.
 - In normal operation each order should have zero or one liquidation trace. More than one liquidation trace for the same normalized order or guide must show as `Doble liquidacion` in `Pedidos` and as a high-severity anomaly for review.
-- The `Rentabilidad` tab now builds an operational finance control center in the client from Shopify orders, Boxful logistics rows, settlement rows, product costs, and import filenames. It does not require an extra DB table yet.
+- The `Cierre mensual` tab builds the operational finance control center in the client from Shopify orders, Boxful logistics rows, settlement rows, product costs, expenses, and import filenames. It does not require an extra DB table yet.
+- There is intentionally no separate `Rentabilidad` tab. Profitability, anomaly review, missing SKU cost review, and cost composition live inside `Cierre mensual` to avoid two similar financial views.
 - Order-level profitability uses:
   - `amount_to_liquidate`: sum of matched settlement rows for the order/guide.
   - `product_cost`: SKU unit cost plus packaging cost, multiplied by quantity, only for delivered orders.
@@ -323,7 +323,7 @@ Recommended top-level navigation:
 1. Pedidos
 2. Costos de producto
 3. Gastos
-4. Rentabilidad
+4. Cierre mensual
 
 ### 1. Pedidos
 
@@ -485,12 +485,13 @@ Examples:
 - VAs
 - accounting
 
-### 4. Rentabilidad
+### 4. Cierre mensual
 
 Purpose:
 
 - answer urgently: how much money did the business actually make?
 - identify per-order profitability, cash pending from COD settlements, and operational anomalies that require action.
+- show which cost concepts consume 100% of the monthly cost base through a stacked horizontal bar.
 
 Initial formula:
 
@@ -520,6 +521,7 @@ Suggested KPIs:
 - real CPA
 - real ROAS
 - loss from not-delivered orders
+- cost composition percentage by Boxful, product cost, ads, payroll, and miscellaneous expenses
 
 Implemented order-control KPIs:
 
@@ -527,6 +529,16 @@ Implemented order-control KPIs:
 - `Caja por reclamar`: expected COD for delivered orders without settlement.
 - `Margen pedido`: sum of order-level contribution margin before ads/payroll/misc.
 - `Alertas criticas`: high-severity finance anomalies.
+
+Implemented close view:
+
+- Month selector for `Todos` or a specific month.
+- Operational counts: pending, delivered, not delivered, annulled, settled, unliquidated, claim candidates, and duplicate settlements.
+- Financial counts: liquidated cash, claim cash, contribution margin, estimated net profit.
+- Stacked horizontal bar for cost composition: Boxful service costs, product cost, ads, payroll, and miscellaneous expenses.
+- Monthly table with `Costos Boxful` separated from `Costo producto`.
+- Order list behind the selected close, with operational and liquidation filters.
+- Financial anomaly center and missing SKU cost list inside the same tab.
 
 Important limitation:
 
@@ -541,7 +553,7 @@ Build in this order:
 2. Orders view with delivered/not delivered/annulled/pending/unmatched statuses.
 3. Product costs CRUD.
 4. Expenses CRUD with Ads, Planilla, and Varios tabs.
-5. Profitability summary using imported settlements plus manual costs/expenses.
+5. Cierre mensual with profitability summary, cost composition, anomalies, and manual costs/expenses.
 
 ## Operational Notes
 
@@ -563,6 +575,7 @@ Build in this order:
 - `Liquidaciones` now has an imported-file selector below the upload form, recent/oldest sorting, delete-with-confirmation, and Shopify match filters (`Todos`, `Con match`, `Sin match`) for the active settlement file.
 - `Pedidos` now separates liquidation state, source file, and amount: `Estado liquidacion` shows only the state, `Archivo liquidacion` shows the exact Excel source, `A liquidar` shows the settlement amount, and liquidation filters support corrective views like `Por reclamar` and `Duplicados`.
 - `Cierre mensual` now lists the order-level data behind each month, with month selection, operational/settlement filters, status counts, and CSV export for the visible order list.
+- Removed the standalone `Rentabilidad` tab. `Cierre mensual` now owns profitability KPIs, financial anomalies, missing SKU costs, and the stacked cost-composition bar for Boxful, product, ads, payroll, and miscellaneous costs.
 - Shopify historical sync now uses a 2025-09-16 lower bound, reads up to 20,000 persisted orders, and syncs in larger bounded batches for complete monthly close coverage.
 - `Archivos Boxful` was renamed to `Logistica Boxful` and now only registers/displays logistics files. Liquidation files stay in `Liquidaciones`.
 
