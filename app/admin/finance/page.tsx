@@ -3634,15 +3634,40 @@ function buildVisibleOrderRows(
   logisticsRows: LogisticsRow[],
   shopifyOrders: ShopifyOrderSummary[]
 ): TrackableOrderRow[] {
-  const existingKeys = new Set<string>();
+  const shopifyByMatchKey = buildShopifyOrderMatchIndex(shopifyOrders);
   const logisticsDisplayRows = logisticsRows.map((row) => {
-    for (const key of getOrderMatchKeys(row)) existingKeys.add(key);
+    const shopify = findShopifyOrderForRow(row, shopifyByMatchKey);
+    const shopifyItems = shopify
+      ? shopify.line_items.map((item) => ({
+          sku: item.sku,
+          title: `${item.quantity}x ${item.title}`,
+          quantity: Number(item.quantity || 0),
+          price: Number(item.price || 0),
+        }))
+      : [];
+
     return {
       ...row,
       row_key: `boxful-${row.id}`,
       source: "boxful" as const,
+      customer_name: row.customer_name || shopify?.customer_name || "",
+      match_status: shopify ? "matched" : row.match_status,
+      cod_amount: row.cod_amount || Number(shopify?.total_price || parseMoneyText(shopify?.total ?? "")),
+      shopify_order_name: shopify?.name ?? row.shopify_order_name,
+      shopify_order_number: shopify?.order_number ?? row.shopify_order_number,
+      shopify_financial_status: shopify?.financial_status ?? row.shopify_financial_status,
+      shopify_fulfillment_status: shopify?.fulfillment_status ?? row.shopify_fulfillment_status,
+      shopify_cancelled_at: shopify?.cancelled_at ?? row.shopify_cancelled_at,
+      shopify_note: shopify?.note ?? "",
+      shopify_created_at: shopify?.created_at ?? row.shopify_created_at,
+      package_items: row.package_items?.length ? row.package_items : shopifyItems,
     };
   });
+
+  const existingKeys = new Set<string>();
+  for (const row of logisticsDisplayRows) {
+    for (const key of getOrderMatchKeys(row)) existingKeys.add(key);
+  }
 
   const shopifyOnlyRows = shopifyOrders
     .filter((order) => !getShopifyOrderMatchKeys(order).some((key) => existingKeys.has(key)))
@@ -3677,21 +3702,65 @@ function buildVisibleOrderRows(
   );
 }
 
-function getOrderMatchKeys(row: Pick<TrackableOrderRow, "order_name" | "shopify_order_name" | "shopify_order_number">): string[] {
+type OrderMatchKeySource = {
+  order_name?: string | null;
+  shopify_order_name?: string | null;
+  shopify_order_number?: number | null;
+  shopify_note?: string | null;
+};
+
+function buildShopifyOrderMatchIndex(orders: ShopifyOrderSummary[]): Map<string, ShopifyOrderSummary> {
+  const byKey = new Map<string, ShopifyOrderSummary>();
+
+  for (const order of orders) {
+    for (const key of extractExternalOrderCodesFromText(order.note ?? "").map(normalizeMatchKey)) {
+      if (!byKey.has(key)) byKey.set(key, order);
+    }
+  }
+
+  for (const order of orders) {
+    for (const key of getShopifyDirectOrderMatchKeys(order)) {
+      if (!byKey.has(key)) byKey.set(key, order);
+    }
+  }
+  return byKey;
+}
+
+function findShopifyOrderForRow(
+  row: OrderMatchKeySource,
+  shopifyByMatchKey: Map<string, ShopifyOrderSummary>
+): ShopifyOrderSummary | undefined {
+  for (const key of getOrderMatchKeys(row)) {
+    const order = shopifyByMatchKey.get(key);
+    if (order) return order;
+  }
+  return undefined;
+}
+
+function getOrderMatchKeys(row: OrderMatchKeySource): string[] {
+  const orderNumber = row.shopify_order_number;
   return uniqueKeys([
-    normalizeMatchKey(row.order_name),
-    normalizeMatchKey(row.shopify_order_name),
-    row.shopify_order_number ? normalizeMatchKey(String(row.shopify_order_number)) : "",
-    row.shopify_order_number ? normalizeMatchKey(`#MCRC${row.shopify_order_number}`) : "",
+    normalizeMatchKey(row.order_name ?? ""),
+    ...extractExternalOrderCodesFromText(row.shopify_note ?? "").map(normalizeMatchKey),
+    normalizeMatchKey(row.shopify_order_name ?? ""),
+    orderNumber ? normalizeMatchKey(String(orderNumber)) : "",
+    orderNumber ? normalizeMatchKey(`#MCRC${orderNumber}`) : "",
   ]);
 }
 
 function getShopifyOrderMatchKeys(order: ShopifyOrderSummary): string[] {
   return uniqueKeys([
-    normalizeMatchKey(order.name),
-    normalizeMatchKey(String(order.order_number ?? "")),
-    normalizeMatchKey(`#MCRC${order.order_number ?? ""}`),
     ...extractExternalOrderCodesFromText(order.note ?? "").map(normalizeMatchKey),
+    ...getShopifyDirectOrderMatchKeys(order),
+  ]);
+}
+
+function getShopifyDirectOrderMatchKeys(order: ShopifyOrderSummary): string[] {
+  const orderNumber = order.order_number;
+  return uniqueKeys([
+    normalizeMatchKey(order.name),
+    orderNumber ? normalizeMatchKey(String(orderNumber)) : "",
+    orderNumber ? normalizeMatchKey(`#MCRC${orderNumber}`) : "",
   ]);
 }
 
@@ -4192,17 +4261,17 @@ function addSettlementTrace(
 }
 
 function getSettlementTracesForLogisticsRow(
-  row: Pick<TrackableOrderRow, "order_name" | "shopify_order_name" | "guide_number">,
+  row: OrderMatchKeySource & Pick<TrackableOrderRow, "guide_number">,
   settlementTraceByKey: Map<string, SettlementTrace[]>
 ): SettlementTrace[] {
   const seen = new Set<string>();
   const traces: SettlementTrace[] = [];
   const keys = [
-    normalizeMatchKey(row.order_name || row.shopify_order_name),
+    ...getOrderMatchKeys(row),
     normalizeMatchKey(row.guide_number),
   ];
 
-  for (const key of keys) {
+  for (const key of uniqueKeys(keys)) {
     for (const trace of settlementTraceByKey.get(key) ?? []) {
       const traceKey = `${trace.file_name}|${trace.amount_to_liquidate}|${trace.settlement_status}`;
       if (seen.has(traceKey)) continue;

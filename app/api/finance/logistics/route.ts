@@ -259,12 +259,28 @@ function findShopifyMatch(
   indexes: ReturnType<typeof buildShopifyIndexes>
 ): ShopifyOrder | undefined {
   const raw = orderName.trim();
+  const explicitMcrc = /^#?mcrc/i.test(raw);
+  if (explicitMcrc) {
+    return (
+      indexes.byName.get(raw) ??
+      indexes.byMcrcNumber.get(toMcrcLookupKey(raw)) ??
+      indexes.byOrderNumber.get(raw.replace(/^#?MCRC/i, ""))
+    );
+  }
+
   return (
     indexes.byName.get(raw) ??
-    indexes.byMcrcNumber.get(raw.startsWith("#") ? raw : `#MCRC${raw}`) ??
     indexes.byExternalOrderCode.get(normalizeExternalOrderCode(raw)) ??
+    indexes.byMcrcNumber.get(toMcrcLookupKey(raw)) ??
     indexes.byOrderNumber.get(raw.replace(/^#?MCRC/i, ""))
   );
+}
+
+function toMcrcLookupKey(value: string): string {
+  const compact = String(value || "").trim().replace(/^#/, "");
+  if (!compact) return "";
+  if (/^mcrc/i.test(compact)) return `#${compact.replace(/^mcrc/i, "MCRC")}`;
+  return `#MCRC${compact}`;
 }
 
 function getExternalOrderCodes(order: ShopifyOrder): string[] {

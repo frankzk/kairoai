@@ -297,7 +297,10 @@ Unmatched rows:
 
 Next reconciliation work:
 
-- Identify whether numeric-only rows come from another Shopify store, a previous order naming format, or an external order source.
+- Numeric-only rows can come from the iConfly/iConflate bot code stored in Shopify notes.
+  Example: Shopify order `#MCRC11603` can include note `Pedido #4206 - Venta por bot - WhatsApp ...`.
+  In that case Boxful/liquidation rows with order `4206` must match Shopify `#MCRC11603`.
+- Plain numeric Boxful order values should prefer the external bot-code alias from Shopify notes before falling back to `#MCRC{number}`.
 - Build an importer that stores uploaded weekly/period settlement files instead of manually analyzing local Excel files.
 - Preserve source file name and import timestamp.
 - Keep raw row data for auditability.
