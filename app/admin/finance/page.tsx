@@ -11,6 +11,7 @@ import {
   Database,
   Download,
   FileSpreadsheet,
+  History,
   Package,
   Plus,
   ReceiptText,
@@ -1852,10 +1853,29 @@ function CostsTab({
 }) {
   const [activeCostView, setActiveCostView] = useState<"missing" | "saved">("missing");
   const [editingSku, setEditingSku] = useState("");
+  const [historySku, setHistorySku] = useState("");
   const costBySku = useMemo(
     () => new Map(costs.map((cost) => [cost.sku.toLowerCase(), cost])),
     [costs]
   );
+  const versionsBySku = useMemo(() => {
+    const grouped = new Map<string, ProductCostVersion[]>();
+    for (const version of versions) {
+      const key = version.sku.toLowerCase();
+      grouped.set(key, [...(grouped.get(key) ?? []), version]);
+    }
+    for (const [key, rows] of Array.from(grouped.entries())) {
+      grouped.set(
+        key,
+        [...rows].sort(
+          (a, b) =>
+            b.effective_from.localeCompare(a.effective_from) ||
+            b.created_at.localeCompare(a.created_at)
+        )
+      );
+    }
+    return grouped;
+  }, [versions]);
   const filteredProducts = useMemo(() => {
     const query = productSearch.trim().toLowerCase();
     if (!query) return products;
@@ -1879,6 +1899,10 @@ function CostsTab({
   const visibleProductRows = productRows.filter((row) =>
     activeCostView === "saved" ? row.hasSavedCost : !row.hasSavedCost
   );
+  const historyVersions = historySku ? versionsBySku.get(historySku.toLowerCase()) ?? [] : [];
+  const historyProduct = historySku
+    ? productRows.find((row) => row.product.sku.toLowerCase() === historySku.toLowerCase())?.product
+    : undefined;
 
   return (
     <div className="space-y-4">
@@ -1931,7 +1955,7 @@ function CostsTab({
               </button>
             </div>
             <div className="max-h-[360px] overflow-auto border border-border">
-              <table className="w-full min-w-[1080px] text-sm">
+              <table className="w-full min-w-[1180px] text-sm">
                 <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2">Producto</th>
@@ -1941,13 +1965,14 @@ function CostsTab({
                     <th className="px-3 py-2 text-right">Empaque propio</th>
                     <th className="px-3 py-2">Vigente desde</th>
                     <th className="px-3 py-2">Estado</th>
+                    <th className="px-3 py-2 text-right">Historial</th>
                     <th className="px-3 py-2 text-right">Accion</th>
                   </tr>
                 </thead>
                 <tbody>
                   {productsLoading ? (
                     <tr>
-                      <td colSpan={8} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      <td colSpan={9} className="px-3 py-6 text-center text-sm text-muted-foreground">
                         Cargando productos Shopify...
                       </td>
                     </tr>
@@ -1958,15 +1983,17 @@ function CostsTab({
                         product={product}
                         savedCost={savedCost}
                         hasSavedCost={hasSavedCost}
+                        costVersions={product.sku ? versionsBySku.get(product.sku.toLowerCase()) ?? [] : []}
                         isEditing={Boolean(product.sku && editingSku === product.sku)}
                         onEdit={() => product.sku && setEditingSku(product.sku)}
+                        onOpenHistory={() => product.sku && setHistorySku(product.sku)}
                         onSaved={() => setEditingSku("")}
                         onSave={onSaveProductCost}
                       />
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={8} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      <td colSpan={9} className="px-3 py-6 text-center text-sm text-muted-foreground">
                         {activeCostView === "saved"
                           ? "No hay SKUs con costo guardado en esta busqueda."
                           : "No hay SKUs pendientes de costo en esta busqueda."}
@@ -1979,44 +2006,79 @@ function CostsTab({
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Historial de cambios de costos</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="max-h-[300px] overflow-auto border border-border">
-              <table className="w-full min-w-[780px] text-sm">
-                <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2">Fecha efectiva</th>
-                    <th className="px-3 py-2">SKU</th>
-                    <th className="px-3 py-2">Producto</th>
-                    <th className="px-3 py-2 text-right">Unitario</th>
-                    <th className="px-3 py-2 text-right">Empaque propio</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {versions.slice(0, 300).map((version) => (
-                    <tr key={`${version.id}-${version.created_at}`} className="border-t border-border/50">
-                      <td className="px-3 py-2 font-mono text-xs">{formatDate(version.effective_from)}</td>
-                      <td className="px-3 py-2 font-mono text-xs">{version.sku}</td>
-                      <td className="px-3 py-2">{version.product_name}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs">{currency(version.unit_cost)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs">{currency(version.packaging_cost)}</td>
-                    </tr>
-                  ))}
-                  {!versions.length && (
-                    <tr>
-                      <td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">
-                        Aun no hay versiones registradas.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+      </div>
+      {historySku && (
+        <CostHistoryModal
+          productName={historyProduct?.display_name ?? historyVersions[0]?.product_name ?? "Producto"}
+          sku={historySku}
+          versions={historyVersions}
+          onClose={() => setHistorySku("")}
+        />
+      )}
+    </div>
+  );
+}
+
+function CostHistoryModal({
+  productName,
+  sku,
+  versions,
+  onClose,
+}: {
+  productName: string;
+  sku: string;
+  versions: ProductCostVersion[];
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cost-history-title"
+    >
+      <div className="w-full max-w-3xl rounded-lg border border-border bg-card p-6 shadow-2xl">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div className="min-w-0 space-y-1">
+            <h3 id="cost-history-title" className="text-base font-semibold">
+              Historial de costos
+            </h3>
+            <p className="truncate text-sm text-muted-foreground" title={productName}>
+              {productName}
+            </p>
+            <p className="font-mono text-xs text-muted-foreground">SKU {sku}</p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Cerrar historial" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="max-h-[460px] overflow-auto border border-border">
+          <table className="w-full min-w-[720px] text-sm">
+            <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">Version</th>
+                <th className="px-3 py-2">Fecha efectiva</th>
+                <th className="px-3 py-2">Registrado</th>
+                <th className="px-3 py-2 text-right">Costo unitario</th>
+                <th className="px-3 py-2 text-right">Empaque propio</th>
+              </tr>
+            </thead>
+            <tbody>
+              {versions.map((version, index) => (
+                <tr key={`${version.id}-${version.created_at}`} className="border-t border-border/50">
+                  <td className="px-3 py-2">
+                    {index === 0 ? <Badge variant="success">Actual</Badge> : <Badge variant="muted">Anterior</Badge>}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs">{formatDate(version.effective_from)}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{formatDate(version.created_at)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">{currency(version.unit_cost)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">{currency(version.packaging_cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -2026,16 +2088,20 @@ function ProductCostRow({
   product,
   savedCost,
   hasSavedCost,
+  costVersions,
   isEditing,
   onEdit,
+  onOpenHistory,
   onSaved,
   onSave,
 }: {
   product: ShopifyProductOption;
   savedCost?: ProductCost;
   hasSavedCost: boolean;
+  costVersions: ProductCostVersion[];
   isEditing: boolean;
   onEdit: () => void;
+  onOpenHistory: () => void;
   onSaved: () => void;
   onSave: (input: ProductCostSaveInput) => Promise<void>;
 }) {
@@ -2046,6 +2112,7 @@ function ProductCostRow({
   );
   const [saving, setSaving] = useState(false);
   const [validationMessage, setValidationMessage] = useState("");
+  const hasHistory = costVersions.length > 1;
 
   useEffect(() => {
     if (!isEditing) return;
@@ -2163,6 +2230,20 @@ function ProductCostRow({
           <Button
             type="button"
             size="sm"
+            variant="outline"
+            disabled={!hasHistory}
+            onClick={onOpenHistory}
+            className="gap-2"
+            title={hasHistory ? "Ver historial de cambios" : "Este SKU aun no tiene cambios historicos"}
+          >
+            <History className="h-4 w-4" />
+            {hasHistory ? `Ver (${costVersions.length})` : "Sin cambios"}
+          </Button>
+        </td>
+        <td className="px-3 py-2 text-right">
+          <Button
+            type="button"
+            size="sm"
             variant={isEditing ? "default" : "outline"}
             disabled={!product.sku || saving}
             onClick={handleAction}
@@ -2173,7 +2254,7 @@ function ProductCostRow({
       </tr>
       {isEditing && validationMessage && (
         <tr className="border-t border-border/50 bg-amber-950/20">
-          <td colSpan={8} className="px-3 py-2 text-xs text-amber-200">
+          <td colSpan={9} className="px-3 py-2 text-xs text-amber-200">
             {validationMessage}
           </td>
         </tr>
