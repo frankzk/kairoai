@@ -163,11 +163,12 @@ Important implementation detail:
   - `Estado seguimiento` comes from Boxful logistics column M and Shopify cancellation state.
   - `Estado liquidacion` comes from settlement/liquidation Excel rows and represents whether/where the order appeared financially.
 - Operational order status uses this priority:
-  - `Anulado`: Shopify says the order is cancelled or `financial_status = voided`.
   - `Entregado`: Boxful logistics column M says `Entregado`.
   - `No entregado`: Boxful logistics column M says `No entregado` or equivalent returned status.
   - Liquidation fallback: if logistics is still pending/in-progress but a Boxful liquidation row says `Entregado` or `No entregado`, tracking can use that liquidation status to update the follow-up state.
+  - `Anulado`: Shopify says the order is cancelled or `financial_status = voided`, and there is no Boxful/logistics/liquidation movement for that order.
   - `Pendiente`: the order is in progress and has none of the final states above.
+- If Shopify is cancelled/voided but Boxful or a liquidation file shows movement, the order is not treated as a pure `Anulado`. Follow Boxful/liquidation for the operational outcome: delivered becomes revenue/profit, not delivered keeps logistics costs, and in-progress stays pending until the final result arrives.
 - Product costs are applied only to rows whose internal status is `delivered`.
 - Product cost lookup is versioned. For a delivered order, the UI chooses the SKU cost version whose `effective_from` date is closest to but not after the Shopify order date. Current `product_costs` remains the active/latest table; `product_cost_versions` is the audit/history table.
 - `No entregado` rows still affect profitability through their negative `A Liquidar` value.
@@ -184,7 +185,7 @@ Important implementation detail:
   - delivered without settlement
   - duplicate settlement/liquidation
   - settlement says delivered but tracking is not delivered
-  - cancelled/voided Shopify order with settlement
+  - cancelled/voided Shopify order with Boxful/liquidation movement
   - missing SKU cost
   - negative order margin only when the matched settlement has COD collected (`Monto COD > 0`)
   - Shopify order without Boxful guide after 2 days
@@ -217,7 +218,7 @@ Important behavior:
 - Shopify order name values look like `#MCRC11518`.
 - The logistics settlement file uses an `Orden` column that often matches Shopify `order.name`.
 - Some settlement rows use numeric-only order values such as `3937` or `3685`. These often come from iConflate/chatbot and should match against Shopify order notes like `Pedido #3685`, not only against Shopify `#MCRC...`.
-- In `/admin/finance`, Shopify orders appear in the `Pedidos` tab. Rows with a matching Boxful logistics import show `Origen = Boxful`; Shopify-only rows show `Origen = Shopify` and remain `Pendiente` unless Shopify is cancelled/voided or a liquidation row provides a final status.
+- In `/admin/finance`, Shopify orders appear in the `Pedidos` tab. Rows with a matching Boxful logistics import show `Origen = Boxful`; Shopify-only rows show `Origen = Shopify` and remain `Pendiente` unless Shopify is cancelled/voided or a liquidation row provides a final status. If a cancelled/voided Shopify order has Boxful or liquidation movement, Boxful/liquidation state overrides pure annulment.
 
 ## Logistics Settlement Analysis
 
@@ -556,14 +557,15 @@ Build in this order:
   - `/admin/finance` now treats Boxful as the source for operational delivery state.
 - Boxful logistics source is not the same as settlement/liquidation source.
 - Current Boxful state rule:
-  - Shopify cancelled or `financial_status = voided` -> `Anulado`
   - Boxful column M `Entregado` -> `Entregado`
   - Boxful column M `No entregado` -> `No entregado`
   - Liquidation row `Estado = Entregado` or `No entregado` can update tracking when logistics is still pending
+  - Shopify cancelled or `financial_status = voided` -> `Anulado` only if there is no Boxful/liquidation movement
   - Other Boxful states -> `Pendiente`
 - Added claim alert in `Pedidos`: delivered Boxful rows missing from liquidations are counted in the top metric `Por reclamar` and listed in an `Entregados sin liquidacion` table with order, guide, customer, courier, and expected COD.
 - Added settlement source trace in `Pedidos`: when a logistics row matches a settlement row by order or guide, the table shows the liquidation Excel file name, status, and amount to liquidate. If multiple settlement rows match, the UI shows the first file plus a `+N` badge.
 - Added anomaly reporting in `Pedidos`: double settlements are counted in the top metric `Anomalias` and shown in a `Doble liquidacion detectada` table.
+- Added cancelled-with-movement handling: if Shopify is cancelled/voided but Boxful or liquidation shows movement, tracking follows Boxful/liquidation and the financial anomaly center reports `Anulado Shopify con movimiento`.
 - `Pedidos` now uses status filter buttons (`Todos`, `Pendientes`, `Anulados`, `Entregados`, `No entregados`) instead of treating Boxful/import match counts as the primary controls. Boxful row/match/unmatched counts remain as import diagnostics.
 - Improved import reliability: finance upload handlers now surface non-JSON server responses with a readable message, and importers infer date ranges from Excel rows when period dates are omitted.
 - `Costos SKU` now fetches `/api/shopify/products` and displays Shopify variants with SKU, Shopify price, explicit row editing, `Sin costo` / `Con costo` internal views, `Empaque propio`, effective dates, and saved/missing cost state.

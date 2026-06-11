@@ -245,6 +245,8 @@ interface OrderProfitabilityRow {
   guide_number: string;
   customer_name: string;
   source: "shopify" | "boxful" | "liquidacion";
+  shopify_cancelled_at: string | null;
+  shopify_financial_status: string;
   tracking_status: string;
   tracking_label: string;
   settlement_status: string;
@@ -3011,12 +3013,14 @@ function buildOrderProfitabilityRow({
   const items = getProfitabilityItems(order, settlementRows);
   const productCostResult = calculateProductCost(items, costVersionsBySku, trackingStatus, order.shopify_created_at);
   const hasSettlement = settlementRows.length > 0;
+  const shopifyCancelledWithMovement = isShopifyCancelled(order) && (order.source !== "shopify" || hasSettlement);
   const cashStatus =
     hasSettlement ? "cobrado" : trackingStatus === "delivered" ? "por_cobrar" : "sin_caja";
 
   const issueCount =
     (trackingStatus === "delivered" && !hasSettlement ? 1 : 0) +
     (settlementRows.length > 1 ? 1 : 0) +
+    (shopifyCancelledWithMovement ? 1 : 0) +
     (productCostResult.missingCostSkus.length ? 1 : 0) +
     (shouldFlagNegativeMargin(amountToLiquidate - productCostResult.productCost, settlementCodAmount) ? 1 : 0);
 
@@ -3026,6 +3030,8 @@ function buildOrderProfitabilityRow({
     guide_number: order.guide_number,
     customer_name: order.customer_name,
     source: order.source,
+    shopify_cancelled_at: order.shopify_cancelled_at,
+    shopify_financial_status: order.shopify_financial_status,
     tracking_status: trackingStatus,
     tracking_label: trackingLabel,
     settlement_status: settlementStatuses.join(", ") || "Sin liquidacion",
@@ -3194,17 +3200,18 @@ function buildFinancialAnomalies(
     });
   }
 
-  if (row.tracking_status === "annulled" && hasSettlement) {
+  const shopifyCancelledWithMovement = isShopifyCancelled(row) && (row.source !== "shopify" || hasSettlement);
+  if (shopifyCancelledWithMovement) {
     anomalies.push({
-      id: `${row.order_key}-annulled-settled`,
-      severity: "high",
-      type: "Anulado con liquidacion",
+      id: `${row.order_key}-cancelled-with-movement`,
+      severity: row.tracking_status === "delivered" ? "high" : "medium",
+      type: "Anulado Shopify con movimiento",
       order_name: row.order_name,
       guide_number: row.guide_number,
       amount: row.amount_to_liquidate,
       source_file: sourceFile,
-      message: "Shopify indica anulado/cancelado, pero el pedido aparece liquidado.",
-      action: "Revisar si el pedido se despacho por error o si Shopify esta desactualizado.",
+      message: "Shopify indica anulado/cancelado, pero Boxful o liquidacion muestran movimiento operativo.",
+      action: "No tratar como anulado puro; seguir estado Boxful. Si se entrego, contabilizar caja/margen; si no se entrego, reconocer costos logisticos.",
     });
   }
 
@@ -3470,15 +3477,27 @@ function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {
 }
 
 function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "internal_status" | "shopify_cancelled_at" | "shopify_financial_status">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status">,
   traces: SettlementTrace[]
 ): string {
-  if (row.shopify_cancelled_at || row.shopify_financial_status === "voided") return "annulled";
   if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
+
+  const boxfulStatus = inferTrackingStatusFromText(row.boxful_status);
+  if (isFinalTrackingStatus(boxfulStatus)) return boxfulStatus;
 
   const settlementStatus = traces.find((trace) => isFinalTrackingStatus(trace.internal_status));
   if (settlementStatus) return settlementStatus.internal_status;
 
+  const hasOperationalMovement = row.source !== "shopify" || traces.length > 0;
+  if (isShopifyCancelled(row) && !hasOperationalMovement) return "annulled";
+
+  return "pending";
+}
+
+function inferTrackingStatusFromText(status: string): string {
+  const lower = status.toLowerCase();
+  if (lower.includes("no entregado") || lower.includes("devuelto")) return "not_delivered";
+  if (lower.includes("entregado")) return "delivered";
   return "pending";
 }
 
@@ -3508,4 +3527,10 @@ function getTrackingStatusLabel(
 
 function isFinalTrackingStatus(status: string): boolean {
   return status === "delivered" || status === "not_delivered" || status === "returned";
+}
+
+function isShopifyCancelled(
+  row: Pick<TrackableOrderRow, "shopify_cancelled_at" | "shopify_financial_status"> | Pick<OrderProfitabilityRow, "shopify_cancelled_at" | "shopify_financial_status">
+): boolean {
+  return Boolean(row.shopify_cancelled_at || row.shopify_financial_status === "voided");
 }

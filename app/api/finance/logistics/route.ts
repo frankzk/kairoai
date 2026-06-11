@@ -344,11 +344,12 @@ function buildLogisticsRow(
 }
 
 function mapInternalStatus(status: string, shopify?: ShopifyOrder): InternalOrderStatus {
-  if (shopify?.cancelled_at || shopify?.financial_status === "voided") return "annulled";
-
   const lower = status.toLowerCase();
   if (lower.includes("entregado") && !lower.includes("no entregado")) return "delivered";
   if (lower.includes("no entregado") || lower.includes("devuelto")) return "not_delivered";
+
+  if (shopify?.cancelled_at || shopify?.financial_status === "voided") return "pending";
+
   return "pending";
 }
 
