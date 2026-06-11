@@ -185,8 +185,9 @@ Important implementation detail:
   - settlement says delivered but tracking is not delivered
   - cancelled/voided Shopify order with settlement
   - missing SKU cost
-  - negative order margin
+  - negative order margin only when the matched settlement has COD collected (`Monto COD > 0`)
   - Shopify order without Boxful guide after 2 days
+- Stripe / non-COD settlement rule: if a matched liquidation row has `Monto COD = 0`, a negative `A Liquidar` is expected because Boxful is only charging logistics/fulfillment services. That negative logistics balance affects profitability, but it is not a `Margen negativo` anomaly by itself.
 - Financial anomalies can be moved through a claim workflow: `pendiente`, `reclamado`, `resuelto`, `descartado`, with notes. The key is `finance_claims.anomaly_key`.
 - Exportables are client-side CSV downloads for anomalies, order profitability, monthly close, and Boxful file control.
 - Shopify historical sync must be done via `/api/finance/shopify-sync` in bounded batches. The normal `/admin/finance` page load must not paginate all Shopify orders because Vercel can time out. The UI sync button loops through bounded batches and persists into `shopify_orders`.
@@ -488,6 +489,7 @@ utilidad_neta = resultado_logistico - product_costs - ads - payroll - miscellane
 Important:
 
 - In the settlement file, `No entregado` rows already contribute negative values through `A Liquidar`.
+- In Stripe/non-COD settlement rows, `Monto COD = 0` and `A Liquidar` can be negative because Boxful deducts service costs without collecting cash from the customer. This is normal and should not create a negative-margin anomaly by itself.
 - In the settlement file, delivery, Pick&Pack, empaque, and COD commission explain the difference between COD collected and `A Liquidar`, but they are not additional deductions after `A Liquidar`.
 - `Com. Tarjeta` is tracked separately as informational unless confirmed as part of the Boxful service-cost formula.
 - Product costs should usually be applied only to delivered orders unless inventory is lost or non-returnable. This needs a business rule before final profit calculations.

@@ -2945,6 +2945,7 @@ function buildOrderProfitabilityRow({
   );
   const settlementStatuses = uniqueKeys(settlementRows.map((row) => row.settlement_status || row.internal_status));
   const amountToLiquidate = sum(settlementRows.map((row) => row.amount_to_liquidate));
+  const settlementCodAmount = sum(settlementRows.map((row) => row.cod_amount));
   const expectedCod = order.cod_amount || sum(settlementRows.map((row) => row.cod_amount));
   const items = getProfitabilityItems(order, settlementRows);
   const productCostResult = calculateProductCost(items, costVersionsBySku, trackingStatus, order.shopify_created_at);
@@ -2956,7 +2957,7 @@ function buildOrderProfitabilityRow({
     (trackingStatus === "delivered" && !hasSettlement ? 1 : 0) +
     (settlementRows.length > 1 ? 1 : 0) +
     (productCostResult.missingCostSkus.length ? 1 : 0) +
-    (hasSettlement && amountToLiquidate - productCostResult.productCost < 0 ? 1 : 0);
+    (shouldFlagNegativeMargin(amountToLiquidate - productCostResult.productCost, settlementCodAmount) ? 1 : 0);
 
   return {
     order_key: order.row_key,
@@ -3160,7 +3161,9 @@ function buildFinancialAnomalies(
     });
   }
 
-  if (hasSettlement && row.contribution_margin < 0) {
+  const settlementCodAmount = sum(settlementRows.map((item) => item.cod_amount));
+
+  if (hasSettlement && shouldFlagNegativeMargin(row.contribution_margin, settlementCodAmount)) {
     anomalies.push({
       id: `${row.order_key}-negative-margin`,
       severity: "medium",
@@ -3189,6 +3192,11 @@ function buildFinancialAnomalies(
   }
 
   return anomalies;
+}
+
+function shouldFlagNegativeMargin(contributionMargin: number, settlementCodAmount: number): boolean {
+  if (contributionMargin >= 0) return false;
+  return settlementCodAmount > 0;
 }
 
 function uniqueFinancialAnomalies(anomalies: FinancialAnomaly[]): FinancialAnomaly[] {
