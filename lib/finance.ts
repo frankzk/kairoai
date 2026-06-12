@@ -375,16 +375,25 @@ const SETTLEMENT_ROW_COLUMNS =
   "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, service_type, cod_amount, cod_commission, card_commission, delivery_cost, pick_pack_cost, packaging_cost, amount_to_liquidate, settlement_status, internal_status, match_status, shopify_order_id, shopify_order_name, shopify_financial_status, shopify_fulfillment_status, shopify_total, shopify_created_at, order_items, created_at";
 
 export async function listSettlementRows(importId?: number): Promise<SettlementRow[]> {
-  let query = getDB()
-    .from("settlement_rows")
-    .select(SETTLEMENT_ROW_COLUMNS)
-    .order("created_on", { ascending: false, nullsFirst: false })
-    .order("id", { ascending: false })
-    .limit(10000);
-  if (importId) query = query.eq("import_id", importId);
-  const { data, error } = await query;
-  if (error) throw new Error(`listSettlementRows: ${error.message}`);
-  return (data ?? []) as SettlementRow[];
+  // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
+  // defecto); se pagina con range() para devolver todas las filas.
+  const pageSize = 1000;
+  const all: SettlementRow[] = [];
+  for (let from = 0; from < 20000; from += pageSize) {
+    let query = getDB()
+      .from("settlement_rows")
+      .select(SETTLEMENT_ROW_COLUMNS)
+      .order("created_on", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (importId) query = query.eq("import_id", importId);
+    const { data, error } = await query;
+    if (error) throw new Error(`listSettlementRows: ${error.message}`);
+    const page = (data ?? []) as unknown as SettlementRow[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
 }
 
 export async function listLogisticsImports(): Promise<LogisticsImport[]> {
@@ -425,16 +434,25 @@ const LOGISTICS_ROW_COLUMNS =
   "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, package_items, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
 
 export async function listLogisticsRows(importId?: number): Promise<LogisticsRow[]> {
-  let query = getDB()
-    .from("logistics_rows")
-    .select(LOGISTICS_ROW_COLUMNS)
-    .order("created_on", { ascending: false, nullsFirst: false })
-    .order("id", { ascending: false })
-    .limit(10000);
-  if (importId) query = query.eq("import_id", importId);
-  const { data, error } = await query;
-  if (error) throw new Error(`listLogisticsRows: ${error.message}`);
-  return (data ?? []) as LogisticsRow[];
+  // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
+  // defecto); se pagina con range() para devolver todas las filas.
+  const pageSize = 1000;
+  const all: LogisticsRow[] = [];
+  for (let from = 0; from < 20000; from += pageSize) {
+    let query = getDB()
+      .from("logistics_rows")
+      .select(LOGISTICS_ROW_COLUMNS)
+      .order("created_on", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (importId) query = query.eq("import_id", importId);
+    const { data, error } = await query;
+    if (error) throw new Error(`listLogisticsRows: ${error.message}`);
+    const page = (data ?? []) as unknown as LogisticsRow[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
 }
 
 // Sin raw_order completo: las lineas y notas se resuelven aca para que la
@@ -449,17 +467,26 @@ export interface PersistedShopifyOrderSummary
 }
 
 export async function listPersistedShopifyOrders(limit = 1000): Promise<PersistedShopifyOrderSummary[]> {
-  const { data, error } = await getDB()
-    .from("shopify_orders")
-    .select(PERSISTED_ORDER_SUMMARY_COLUMNS)
-    .order("shopify_created_at", { ascending: false, nullsFirst: false })
-    .limit(limit);
-  if (error) throw new Error(`listPersistedShopifyOrders: ${error.message}`);
-
   type RawSummary = PersistedShopifyOrderSummary & {
     raw_line_items: Array<Record<string, unknown>> | null;
   };
-  return ((data ?? []) as unknown as RawSummary[]).map(({ raw_line_items, ...order }) => ({
+  // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
+  // defecto); se pagina con range() hasta el limite pedido.
+  const pageSize = 1000;
+  const rows: RawSummary[] = [];
+  for (let from = 0; from < limit; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("shopify_orders")
+      .select(PERSISTED_ORDER_SUMMARY_COLUMNS)
+      .order("shopify_created_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, Math.min(from + pageSize, limit) - 1);
+    if (error) throw new Error(`listPersistedShopifyOrders: ${error.message}`);
+    const page = (data ?? []) as unknown as RawSummary[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows.map(({ raw_line_items, ...order }) => ({
     ...order,
     note: order.note ?? "",
     note_attributes: order.note_attributes ?? [],
