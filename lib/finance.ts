@@ -3,6 +3,7 @@ import { getDB } from "@/lib/db";
 export * from "./finance-types";
 import type {
   BoxfulFileControl,
+  PayrollStaff,
   BusinessExpense,
   ExpenseType,
   FinanceClaim,
@@ -530,4 +531,29 @@ function getProductCostKey(item: { sku?: string | null; title?: string | null })
     .replace(/^-+|-+$/g, "")
     .slice(0, 96);
   return slug ? `producto:${slug}` : "";
+}
+
+export async function listPayrollStaff(): Promise<PayrollStaff[]> {
+  const { data, error } = await getDB()
+    .from("payroll_staff")
+    .select("*")
+    .eq("active", true)
+    .order("name");
+  if (error) throw new Error(`listPayrollStaff: ${error.message}`);
+  return (data ?? []) as PayrollStaff[];
+}
+
+export async function createPayrollStaff(input: { name: string; role: string }): Promise<PayrollStaff> {
+  const { data, error } = await getDB()
+    .from("payroll_staff")
+    .insert({ name: input.name, role: input.role, updated_at: new Date().toISOString() })
+    .select()
+    .single();
+  if (error) throw new Error(`createPayrollStaff: ${error.message}`);
+  return data as PayrollStaff;
+}
+
+export async function deletePayrollStaff(id: number): Promise<void> {
+  const { error } = await getDB().from("payroll_staff").delete().eq("id", id);
+  if (error) throw new Error(`deletePayrollStaff: ${error.message}`);
 }

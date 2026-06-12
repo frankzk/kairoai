@@ -43,6 +43,7 @@ import type {
   FinanceClaim,
   LogisticsImport,
   LogisticsRow,
+  PayrollStaff,
   ProductCost,
   ProductCostVersion,
   ProfitabilitySummary,
@@ -290,6 +291,13 @@ type ExpensePayload = {
   notes: string;
 };
 const EXPENSE_ORIGINAL_CURRENCIES = ["CRC", "USD", "PEN"] as const;
+const PAYROLL_PAYMENT_TYPES = [
+  "Sueldo mensual",
+  "Sueldo quincena",
+  "Horas extras",
+  "CTS",
+  "Gratificacion",
+] as const;
 type ExpenseOriginalCurrency = (typeof EXPENSE_ORIGINAL_CURRENCIES)[number];
 
 const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string }> = [
@@ -3220,9 +3228,31 @@ function ExpensesTab({
 }) {
   const [activeType, setActiveType] = useState<ExpenseType>("ads");
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [staff, setStaff] = useState<PayrollStaff[]>([]);
+  const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/finance/payroll-staff", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((json) => {
+        if (!cancelled && Array.isArray(json.staff)) setStaff(json.staff as PayrollStaff[]);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const activeView =
     EXPENSE_VIEW_CONFIG.find((view) => view.type === activeType) ?? EXPENSE_VIEW_CONFIG[0];
-  const visibleExpenses = expenses.filter((expense) => expense.type === activeType);
+  const visibleExpenses = expenses
+    .filter((expense) => expense.type === activeType)
+    .sort(
+      (a, b) =>
+        String(b.expense_date || "").localeCompare(String(a.expense_date || "")) ||
+        String(b.created_at || "").localeCompare(String(a.created_at || ""))
+    );
   const payrollPeople = uniqueKeys(
     expenses
       .filter((expense) => expense.type === "payroll" && expense.platform)
@@ -3309,10 +3339,17 @@ function ExpensesTab({
               Registra y revisa gastos por tipo para alimentar la rentabilidad mensual.
             </p>
           </div>
-          <Button type="button" onClick={() => openExpenseModal(activeType)} className="gap-2">
-            <Plus className="h-4 w-4" />
-            {activeView.buttonLabel}
-          </Button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {activeType === "payroll" && (
+              <Button type="button" variant="outline" onClick={() => setIsStaffModalOpen(true)}>
+                Personal
+              </Button>
+            )}
+            <Button type="button" onClick={() => openExpenseModal(activeType)} className="gap-2">
+              <Plus className="h-4 w-4" />
+              {activeView.buttonLabel}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap gap-2 border-b border-border">
@@ -3436,13 +3473,43 @@ function ExpensesTab({
               </div>
 
               <LabeledField label={activeType === "payroll" ? "Persona" : "Plataforma / proveedor"}>
-                <Input
-                  placeholder={activeView.platformPlaceholder}
-                  value={form.platform}
-                  list={activeType === "payroll" ? "payroll-people" : undefined}
-                  onChange={(e) => setForm({ ...form, platform: e.target.value, type: activeType })}
-                  required={activeType === "payroll"}
-                />
+                {activeType === "payroll" && staff.length > 0 ? (
+                  <select
+                    value={form.platform}
+                    required
+                    onChange={(e) => {
+                      const member = staff.find((person) => person.name === e.target.value);
+                      setForm({
+                        ...form,
+                        platform: e.target.value,
+                        description: form.description || member?.role || "",
+                        type: activeType,
+                      });
+                    }}
+                    className="h-10 w-full border border-input bg-background px-3 text-sm outline-none"
+                  >
+                    <option value="">Selecciona persona...</option>
+                    {staff.map((person) => (
+                      <option key={person.id} value={person.name}>
+                        {person.name}
+                        {person.role ? ` - ${person.role}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    placeholder={activeView.platformPlaceholder}
+                    value={form.platform}
+                    list={activeType === "payroll" ? "payroll-people" : undefined}
+                    onChange={(e) => setForm({ ...form, platform: e.target.value, type: activeType })}
+                    required={activeType === "payroll"}
+                  />
+                )}
+                {activeType === "payroll" && staff.length === 0 && (
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    Registra tu personal con el boton &quot;Personal&quot; para elegirlo de una lista.
+                  </p>
+                )}
                 {activeType === "payroll" && (
                   <datalist id="payroll-people">
                     {payrollPeople.map((person) => (
@@ -3454,11 +3521,27 @@ function ExpensesTab({
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <LabeledField label={activeType === "payroll" ? "Tipo de pago" : "Categoria"}>
-                  <Input
-                    placeholder={activeView.categoryPlaceholder}
-                    value={form.category}
-                    onChange={(e) => setForm({ ...form, category: e.target.value, type: activeType })}
-                  />
+                  {activeType === "payroll" ? (
+                    <select
+                      value={form.category}
+                      required
+                      onChange={(e) => setForm({ ...form, category: e.target.value, type: activeType })}
+                      className="h-10 w-full border border-input bg-background px-3 text-sm outline-none"
+                    >
+                      <option value="">Selecciona tipo...</option>
+                      {PAYROLL_PAYMENT_TYPES.map((paymentType) => (
+                        <option key={paymentType} value={paymentType}>
+                          {paymentType}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <Input
+                      placeholder={activeView.categoryPlaceholder}
+                      value={form.category}
+                      onChange={(e) => setForm({ ...form, category: e.target.value, type: activeType })}
+                    />
+                  )}
                 </LabeledField>
                 <LabeledField label={activeType === "payroll" ? "Funcion / detalle" : "Descripcion"}>
                   <Input
@@ -3597,8 +3680,149 @@ function ExpensesTab({
           </div>
         </div>
       )}
+      {isStaffModalOpen && (
+        <PayrollStaffModal
+          staff={staff}
+          onChange={setStaff}
+          onClose={() => setIsStaffModalOpen(false)}
+        />
+      )}
     </div>
   );
+
+function PayrollStaffModal({
+  staff,
+  onChange,
+  onClose,
+}: {
+  staff: PayrollStaff[];
+  onChange: (staff: PayrollStaff[]) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [role, setRole] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function handleAdd() {
+    if (!name.trim()) {
+      setMessage("Escribe el nombre de la persona.");
+      return;
+    }
+    setSaving(true);
+    setMessage("");
+    try {
+      const res = await fetch("/api/finance/payroll-staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), role: role.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "No se pudo registrar la persona");
+      onChange(
+        [...staff, json.member as PayrollStaff].sort((a, b) => a.name.localeCompare(b.name))
+      );
+      setName("");
+      setRole("");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo registrar la persona");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(member: PayrollStaff) {
+    const ok = window.confirm(`Eliminar a ${member.name} del catalogo de personal?`);
+    if (!ok) return;
+    setMessage("");
+    try {
+      const res = await fetch(`/api/finance/payroll-staff?id=${member.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const json = await res.json();
+        throw new Error(json.error ?? "No se pudo eliminar");
+      }
+      onChange(staff.filter((person) => person.id !== member.id));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo eliminar");
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="payroll-staff-title"
+    >
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h3 id="payroll-staff-title" className="text-base font-semibold">
+              Personal de planilla
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Registra cada persona una vez; en los pagos solo la eliges de la lista.
+            </p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+          <Input
+            placeholder="Nombre"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+          <Input
+            placeholder="Funcion (ej. Jefa de tienda)"
+            value={role}
+            onChange={(event) => setRole(event.target.value)}
+          />
+          <Button type="button" disabled={saving} onClick={handleAdd} className="gap-2">
+            {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            Agregar
+          </Button>
+        </div>
+        {message && (
+          <p className="mt-2 border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-200">
+            {message}
+          </p>
+        )}
+
+        <div className="mt-3 min-h-0 flex-1 space-y-1.5 overflow-auto">
+          {staff.length ? (
+            staff.map((member) => (
+              <div
+                key={member.id}
+                className="flex items-center justify-between gap-3 border border-border bg-background px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{member.name}</p>
+                  <p className="truncate text-xs text-muted-foreground">{member.role || "Sin funcion"}</p>
+                </div>
+                <button
+                  type="button"
+                  title="Eliminar"
+                  aria-label={`Eliminar ${member.name}`}
+                  onClick={() => handleDelete(member)}
+                  className="text-muted-foreground transition-colors hover:text-red-300"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))
+          ) : (
+            <p className="border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
+              Aun no hay personal registrado.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 }
 
 function LabeledField({
