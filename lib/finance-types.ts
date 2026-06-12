@@ -227,3 +227,12 @@ export interface ProfitabilitySummary {
   matched_orders: number;
   missing_cost_skus: string[];
 }
+
+export interface PayrollStaff {
+  id: number;
+  name: string;
+  role: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
