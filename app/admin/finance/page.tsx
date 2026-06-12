@@ -5881,7 +5881,9 @@ function buildVisibleOrderRows(
       package_items: shopifyItems.length ? shopifyItems : row.package_items ?? [],
     };
   });
-  const consolidatedLogisticsRows = consolidateLogisticsRows(logisticsDisplayRows);
+  const consolidatedLogisticsRows = consolidateLogisticsRows(
+    logisticsDisplayRows.filter(isShopifyBackedLogisticsRow)
+  );
 
   const existingKeys = new Set<string>();
   for (const row of consolidatedLogisticsRows) {
@@ -5918,6 +5920,14 @@ function buildVisibleOrderRows(
 
   return [...consolidatedLogisticsRows, ...shopifyOnlyRows].sort((a, b) =>
     String(b.shopify_created_at || "").localeCompare(String(a.shopify_created_at || ""))
+  );
+}
+
+function isShopifyBackedLogisticsRow(row: TrackableOrderRow): boolean {
+  if (row.match_status !== "matched") return false;
+  return Boolean(
+    normalizeMatchKey(row.shopify_order_name) ||
+      (row.shopify_order_number ? normalizeMatchKey(`#MCRC${row.shopify_order_number}`) : "")
   );
 }
 
@@ -6055,20 +6065,7 @@ function buildFinanceControlCenter(
   }
 
   for (const settlementRow of settlementRows.filter((row) => !consumedSettlementIds.has(row.id))) {
-    const standaloneOrder = settlementRowToTrackableOrder(settlementRow);
-    const traces = getSettlementTracesForLogisticsRow(standaloneOrder, settlementTraceByKey);
-    const trackingStatus = getEffectiveTrackingStatus(standaloneOrder, traces);
-    const financialRow = buildOrderProfitabilityRow({
-      order: standaloneOrder,
-      settlementRows: [settlementRow],
-      fileByImportId,
-      costVersionsBySku,
-      trackingStatus,
-      trackingLabel: getTrackingStatusLabel(standaloneOrder, traces, trackingStatus),
-    });
-
-    orders.push(financialRow);
-    anomalies.push(...buildFinancialAnomalies(financialRow, [settlementRow]));
+    anomalies.push(buildOrphanSettlementAnomaly(settlementRow, fileByImportId));
   }
 
   const uniqueAnomalies = uniqueFinancialAnomalies(anomalies).sort(sortAnomalies);
@@ -6631,27 +6628,6 @@ function buildOrderProfitabilityRow({
   };
 }
 
-function settlementRowToTrackableOrder(row: SettlementRow): TrackableOrderRow {
-  return {
-    row_key: `liquidacion-${row.id}`,
-    source: "liquidacion",
-    guide_number: row.guide_number,
-    order_name: row.order_name || row.shopify_order_name,
-    customer_name: row.customer_name,
-    boxful_status: row.settlement_status,
-    internal_status: row.internal_status,
-    match_status: row.match_status,
-    cod_amount: 0,
-    shopify_order_name: row.shopify_order_name,
-    shopify_order_number: null,
-    shopify_financial_status: row.shopify_financial_status,
-    shopify_fulfillment_status: row.shopify_fulfillment_status,
-    shopify_cancelled_at: null,
-    shopify_created_at: row.shopify_created_at ?? null,
-    package_items: row.order_items,
-  };
-}
-
 function getProfitabilityItems(
   order: TrackableOrderRow,
   settlementRows: SettlementRow[]
@@ -6845,6 +6821,26 @@ function buildFinancialAnomalies(
   }
 
   return anomalies;
+}
+
+function buildOrphanSettlementAnomaly(
+  row: SettlementRow,
+  fileByImportId: Map<number, string>
+): FinancialAnomaly {
+  const sourceFile = fileByImportId.get(row.import_id) || `Import #${row.import_id}`;
+  const orderName = row.shopify_order_name || row.order_name || "-";
+
+  return {
+    id: `settlement-${row.id}-without-shopify-order`,
+    severity: "high",
+    type: "Liquidacion sin pedido Shopify",
+    order_name: orderName,
+    guide_number: row.guide_number || "-",
+    amount: row.amount_to_liquidate,
+    source_file: sourceFile,
+    message: "Esta fila de liquidacion no se asigno a ningun pedido base Shopify visible.",
+    action: "Corregir el match por nota, guia, telefono o cliente. No se contabiliza como pedido hasta que apunte a Shopify.",
+  };
 }
 
 function shouldFlagNegativeMargin(contributionMargin: number, settlementCodAmount: number): boolean {
