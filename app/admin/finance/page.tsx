@@ -404,6 +404,8 @@ type ExpensePayload = {
   currency: string;
   notes: string;
 };
+const EXPENSE_ORIGINAL_CURRENCIES = ["CRC", "USD", "PEN"] as const;
+type ExpenseOriginalCurrency = (typeof EXPENSE_ORIGINAL_CURRENCIES)[number];
 
 const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string }> = [
   { value: "all", label: "Todos" },
@@ -3148,15 +3150,17 @@ function ExpensesTab({
       .filter((expense) => expense.type === "payroll" && expense.platform)
       .map((expense) => expense.platform)
   ).sort((a, b) => a.localeCompare(b));
-  const payrollAmount = Number(form.amount);
-  const payrollExchangeRate = Number(form.exchange_rate);
-  const payrollConvertedAmount =
-    activeType === "payroll" &&
-    Number.isFinite(payrollAmount) &&
-    payrollAmount > 0 &&
-    Number.isFinite(payrollExchangeRate) &&
-    payrollExchangeRate > 0
-      ? roundMoney(payrollAmount * payrollExchangeRate)
+  const formAmount = Number(form.amount);
+  const formExchangeRate = Number(form.exchange_rate);
+  const originalCurrency = getExpenseOriginalCurrency(form);
+  const needsExchangeRate = originalCurrency !== "CRC";
+  const convertedExpenseAmount =
+    needsExchangeRate &&
+    Number.isFinite(formAmount) &&
+    formAmount > 0 &&
+    Number.isFinite(formExchangeRate) &&
+    formExchangeRate > 0
+      ? roundMoney(formAmount * formExchangeRate)
       : 0;
   const currentMonth = new Date().toISOString().slice(0, 7);
   const currentMonthTotal = sum(
@@ -3168,12 +3172,12 @@ function ExpensesTab({
 
   function selectExpenseType(type: ExpenseType) {
     setActiveType(type);
-    setForm({ ...form, type });
+    setForm(prepareExpenseFormForType(form, type));
   }
 
   function openExpenseModal(type: ExpenseType) {
     setActiveType(type);
-    setForm({ ...form, type });
+    setForm(prepareExpenseFormForType(form, type));
     setIsExpenseModalOpen(true);
   }
 
@@ -3242,9 +3246,9 @@ function ExpensesTab({
                     <td className="px-3 py-2">{expense.description || "-"}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs">
                       {currency(expense.amount)}
-                      {expense.type === "payroll" && getPayrollOriginalPaymentLabel(expense) && (
+                      {getExpenseOriginalPaymentLabel(expense) && (
                         <span className="block text-[11px] text-muted-foreground">
-                          {getPayrollOriginalPaymentLabel(expense)}
+                          {getExpenseOriginalPaymentLabel(expense)}
                         </span>
                       )}
                     </td>
@@ -3381,9 +3385,65 @@ function ExpensesTab({
                     </LabeledField>
                   </div>
                   <div className="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                    {payrollConvertedAmount
-                      ? `Se guardara en cierre mensual como ${currency(payrollConvertedAmount)}.`
+                    {convertedExpenseAmount
+                      ? `Se guardara en cierre mensual como ${currency(convertedExpenseAmount)}.`
                       : "Ingresa monto y tipo de cambio para calcular el gasto en CRC."}
+                  </div>
+                </>
+              ) : activeType === "misc" ? (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <LabeledField label="Moneda pagada">
+                      <select
+                        value={originalCurrency}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            currency: e.target.value,
+                            exchange_rate: e.target.value === "CRC" ? "" : form.exchange_rate,
+                            type: activeType,
+                          })
+                        }
+                        className="h-10 w-full border border-input bg-background px-3 text-sm outline-none"
+                      >
+                        <option value="CRC">Colones (CRC)</option>
+                        <option value="USD">Dolares (USD)</option>
+                        <option value="PEN">Soles (PEN)</option>
+                      </select>
+                    </LabeledField>
+                    <LabeledField label={getExpenseAmountLabel(originalCurrency)}>
+                      <Input
+                        type="number"
+                        min="0"
+                        step={originalCurrency === "CRC" ? "1" : "0.01"}
+                        inputMode="decimal"
+                        placeholder={getExpenseAmountPlaceholder(originalCurrency)}
+                        value={form.amount}
+                        onChange={(e) => setForm({ ...form, amount: e.target.value, type: activeType })}
+                        required
+                      />
+                    </LabeledField>
+                  </div>
+                  {needsExchangeRate && (
+                    <LabeledField label={getExchangeRateLabel(originalCurrency)}>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        inputMode="decimal"
+                        placeholder={`CRC por 1 ${originalCurrency}`}
+                        value={form.exchange_rate}
+                        onChange={(e) => setForm({ ...form, exchange_rate: e.target.value, type: activeType })}
+                        required
+                      />
+                    </LabeledField>
+                  )}
+                  <div className="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                    {needsExchangeRate
+                      ? convertedExpenseAmount
+                        ? `Se guardara en cierre mensual como ${currency(convertedExpenseAmount)}.`
+                        : "Ingresa monto y tipo de cambio para calcular el gasto en CRC."
+                      : "Se guardara en cierre mensual sin conversion."}
                   </div>
                 </>
               ) : (
@@ -3433,16 +3493,74 @@ function LabeledField({
   );
 }
 
-function getPayrollOriginalPaymentLabel(expense: BusinessExpense): string {
-  const originalAmount = expense.notes.match(/Monto original:\s*PEN\s*([0-9.,]+)/i)?.[1];
-  const exchangeRate = expense.notes.match(/Tipo de cambio PEN->CRC:\s*([0-9.,]+)/i)?.[1];
+function prepareExpenseFormForType(form: typeof emptyExpense, type: ExpenseType): typeof emptyExpense {
+  const currency =
+    type === "payroll"
+      ? "PEN"
+      : type === "misc" && form.type === "misc"
+        ? normalizeExpenseOriginalCurrency(form.currency)
+        : "CRC";
+  return {
+    ...form,
+    type,
+    currency,
+    exchange_rate: type === "ads" || currency === "CRC" ? "" : form.exchange_rate,
+  };
+}
+
+function normalizeExpenseOriginalCurrency(value: string): ExpenseOriginalCurrency {
+  return isExpenseOriginalCurrency(value) ? value : "CRC";
+}
+
+function isExpenseOriginalCurrency(value: string): value is ExpenseOriginalCurrency {
+  return (EXPENSE_ORIGINAL_CURRENCIES as readonly string[]).includes(value);
+}
+
+function getExpenseOriginalCurrency(form: typeof emptyExpense): ExpenseOriginalCurrency {
+  if (form.type === "payroll") return "PEN";
+  if (form.type === "misc") return normalizeExpenseOriginalCurrency(form.currency);
+  return "CRC";
+}
+
+function getExpenseAmountLabel(currencyCode: ExpenseOriginalCurrency): string {
+  if (currencyCode === "USD") return "Monto pagado en dolares";
+  if (currencyCode === "PEN") return "Monto pagado en soles";
+  return "Monto en colones";
+}
+
+function getExpenseAmountPlaceholder(currencyCode: ExpenseOriginalCurrency): string {
+  if (currencyCode === "USD") return "US$ 0.00";
+  if (currencyCode === "PEN") return "S/ 0.00";
+  return "Monto";
+}
+
+function getExchangeRateLabel(currencyCode: ExpenseOriginalCurrency): string {
+  return `Tipo de cambio ${currencyCode} a colones`;
+}
+
+function getExpenseOriginalPaymentLabel(expense: BusinessExpense): string {
+  const originalMatch = expense.notes.match(/Monto original:\s*([A-Z]{3})\s*([0-9.,]+)/i);
+  const originalCurrency = originalMatch?.[1]?.toUpperCase() ?? "";
+  const originalAmount = originalMatch?.[2];
+  const exchangeRate = expense.notes.match(/Tipo de cambio [A-Z]{3}->CRC:\s*([0-9.,]+)/i)?.[1];
   if (!originalAmount && !exchangeRate) return "";
 
   const amount = Number(String(originalAmount ?? "").replace(",", "."));
   const amountLabel = Number.isFinite(amount) && amount > 0
-    ? `S/ ${amount.toLocaleString("es-PE", { maximumFractionDigits: 2 })}`
-    : "PEN";
+    ? formatOriginalCurrencyAmount(originalCurrency, amount)
+    : originalCurrency || "Origen";
   return exchangeRate ? `${amountLabel} @ ${exchangeRate}` : amountLabel;
+}
+
+function formatOriginalCurrencyAmount(currencyCode: string, amount: number): string {
+  if (currencyCode === "USD") {
+    return `US$ ${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  }
+  if (currencyCode === "PEN") {
+    return `S/ ${amount.toLocaleString("es-PE", { maximumFractionDigits: 2 })}`;
+  }
+  if (currencyCode === "CRC") return currency(amount);
+  return `${currencyCode} ${amount.toLocaleString("es-CR", { maximumFractionDigits: 2 })}`;
 }
 
 function FinancialAnomaliesTable({
@@ -5062,20 +5180,25 @@ function buildExpensePayload(
     notes: form.notes.trim(),
   };
 
-  if (form.type !== "payroll") return { ok: true, expense: baseExpense };
+  if (!baseExpense.platform) {
+    if (form.type === "payroll") return { ok: false, error: "Ingresa la persona asociada al pago de planilla." };
+  }
+
+  const originalCurrency = getExpenseOriginalCurrency(form);
+  if (originalCurrency === "CRC") return { ok: true, expense: baseExpense };
 
   const exchangeRate = Number(form.exchange_rate);
   if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
-    return { ok: false, error: "Ingresa el tipo de cambio PEN a CRC para registrar la planilla." };
-  }
-  if (!baseExpense.platform) {
-    return { ok: false, error: "Ingresa la persona asociada al pago de planilla." };
+    return {
+      ok: false,
+      error: `Ingresa el tipo de cambio ${originalCurrency} a CRC para registrar este gasto.`,
+    };
   }
 
   const convertedAmount = roundMoney(amount * exchangeRate);
   const conversionNote = [
-    `Monto original: PEN ${amount.toFixed(2)}`,
-    `Tipo de cambio PEN->CRC: ${exchangeRate}`,
+    `Monto original: ${originalCurrency} ${amount.toFixed(2)}`,
+    `Tipo de cambio ${originalCurrency}->CRC: ${exchangeRate}`,
     baseExpense.notes ? `Nota: ${baseExpense.notes}` : "",
   ].filter(Boolean).join("\n");
 
