@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  getPersistedShopifyCoverage,
   listPersistedShopifyOrders,
   upsertPersistedShopifyOrders,
   type PersistedShopifyOrder,
@@ -11,15 +12,20 @@ export const maxDuration = 60;
 const DEFAULT_CREATED_AT_MIN = "2025-09-16T00:00:00-06:00";
 const DEFAULT_SYNC_PAGES_PER_REQUEST = 8;
 const MAX_SYNC_PAGES_PER_REQUEST = 12;
+// Shopify REST permite ~2 req/s; un respiro entre paginas evita 429 en rafaga.
+const PAGE_DELAY_MS = 350;
 
 export async function GET(req: NextRequest) {
   try {
     const limit = Number(req.nextUrl.searchParams.get("limit") || 1000);
-    const orders = await listPersistedShopifyOrders(Math.min(Math.max(limit, 1), 20000));
-    return NextResponse.json({ orders, total: orders.length });
+    const [orders, coverage] = await Promise.all([
+      listPersistedShopifyOrders(Math.min(Math.max(limit, 1), 20000)),
+      getPersistedShopifyCoverage(),
+    ]);
+    return NextResponse.json({ orders, total: orders.length, coverage });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer pedidos Shopify sincronizados";
-    return NextResponse.json({ orders: [], total: 0, error: message }, { status: 500 });
+    return NextResponse.json({ orders: [], total: 0, coverage: null, error: message }, { status: 500 });
   }
 }
 
@@ -31,18 +37,34 @@ export async function POST(req: NextRequest) {
       MAX_SYNC_PAGES_PER_REQUEST
     );
     const createdAtMin = String(body.created_at_min ?? DEFAULT_CREATED_AT_MIN);
-    let url = typeof body.next_url === "string" && body.next_url ? body.next_url : buildInitialUrl(createdAtMin);
+    const mode = body.mode === "backfill" ? "backfill" : "forward";
+
+    let url: string;
+    if (typeof body.next_url === "string" && body.next_url) {
+      url = body.next_url;
+    } else if (mode === "backfill") {
+      // Continua hacia atras desde el pedido mas viejo ya sincronizado, asi
+      // cada llamada avanza aunque la anterior haya muerto a mitad de camino.
+      const coverage = await getPersistedShopifyCoverage();
+      if (!coverage.oldest) {
+        url = buildInitialUrl(createdAtMin);
+      } else if (coverage.oldest <= createdAtMin) {
+        return NextResponse.json({ synced: 0, done: true, oldest: coverage.oldest });
+      } else {
+        // Se excluye el pedido frontera (ya sincronizado) restando un segundo,
+        // para que cada llamada avance en vez de repetir la misma ventana.
+        const beforeOldest = new Date(new Date(coverage.oldest).getTime() - 1000).toISOString();
+        url = buildInitialUrl(createdAtMin, beforeOldest);
+      }
+    } else {
+      url = buildInitialUrl(createdAtMin);
+    }
 
     const rawOrders: Array<Record<string, unknown>> = [];
     let pagesChecked = 0;
     for (let page = 0; page < maxPages && url; page++) {
-      const res = await fetch(url, {
-        headers: {
-          "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN ?? "",
-          "Content-Type": "application/json",
-        },
-        cache: "no-store",
-      });
+      if (page > 0) await sleep(PAGE_DELAY_MS);
+      const res = await fetchShopifyPage(url);
 
       if (!res.ok) {
         const text = await res.text();
@@ -64,10 +86,18 @@ export async function POST(req: NextRequest) {
     const orders = rawOrders.map(mapShopifyOrder);
     await upsertPersistedShopifyOrders(orders);
 
+    const oldestFetched = orders.reduce<string | null>((min, order) => {
+      const created = order.shopify_created_at;
+      if (!created) return min;
+      return !min || created < min ? created : min;
+    }, null);
+
     return NextResponse.json({
       synced: orders.length,
       next_url: url || null,
       partial: Boolean(url),
+      done: mode === "backfill" && !url && orders.length === 0,
+      oldest: oldestFetched,
       created_at_min: createdAtMin,
       pages_checked: pagesChecked,
     });
@@ -77,7 +107,30 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function buildInitialUrl(createdAtMin: string): string {
+async function fetchShopifyPage(url: string): Promise<Response> {
+  const doFetch = () =>
+    fetch(url, {
+      headers: {
+        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN ?? "",
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+    });
+
+  let res = await doFetch();
+  if (res.status === 429) {
+    const retryAfter = Number(res.headers.get("retry-after") || 1.2);
+    await sleep(Math.min(Math.max(retryAfter, 0.5), 5) * 1000);
+    res = await doFetch();
+  }
+  return res;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildInitialUrl(createdAtMin: string, createdAtMax?: string): string {
   if (!process.env.SHOPIFY_SHOP_DOMAIN || !process.env.SHOPIFY_ACCESS_TOKEN) {
     throw new Error("Shopify no configurado: faltan SHOPIFY_SHOP_DOMAIN o SHOPIFY_ACCESS_TOKEN.");
   }
@@ -110,6 +163,7 @@ function buildInitialUrl(createdAtMin: string): string {
     created_at_min: createdAtMin,
     fields,
   });
+  if (createdAtMax) params.set("created_at_max", createdAtMax);
   return `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/orders.json?${params.toString()}`;
 }
 

@@ -499,6 +499,11 @@ export default function FinancePage() {
   const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
   const [logisticsRows, setLogisticsRows] = useState<LogisticsRow[]>([]);
   const [shopifyOrders, setShopifyOrders] = useState<ShopifyOrderSummary[]>([]);
+  const [shopifyCoverage, setShopifyCoverage] = useState<{
+    count: number;
+    oldest: string | null;
+    newest: string | null;
+  } | null>(null);
   const [costs, setCosts] = useState<ProductCost[]>([]);
   const [costVersions, setCostVersions] = useState<ProductCostVersion[]>([]);
   const [shopifyProducts, setShopifyProducts] = useState<ShopifyProductOption[]>([]);
@@ -626,6 +631,10 @@ export default function FinancePage() {
       // Orden de fusion: lo sincronizado primero y las lecturas en vivo despues,
       // para que una nota recien editada en Shopify pise la copia vieja de la base.
       setShopifyOrders(mergeShopifyOrderSummaries(persistedShopifyOrders, noteShopifyOrders, liveShopifyOrders));
+      setShopifyCoverage(
+        (persistedShopifyJson.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
+          null
+      );
       setCosts(costsJson.costs ?? []);
       setCostVersions(Array.isArray(costsJson.versions) ? costsJson.versions as ProductCostVersion[] : []);
       setExpenses(expensesJson.expenses ?? []);
@@ -765,9 +774,11 @@ export default function FinancePage() {
     setSyncingShopify(true);
     setSyncMessage("Sincronizando Shopify...");
     setError("");
+    let totalSynced = 0;
+
+    // Fase 1: pedidos recientes (de lo mas nuevo hacia atras con cursor).
     try {
       let nextUrl: string | null = null;
-      let totalSynced = 0;
       for (let batch = 0; batch < 40; batch++) {
         const res = await fetch("/api/finance/shopify-sync", {
           method: "POST",
@@ -782,10 +793,47 @@ export default function FinancePage() {
         if (!res.ok) throw new Error(json.error ?? "No se pudo sincronizar Shopify");
         totalSynced += Number(json.synced ?? 0);
         nextUrl = typeof json.next_url === "string" ? json.next_url : null;
-        setSyncMessage(`Sincronizados ${totalSynced} pedidos desde 16/09/2025...`);
+        setSyncMessage(`Sincronizando pedidos recientes: ${totalSynced}...`);
         if (!nextUrl) break;
       }
-      setSyncMessage(`Sync listo: ${totalSynced} pedidos procesados.`);
+    } catch (err) {
+      // El historico hacia atras puede continuar aunque esta fase falle.
+      setSyncMessage(
+        err instanceof Error ? `${err.message} - continuando con el historico...` : "Continuando con el historico..."
+      );
+    }
+
+    // Fase 2: backfill hacia atras desde el pedido mas viejo sincronizado,
+    // reanudable: cada llamada parte de donde quedo la base.
+    try {
+      let oldestReached: string | null = null;
+      for (let batch = 0; batch < 80; batch++) {
+        const res = await fetch("/api/finance/shopify-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            created_at_min: FINANCE_SHOPIFY_CREATED_AT_MIN,
+            max_pages: 8,
+            mode: "backfill",
+          }),
+        });
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudo completar el historico");
+        const synced = Number(json.synced ?? 0);
+        totalSynced += synced;
+        if (typeof json.oldest === "string" && json.oldest) oldestReached = json.oldest;
+        if (json.done || !synced) break;
+        setSyncMessage(
+          `Completando historico: ${totalSynced} pedidos${
+            oldestReached ? `, base desde ${formatDate(oldestReached.slice(0, 10))}` : ""
+          }...`
+        );
+      }
+      setSyncMessage(
+        `Sync listo: ${totalSynced} pedidos procesados${
+          oldestReached ? `. Base desde ${formatDate(oldestReached.slice(0, 10))}` : ""
+        }.`
+      );
       await refresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : "No se pudo sincronizar Shopify";
@@ -956,6 +1004,7 @@ export default function FinancePage() {
                 latestLogisticsImport={latestLogisticsImport}
                 settlementTraceByKey={settlementTraceByKey}
                 shopifyOrderCount={shopifyOrders.length}
+                shopifyCoverage={shopifyCoverage}
                 syncingShopify={syncingShopify}
                 syncMessage={syncMessage}
                 onSyncShopify={syncShopifyHistory}
@@ -1037,6 +1086,7 @@ function OrdersTab({
   latestLogisticsImport,
   settlementTraceByKey,
   shopifyOrderCount,
+  shopifyCoverage,
   syncingShopify,
   syncMessage,
   onSyncShopify,
@@ -1048,6 +1098,7 @@ function OrdersTab({
   latestLogisticsImport?: LogisticsImport;
   settlementTraceByKey: Map<string, SettlementTrace[]>;
   shopifyOrderCount: number;
+  shopifyCoverage: { count: number; oldest: string | null; newest: string | null } | null;
   syncingShopify: boolean;
   syncMessage: string;
   onSyncShopify: () => void;
@@ -1321,7 +1372,9 @@ function OrdersTab({
             <p className="text-xs text-muted-foreground">
               {orderSearch
                 ? `${filteredRows.length} de ${searchedRows.length} pedidos encontrados`
-                : `Base Shopify: ${shopifyOrderCount} pedidos desde 16/09/2025${
+                : `Base Shopify: ${shopifyCoverage?.count ?? shopifyOrderCount} pedidos${
+                    shopifyCoverage?.oldest ? ` desde ${formatDate(shopifyCoverage.oldest.slice(0, 10))}` : ""
+                  }${
                     latestLogisticsImport
                       ? ` - Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match, ${latestLogisticsImport.unmatched_rows} sin match`
                       : " - Sin Boxful importado"
