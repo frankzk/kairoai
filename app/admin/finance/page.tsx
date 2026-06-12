@@ -385,6 +385,8 @@ interface MonthlyCloseRow {
   misc: number;
   contribution_margin: number;
   net_profit: number;
+  misc_software: number;
+  misc_other: number;
 }
 
 const emptyExpense = {
@@ -3886,6 +3888,8 @@ function MonthlyCloseTab({
     const acc = {
       orders: 0,
       delivered: 0,
+      not_delivered: 0,
+      annulled: 0,
       pending: 0,
       settled: 0,
       unsettled: 0,
@@ -3893,10 +3897,13 @@ function MonthlyCloseTab({
       costs: 0,
       net_profit: 0,
       gross: 0,
+      cash_pending: 0,
     };
     for (const row of rows) {
       acc.orders += row.orders;
       acc.delivered += row.delivered;
+      acc.not_delivered += row.not_delivered;
+      acc.annulled += row.annulled;
       acc.pending += row.pending;
       acc.settled += row.settled;
       acc.unsettled += row.unsettled;
@@ -3904,9 +3911,76 @@ function MonthlyCloseTab({
       acc.costs += row.boxful_costs + row.product_costs + row.ads + row.payroll + row.misc;
       acc.net_profit += row.net_profit;
       acc.gross += row.cash_received + row.boxful_costs;
+      acc.cash_pending += row.cash_pending;
     }
     return acc;
   }, [rows]);
+  // Alertas automaticas: se evaluan sobre el mes mas reciente con
+  // liquidaciones (los abiertos aun no son representativos) y sobre globales.
+  const autoAlerts = useMemo(() => {
+    const list: Array<{ key: string; text: string; tone: "warning" | "danger" }> = [];
+    const reference = rows.find(
+      (row) => row.month !== "sin-fecha" && (row.settled > 0 || row.cash_received > 0)
+    );
+    if (reference) {
+      const monthLabel = formatMonthLabel(reference.month);
+      const completed = reference.delivered + reference.not_delivered + reference.annulled;
+      const effectiveness = completed ? (reference.delivered / completed) * 100 : null;
+      if (effectiveness != null && effectiveness < 50) {
+        list.push({
+          key: "efectividad",
+          text: `Efectividad de entrega ${formatPercent(effectiveness)} (<50%) en ${monthLabel}`,
+          tone: "danger",
+        });
+      }
+      const annulRate = reference.orders ? (reference.annulled / reference.orders) * 100 : 0;
+      if (annulRate > 25) {
+        list.push({
+          key: "anulacion",
+          text: `Anulacion ${formatPercent(annulRate)} (>25%) en ${monthLabel}`,
+          tone: "danger",
+        });
+      }
+      if (reference.net_profit < 0) {
+        list.push({ key: "margen", text: `Margen negativo en ${monthLabel}`, tone: "danger" });
+      }
+      const operatingMargin =
+        reference.cash_received + reference.boxful_costs - reference.product_costs - reference.boxful_costs;
+      if (reference.ads > 0 && reference.ads > operatingMargin) {
+        list.push({
+          key: "roas",
+          text: `Ads por encima del margen operativo (ROAS bajo equilibrio) en ${monthLabel}`,
+          tone: "danger",
+        });
+      }
+    }
+    if (control.missing_cost_count > 0) {
+      list.push({
+        key: "skus",
+        text: `${control.missing_cost_count} pedidos con SKUs sin costo`,
+        tone: "warning",
+      });
+    }
+    const lateClaims = control.orders.filter(
+      (order) =>
+        order.tracking_status === "delivered" &&
+        order.settlement_count === 0 &&
+        daysSince(order.delivered_on ?? order.created_at ?? "") > 15
+    ).length;
+    if (lateClaims > 0) {
+      list.push({
+        key: "reclamos",
+        text: `${lateClaims} entregas sin liquidar hace mas de 15 dias`,
+        tone: "danger",
+      });
+    }
+    return list;
+  }, [rows, control]);
+  const totalsCompleted = totals.delivered + totals.not_delivered + totals.annulled;
+  const totalsEffectiveness = totalsCompleted ? (totals.delivered / totalsCompleted) * 100 : 0;
+  const totalsHasFullCosts = rows.some(
+    (row) => row.product_costs > 0 || row.ads > 0 || row.payroll > 0 || row.misc > 0
+  );
 
   return (
     <div className="space-y-4">
@@ -3921,6 +3995,52 @@ function MonthlyCloseTab({
           <Download className="h-4 w-4" /> Exportar cierre
         </Button>
       </div>
+
+      {autoAlerts.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {autoAlerts.map((alert) => (
+            <span
+              key={alert.key}
+              className={`inline-flex items-center gap-1.5 border px-2.5 py-1 text-xs ${
+                alert.tone === "danger"
+                  ? "border-red-500/40 bg-red-500/10 text-red-200"
+                  : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+              }`}
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              {alert.text}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+          <CompactStat label="Ventas liquidadas" value={currency(totals.gross)} />
+          <CompactStat
+            label={totalsHasFullCosts ? "Utilidad neta" : "Margen logistico"}
+            value={currency(totals.net_profit)}
+            tone={totals.net_profit < 0 ? "warning" : undefined}
+          />
+          <CompactStat
+            label="Margen"
+            value={totals.gross ? formatPercent((totals.net_profit / totals.gross) * 100) : "-"}
+          />
+          <CompactStat
+            label="Ticket promedio"
+            value={currency(totals.delivered ? totals.gross / totals.delivered : 0)}
+          />
+          <CompactStat
+            label="Efectividad entrega"
+            value={`${totals.delivered} · ${formatPercent(totalsEffectiveness)}`}
+          />
+          <CompactStat
+            label="Caja por reclamar"
+            value={currency(totals.cash_pending)}
+            tone={totals.cash_pending > 0 ? "warning" : undefined}
+          />
+        </div>
+      )}
 
       {!rows.length ? (
         <Card>
@@ -4029,8 +4149,13 @@ function MonthlyCloseMonthRow({
   onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
 }) {
   const registeredCosts = row.boxful_costs + row.product_costs + row.ads + row.payroll + row.misc;
-  const deliveredPct = row.orders ? Math.round((row.delivered / row.orders) * 100) : 0;
+  // Efectividad sobre pedidos con ciclo terminado, no sobre el total del mes.
+  const completedOutcomes = row.delivered + row.not_delivered + row.annulled;
+  const deliveredPct = completedOutcomes
+    ? Math.round((row.delivered / completedOutcomes) * 100)
+    : 0;
   const settledPct = row.orders ? Math.round((row.settled / row.orders) * 100) : 0;
+  const maturity = getMonthMaturity(row.month);
   const grossIncome = row.cash_received + row.boxful_costs;
   const marginPct = grossIncome ? Math.round((row.net_profit / grossIncome) * 100) : null;
   const incompleteData = row.orders > 0 && row.settled === 0 && row.cash_received === 0;
@@ -4055,6 +4180,11 @@ function MonthlyCloseMonthRow({
         </span>
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="truncate font-mono text-xs font-semibold">{formatMonthLabel(row.month)}</span>
+          {maturity && (
+            <span className={`hidden shrink-0 border px-1.5 py-px text-[9px] sm:inline-flex ${maturity.className}`}>
+              {maturity.label}
+            </span>
+          )}
           {incompleteData && (
             <span
               className="h-1.5 w-1.5 shrink-0 bg-amber-400"
@@ -4065,7 +4195,7 @@ function MonthlyCloseMonthRow({
         <span className="text-right font-mono text-xs">{row.orders}</span>
         <span className="hidden text-right font-mono text-xs lg:block">
           {row.delivered}
-          {row.orders > 0 && (
+          {completedOutcomes > 0 && (
             <span className="ml-1 text-[10px] text-muted-foreground">{deliveredPct}%</span>
           )}
         </span>
@@ -4171,13 +4301,43 @@ function MonthCloseDetail({
     close.boxful_costs + close.product_costs + close.ads + close.payroll + close.misc;
   const directCosts = close.boxful_costs + close.product_costs;
   const operatingExpenses = close.ads + close.payroll + close.misc;
-  const deliveredRate = close.orders ? (close.delivered / close.orders) * 100 : 0;
   const settledRate = close.orders ? (close.settled / close.orders) * 100 : 0;
   const claimBase = close.cash_received + close.cash_pending;
   const claimShare = claimBase ? (close.cash_pending / claimBase) * 100 : 0;
   // Monto COD bruto cobrado: lo liquidado mas lo que Boxful retuvo en costos.
   const grossCodIncome = close.cash_received + close.boxful_costs;
   const previousGrossIncome = previous ? previous.cash_received + previous.boxful_costs : null;
+  // Cascada financiera: ingresos -> margen bruto -> operativo -> contribucion -> utilidad.
+  const grossMargin = grossCodIncome - close.product_costs;
+  const operatingMargin = grossMargin - close.boxful_costs;
+  const contributionAfterAds = operatingMargin - close.ads;
+  const previousGrossMargin =
+    previous && previousGrossIncome != null ? previousGrossIncome - previous.product_costs : null;
+  const previousOperatingMargin =
+    previous && previousGrossMargin != null ? previousGrossMargin - previous.boxful_costs : null;
+  const previousContribution =
+    previous && previousOperatingMargin != null ? previousOperatingMargin - previous.ads : null;
+  // Mientras falten costos reales, el resultado es margen logistico, no utilidad.
+  const hasFullCosts =
+    close.product_costs > 0 || close.ads > 0 || close.payroll > 0 || close.misc > 0;
+  const bottomLineLabel = hasFullCosts ? "Utilidad neta" : "Margen logistico (faltan costos)";
+  // Efectividad sobre ciclo terminado (entregados + anulados + no entregados).
+  const completedOutcomes = close.delivered + close.not_delivered + close.annulled;
+  const deliveryEffectiveness = completedOutcomes
+    ? (close.delivered / completedOutcomes) * 100
+    : 0;
+  const ticketPromedio = close.delivered ? grossCodIncome / close.delivered : 0;
+  const logisticsPerDelivery = close.delivered ? close.boxful_costs / close.delivered : 0;
+  const logisticsTicketShare = ticketPromedio
+    ? (logisticsPerDelivery / ticketPromedio) * 100
+    : 0;
+  // Embudo COD del mes.
+  const confirmedOrders = close.orders - close.annulled;
+  const dispatchedOrders = useMemo(
+    () => monthOrders.filter((order) => order.guide_number).length,
+    [monthOrders]
+  );
+  const deliveredSettled = Math.max(0, close.delivered - close.to_claim);
   // Dinero quemado en envios fallidos: lo que Boxful cobro sobre no entregados.
   const failedDeliveryLoss = roundMoney(
     sum(
@@ -4241,7 +4401,7 @@ function MonthCloseDetail({
           <>
             <div className="border border-border bg-card p-3">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold">P&G del mes</p>
+                <p className="text-sm font-semibold">Estado financiero del mes</p>
                 <span className="flex items-baseline gap-2 text-[10px] text-muted-foreground">
                   <span className="w-10 text-right">% ing.</span>
                   {previous && <span className="w-12 text-right">Δ mes ant.</span>}
@@ -4249,10 +4409,27 @@ function MonthCloseDetail({
               </div>
               <div className="mt-2 space-y-1">
                 <StatementRow
-                  label="Ingresos COD cobrados"
+                  label="Ingresos liquidados"
                   value={currency(grossCodIncome)}
                   pct={pctOf(grossCodIncome, grossCodIncome)}
                   delta={pctChange(grossCodIncome, previousGrossIncome)}
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Costo de producto"
+                  value={currency(close.product_costs)}
+                  sign="minus"
+                  pct={pctOf(close.product_costs, grossCodIncome)}
+                  delta={pctChange(close.product_costs, previous?.product_costs)}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Margen bruto"
+                  value={currency(grossMargin)}
+                  emphasis
+                  pct={pctOf(grossMargin, grossCodIncome)}
+                  delta={pctChange(grossMargin, previousGrossMargin)}
                   showDeltaCol={Boolean(previous)}
                 />
                 <StatementRow
@@ -4303,28 +4480,11 @@ function MonthCloseDetail({
                   />
                 )}
                 <StatementRow
-                  label="Caja liquidada"
-                  value={currency(close.cash_received)}
+                  label="Margen operativo"
+                  value={currency(operatingMargin)}
                   emphasis
-                  pct={pctOf(close.cash_received, grossCodIncome)}
-                  delta={pctChange(close.cash_received, previous?.cash_received)}
-                  showDeltaCol={Boolean(previous)}
-                />
-                <StatementRow
-                  label="Costo de producto"
-                  value={currency(close.product_costs)}
-                  sign="minus"
-                  pct={pctOf(close.product_costs, grossCodIncome)}
-                  delta={pctChange(close.product_costs, previous?.product_costs)}
-                  deltaInverted
-                  showDeltaCol={Boolean(previous)}
-                />
-                <StatementRow
-                  label="Margen de pedidos"
-                  value={currency(close.contribution_margin)}
-                  emphasis
-                  pct={pctOf(close.contribution_margin, grossCodIncome)}
-                  delta={pctChange(close.contribution_margin, previous?.contribution_margin)}
+                  pct={pctOf(operatingMargin, grossCodIncome)}
+                  delta={pctChange(operatingMargin, previousOperatingMargin)}
                   showDeltaCol={Boolean(previous)}
                 />
                 <StatementRow
@@ -4337,6 +4497,14 @@ function MonthCloseDetail({
                   showDeltaCol={Boolean(previous)}
                 />
                 <StatementRow
+                  label="Contribucion"
+                  value={currency(contributionAfterAds)}
+                  emphasis
+                  pct={pctOf(contributionAfterAds, grossCodIncome)}
+                  delta={pctChange(contributionAfterAds, previousContribution)}
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
                   label="Planilla"
                   value={currency(close.payroll)}
                   sign="minus"
@@ -4346,17 +4514,26 @@ function MonthCloseDetail({
                   showDeltaCol={Boolean(previous)}
                 />
                 <StatementRow
-                  label="Varios"
-                  value={currency(close.misc)}
+                  label="Software"
+                  value={currency(close.misc_software)}
                   sign="minus"
-                  pct={pctOf(close.misc, grossCodIncome)}
-                  delta={pctChange(close.misc, previous?.misc)}
+                  pct={pctOf(close.misc_software, grossCodIncome)}
+                  delta={pctChange(close.misc_software, previous?.misc_software)}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Otros gastos"
+                  value={currency(close.misc_other)}
+                  sign="minus"
+                  pct={pctOf(close.misc_other, grossCodIncome)}
+                  delta={pctChange(close.misc_other, previous?.misc_other)}
                   deltaInverted
                   showDeltaCol={Boolean(previous)}
                 />
               </div>
               <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2">
-                <span className="text-xs font-semibold">Utilidad neta estimada</span>
+                <span className="text-xs font-semibold">{bottomLineLabel}</span>
                 <span className="flex items-baseline gap-2">
                   <span className={`font-mono text-xl font-semibold ${close.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
                     {currency(close.net_profit)}
@@ -4373,12 +4550,47 @@ function MonthCloseDetail({
 
             <div className="border border-border bg-card p-3">
               <p className="text-sm font-semibold">Operacion logistica</p>
+              <div className="mt-2 space-y-1.5 border border-border bg-background p-2">
+                {[
+                  { label: "Pedidos", value: close.orders, base: null as number | null },
+                  { label: "Confirmados", value: confirmedOrders, base: close.orders },
+                  { label: "Despachados", value: dispatchedOrders, base: confirmedOrders },
+                  { label: "Entregados", value: close.delivered, base: dispatchedOrders },
+                  { label: "Liquidados", value: deliveredSettled, base: close.delivered },
+                ].map((stage) => (
+                  <div key={stage.label}>
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">{stage.label}</span>
+                      <span className="font-mono">
+                        {stage.value}
+                        {stage.base ? (
+                          <span className="ml-1 text-[10px] text-muted-foreground">
+                            {Math.round((stage.value / stage.base) * 100)}%
+                          </span>
+                        ) : null}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 h-1 overflow-hidden bg-muted">
+                      <div
+                        className="h-full bg-cyan-400/70"
+                        style={{
+                          width: `${close.orders ? Math.min(100, (stage.value / close.orders) * 100) : 0}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
               <div className="mt-2 space-y-1">
-                <StatementRow label="Pedidos del mes" value={String(close.orders)} />
                 <StatementRow
-                  label="Entregados"
-                  value={`${close.delivered} (${formatPercent(deliveredRate)})`}
-                  tone={close.delivered ? "positive" : undefined}
+                  label="Efectividad entrega"
+                  value={`${close.delivered} · ${formatPercent(deliveryEffectiveness)}`}
+                  tone={deliveryEffectiveness >= 50 ? "positive" : "negative"}
+                />
+                <StatementRow
+                  label="Tasa de anulacion"
+                  value={`${close.annulled} · ${formatPercent(annulledRate)}`}
+                  tone={annulledRate > 25 ? "negative" : close.annulled ? "warning" : undefined}
                 />
                 <StatementRow
                   label="No entregados"
@@ -4391,47 +4603,12 @@ function MonthCloseDetail({
                   sign="minus"
                   tone={failedDeliveryLoss ? "negative" : undefined}
                 />
-                <StatementRow
-                  label="Anulados"
-                  value={String(close.annulled)}
-                  tone={close.annulled ? "warning" : undefined}
-                />
-                <StatementRow label="Pendientes" value={String(close.pending)} />
+                <StatementRow label="Pendientes en ruta" value={String(close.pending)} />
                 <StatementRow
                   label="Liquidados"
                   value={`${close.settled} (${formatPercent(settledRate)})`}
                   emphasis
                 />
-                <StatementRow
-                  label="Por reclamar"
-                  value={`${close.to_claim} · ${currency(close.cash_pending)}`}
-                  tone={close.to_claim ? "warning" : undefined}
-                />
-              </div>
-              <div className="mt-3">
-                <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
-                  <span>Caja por reclamar</span>
-                  <span>{formatPercent(claimShare)} del total pendiente + liquidado</span>
-                </div>
-                <div className="h-1.5 overflow-hidden border border-border bg-background">
-                  <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, claimShare)}%` }} />
-                </div>
-                {close.to_claim > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
-                    <span className="inline-flex items-center gap-1 border border-border bg-background px-2 py-0.5 text-muted-foreground">
-                      0-7 d <span className="font-mono text-foreground">{toClaimAging.fresh.count}</span>
-                      <span className="font-mono">{currency(toClaimAging.fresh.amount)}</span>
-                    </span>
-                    <span className="inline-flex items-center gap-1 border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-amber-200">
-                      8-15 d <span className="font-mono">{toClaimAging.warn.count}</span>
-                      <span className="font-mono">{currency(toClaimAging.warn.amount)}</span>
-                    </span>
-                    <span className="inline-flex items-center gap-1 border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-red-200">
-                      +15 d <span className="font-mono">{toClaimAging.late.count}</span>
-                      <span className="font-mono">{currency(toClaimAging.late.amount)}</span>
-                    </span>
-                  </div>
-                )}
               </div>
             </div>
           </>
@@ -4522,6 +4699,49 @@ function MonthCloseDetail({
         </div>
       </div>
 
+      {hasSettlementData && (
+        <div className="border border-border bg-card p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold">Caja por reclamar</p>
+            <span className={`font-mono text-sm font-semibold ${close.cash_pending > 0 ? "text-amber-300" : "text-emerald-300"}`}>
+              {currency(close.cash_pending)}
+            </span>
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            <div className="border border-border bg-background px-2.5 py-1.5">
+              <p className="text-[11px] text-muted-foreground">0-7 dias</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold">
+                {toClaimAging.fresh.count} <span className="text-[10px] font-normal text-muted-foreground">pedidos</span>
+              </p>
+              <p className="font-mono text-xs text-muted-foreground">{currency(toClaimAging.fresh.amount)}</p>
+            </div>
+            <div className="border border-amber-500/40 bg-amber-500/5 px-2.5 py-1.5">
+              <p className="text-[11px] text-amber-200">8-15 dias</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold">
+                {toClaimAging.warn.count} <span className="text-[10px] font-normal text-muted-foreground">pedidos</span>
+              </p>
+              <p className="font-mono text-xs text-amber-200">{currency(toClaimAging.warn.amount)}</p>
+            </div>
+            <div className="border border-red-500/40 bg-red-500/5 px-2.5 py-1.5">
+              <p className="text-[11px] text-red-200">+15 dias</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold">
+                {toClaimAging.late.count} <span className="text-[10px] font-normal text-muted-foreground">pedidos</span>
+              </p>
+              <p className="font-mono text-xs text-red-200">{currency(toClaimAging.late.amount)}</p>
+            </div>
+          </div>
+          <div className="mt-2">
+            <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>Participacion sobre pendiente + liquidado</span>
+              <span>{formatPercent(claimShare)}</span>
+            </div>
+            <div className="h-1.5 overflow-hidden border border-border bg-background">
+              <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, claimShare)}%` }} />
+            </div>
+          </div>
+        </div>
+      )}
+
       {hasSettlementData && close.delivered > 0 && (
         <div className="border border-border bg-card p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4531,22 +4751,25 @@ function MonthCloseDetail({
             </p>
           </div>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
-            <CompactStat label="Ingreso" value={currency(grossCodIncome / close.delivered)} />
-            <CompactStat label="Costo logistico" value={currency(close.boxful_costs / close.delivered)} />
+            <CompactStat label="Ticket promedio" value={currency(ticketPromedio)} />
             <CompactStat label="Costo producto" value={currency(close.product_costs / close.delivered)} />
-            <CompactStat label="Margen" value={currency(close.contribution_margin / close.delivered)} />
             <CompactStat
-              label="Utilidad"
-              value={currency(close.net_profit / close.delivered)}
-              tone={close.net_profit < 0 ? "warning" : undefined}
+              label={`Costo logistico (${formatPercent(logisticsTicketShare)} ticket)`}
+              value={currency(logisticsPerDelivery)}
             />
             <CompactStat
               label="CPA real (ads)"
               value={close.ads > 0 ? currency(close.ads / close.delivered) : "Sin ads"}
             />
+            <CompactStat label="Margen bruto" value={currency(grossMargin / close.delivered)} />
             <CompactStat
-              label="ROAS caja"
-              value={close.ads > 0 ? `${(close.cash_received / close.ads).toFixed(1)}x` : "Sin ads"}
+              label="Utilidad por entrega"
+              value={currency(close.net_profit / close.delivered)}
+              tone={close.net_profit < 0 ? "warning" : undefined}
+            />
+            <CompactStat
+              label="ROAS real"
+              value={close.ads > 0 ? `${(grossCodIncome / close.ads).toFixed(1)}x` : "Sin ads"}
             />
           </div>
         </div>
@@ -5466,6 +5689,8 @@ function buildMonthlyCloseRows(
       misc: 0,
       contribution_margin: 0,
       net_profit: 0,
+      misc_software: 0,
+      misc_other: 0,
     };
     byMonth.set(month, row);
     return row;
@@ -5498,9 +5723,16 @@ function buildMonthlyCloseRows(
   for (const expense of expenses) {
     const month = expense.month || getMonthKey(expense.expense_date) || "sin-fecha";
     const row = ensureMonth(month);
-    if (expense.type === "ads") row.ads += Number(expense.amount || 0);
-    if (expense.type === "payroll") row.payroll += Number(expense.amount || 0);
-    if (expense.type === "misc") row.misc += Number(expense.amount || 0);
+    const amount = Number(expense.amount || 0);
+    if (expense.type === "ads") row.ads += amount;
+    if (expense.type === "payroll") row.payroll += amount;
+    if (expense.type === "misc") {
+      row.misc += amount;
+      // El desglose Software vs Otros sale de la categoria/descripcion del gasto.
+      const descriptor = `${expense.category} ${expense.description} ${expense.platform}`.toLowerCase();
+      if (/software|saas|suscrip|app|herramienta/.test(descriptor)) row.misc_software += amount;
+      else row.misc_other += amount;
+    }
   }
 
   return Array.from(byMonth.values())
@@ -5520,6 +5752,8 @@ function buildMonthlyCloseRows(
       misc: roundMoney(row.misc),
       contribution_margin: roundMoney(row.contribution_margin),
       net_profit: roundMoney(row.contribution_margin - row.ads - row.payroll - row.misc),
+      misc_software: roundMoney(row.misc_software),
+      misc_other: roundMoney(row.misc_other),
     }))
     .sort((a, b) => b.month.localeCompare(a.month));
 }
@@ -5563,6 +5797,19 @@ function matchesMonthlyOrderFilter(order: OrderProfitabilityRow, filter: Monthly
   if (filter === "unsettled") return order.settlement_count === 0;
   if (filter === "to_claim") return order.tracking_status === "delivered" && order.settlement_count === 0;
   return order.settlement_count > 1;
+}
+
+// Estado de maduracion del mes segun dias desde su cierre: en COD un mes
+// reciente aun no termina de liquidarse y no debe leerse como definitivo.
+function getMonthMaturity(month: string): { label: string; className: string } | null {
+  if (!/^\d{4}-\d{2}$/.test(month)) return null;
+  const [year, monthNumber] = month.split("-").map(Number);
+  const monthEnd = new Date(year, monthNumber, 0);
+  const days = Math.floor((Date.now() - monthEnd.getTime()) / (24 * 60 * 60 * 1000));
+  if (days <= 15) return { label: "Abierto", className: "border-sky-500/40 bg-sky-500/10 text-sky-200" };
+  if (days <= 30) return { label: "En maduracion", className: "border-amber-500/40 bg-amber-500/10 text-amber-200" };
+  if (days <= 45) return { label: "Casi cerrado", className: "border-violet-500/40 bg-violet-500/10 text-violet-200" };
+  return { label: "Cerrado", className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" };
 }
 
 function getMonthKey(value: string | null): string {
