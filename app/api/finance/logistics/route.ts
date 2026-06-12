@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { readWorkbook, sheetToJson } from "@/lib/xlsx";
+import { buildShopifyMatchIndex, findShopifyOrderForRow } from "@/lib/order-matching";
 import {
   loadShopifyOrdersForMatching,
   type MatchableShopifyOrder as ShopifyOrder,
@@ -79,12 +80,12 @@ export async function POST(req: NextRequest) {
     const shopifyOrders = await loadShopifyOrdersForMatching(
       periodStart ?? inferEarliestDate(boxfulRows)
     );
-    const indexes = buildShopifyIndexes(shopifyOrders);
+    const matchIndex = buildShopifyMatchIndex(shopifyOrders);
     const statusSummary: Record<string, { count: number }> = {};
     let matchedRows = 0;
 
     const pendingRows = boxfulRows.map((row) => {
-      const shopify = findShopifyMatch(row.order_name, indexes);
+      const shopify = findShopifyOrderForRow({ order_name: row.order_name }, matchIndex);
       if (shopify) matchedRows++;
 
       statusSummary[row.boxful_status] = {
@@ -210,92 +211,6 @@ function parsePackageItems(raw: Record<string, unknown>): LogisticsPackageItem[]
     });
   }
   return items;
-}
-
-function buildShopifyIndexes(orders: ShopifyOrder[]) {
-  const byExternalOrderCode = new Map<string, ShopifyOrder>();
-  for (const order of orders) {
-    for (const code of getExternalOrderCodes(order)) {
-      if (!byExternalOrderCode.has(code)) byExternalOrderCode.set(code, order);
-    }
-  }
-  return {
-    byName: new Map(orders.map((order) => [order.name, order])),
-    byMcrcNumber: new Map(orders.map((order) => [`#MCRC${order.order_number}`, order])),
-    byOrderNumber: new Map(orders.map((order) => [String(order.order_number), order])),
-    byExternalOrderCode,
-  };
-}
-
-function findShopifyMatch(
-  orderName: string,
-  indexes: ReturnType<typeof buildShopifyIndexes>
-): ShopifyOrder | undefined {
-  const raw = orderName.trim();
-  const explicitMcrc = /^#?mcrc/i.test(raw);
-  if (explicitMcrc) {
-    // Guias reenviadas ("#MCRC10099-V2") cruzan con su pedido base.
-    const base = raw.replace(/-v\d+$/i, "");
-    return (
-      indexes.byName.get(raw) ??
-      indexes.byMcrcNumber.get(toMcrcLookupKey(raw)) ??
-      indexes.byOrderNumber.get(raw.replace(/^#?MCRC/i, "")) ??
-      (base !== raw
-        ? indexes.byName.get(base) ??
-          indexes.byMcrcNumber.get(toMcrcLookupKey(base)) ??
-          indexes.byOrderNumber.get(base.replace(/^#?MCRC/i, ""))
-        : undefined)
-    );
-  }
-
-  return (
-    indexes.byName.get(raw) ??
-    indexes.byExternalOrderCode.get(normalizeExternalOrderCode(raw))
-  );
-}
-
-function toMcrcLookupKey(value: string): string {
-  const compact = String(value || "").trim().replace(/^#/, "");
-  if (!compact) return "";
-  if (/^mcrc/i.test(compact)) return `#${compact.replace(/^mcrc/i, "MCRC")}`;
-  return `#MCRC${compact}`;
-}
-
-function getExternalOrderCodes(order: ShopifyOrder): string[] {
-  const sources = [
-    order.note ?? "",
-    ...(order.note_attributes ?? []).flatMap((attribute) => [
-      attribute.name ?? "",
-      attribute.value ?? "",
-    ]),
-  ];
-  return extractExternalOrderCodes(sources.join("\n"));
-}
-
-function extractExternalOrderCodes(value: string): string[] {
-  const codes = new Set<string>();
-  const patterns = [
-    /\bpedido\s*#?\s*([0-9]{3,})\b/gi,
-    /\border\s*#?\s*([0-9]{3,})\b/gi,
-  ];
-  for (const pattern of patterns) {
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(value)) !== null) {
-      const code = normalizeExternalOrderCode(match[1] ?? "");
-      if (code) codes.add(code);
-    }
-  }
-  return Array.from(codes);
-}
-
-function normalizeExternalOrderCode(value: string): string {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^#/, "")
-    .replace(/^mcrc/i, "")
-    .replace(/\s+/g, "")
-    .replace(/[^0-9]/g, "");
 }
 
 function buildLogisticsRow(
