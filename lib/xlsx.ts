@@ -6,6 +6,10 @@ const KNOWN_CELL_TYPES = new Set(["z", "e", "s", "d", "b", "n"]);
 
 export function readWorkbook(data: ArrayBuffer): XLSX.WorkBook {
   const workbook = XLSX.read(data, { type: "array", cellDates: true });
+  return sanitizeWorkbook(workbook);
+}
+
+export function sanitizeWorkbook(workbook: XLSX.WorkBook): XLSX.WorkBook {
   for (const name of workbook.SheetNames) {
     sanitizeSheet(workbook.Sheets[name]);
   }

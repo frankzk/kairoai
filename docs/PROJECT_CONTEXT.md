@@ -151,9 +151,9 @@ Excel parsing:
 
 Database schema:
 
-- New migration file: `supabase/finance_schema.sql`
+- New migration file: `supabase/migrations/0002_finance_schema.sql`
 - This SQL must be executed in Supabase SQL Editor before production finance APIs can persist data.
-- If tables are missing, `/admin/finance` shows a message instructing the user to run `supabase/finance_schema.sql`.
+- If tables are missing, `/admin/finance` shows a message instructing the user to run `supabase/migrations/0002_finance_schema.sql`.
 - Additional finance-control tables:
   - `shopify_orders`: persisted Shopify order master, synced in batches.
   - `shopify_order_syncs`: reserved sync audit table.
@@ -565,7 +565,7 @@ Build in this order:
 - Do not commit `.env.local` or secrets.
 - `.vercel` is local metadata and should remain ignored.
 - Vercel production deploys from `main`.
-- Finance persistence requires running `supabase/finance_schema.sql` in Supabase before use.
+- Finance persistence requires running `supabase/migrations/0002_finance_schema.sql` in Supabase before use.
 - After changing protected routes, verify:
   - `/login` returns 200
   - `/` redirects to `/login` when unauthenticated

@@ -34,5 +34,5 @@ Do not commit local secrets. Environment files are ignored by Git.
 
 Run the base schema first, then run the finance schema when enabling the order management/profitability area. The finance schema includes product costs, expenses, settlement imports, and Boxful logistics imports.
 
-- `supabase/schema.sql`
-- `supabase/finance_schema.sql`
+- `supabase/migrations/0001_schema.sql`
+- `supabase/migrations/0002_finance_schema.sql`

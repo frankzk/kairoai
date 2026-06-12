@@ -26,13 +26,36 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import {
+  buildShopifyMatchIndex,
+  extractExternalOrderCodesFromText,
+  findShopifyOrderForRow,
+  getOrderMatchKeys,
+  getShopifyNoteText,
+  getShopifyOrderMatchKeys,
+  normalizeMatchKey,
+  normalizeSearchText,
+  type OrderMatchKeySource,
+} from "@/lib/order-matching";
+import type {
+  BoxfulFileControl,
+  BusinessExpense,
+  ExpenseType,
+  FinanceClaim,
+  LogisticsImport,
+  LogisticsRow,
+  ProductCost,
+  ProductCostVersion,
+  ProfitabilitySummary,
+  SettlementImport,
+  SettlementRow,
+} from "@/lib/finance-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 type Tab = "orders" | "products" | "notes" | "settlements" | "costs" | "expenses" | "monthly" | "files";
-type ExpenseType = "ads" | "payroll" | "misc";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 type OrderTrackingFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
@@ -52,43 +75,6 @@ type SettlementImportSort = "recent" | "oldest";
 type SettlementShopifyFilter = "all" | "matched" | "unmatched";
 type ProductLineItem = { sku?: string; title: string; quantity: number; price: number };
 
-interface SettlementImport {
-  id: number;
-  file_name: string;
-  period_label: string;
-  period_start: string | null;
-  period_end: string | null;
-  total_rows: number;
-  matched_rows: number;
-  unmatched_rows: number;
-  total_to_liquidate: number;
-  created_at: string;
-}
-
-interface SettlementRow {
-  id: number;
-  import_id: number;
-  order_name: string;
-  guide_number: string;
-  customer_name: string;
-  courier: string;
-  settlement_status: string;
-  internal_status: string;
-  match_status: string;
-  cod_amount: number;
-  cod_commission: number;
-  card_commission: number;
-  delivery_cost: number;
-  pick_pack_cost: number;
-  packaging_cost: number;
-  amount_to_liquidate: number;
-  shopify_order_name: string;
-  shopify_financial_status: string;
-  shopify_fulfillment_status: string;
-  shopify_created_at?: string | null;
-  order_items: ProductLineItem[];
-}
-
 interface SettlementTrace {
   file_name: string;
   amount_to_liquidate: number;
@@ -100,38 +86,6 @@ interface DoubleSettlementAnomaly {
   key: string;
   kind: "order" | "guide";
   traces: SettlementTrace[];
-}
-
-interface LogisticsImport {
-  id: number;
-  file_name: string;
-  period_label: string;
-  period_start: string | null;
-  period_end: string | null;
-  total_rows: number;
-  matched_rows: number;
-  unmatched_rows: number;
-  created_at: string;
-}
-
-interface LogisticsRow {
-  id: number;
-  guide_number: string;
-  order_name: string;
-  customer_name: string;
-  courier: string;
-  boxful_status: string;
-  internal_status: string;
-  match_status: string;
-  cod_amount: number;
-  delivery_cost: number;
-  shopify_order_name: string;
-  shopify_order_number: number | null;
-  shopify_financial_status: string;
-  shopify_fulfillment_status: string;
-  shopify_cancelled_at: string | null;
-  shopify_created_at: string | null;
-  package_items: Array<{ title: string; quantity: number; price: number }>;
 }
 
 interface ShopifyOrderSummary {
@@ -182,28 +136,6 @@ interface TrackableOrderRow {
   package_items: ProductLineItem[];
 }
 
-interface ProductCost {
-  id: number;
-  sku: string;
-  product_name: string;
-  unit_cost: number;
-  packaging_cost: number;
-  currency: string;
-  effective_from: string;
-  active: boolean;
-}
-
-interface ProductCostVersion {
-  id: number;
-  sku: string;
-  product_name: string;
-  unit_cost: number;
-  packaging_cost: number;
-  currency: string;
-  effective_from: string;
-  created_at: string;
-}
-
 type ProductCostSaveInput = {
   sku: string;
   product_name: string;
@@ -211,29 +143,6 @@ type ProductCostSaveInput = {
   packaging_cost: number;
   effective_from?: string;
 };
-
-interface FinanceClaim {
-  id: number;
-  anomaly_key: string;
-  order_name: string;
-  guide_number: string;
-  type: string;
-  status: "pendiente" | "reclamado" | "resuelto" | "descartado";
-  amount: number;
-  source_file: string;
-  notes: string;
-}
-
-interface BoxfulFileControl {
-  id: number;
-  file_name: string;
-  file_type: "logistica" | "liquidacion";
-  cutoff_date: string | null;
-  status: "esperado" | "importado" | "faltante" | "ignorado";
-  import_id: number | null;
-  notes: string;
-  imported_at: string | null;
-}
 
 interface ShopifyProductOption {
   variant_id: number;
@@ -244,38 +153,6 @@ interface ShopifyProductOption {
   sku: string;
   price: number;
   image_url?: string;
-}
-
-interface BusinessExpense {
-  id: number;
-  type: ExpenseType;
-  expense_date: string;
-  month: string;
-  platform: string;
-  category: string;
-  description: string;
-  amount: number;
-}
-
-interface ProfitabilitySummary {
-  cod_collected: number;
-  cod_commission: number;
-  card_commission: number;
-  delivery_cost: number;
-  pick_pack_cost: number;
-  settlement_packaging_cost: number;
-  settlement_charged_costs: number;
-  settlement_total: number;
-  product_costs: number;
-  ads: number;
-  payroll: number;
-  misc: number;
-  net_profit: number;
-  delivered_orders: number;
-  not_delivered_orders: number;
-  unmatched_orders: number;
-  matched_orders: number;
-  missing_cost_skus: string[];
 }
 
 interface OrderProfitabilityRow {
@@ -949,7 +826,7 @@ export default function FinancePage() {
         {error && (
           <div className="border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-red-200">
             {error.includes("Could not find the table") || error.includes("schema cache")
-              ? "Faltan tablas financieras en Supabase. Ejecuta supabase/finance_schema.sql en SQL Editor."
+              ? "Faltan tablas financieras en Supabase. Ejecuta supabase/migrations/0002_finance_schema.sql en SQL Editor."
               : error}
           </div>
         )}
@@ -5380,6 +5257,8 @@ function mergeLogisticsBoxfulFiles(
       import_id: item.id,
       notes: "",
       imported_at: item.created_at,
+      created_at: item.created_at,
+      updated_at: item.created_at,
     });
   }
   return Array.from(byName.values()).sort((a, b) =>
@@ -5391,7 +5270,7 @@ function buildVisibleOrderRows(
   logisticsRows: LogisticsRow[],
   shopifyOrders: ShopifyOrderSummary[]
 ): TrackableOrderRow[] {
-  const shopifyByMatchKey = buildShopifyOrderMatchIndex(shopifyOrders);
+  const shopifyByMatchKey = buildShopifyMatchIndex(shopifyOrders);
   const logisticsDisplayRows = logisticsRows.map((row) => {
     const shopify = findShopifyOrderForRow(row, shopifyByMatchKey);
     const shopifyItems = shopify
@@ -5467,7 +5346,7 @@ function enrichSettlementRowsWithShopify(
 ): SettlementRow[] {
   if (!rows.length || !shopifyOrders.length) return rows;
 
-  const shopifyByMatchKey = buildShopifyOrderMatchIndex(shopifyOrders);
+  const shopifyByMatchKey = buildShopifyMatchIndex(shopifyOrders);
   return rows.map((row) => {
     const shopify = findShopifyOrderForRow(
       {
@@ -5497,72 +5376,6 @@ function enrichSettlementRowsWithShopify(
           })),
     };
   });
-}
-
-type OrderMatchKeySource = {
-  order_name?: string | null;
-  shopify_order_name?: string | null;
-  shopify_order_number?: number | null;
-  shopify_note?: string | null;
-};
-
-function buildShopifyOrderMatchIndex(orders: ShopifyOrderSummary[]): Map<string, ShopifyOrderSummary> {
-  const byKey = new Map<string, ShopifyOrderSummary>();
-
-  for (const order of orders) {
-    for (const key of extractExternalOrderCodesFromText(getShopifyNoteText(order)).map(normalizeMatchKey)) {
-      if (!byKey.has(key)) byKey.set(key, order);
-    }
-  }
-
-  for (const order of orders) {
-    for (const key of getShopifyDirectOrderMatchKeys(order)) {
-      if (!byKey.has(key)) byKey.set(key, order);
-    }
-  }
-  return byKey;
-}
-
-function findShopifyOrderForRow(
-  row: OrderMatchKeySource,
-  shopifyByMatchKey: Map<string, ShopifyOrderSummary>
-): ShopifyOrderSummary | undefined {
-  for (const key of getOrderMatchKeys(row)) {
-    const order = shopifyByMatchKey.get(key);
-    if (order) return order;
-  }
-  return undefined;
-}
-
-function getOrderMatchKeys(row: OrderMatchKeySource): string[] {
-  const orderNumber = row.shopify_order_number;
-  const orderNameKey = normalizeMatchKey(row.order_name ?? "");
-  // Guias reenviadas ("#MCRC10099-V2") cruzan con su pedido base de Shopify.
-  const reshipmentBaseKey = /^mcrc\d+-v\d+$/.test(orderNameKey)
-    ? orderNameKey.replace(/-v\d+$/, "")
-    : "";
-  return uniqueKeys([
-    orderNameKey,
-    reshipmentBaseKey,
-    ...extractExternalOrderCodesFromText(row.shopify_note ?? "").map(normalizeMatchKey),
-    normalizeMatchKey(row.shopify_order_name ?? ""),
-    orderNumber ? normalizeMatchKey(`#MCRC${orderNumber}`) : "",
-  ]);
-}
-
-function getShopifyOrderMatchKeys(order: ShopifyOrderSummary): string[] {
-  return uniqueKeys([
-    ...extractExternalOrderCodesFromText(getShopifyNoteText(order)).map(normalizeMatchKey),
-    ...getShopifyDirectOrderMatchKeys(order),
-  ]);
-}
-
-function getShopifyDirectOrderMatchKeys(order: ShopifyOrderSummary): string[] {
-  const orderNumber = order.order_number;
-  return uniqueKeys([
-    normalizeMatchKey(order.name),
-    orderNumber ? normalizeMatchKey(`#MCRC${orderNumber}`) : "",
-  ]);
 }
 
 function uniqueKeys(keys: string[]): string[] {
@@ -6247,48 +6060,6 @@ function uniqueSettlementTraces(traces: SettlementTrace[]): SettlementTrace[] {
     unique.push(trace);
   }
   return unique;
-}
-
-function normalizeMatchKey(value: string): string {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^#/, "")
-    .replace(/\s+/g, "");
-}
-
-function normalizeSearchText(value: string): string {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^#/, "")
-    .replace(/\s+/g, "")
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function extractExternalOrderCodesFromText(value: string): string[] {
-  const codes = new Set<string>();
-  const patterns = [
-    /\bpedido\s*#?\s*([0-9]{3,})\b/gi,
-    /\border\s*#?\s*([0-9]{3,})\b/gi,
-  ];
-  for (const pattern of patterns) {
-    let match: RegExpExecArray | null;
-    const text = String(value || "");
-    while ((match = pattern.exec(text)) !== null) {
-      const code = normalizeSearchText(match[1] ?? "").replace(/[^0-9]/g, "");
-      if (code) codes.add(code);
-    }
-  }
-  return Array.from(codes);
-}
-
-function getShopifyNoteText(order: Pick<ShopifyOrderSummary, "note" | "note_attributes">): string {
-  const attributeText = (order.note_attributes ?? [])
-    .flatMap((attribute) => [attribute.name ?? "", attribute.value ?? ""])
-    .filter(Boolean)
-    .join("\n");
-  return [order.note ?? "", attributeText].filter(Boolean).join("\n");
 }
 
 function buildShopifyNoteAliasRows(orders: ShopifyOrderSummary[]): ShopifyNoteAliasRow[] {
