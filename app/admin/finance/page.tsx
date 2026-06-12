@@ -51,6 +51,7 @@ type MonthlyOrderFilter =
 type SettlementImportSort = "recent" | "oldest";
 type SettlementShopifyFilter = "all" | "matched" | "unmatched";
 type ProductLineItem = { sku?: string; title: string; quantity: number; price: number };
+type ImportResult = { ok: boolean; error?: string };
 
 interface SettlementImport {
   id: number;
@@ -313,6 +314,7 @@ interface ProductAnalysisRow {
   key: string;
   product_name: string;
   sku: string;
+  sample_orders: string[];
   orders: number;
   units: number;
   dispatched: number;
@@ -398,6 +400,7 @@ const PRODUCT_ANALYSIS_FILTERS: Array<{ value: ProductAnalysisFilter; label: str
   { value: "delivered", label: "Entregados" },
   { value: "not_delivered", label: "No entregados" },
 ];
+const UNKNOWN_PRODUCT_LABEL = "Producto sin registrar";
 
 const ORDER_SETTLEMENT_FILTERS: Array<{ value: OrderSettlementFilter; label: string }> = [
   { value: "all", label: "Todos" },
@@ -694,7 +697,7 @@ export default function FinancePage() {
     await refresh();
   }
 
-  async function handleLogisticsImport(event: FormEvent<HTMLFormElement>): Promise<boolean> {
+  async function handleLogisticsImport(event: FormEvent<HTMLFormElement>): Promise<ImportResult> {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
@@ -709,10 +712,11 @@ export default function FinancePage() {
       if (!res.ok) throw new Error(json.error ?? "No se pudo importar logistica");
       form.reset();
       await refresh();
-      return true;
+      return { ok: true };
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo importar logistica");
-      return false;
+      const message = err instanceof Error ? err.message : "No se pudo importar logistica";
+      setError(message);
+      return { ok: false, error: message };
     } finally {
       setImportingLogistics(false);
     }
@@ -1046,9 +1050,10 @@ function OrdersTab({
   syncMessage: string;
   onSyncShopify: () => void;
   importingLogistics: boolean;
-  onLogisticsImport: (event: FormEvent<HTMLFormElement>) => Promise<boolean>;
+  onLogisticsImport: (event: FormEvent<HTMLFormElement>) => Promise<ImportResult>;
 }) {
   const [isLogisticsModalOpen, setIsLogisticsModalOpen] = useState(false);
+  const [logisticsModalError, setLogisticsModalError] = useState("");
   const [orderSearch, setOrderSearch] = useState("");
   const [periodMode, setPeriodMode] = useState<OrderPeriodMode>("all");
   const [selectedOrderMonth, setSelectedOrderMonth] = useState("");
@@ -1147,8 +1152,13 @@ function OrdersTab({
   }, [orderMonthOptions, selectedOrderMonth]);
 
   async function handleModalLogisticsImport(event: FormEvent<HTMLFormElement>) {
-    const didImport = await onLogisticsImport(event);
-    if (didImport) setIsLogisticsModalOpen(false);
+    setLogisticsModalError("");
+    const result = await onLogisticsImport(event);
+    if (result.ok) {
+      setIsLogisticsModalOpen(false);
+      return;
+    }
+    setLogisticsModalError(result.error ?? "No se pudo importar el archivo Boxful.");
   }
 
   return (
@@ -1170,7 +1180,10 @@ function OrdersTab({
             <Button
               type="button"
               disabled={importingLogistics}
-              onClick={() => setIsLogisticsModalOpen(true)}
+              onClick={() => {
+                setLogisticsModalError("");
+                setIsLogisticsModalOpen(true);
+              }}
               className="gap-2"
             >
               {importingLogistics ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
@@ -1367,12 +1380,20 @@ function OrdersTab({
                 size="icon"
                 disabled={importingLogistics}
                 aria-label="Cerrar importacion Boxful"
-                onClick={() => setIsLogisticsModalOpen(false)}
+                onClick={() => {
+                  setLogisticsModalError("");
+                  setIsLogisticsModalOpen(false);
+                }}
               >
                 <X className="h-4 w-4" />
               </Button>
             </div>
             <form onSubmit={handleModalLogisticsImport} className="space-y-3">
+              {logisticsModalError && (
+                <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-red-200">
+                  {logisticsModalError}
+                </div>
+              )}
               <Input name="file" type="file" accept=".xlsx,.xls" required />
               <Input name="period_label" placeholder="Periodo, ej: 13 marzo - 10 junio" />
               <div className="grid grid-cols-2 gap-2">
@@ -1384,7 +1405,10 @@ function OrdersTab({
                   type="button"
                   variant="outline"
                   disabled={importingLogistics}
-                  onClick={() => setIsLogisticsModalOpen(false)}
+                  onClick={() => {
+                    setLogisticsModalError("");
+                    setIsLogisticsModalOpen(false);
+                  }}
                 >
                   Cancelar
                 </Button>
@@ -1494,6 +1518,7 @@ const PRODUCT_TABLE_COLUMNS: Array<{
 }> = [
   { key: "product_name", label: "Producto", numeric: false },
   { key: "sku", label: "SKU", numeric: false },
+  { key: "sample_orders", label: "Pedidos ejemplo", numeric: false },
   { key: "cost", label: "Costo", numeric: true },
   { key: "orders", label: "Pedidos", numeric: true },
   { key: "units", label: "Unid.", numeric: true },
@@ -1568,7 +1593,8 @@ function ProductAnalysisTab({
         const cost = row.sku ? costBySku.get(row.sku.toLowerCase()) : undefined;
         return cost ? cost.unit_cost + cost.packaging_cost : -1;
       }
-      return row[key];
+      const value = row[key];
+      return Array.isArray(value) ? value.join(", ") : value;
     };
     return [...filteredRows].sort((a, b) => {
       const aValue = valueOf(a);
@@ -1624,6 +1650,7 @@ function ProductAnalysisTab({
                 filteredRows.map((row) => ({
                   producto: row.product_name,
                   sku: row.sku,
+                  pedidos_ejemplo: row.sample_orders.join(", "),
                   pedidos: row.orders,
                   unidades: row.units,
                   despachados: row.dispatched,
@@ -1678,7 +1705,7 @@ function ProductAnalysisTab({
         </div>
 
         <div className="max-h-[640px] overflow-auto border border-border">
-          <table className="w-full min-w-[1180px] text-sm">
+          <table className="w-full min-w-[1480px] text-sm">
             <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
               <tr>
                 {PRODUCT_TABLE_COLUMNS.map((column) => {
@@ -1713,6 +1740,12 @@ function ProductAnalysisTab({
                     {row.product_name}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{row.sku || "-"}</td>
+                  <td
+                    className="max-w-[260px] truncate px-3 py-2 font-mono text-xs text-muted-foreground"
+                    title={row.sample_orders.join(", ")}
+                  >
+                    {row.sample_orders.join(", ") || "-"}
+                  </td>
                   <td className="px-3 py-2">
                     {row.sku ? (
                       <ProductCostCell
@@ -1742,7 +1775,7 @@ function ProductAnalysisTab({
               ))}
               {!filteredRows.length && (
                 <tr>
-                  <td colSpan={12} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  <td colSpan={PRODUCT_TABLE_COLUMNS.length} className="px-3 py-8 text-center text-sm text-muted-foreground">
                     No hay productos para este filtro.
                   </td>
                 </tr>
@@ -4966,9 +4999,7 @@ function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnaly
 
   for (const order of orders) {
     const itemsByProduct = new Map<string, { sku: string; title: string; quantity: number }>();
-    const items = order.items.length
-      ? order.items
-      : [{ title: order.items_summary || "Producto sin registrar", quantity: 1, price: 0 }];
+    const items = getProductAnalysisItems(order);
 
     for (const item of items) {
       const normalized = normalizeProductLineItem(item);
@@ -4990,6 +5021,7 @@ function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnaly
         key,
         product_name: item.title,
         sku: item.sku,
+        sample_orders: [],
         orders: 0,
         units: 0,
         dispatched: 0,
@@ -5003,6 +5035,10 @@ function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnaly
 
       existing.orders += 1;
       existing.units += item.quantity;
+      const sampleOrder = order.order_name || order.guide_number || order.customer_name;
+      if (sampleOrder && existing.sample_orders.length < 5 && !existing.sample_orders.includes(sampleOrder)) {
+        existing.sample_orders.push(sampleOrder);
+      }
       existing[status] += 1;
       existing.dispatched = existing.delivered + existing.not_delivered;
       existing.dispatch_rate = existing.orders ? (existing.dispatched / existing.orders) * 100 : 0;
@@ -5021,9 +5057,43 @@ function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnaly
   );
 }
 
+function getProductAnalysisItems(order: OrderProfitabilityRow): ProductLineItem[] {
+  if (order.items.length) return order.items;
+  const parsedSummaryItems = parseItemsSummary(order.items_summary);
+  if (parsedSummaryItems.length) return parsedSummaryItems;
+  return [{ title: UNKNOWN_PRODUCT_LABEL, quantity: 1, price: 0 }];
+}
+
+function parseItemsSummary(summary: string): ProductLineItem[] {
+  return String(summary || "")
+    .split(/\s*,\s*/)
+    .map((part): ProductLineItem | null => {
+      const trimmed = part.trim();
+      if (!trimmed) return null;
+
+      const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*x\s+(.+)$/i);
+      const quantity = match ? Math.max(1, Number(match[1] || 1)) : 1;
+      const title = cleanProductTitle(match?.[2] ?? trimmed);
+      if (!title || title === UNKNOWN_PRODUCT_LABEL) return null;
+
+      return {
+        sku: looksLikeSkuOnly(title) ? title.toLowerCase() : "",
+        title,
+        quantity,
+        price: 0,
+      };
+    })
+    .filter((item): item is ProductLineItem => Boolean(item));
+}
+
+function looksLikeSkuOnly(value: string): boolean {
+  const text = value.trim();
+  return Boolean(text && !/\s/.test(text) && /^[a-z0-9._-]{3,}$/i.test(text));
+}
+
 function normalizeProductLineItem(item: ProductLineItem): { key: string; sku: string; title: string; quantity: number } {
   const sku = String(item.sku ?? "").trim();
-  const title = cleanProductTitle(item.title || sku || "Producto sin registrar");
+  const title = cleanProductTitle(item.title || sku || UNKNOWN_PRODUCT_LABEL);
   const key = sku ? `sku:${sku.toLowerCase()}` : `title:${title.toLowerCase()}`;
   return {
     key,
@@ -5034,9 +5104,9 @@ function normalizeProductLineItem(item: ProductLineItem): { key: string; sku: st
 }
 
 function cleanProductTitle(title: string): string {
-  return String(title || "Producto sin registrar")
+  return String(title || UNKNOWN_PRODUCT_LABEL)
     .replace(/^\s*\d+\s*x\s*/i, "")
-    .trim() || "Producto sin registrar";
+    .trim() || UNKNOWN_PRODUCT_LABEL;
 }
 
 function getProductOrderAnalysisStatus(

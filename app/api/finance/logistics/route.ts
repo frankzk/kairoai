@@ -157,6 +157,7 @@ export async function DELETE(req: NextRequest) {
 
 function parseBoxfulRows(workbook: XLSX.WorkBook): ParsedLogisticsRow[] {
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  normalizeFormulaCells(sheet);
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
     defval: "",
     raw: false,
@@ -188,6 +189,27 @@ function parseBoxfulRows(workbook: XLSX.WorkBook): ParsedLogisticsRow[] {
       };
     })
     .filter((row) => row.guide_number || row.order_name);
+}
+
+function normalizeFormulaCells(sheet: XLSX.WorkSheet): void {
+  for (const [address, cell] of Object.entries(sheet)) {
+    if (address.startsWith("!") || !cell || typeof cell !== "object") continue;
+    const candidate = cell as { t?: string; f?: string; v?: unknown; w?: string };
+    if (candidate.t !== "f") continue;
+
+    const formulaValue = extractFormulaDisplayValue(candidate.f);
+    const value = formulaValue || text(candidate.v ?? candidate.w ?? "");
+    candidate.t = "s";
+    candidate.v = value;
+    candidate.w = value;
+  }
+}
+
+function extractFormulaDisplayValue(formula?: string): string {
+  if (!formula) return "";
+  const hyperlinkMatch = formula.match(/^HYPERLINK\(\s*"([^"]+)"/i);
+  if (hyperlinkMatch?.[1]) return hyperlinkMatch[1];
+  return "";
 }
 
 function parsePackageItems(raw: Record<string, unknown>): LogisticsPackageItem[] {

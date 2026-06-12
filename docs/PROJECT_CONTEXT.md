@@ -588,7 +588,15 @@ Build in this order:
 - Added `Productos` analysis tab for product-level operational performance. It uses the same normalized finance order rows as `Pedidos`/`Cierre mensual`, preserves line items on `OrderProfitabilityRow`, and aggregates by SKU when available or by product title otherwise.
 - Product-level dispatch rule: a product order is `despachado` only when the Shopify order is not cancelled/voided and tracking has final movement (`Entregado` or `No entregado`). Dispatch rate = dispatched product-orders / total product-orders. Delivery effectiveness = delivered / dispatched.
 - Product-level status counts classify Shopify cancelled/voided first as `Anulado`; otherwise they follow tracking as `Entregado`, `No entregado`, or `Pendiente`. The `Productos` tab includes search by product/SKU, status filters, order/unit counts, rate bars, and CSV export.
+- In `Productos`, `Producto sin registrar` is only a fallback when an order reaches the product analysis without readable line items, package items, or item summary. The table now includes `Pedidos ejemplo` so the user can search those order codes in `Pedidos` and audit why product metadata is missing. The grouping also parses `items_summary` before falling back to `Producto sin registrar`.
 - `Notas Shopify` now defaults to the actionable alias view: only rows with an extracted bot/order code are shown first. The user can switch to `Todas` to audit notes without extracted codes.
+- Large Boxful logistics files can exceed the Vercel function timeout when uploaded from the UI because the serverless route must parse Excel formulas, fetch/index Shopify orders, match rows, and insert thousands of records. On 2026-06-11, `01-12-2025 hasta 11-06-2026.xlsx` was imported directly from the local Codex environment into Supabase in chunks:
+  - `logistics_imports.id = 1`
+  - `total_rows = 7736`
+  - `matched_rows = 7407`
+  - `unmatched_rows = 329`
+  - `boxful_file_controls.status = importado`
+  Future product work should replace this emergency path with an async/background import flow or chunked client upload.
 
 2026-06-10:
 
