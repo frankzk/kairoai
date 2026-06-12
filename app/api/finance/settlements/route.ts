@@ -248,10 +248,17 @@ function findShopifyMatch(
   const raw = orderName.trim();
   const explicitMcrc = /^#?mcrc/i.test(raw);
   if (explicitMcrc) {
+    // Guias reenviadas ("#MCRC10099-V2") cruzan con su pedido base.
+    const base = raw.replace(/-v\d+$/i, "");
     return (
       indexes.byName.get(raw) ??
       indexes.byMcrcNumber.get(toMcrcLookupKey(raw)) ??
-      indexes.byOrderNumber.get(raw.replace(/^#?MCRC/i, ""))
+      indexes.byOrderNumber.get(raw.replace(/^#?MCRC/i, "")) ??
+      (base !== raw
+        ? indexes.byName.get(base) ??
+          indexes.byMcrcNumber.get(toMcrcLookupKey(base)) ??
+          indexes.byOrderNumber.get(base.replace(/^#?MCRC/i, ""))
+        : undefined)
     );
   }
 

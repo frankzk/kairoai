@@ -5,7 +5,9 @@ import type React from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   BarChart3,
   ChevronDown,
   ChevronRight,
@@ -82,6 +84,7 @@ interface SettlementRow {
   shopify_order_name: string;
   shopify_financial_status: string;
   shopify_fulfillment_status: string;
+  shopify_created_at?: string | null;
   order_items: ProductLineItem[];
 }
 
@@ -503,9 +506,13 @@ export default function FinancePage() {
     () => getDeliveredWithoutSettlement(logisticsRows, rows),
     [logisticsRows, rows]
   );
+  const matchedSettlementRows = useMemo(
+    () => enrichSettlementRowsWithShopify(rows, shopifyOrders),
+    [rows, shopifyOrders]
+  );
   const settlementTraceByKey = useMemo(
-    () => buildSettlementTraceByKey(rows, imports),
-    [rows, imports]
+    () => buildSettlementTraceByKey(matchedSettlementRows, imports),
+    [matchedSettlementRows, imports]
   );
   const visibleOrderRows = useMemo(
     () => buildVisibleOrderRows(logisticsRows, shopifyOrders),
@@ -516,8 +523,8 @@ export default function FinancePage() {
     [settlementTraceByKey]
   );
   const financeControl = useMemo(
-    () => buildFinanceControlCenter(visibleOrderRows, rows, imports, costs, costVersions, settlementTraceByKey),
-    [visibleOrderRows, rows, imports, costs, costVersions, settlementTraceByKey]
+    () => buildFinanceControlCenter(visibleOrderRows, matchedSettlementRows, imports, costs, costVersions, settlementTraceByKey),
+    [visibleOrderRows, matchedSettlementRows, imports, costs, costVersions, settlementTraceByKey]
   );
   const productAnalysisRows = useMemo(
     () => buildProductAnalysisRows(financeControl.orders),
@@ -600,7 +607,9 @@ export default function FinancePage() {
       const persistedShopifyOrders = Array.isArray(persistedShopifyJson.orders)
         ? (persistedShopifyJson.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
         : [];
-      setShopifyOrders(mergeShopifyOrderSummaries(noteShopifyOrders, persistedShopifyOrders, liveShopifyOrders));
+      // Orden de fusion: lo sincronizado primero y las lecturas en vivo despues,
+      // para que una nota recien editada en Shopify pise la copia vieja de la base.
+      setShopifyOrders(mergeShopifyOrderSummaries(persistedShopifyOrders, noteShopifyOrders, liveShopifyOrders));
       setCosts(costsJson.costs ?? []);
       setCostVersions(Array.isArray(costsJson.versions) ? costsJson.versions as ProductCostVersion[] : []);
       setExpenses(expensesJson.expenses ?? []);
@@ -946,7 +955,7 @@ export default function FinancePage() {
             {tab === "settlements" && (
               <SettlementsTab
                 imports={imports}
-                rows={rows}
+                rows={matchedSettlementRows}
                 shopifyOrders={shopifyOrders}
                 liquidationAlertRows={liquidationAlertRows}
                 doubleSettlementAnomalies={doubleSettlementAnomalies}
@@ -1151,141 +1160,119 @@ function OrdersTab({
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="border border-border bg-background/60 p-3">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">Periodo</p>
-                <div className="flex flex-wrap gap-2">
-                  {ORDER_PERIOD_MODES.map((mode) => (
-                    <button
-                      key={mode.value}
-                      type="button"
-                      onClick={() => setPeriodMode(mode.value)}
-                      className={`border px-3 py-1.5 text-sm transition-colors ${
-                        periodMode === mode.value
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border bg-card text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                      }`}
-                    >
-                      {mode.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {periodMode === "month" && (
-                <label className="w-full space-y-1 lg:max-w-xs">
-                  <span className="text-xs font-medium text-muted-foreground">Mes</span>
-                  <select
-                    value={selectedOrderMonth}
-                    onChange={(event) => setSelectedOrderMonth(event.target.value)}
-                    className="h-10 w-full border border-input bg-background px-3 text-sm outline-none"
-                  >
-                    {orderMonthOptions.map((month) => (
-                      <option key={month} value={month}>
-                        {formatMonthLabel(month)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              {periodMode === "range" && (
-                <div className="grid w-full gap-2 sm:grid-cols-2 lg:max-w-md">
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-muted-foreground">Desde</span>
-                    <Input
-                      type="date"
-                      value={rangeStart}
-                      onChange={(event) => setRangeStart(event.target.value)}
-                    />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-muted-foreground">Hasta</span>
-                    <Input
-                      type="date"
-                      value={rangeEnd}
-                      onChange={(event) => setRangeEnd(event.target.value)}
-                    />
-                  </label>
-                </div>
-              )}
-
-              <div className="border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
-                Vista actual
-                <span className="ml-2 font-mono text-sm font-semibold text-foreground">
-                  {periodFilteredRows.length}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex flex-wrap gap-2">
-              {ORDER_TRACKING_FILTERS.map((filter) => (
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Periodo</span>
+            <div className="inline-flex divide-x divide-border border border-border">
+              {ORDER_PERIOD_MODES.map((mode) => (
                 <button
-                  key={filter.value}
+                  key={mode.value}
                   type="button"
-                  onClick={() => setTrackingFilter(filter.value)}
-                  className={`min-w-[132px] border px-3 py-2 text-left text-sm transition-colors ${
-                    trackingFilter === filter.value
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                  onClick={() => setPeriodMode(mode.value)}
+                  className={`px-3 py-1 text-sm transition-colors ${
+                    periodMode === mode.value
+                      ? "bg-primary/10 text-primary"
+                      : "bg-card text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  <span className="block text-xs">{filter.label}</span>
-                  <span className="mt-1 block font-mono text-lg font-semibold text-foreground">
-                    {trackingCounts[filter.value]}
-                  </span>
+                  {mode.label}
                 </button>
               ))}
             </div>
-            <div className="text-xs text-muted-foreground">
-              Base Shopify: {shopifyOrderCount} pedidos desde 16/09/2025 | vista: {periodFilteredRows.length} pedidos
-              {latestLogisticsImport
-                ? ` - Ultimo Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match Shopify, ${latestLogisticsImport.unmatched_rows} sin match`
-                : " - Sin Boxful importado"}
-            </div>
+            {periodMode === "month" && (
+              <select
+                value={selectedOrderMonth}
+                onChange={(event) => setSelectedOrderMonth(event.target.value)}
+                className="h-8 border border-input bg-background px-2 text-sm outline-none"
+                aria-label="Mes"
+              >
+                {orderMonthOptions.map((month) => (
+                  <option key={month} value={month}>
+                    {formatMonthLabel(month)}
+                  </option>
+                ))}
+              </select>
+            )}
+            {periodMode === "range" && (
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="date"
+                  value={rangeStart}
+                  onChange={(event) => setRangeStart(event.target.value)}
+                  className="h-8 w-[150px]"
+                  aria-label="Desde"
+                />
+                <span className="text-xs text-muted-foreground">a</span>
+                <Input
+                  type="date"
+                  value={rangeEnd}
+                  onChange={(event) => setRangeEnd(event.target.value)}
+                  className="h-8 w-[150px]"
+                  aria-label="Hasta"
+                />
+              </div>
+            )}
+            <span className="ml-auto text-xs text-muted-foreground">
+              Vista actual{" "}
+              <span className="font-mono text-sm font-semibold text-foreground">{periodFilteredRows.length}</span>
+            </span>
           </div>
-          <div className="space-y-2 border-t border-border pt-3">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs font-medium text-muted-foreground">Liquidacion</p>
-              {settlementFilter !== "all" && (
-                <button
-                  type="button"
-                  onClick={() => setSettlementFilter("all")}
-                  className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  Limpiar filtro
-                </button>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {ORDER_SETTLEMENT_FILTERS.map((filter) => (
-                <button
-                  key={filter.value}
-                  type="button"
-                  onClick={() => setSettlementFilter(filter.value)}
-                  className={`border px-3 py-1.5 text-sm transition-colors ${
-                    settlementFilter === filter.value
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                  }`}
-                >
-                  {filter.label} <span className="ml-1 font-mono text-xs text-foreground">{settlementCounts[filter.value]}</span>
-                </button>
-              ))}
-            </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Estado</span>
+            {ORDER_TRACKING_FILTERS.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                onClick={() => setTrackingFilter(filter.value)}
+                className={`border px-2.5 py-1 text-sm transition-colors ${
+                  trackingFilter === filter.value
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                }`}
+              >
+                {filter.label}{" "}
+                <span className="ml-1 font-mono text-xs text-foreground">{trackingCounts[filter.value]}</span>
+              </button>
+            ))}
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex w-full items-center gap-2 border border-input bg-background px-3 sm:max-w-xl">
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Liquidacion</span>
+            {ORDER_SETTLEMENT_FILTERS.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                onClick={() => setSettlementFilter(filter.value)}
+                className={`border px-2.5 py-1 text-sm transition-colors ${
+                  settlementFilter === filter.value
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                }`}
+              >
+                {filter.label}{" "}
+                <span className="ml-1 font-mono text-xs text-foreground">{settlementCounts[filter.value]}</span>
+              </button>
+            ))}
+            {settlementFilter !== "all" && (
+              <button
+                type="button"
+                onClick={() => setSettlementFilter("all")}
+                className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Limpiar filtro
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex w-full items-center gap-2 border border-input bg-background px-3 sm:max-w-md">
               <Search className="h-4 w-4 text-muted-foreground" />
               <input
                 value={orderSearch}
                 onChange={(event) => setOrderSearch(event.target.value)}
                 placeholder="Buscar pedido: #MCRC11566, 11566, guia o cliente"
-                className="h-10 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                className="h-8 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               />
               {orderSearch && (
                 <button
@@ -1298,11 +1285,15 @@ function OrdersTab({
                 </button>
               )}
             </div>
-            {orderSearch && (
-              <p className="text-xs text-muted-foreground">
-                {filteredRows.length} de {searchedRows.length} pedidos encontrados
-              </p>
-            )}
+            <p className="text-xs text-muted-foreground">
+              {orderSearch
+                ? `${filteredRows.length} de ${searchedRows.length} pedidos encontrados`
+                : `Base Shopify: ${shopifyOrderCount} pedidos desde 16/09/2025${
+                    latestLogisticsImport
+                      ? ` - Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match, ${latestLogisticsImport.unmatched_rows} sin match`
+                      : " - Sin Boxful importado"
+                  }`}
+            </p>
           </div>
           <OrdersTable
             rows={filteredRows}
@@ -1475,9 +1466,35 @@ function OrdersTable({
   );
 }
 
+const PRODUCT_TABLE_COLUMNS: Array<{
+  key: keyof ProductAnalysisRow;
+  label: string;
+  numeric: boolean;
+  headerClass?: string;
+}> = [
+  { key: "product_name", label: "Producto", numeric: false },
+  { key: "sku", label: "SKU", numeric: false },
+  { key: "orders", label: "Pedidos", numeric: true },
+  { key: "units", label: "Unid.", numeric: true },
+  { key: "dispatch_rate", label: "Tasa despacho", numeric: true, headerClass: "text-cyan-300" },
+  { key: "delivery_effectiveness", label: "Efectividad entrega", numeric: true, headerClass: "text-emerald-300" },
+  { key: "dispatched", label: "Desp.", numeric: true },
+  { key: "delivered", label: "Entreg.", numeric: true },
+  { key: "not_delivered", label: "No entreg.", numeric: true },
+  { key: "annulled", label: "Anul.", numeric: true },
+  { key: "pending", label: "Pend.", numeric: true },
+];
+
+// Las columnas de barra alinean a la izquierda aunque sean numericas.
+const PRODUCT_METER_COLUMNS = new Set<keyof ProductAnalysisRow>([
+  "dispatch_rate",
+  "delivery_effectiveness",
+]);
+
 function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<ProductAnalysisFilter>("all");
+  const [sort, setSort] = useState<{ key: keyof ProductAnalysisRow; dir: "asc" | "desc" } | null>(null);
   const filteredRows = useMemo(
     () =>
       rows.filter((row) => {
@@ -1487,8 +1504,33 @@ function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
       }),
     [rows, search, statusFilter]
   );
+  const sortedRows = useMemo(() => {
+    if (!sort) return filteredRows;
+    const factor = sort.dir === "asc" ? 1 : -1;
+    return [...filteredRows].sort((a, b) => {
+      const aValue = a[sort.key];
+      const bValue = b[sort.key];
+      if (typeof aValue === "number" && typeof bValue === "number") {
+        return (aValue - bValue) * factor;
+      }
+      return (
+        String(aValue ?? "").localeCompare(String(bValue ?? ""), "es", { sensitivity: "base" }) *
+        factor
+      );
+    });
+  }, [filteredRows, sort]);
   const summary = useMemo(() => summarizeProductAnalysisRows(filteredRows), [filteredRows]);
   const filterCounts = useMemo(() => getProductAnalysisFilterCounts(rows), [rows]);
+
+  function toggleSort(key: keyof ProductAnalysisRow, numeric: boolean) {
+    setSort((current) => {
+      if (current?.key === key) {
+        return { key, dir: current.dir === "asc" ? "desc" : "asc" };
+      }
+      // Numericas arrancan de mayor a menor; texto arranca A-Z.
+      return { key, dir: numeric ? "desc" : "asc" };
+    });
+  }
 
   return (
     <Card>
@@ -1567,21 +1609,33 @@ function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
           <table className="w-full min-w-[1180px] text-sm">
             <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
               <tr>
-                <th className="px-3 py-2">Producto</th>
-                <th className="px-3 py-2">SKU</th>
-                <th className="px-3 py-2 text-right">Pedidos</th>
-                <th className="px-3 py-2 text-right">Unid.</th>
-                <th className="px-3 py-2">Tasa despacho</th>
-                <th className="px-3 py-2">Efectividad entrega</th>
-                <th className="px-3 py-2 text-right">Desp.</th>
-                <th className="px-3 py-2 text-right">Entreg.</th>
-                <th className="px-3 py-2 text-right">No entreg.</th>
-                <th className="px-3 py-2 text-right">Anul.</th>
-                <th className="px-3 py-2 text-right">Pend.</th>
+                {PRODUCT_TABLE_COLUMNS.map((column) => {
+                  const rightAligned = column.numeric && !PRODUCT_METER_COLUMNS.has(column.key);
+                  return (
+                    <th key={column.key} className={`px-3 py-2 ${rightAligned ? "text-right" : ""}`}>
+                      <button
+                        type="button"
+                        onClick={() => toggleSort(column.key, column.numeric)}
+                        className={`inline-flex w-full items-center gap-1 transition-colors hover:text-foreground ${
+                          rightAligned ? "justify-end" : ""
+                        } ${column.headerClass ?? ""}`}
+                        title="Ordenar por esta columna"
+                      >
+                        {column.label}
+                        {sort?.key === column.key &&
+                          (sort.dir === "asc" ? (
+                            <ArrowUp className="h-3 w-3 shrink-0" />
+                          ) : (
+                            <ArrowDown className="h-3 w-3 shrink-0" />
+                          ))}
+                      </button>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
-              {filteredRows.slice(0, 800).map((row) => (
+              {sortedRows.slice(0, 800).map((row) => (
                 <tr key={row.key} className="border-t border-border/50">
                   <td className="max-w-[360px] truncate px-3 py-2 font-medium" title={row.product_name}>
                     {row.product_name}
@@ -1611,9 +1665,9 @@ function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
               )}
             </tbody>
           </table>
-          {filteredRows.length > 800 && (
+          {sortedRows.length > 800 && (
             <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-              Mostrando 800 de {filteredRows.length} productos.
+              Mostrando 800 de {sortedRows.length} productos.
             </div>
           )}
         </div>
@@ -1625,13 +1679,18 @@ function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
 function RateMeter({ value, tone }: { value: number; tone: "cyan" | "emerald" }) {
   const clampedValue = Math.max(0, Math.min(100, Number(value || 0)));
   const barClass = tone === "emerald" ? "bg-emerald-400" : "bg-cyan-400";
+  const textClass = tone === "emerald" ? "text-emerald-300" : "text-cyan-300";
 
+  // El % va antes de la barra y en su mismo color para que no se confunda
+  // con la barra de la columna vecina.
   return (
-    <div className="flex min-w-[150px] items-center gap-3">
+    <div className="flex min-w-[150px] items-center gap-2">
+      <span className={`w-10 shrink-0 text-right font-mono text-xs font-semibold ${textClass}`}>
+        {formatPercent(clampedValue)}
+      </span>
       <div className="h-2 flex-1 overflow-hidden bg-muted">
         <div className={`h-full ${barClass}`} style={{ width: `${clampedValue}%` }} />
       </div>
-      <span className="w-10 text-right font-mono text-xs">{formatPercent(clampedValue)}</span>
     </div>
   );
 }
@@ -4113,8 +4172,14 @@ function findShopifyOrderForRow(
 
 function getOrderMatchKeys(row: OrderMatchKeySource): string[] {
   const orderNumber = row.shopify_order_number;
+  const orderNameKey = normalizeMatchKey(row.order_name ?? "");
+  // Guias reenviadas ("#MCRC10099-V2") cruzan con su pedido base de Shopify.
+  const reshipmentBaseKey = /^mcrc\d+-v\d+$/.test(orderNameKey)
+    ? orderNameKey.replace(/-v\d+$/, "")
+    : "";
   return uniqueKeys([
-    normalizeMatchKey(row.order_name ?? ""),
+    orderNameKey,
+    reshipmentBaseKey,
     ...extractExternalOrderCodesFromText(row.shopify_note ?? "").map(normalizeMatchKey),
     normalizeMatchKey(row.shopify_order_name ?? ""),
     orderNumber ? normalizeMatchKey(`#MCRC${orderNumber}`) : "",
@@ -4462,7 +4527,7 @@ function settlementRowToTrackableOrder(row: SettlementRow): TrackableOrderRow {
     shopify_financial_status: row.shopify_financial_status,
     shopify_fulfillment_status: row.shopify_fulfillment_status,
     shopify_cancelled_at: null,
-    shopify_created_at: null,
+    shopify_created_at: row.shopify_created_at ?? null,
     package_items: row.order_items,
   };
 }

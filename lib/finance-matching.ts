@@ -31,25 +31,33 @@ const FALLBACK_CREATED_AT_MIN = "2025-09-16T00:00:00-06:00";
 export async function loadShopifyOrdersForMatching(
   periodStart: string | null
 ): Promise<MatchableShopifyOrder[]> {
-  const persisted = await listPersistedOrdersSlim();
+  const { orders: persisted, latestUpdatedAt } = await listPersistedOrdersSlim();
   if (!persisted.length) {
     const minDate = periodStart
       ? new Date(new Date(periodStart).getTime() - 45 * 24 * 60 * 60 * 1000).toISOString()
       : FALLBACK_CREATED_AT_MIN;
-    return fetchOrdersFromShopify(minDate, FALLBACK_MAX_PAGES);
+    return fetchOrdersFromShopify({ createdAtMin: minDate }, FALLBACK_MAX_PAGES);
   }
 
   const latestCreatedAt = persisted.reduce(
     (max, order) => (order.created_at > max ? order.created_at : max),
     ""
   );
-  const fresh = latestCreatedAt
-    ? await fetchOrdersFromShopify(latestCreatedAt, GAP_MAX_PAGES)
-    : [];
+  // Pedidos nuevos + pedidos viejos editados (p. ej. notas "Pedido <codigo>"
+  // agregadas a mano para forzar el match) desde la ultima sincronizacion.
+  const [freshCreated, freshUpdated] = await Promise.all([
+    latestCreatedAt
+      ? fetchOrdersFromShopify({ createdAtMin: latestCreatedAt }, GAP_MAX_PAGES)
+      : Promise.resolve([] as MatchableShopifyOrder[]),
+    latestUpdatedAt
+      ? fetchOrdersFromShopify({ updatedAtMin: latestUpdatedAt }, GAP_MAX_PAGES)
+      : Promise.resolve([] as MatchableShopifyOrder[]),
+  ]);
 
   const byId = new Map<number, MatchableShopifyOrder>();
   for (const order of persisted) byId.set(order.id, order);
-  for (const order of fresh) byId.set(order.id, order);
+  for (const order of freshCreated) byId.set(order.id, order);
+  for (const order of freshUpdated) byId.set(order.id, order);
   return Array.from(byId.values());
 }
 
@@ -62,18 +70,23 @@ interface PersistedOrderSlim {
   cancelled_at: string | null;
   total_price: number;
   shopify_created_at: string | null;
+  shopify_updated_at: string | null;
   line_items: Array<{ sku: string; title: string; quantity: number; price: number }> | null;
   note: string | null;
   note_attributes: Array<{ name?: string | null; value?: string | null }> | null;
 }
 
-async function listPersistedOrdersSlim(): Promise<MatchableShopifyOrder[]> {
+async function listPersistedOrdersSlim(): Promise<{
+  orders: MatchableShopifyOrder[];
+  latestUpdatedAt: string;
+}> {
   const orders: MatchableShopifyOrder[] = [];
+  let latestUpdatedAt = "";
   for (let from = 0; ; from += DB_PAGE_SIZE) {
     const { data, error } = await getDB()
       .from("shopify_orders")
       .select(
-        "shopify_order_id, order_number, name, financial_status, fulfillment_status, cancelled_at, total_price, shopify_created_at, line_items, note:raw_order->>note, note_attributes:raw_order->note_attributes"
+        "shopify_order_id, order_number, name, financial_status, fulfillment_status, cancelled_at, total_price, shopify_created_at, shopify_updated_at, line_items, note:raw_order->>note, note_attributes:raw_order->note_attributes"
       )
       .order("id", { ascending: true })
       .range(from, from + DB_PAGE_SIZE - 1);
@@ -81,6 +94,9 @@ async function listPersistedOrdersSlim(): Promise<MatchableShopifyOrder[]> {
 
     const page = (data ?? []) as unknown as PersistedOrderSlim[];
     for (const row of page) {
+      if (row.shopify_updated_at && row.shopify_updated_at > latestUpdatedAt) {
+        latestUpdatedAt = row.shopify_updated_at;
+      }
       orders.push({
         id: Number(row.shopify_order_id),
         name: row.name,
@@ -97,22 +113,28 @@ async function listPersistedOrdersSlim(): Promise<MatchableShopifyOrder[]> {
     }
     if (page.length < DB_PAGE_SIZE) break;
   }
-  return orders;
+  return { orders, latestUpdatedAt };
 }
 
 async function fetchOrdersFromShopify(
-  createdAtMin: string,
+  filters: { createdAtMin?: string; updatedAtMin?: string },
   maxPages: number
 ): Promise<MatchableShopifyOrder[]> {
   const shop = process.env.SHOPIFY_SHOP_DOMAIN;
   const token = process.env.SHOPIFY_ACCESS_TOKEN;
   if (!shop || !token) return [];
 
-  let url =
-    `https://${shop}/admin/api/2024-01/orders.json` +
-    `?status=any&limit=250&order=created_at%20desc` +
-    `&created_at_min=${encodeURIComponent(createdAtMin)}` +
-    `&fields=id,name,order_number,note,note_attributes,created_at,financial_status,fulfillment_status,cancelled_at,total_price,line_items`;
+  const params = new URLSearchParams({
+    status: "any",
+    limit: "250",
+    order: filters.updatedAtMin ? "updated_at desc" : "created_at desc",
+    fields:
+      "id,name,order_number,note,note_attributes,created_at,financial_status,fulfillment_status,cancelled_at,total_price,line_items",
+  });
+  if (filters.createdAtMin) params.set("created_at_min", filters.createdAtMin);
+  if (filters.updatedAtMin) params.set("updated_at_min", filters.updatedAtMin);
+
+  let url = `https://${shop}/admin/api/2024-01/orders.json?${params.toString()}`;
 
   const orders: MatchableShopifyOrder[] = [];
   for (let page = 0; page < maxPages && url; page++) {
