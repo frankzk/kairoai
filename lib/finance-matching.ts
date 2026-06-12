@@ -22,7 +22,7 @@ export interface MatchableShopifyOrder {
 const DB_PAGE_SIZE = 1000;
 const GAP_MAX_PAGES = 10;
 const FALLBACK_MAX_PAGES = 30;
-const FALLBACK_CREATED_AT_MIN = "2025-09-16T00:00:00-06:00";
+const FALLBACK_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
 
 // Pedir miles de pedidos a la API de Shopify durante una importacion excede el
 // limite de tiempo de Vercel; la base de pedidos vive en la tabla

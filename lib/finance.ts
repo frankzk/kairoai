@@ -466,7 +466,7 @@ export interface PersistedShopifyOrderSummary
   note_attributes: Array<{ name?: string | null; value?: string | null }>;
 }
 
-export async function listPersistedShopifyOrders(limit = 1000): Promise<PersistedShopifyOrderSummary[]> {
+export async function listPersistedShopifyOrders(limit = 1000, offset = 0): Promise<PersistedShopifyOrderSummary[]> {
   type RawSummary = PersistedShopifyOrderSummary & {
     raw_line_items: Array<Record<string, unknown>> | null;
   };
@@ -474,13 +474,17 @@ export async function listPersistedShopifyOrders(limit = 1000): Promise<Persiste
   // defecto); se pagina con range() hasta el limite pedido.
   const pageSize = 1000;
   const rows: RawSummary[] = [];
-  for (let from = 0; from < limit; from += pageSize) {
+  const safeLimit = Math.max(Math.floor(limit), 0);
+  const safeOffset = Math.max(Math.floor(offset), 0);
+  for (let fetched = 0; fetched < safeLimit; fetched += pageSize) {
+    const from = safeOffset + fetched;
+    const to = safeOffset + Math.min(fetched + pageSize, safeLimit) - 1;
     const { data, error } = await getDB()
       .from("shopify_orders")
       .select(PERSISTED_ORDER_SUMMARY_COLUMNS)
       .order("shopify_created_at", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false })
-      .range(from, Math.min(from + pageSize, limit) - 1);
+      .range(from, to);
     if (error) throw new Error(`listPersistedShopifyOrders: ${error.message}`);
     const page = (data ?? []) as unknown as RawSummary[];
     rows.push(...page);

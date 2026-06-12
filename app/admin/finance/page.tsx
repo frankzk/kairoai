@@ -519,10 +519,12 @@ const EXPENSE_VIEW_CONFIG: Array<{
   },
 ];
 
-const FINANCE_SHOPIFY_CREATED_AT_MIN = "2025-09-16T00:00:00-06:00";
+const FINANCE_SHOPIFY_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
 const FINANCE_SHOPIFY_ORDERS_URL =
   `/api/shopify/orders?status=any&limit=250&created_at_min=${encodeURIComponent(FINANCE_SHOPIFY_CREATED_AT_MIN)}`;
 const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
+const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 1000;
+const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
@@ -612,6 +614,7 @@ export default function FinancePage() {
       let shopifyOrdersJson: Record<string, unknown> = {};
       let shopifyNoteOrdersJson: Record<string, unknown> = {};
       let persistedShopifyJson: Record<string, unknown> = {};
+      let persistedShopifyError = "";
       let claimsJson: Record<string, unknown> = {};
       let boxfulFilesJson: Record<string, unknown> = {};
       try {
@@ -630,9 +633,9 @@ export default function FinancePage() {
         shopifyNoteOrdersJson = {};
       }
       try {
-        const persistedShopifyRes = await fetch("/api/finance/shopify-sync?limit=20000", { cache: "no-store" });
-        persistedShopifyJson = await readApiJson(persistedShopifyRes);
-      } catch {
+        persistedShopifyJson = await fetchPersistedShopifySnapshot();
+      } catch (err) {
+        persistedShopifyError = err instanceof Error ? err.message : "No se pudo leer el historico Shopify";
         persistedShopifyJson = {};
       }
       try {
@@ -678,7 +681,8 @@ export default function FinancePage() {
         logisticsJson.error ??
         costsJson.error ??
         expensesJson.error ??
-        summaryJson.error;
+        summaryJson.error ??
+        persistedShopifyError;
       if (firstError) setError(firstError);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
@@ -5583,6 +5587,35 @@ function toCsv(rows: unknown[]): string {
     return `"${text.replace(/"/g, '""')}"`;
   };
   return [headers.join(","), ...records.map((row) => headers.map((header) => escape(row[header])).join(","))].join("\n");
+}
+
+async function fetchPersistedShopifySnapshot(): Promise<Record<string, unknown>> {
+  const orders: Array<Record<string, unknown>> = [];
+  let coverage: { count: number; oldest: string | null; newest: string | null } | null = null;
+  let offset = 0;
+
+  while (orders.length < FINANCE_SHOPIFY_SYNC_MAX_ROWS) {
+    const res = await fetch(
+      `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_PAGE_SIZE}&offset=${offset}`,
+      { cache: "no-store" }
+    );
+    const json = await readApiJson(res);
+    if (!res.ok) throw new Error(json.error ?? "No se pudo leer el historico Shopify");
+
+    if (!coverage && json.coverage && typeof json.coverage === "object") {
+      coverage = json.coverage as { count: number; oldest: string | null; newest: string | null };
+    }
+
+    const pageOrders = Array.isArray(json.orders) ? json.orders as Array<Record<string, unknown>> : [];
+    orders.push(...pageOrders);
+
+    if (!json.has_more || !pageOrders.length) break;
+    const nextOffset = Number(json.next_offset ?? offset + pageOrders.length);
+    if (!Number.isFinite(nextOffset) || nextOffset <= offset) break;
+    offset = nextOffset;
+  }
+
+  return { orders, total: orders.length, coverage };
 }
 
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {

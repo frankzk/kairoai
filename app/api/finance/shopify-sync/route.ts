@@ -9,20 +9,33 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const DEFAULT_CREATED_AT_MIN = "2025-09-16T00:00:00-06:00";
+const DEFAULT_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
 const DEFAULT_SYNC_PAGES_PER_REQUEST = 8;
 const MAX_SYNC_PAGES_PER_REQUEST = 12;
+const MAX_GET_LIMIT = 2000;
 // Shopify REST permite ~2 req/s; un respiro entre paginas evita 429 en rafaga.
 const PAGE_DELAY_MS = 350;
 
 export async function GET(req: NextRequest) {
   try {
-    const limit = Number(req.nextUrl.searchParams.get("limit") || 1000);
+    const requestedLimit = Number(req.nextUrl.searchParams.get("limit") || 1000);
+    const offset = Math.max(Number(req.nextUrl.searchParams.get("offset") || 0), 0);
+    const limit = Math.min(Math.max(requestedLimit, 1), MAX_GET_LIMIT);
     const [orders, coverage] = await Promise.all([
-      listPersistedShopifyOrders(Math.min(Math.max(limit, 1), 20000)),
+      listPersistedShopifyOrders(limit + 1, offset),
       getPersistedShopifyCoverage(),
     ]);
-    return NextResponse.json({ orders, total: orders.length, coverage });
+    const pageOrders = orders.slice(0, limit);
+    const hasMore = orders.length > limit;
+    return NextResponse.json({
+      orders: pageOrders,
+      total: pageOrders.length,
+      coverage,
+      offset,
+      limit,
+      has_more: hasMore,
+      next_offset: hasMore ? offset + pageOrders.length : null,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer pedidos Shopify sincronizados";
     return NextResponse.json({ orders: [], total: 0, coverage: null, error: message }, { status: 500 });
