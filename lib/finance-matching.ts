@@ -103,6 +103,8 @@ async function listPersistedOrdersSlim(): Promise<{
         order_number: Number(row.order_number ?? 0),
         note: row.note,
         note_attributes: row.note_attributes ?? [],
+        // Cadena vacia (no null): los matchers comparan strings, y los
+        // builders de filas la convierten a null antes de insertar.
         created_at: row.shopify_created_at ?? "",
         financial_status: row.financial_status,
         fulfillment_status: row.fulfillment_status || null,
