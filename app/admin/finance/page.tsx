@@ -38,6 +38,7 @@ type ProductAnalysisFilter =
   | "all"
   | "no_cost"
   | "unknown_product"
+  | "dispatched"
   | "pending"
   | "annulled"
   | "delivered"
@@ -427,6 +428,7 @@ const PRODUCT_ANALYSIS_FILTERS: Array<{ value: ProductAnalysisFilter; label: str
   { value: "all", label: "Todos" },
   { value: "no_cost", label: "Sin costo" },
   { value: "unknown_product", label: "Sin producto" },
+  { value: "dispatched", label: "Despachados" },
   { value: "pending", label: "Pendientes" },
   { value: "annulled", label: "Anulados" },
   { value: "delivered", label: "Entregados" },
@@ -6232,16 +6234,18 @@ function mergeProductAnalysisWithCatalog(
   rows: ProductAnalysisRow[],
   products: ShopifyProductOption[]
 ): ProductAnalysisRow[] {
-  const merged = rows.map((row) => ({ ...row, sample_orders: [...row.sample_orders] }));
-  const byTitleKey = new Map<string, ProductAnalysisRow>();
-  const seenSkus = new Set<string>();
-
-  for (const row of merged) {
-    const sku = row.sku.trim().toLowerCase();
-    if (sku) seenSkus.add(sku);
-    const titleKey = getProductTitleCostKey(row.product_name);
-    if (titleKey && !byTitleKey.has(titleKey)) byTitleKey.set(titleKey, row);
-  }
+  const catalogRows = rows.map((row) => {
+    const catalogProduct = findCatalogProductForAnalysisRow(row, products);
+    if (!catalogProduct) return { ...row, sample_orders: [...row.sample_orders] };
+    return {
+      ...row,
+      product_name: getBetterProductName(row.product_name, catalogProduct.display_name),
+      sku: row.sku || catalogProduct.sku || "",
+      sample_orders: [...row.sample_orders],
+    };
+  });
+  const merged = consolidateProductAnalysisRows(catalogRows);
+  const seenSkus = new Set(merged.map((row) => row.sku.trim().toLowerCase()).filter(Boolean));
 
   for (const product of products) {
     const sku = String(product.sku || "").trim();
@@ -6249,16 +6253,20 @@ function mergeProductAnalysisWithCatalog(
     const titleKey = getProductTitleCostKey(product.display_name);
     if (skuKey && seenSkus.has(skuKey)) continue;
 
-    const titleMatch = titleKey ? byTitleKey.get(titleKey) : undefined;
-    if (titleMatch) {
-      if (!titleMatch.sku && sku) {
-        titleMatch.sku = sku;
-        seenSkus.add(skuKey);
-      }
+    const compatibleRow = merged.find(
+      (row) =>
+        !row.sku &&
+        row.product_name !== UNKNOWN_PRODUCT_LABEL &&
+        areCompatibleProductTitles(row.product_name, product.display_name)
+    );
+    if (compatibleRow) {
+      compatibleRow.sku = sku;
+      compatibleRow.product_name = getBetterProductName(compatibleRow.product_name, product.display_name);
+      if (skuKey) seenSkus.add(skuKey);
       continue;
     }
 
-    merged.push({
+    const row = {
       key: skuKey ? `catalog:${skuKey}` : titleKey || `catalog:${product.variant_id}`,
       product_name: product.display_name,
       sku,
@@ -6272,12 +6280,120 @@ function mergeProductAnalysisWithCatalog(
       not_delivered: 0,
       annulled: 0,
       pending: 0,
-    });
+    };
+    merged.push(row);
     if (skuKey) seenSkus.add(skuKey);
-    if (titleKey) byTitleKey.set(titleKey, merged[merged.length - 1]);
   }
 
   return merged;
+}
+
+function consolidateProductAnalysisRows(rows: ProductAnalysisRow[]): ProductAnalysisRow[] {
+  const consolidated: ProductAnalysisRow[] = [];
+  const bySku = new Map<string, ProductAnalysisRow>();
+
+  for (const row of rows) {
+    const skuKey = row.sku.trim().toLowerCase();
+    const target =
+      (skuKey ? bySku.get(skuKey) : undefined) ??
+      consolidated.find((candidate) => canMergeProductAnalysisRows(candidate, row));
+
+    if (!target) {
+      const clone = { ...row, sample_orders: [...row.sample_orders] };
+      clone.key = getConsolidatedProductAnalysisKey(clone);
+      consolidated.push(clone);
+      if (clone.sku) bySku.set(clone.sku.trim().toLowerCase(), clone);
+      continue;
+    }
+
+    mergeProductAnalysisRow(target, row);
+    if (target.sku) bySku.set(target.sku.trim().toLowerCase(), target);
+  }
+
+  return consolidated.sort(
+    (a, b) =>
+      b.orders - a.orders ||
+      a.delivery_effectiveness - b.delivery_effectiveness ||
+      a.product_name.localeCompare(b.product_name)
+  );
+}
+
+function canMergeProductAnalysisRows(current: ProductAnalysisRow, incoming: ProductAnalysisRow): boolean {
+  if (current === incoming) return true;
+  if (current.product_name === UNKNOWN_PRODUCT_LABEL || incoming.product_name === UNKNOWN_PRODUCT_LABEL) {
+    return current.product_name === incoming.product_name;
+  }
+
+  const currentSku = current.sku.trim().toLowerCase();
+  const incomingSku = incoming.sku.trim().toLowerCase();
+  if (currentSku && incomingSku) return currentSku === incomingSku;
+  if (currentSku || incomingSku) {
+    return areCompatibleProductTitles(current.product_name, incoming.product_name);
+  }
+  return areCompatibleProductTitles(current.product_name, incoming.product_name);
+}
+
+function mergeProductAnalysisRow(target: ProductAnalysisRow, incoming: ProductAnalysisRow): void {
+  target.product_name = getBetterProductName(target.product_name, incoming.product_name);
+  if (!target.sku && incoming.sku) target.sku = incoming.sku;
+  target.sample_orders = uniqueKeys([...target.sample_orders, ...incoming.sample_orders]).slice(0, 5);
+  target.orders += incoming.orders;
+  target.units += incoming.units;
+  target.dispatched += incoming.dispatched;
+  target.delivered += incoming.delivered;
+  target.not_delivered += incoming.not_delivered;
+  target.annulled += incoming.annulled;
+  target.pending += incoming.pending;
+  target.dispatch_rate = target.orders ? (target.dispatched / target.orders) * 100 : 0;
+  target.delivery_effectiveness = target.dispatched ? (target.delivered / target.dispatched) * 100 : 0;
+  target.key = getConsolidatedProductAnalysisKey(target);
+}
+
+function getConsolidatedProductAnalysisKey(row: Pick<ProductAnalysisRow, "sku" | "product_name" | "key">): string {
+  const sku = row.sku.trim().toLowerCase();
+  if (sku) return `sku:${sku}`;
+  return getProductTitleCostKey(row.product_name) || row.key;
+}
+
+function findCatalogProductForAnalysisRow(
+  row: Pick<ProductAnalysisRow, "sku" | "product_name">,
+  products: ShopifyProductOption[]
+): ShopifyProductOption | undefined {
+  const sku = row.sku.trim().toLowerCase();
+  if (sku) {
+    const bySku = products.find((product) => String(product.sku || "").trim().toLowerCase() === sku);
+    if (bySku) return bySku;
+  }
+  if (row.product_name === UNKNOWN_PRODUCT_LABEL) return undefined;
+  return products.find((product) => areCompatibleProductTitles(row.product_name, product.display_name));
+}
+
+function areCompatibleProductTitles(a: string, b: string): boolean {
+  const left = normalizeComparableProductTitle(a);
+  const right = normalizeComparableProductTitle(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+
+  const shorter = left.length <= right.length ? left : right;
+  const longer = left.length > right.length ? left : right;
+  if (shorter.length < 28 || longer.length > shorter.length * 1.6) return false;
+  return longer.startsWith(shorter);
+}
+
+function normalizeComparableProductTitle(value: string): string {
+  return cleanProductTitle(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getBetterProductName(current: string, incoming: string): string {
+  if (current === UNKNOWN_PRODUCT_LABEL) return incoming;
+  if (!incoming || incoming === UNKNOWN_PRODUCT_LABEL) return current;
+  return incoming.length > current.length ? incoming : current;
 }
 
 function getProductAnalysisItems(order: OrderProfitabilityRow): ProductLineItem[] {
@@ -6432,6 +6548,7 @@ function matchesProductAnalysisFilter(
     const cost = getProductCostForAnalysisRow(row, costBySku);
     return !cost || Number(cost.unit_cost || 0) <= 0;
   }
+  if (filter === "dispatched") return row.dispatched > 0;
   return row[filter] > 0;
 }
 
@@ -6465,6 +6582,7 @@ function getProductAnalysisFilterCounts(
     all: rows.length,
     no_cost: rows.filter((row) => matchesProductAnalysisFilter(row, "no_cost", costBySku)).length,
     unknown_product: rows.filter((row) => row.product_name === UNKNOWN_PRODUCT_LABEL).length,
+    dispatched: rows.filter((row) => row.dispatched > 0).length,
     pending: rows.filter((row) => row.pending > 0).length,
     annulled: rows.filter((row) => row.annulled > 0).length,
     delivered: rows.filter((row) => row.delivered > 0).length,

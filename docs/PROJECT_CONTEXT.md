@@ -573,6 +573,21 @@ Build in this order:
 
 ## Validation Log
 
+2026-06-12:
+
+- `npm run lint`: passed
+- `npm run build`: passed
+- Hardened Boxful Excel parsing. `lib/xlsx.ts` now exposes `sheetToJson`, sanitizes every worksheet before conversion, and converts unsupported formula cell types such as `t="f"` into safe string/number/date cells. `/api/finance/logistics` and `/api/finance/settlements` now use this helper for every parsed sheet, including `Consolidado`, to prevent the upload error `unrecognized type f`.
+- Local audit of `C:\Users\Pc\Downloads\01-12-2025 hasta 11-06-2026.xlsx` after formula sanitization:
+  - `total_rows = 7736`
+  - `guide_rows = 7736`
+  - status counts from Boxful column M: `Entregado = 4808`, `No entregado = 2349`, `Recolectado = 275`, `Registrado = 23`, `En ruta a destino = 140`, `Problemas en gestion = 96`, `Guia cancelada = 45`
+  - order code shapes: `#MCRC... = 6871`, numeric bot/iConflate aliases = `863`, other = `2`
+  This means a dashboard showing only ~800 delivered and ~350 not delivered after importing this file should be investigated as a data-loading/consolidation issue, not as an Excel-source issue.
+- `Productos` and the former `Costos SKU` workflow remain unified in one compact product table. Added a `Despachados` product filter and kept `Sin costo` / `Sin producto` filters for cost completion and unknown-product audits.
+- Product rows are now consolidated conservatively after Shopify catalog enrichment: rows with the same SKU merge; rows with one missing SKU can merge only when product titles are compatible; rows with conflicting SKUs remain separate. This reduces duplicate rows where one source has the SKU and another source only has the product title.
+- Product rates remain order-based, not unit-based: `Tasa despacho = product-orders con guia / product-orders Shopify`; `Efectividad entrega = product-orders entregados / product-orders con guia`. The UI shows numerator/denominator beside each rate so a 100% rate is auditable as, for example, `1/1` rather than an unexplained percentage.
+
 2026-06-11:
 
 - `npm run lint`: passed
@@ -588,7 +603,7 @@ Build in this order:
 - Added `Productos` analysis tab for product-level operational performance and cost completion. It uses the same normalized finance order rows as `Pedidos`/`Cierre mensual`, preserves line items on `OrderProfitabilityRow`, and aggregates by SKU when available or by product title otherwise.
 - Product-level dispatch rule: `Tasa despacho = product-orders con guia Boxful / product-orders que ingresaron a Shopify`. Product analysis excludes orphan settlement/logistics rows that cannot be tied back to Shopify. A guide means the order left the warehouse with transport, even if it is still in progress and has not reached `Entregado` or `No entregado`. Delivery effectiveness is `Entregados / product-orders con guia Boxful`, so guided orders still in progress count in the denominator until their final outcome arrives.
 - Product-level status counts classify Shopify cancelled/voided first as `Anulado`; otherwise they follow tracking as `Entregado`, `No entregado`, or `Pendiente`. The `Productos` tab includes search by product/SKU/order example, status filters, `Sin costo`, `Sin producto`, compact funnel counts, rate bars with numerator/denominator, cost edit/history actions, and CSV export.
-- Product-level grouping is by normalized product title first, not by SKU first, because the same Shopify product can appear in some rows with SKU and other rows without SKU. When any grouped row has a SKU, the consolidated product keeps that SKU for cost editing and display.
+- Product-level grouping is catalog-aware: SKU is authoritative when present, and rows without SKU can be merged into a catalog/SKU row only when the product title is compatible and there is no conflicting SKU.
 - In `Productos`, `Producto sin registrar` is only a fallback when an order reaches the product analysis without readable line items, package items, or item summary. The table shows an alert with the grouped order count and includes `Pedidos ejemplo` so the user can search those order codes in `Pedidos` and audit whether the source lacked Shopify `line_items` or only arrived through Boxful/liquidacion. The grouping also parses `items_summary` before falling back to `Producto sin registrar`.
 - Products without Shopify SKU can still be costed from the `Productos` tab. The UI stores those costs with an internal key derived from the product title (`producto:<slug>`). Cost lookup uses SKU first, then this title key for SKU-less items. `Producto sin registrar` remains uncostable because the real product is unknown.
 - `Notas Shopify` now defaults to the actionable alias view: only rows with an extracted bot/order code are shown first. The user can switch to `Todas` to audit notes without extracted codes.
