@@ -291,6 +291,11 @@ interface OrderProfitabilityRow {
   settlement_files: string[];
   settlement_count: number;
   settlement_charged_costs: number;
+  settlement_cod_commission: number;
+  settlement_card_commission: number;
+  settlement_delivery_cost: number;
+  settlement_pick_pack_cost: number;
+  settlement_packaging_cost: number;
   amount_to_liquidate: number;
   expected_cod: number;
   product_cost: number;
@@ -352,6 +357,11 @@ interface MonthlyCloseRow {
   to_claim: number;
   duplicate_settlements: number;
   boxful_costs: number;
+  boxful_cod_commission: number;
+  boxful_card_commission: number;
+  boxful_delivery_cost: number;
+  boxful_pick_pack_cost: number;
+  boxful_packaging_cost: number;
   cash_received: number;
   cash_pending: number;
   product_costs: number;
@@ -3543,7 +3553,11 @@ function MonthCloseDetail({
   const claimBase = close.cash_received + close.cash_pending;
   const claimShare = claimBase ? (close.cash_pending / claimBase) * 100 : 0;
   const costSegments = [
-    { label: "Costos Boxful", value: close.boxful_costs, className: "bg-sky-400" },
+    { label: "Comision COD", value: close.boxful_cod_commission, className: "bg-sky-400" },
+    { label: "Costo entrega", value: close.boxful_delivery_cost, className: "bg-cyan-400" },
+    { label: "Pick&Pack", value: close.boxful_pick_pack_cost, className: "bg-indigo-400" },
+    { label: "Empaque Boxful", value: close.boxful_packaging_cost, className: "bg-blue-400" },
+    { label: "Comision tarjeta", value: close.boxful_card_commission, className: "bg-teal-400" },
     { label: "Costo producto", value: close.product_costs, className: "bg-emerald-400" },
     { label: "Ads", value: close.ads, className: "bg-violet-400" },
     { label: "Planilla", value: close.payroll, className: "bg-amber-400" },
@@ -4458,6 +4472,11 @@ function buildMonthlyCloseRows(
       to_claim: 0,
       duplicate_settlements: 0,
       boxful_costs: 0,
+      boxful_cod_commission: 0,
+      boxful_card_commission: 0,
+      boxful_delivery_cost: 0,
+      boxful_pick_pack_cost: 0,
+      boxful_packaging_cost: 0,
       cash_received: 0,
       cash_pending: 0,
       product_costs: 0,
@@ -4486,6 +4505,11 @@ function buildMonthlyCloseRows(
     if (order.cash_status === "cobrado") row.cash_received += order.amount_to_liquidate;
     if (order.cash_status === "por_cobrar") row.cash_pending += order.expected_cod;
     row.boxful_costs += order.settlement_charged_costs;
+    row.boxful_cod_commission += order.settlement_cod_commission;
+    row.boxful_card_commission += order.settlement_card_commission;
+    row.boxful_delivery_cost += order.settlement_delivery_cost;
+    row.boxful_pick_pack_cost += order.settlement_pick_pack_cost;
+    row.boxful_packaging_cost += order.settlement_packaging_cost;
     row.product_costs += order.product_cost;
     row.contribution_margin += order.contribution_margin;
   }
@@ -4504,6 +4528,11 @@ function buildMonthlyCloseRows(
       cash_received: roundMoney(row.cash_received),
       cash_pending: roundMoney(row.cash_pending),
       boxful_costs: roundMoney(row.boxful_costs),
+      boxful_cod_commission: roundMoney(row.boxful_cod_commission),
+      boxful_card_commission: roundMoney(row.boxful_card_commission),
+      boxful_delivery_cost: roundMoney(row.boxful_delivery_cost),
+      boxful_pick_pack_cost: roundMoney(row.boxful_pick_pack_cost),
+      boxful_packaging_cost: roundMoney(row.boxful_packaging_cost),
       product_costs: roundMoney(row.product_costs),
       ads: roundMoney(row.ads),
       payroll: roundMoney(row.payroll),
@@ -5031,16 +5060,17 @@ function buildOrderProfitabilityRow({
   );
   const settlementStatuses = uniqueKeys(settlementRows.map((row) => row.settlement_status || row.internal_status));
   const amountToLiquidate = sum(settlementRows.map((row) => row.amount_to_liquidate));
-  const settlementChargedCosts = sum(
-    settlementRows.map(
-      (row) =>
-        Number(row.cod_commission || 0) +
-        Number(row.card_commission || 0) +
-        Number(row.delivery_cost || 0) +
-        Number(row.pick_pack_cost || 0) +
-        Number(row.packaging_cost || 0)
-    )
-  );
+  const settlementCodCommission = sum(settlementRows.map((row) => Number(row.cod_commission || 0)));
+  const settlementCardCommission = sum(settlementRows.map((row) => Number(row.card_commission || 0)));
+  const settlementDeliveryCost = sum(settlementRows.map((row) => Number(row.delivery_cost || 0)));
+  const settlementPickPackCost = sum(settlementRows.map((row) => Number(row.pick_pack_cost || 0)));
+  const settlementPackagingCost = sum(settlementRows.map((row) => Number(row.packaging_cost || 0)));
+  const settlementChargedCosts =
+    settlementCodCommission +
+    settlementCardCommission +
+    settlementDeliveryCost +
+    settlementPickPackCost +
+    settlementPackagingCost;
   const settlementCodAmount = sum(settlementRows.map((row) => row.cod_amount));
   const expectedCod = order.cod_amount || sum(settlementRows.map((row) => row.cod_amount));
   const items = getProfitabilityItems(order, settlementRows);
@@ -5071,6 +5101,11 @@ function buildOrderProfitabilityRow({
     settlement_files: settlementFiles,
     settlement_count: settlementRows.length,
     settlement_charged_costs: roundMoney(settlementChargedCosts),
+    settlement_cod_commission: roundMoney(settlementCodCommission),
+    settlement_card_commission: roundMoney(settlementCardCommission),
+    settlement_delivery_cost: roundMoney(settlementDeliveryCost),
+    settlement_pick_pack_cost: roundMoney(settlementPickPackCost),
+    settlement_packaging_cost: roundMoney(settlementPackagingCost),
     amount_to_liquidate: roundMoney(amountToLiquidate),
     expected_cod: roundMoney(expectedCod),
     product_cost: productCostResult.productCost,
