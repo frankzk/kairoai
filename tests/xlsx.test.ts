@@ -31,7 +31,8 @@ describe("sanitizeWorkbook", () => {
   });
 
   it("convierte tipos desconocidos y permite leer todas las filas", () => {
-    const workbook = sanitizeWorkbook(buildWorkbookWithBadCells());
+    const workbook = buildWorkbookWithBadCells();
+    sanitizeWorkbook(workbook);
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets.Envios, {
       defval: "",
       raw: false,

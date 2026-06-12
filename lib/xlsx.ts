@@ -6,17 +6,23 @@ const KNOWN_CELL_TYPES = new Set(["z", "e", "s", "d", "b", "n"]);
 
 export function readWorkbook(data: ArrayBuffer): XLSX.WorkBook {
   const workbook = XLSX.read(data, { type: "array", cellDates: true });
-  return sanitizeWorkbook(workbook);
-}
-
-export function sanitizeWorkbook(workbook: XLSX.WorkBook): XLSX.WorkBook {
-  for (const name of workbook.SheetNames) {
-    sanitizeSheet(workbook.Sheets[name]);
-  }
+  sanitizeWorkbook(workbook);
   return workbook;
 }
 
-function sanitizeSheet(sheet: XLSX.WorkSheet | undefined) {
+export function sheetToJson<T>(sheet: XLSX.WorkSheet | undefined, opts: XLSX.Sheet2JSONOpts): T[] {
+  sanitizeSheet(sheet);
+  if (!sheet) return [];
+  return XLSX.utils.sheet_to_json<T>(sheet, opts);
+}
+
+export function sanitizeWorkbook(workbook: XLSX.WorkBook): void {
+  for (const name of workbook.SheetNames) {
+    sanitizeSheet(workbook.Sheets[name]);
+  }
+}
+
+export function sanitizeSheet(sheet: XLSX.WorkSheet | undefined): void {
   if (!sheet) return;
   for (const address of Object.keys(sheet)) {
     if (address.startsWith("!")) continue;
@@ -33,7 +39,15 @@ function sanitizeSheet(sheet: XLSX.WorkSheet | undefined) {
       cell.t = "d";
     } else {
       cell.t = "s";
-      cell.v = cell.w ?? (value == null ? "" : String(value));
+      cell.v = extractFormulaDisplayValue(cell.f) || cell.w || (value == null ? "" : String(value));
+      cell.w = String(cell.v ?? "");
     }
   }
+}
+
+function extractFormulaDisplayValue(formula?: string): string {
+  if (!formula) return "";
+  const hyperlinkMatch = formula.match(/^HYPERLINK\(\s*"([^"]+)"/i);
+  if (hyperlinkMatch?.[1]) return hyperlinkMatch[1];
+  return "";
 }

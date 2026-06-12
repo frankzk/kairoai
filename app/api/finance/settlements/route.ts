@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
-import { readWorkbook } from "@/lib/xlsx";
+import { readWorkbook, sheetToJson } from "@/lib/xlsx";
 import { buildShopifyMatchIndex, findShopifyOrderForRow } from "@/lib/order-matching";
 import {
   loadShopifyOrdersForMatching,
@@ -176,7 +176,7 @@ export async function DELETE(req: NextRequest) {
 
 function parseSettlementRows(workbook: XLSX.WorkBook): ParsedSettlementRow[] {
   const sheet = workbook.Sheets.Envios ?? workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+  const rows = sheetToJson<Record<string, unknown>>(sheet, {
     defval: "",
     raw: false,
   });
@@ -217,7 +217,7 @@ function parseConsolidated(workbook: XLSX.WorkBook): {
   const sheet = workbook.Sheets.Consolidado;
   if (!sheet) return { total_collected: 0, total_to_liquidate: 0 };
 
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+  const rows = sheetToJson<Record<string, unknown>>(sheet, {
     header: ["description", "amount"],
     defval: "",
     raw: false,

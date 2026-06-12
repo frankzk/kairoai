@@ -257,7 +257,7 @@ export interface PersistedShopifyOrderSummary
   note_attributes: Array<{ name?: string | null; value?: string | null }>;
 }
 
-export async function listPersistedShopifyOrders(limit = 1000): Promise<PersistedShopifyOrderSummary[]> {
+export async function listPersistedShopifyOrders(limit = 1000, offset = 0): Promise<PersistedShopifyOrderSummary[]> {
   type RawSummary = PersistedShopifyOrderSummary & {
     raw_line_items: Array<Record<string, unknown>> | null;
   };
@@ -265,13 +265,17 @@ export async function listPersistedShopifyOrders(limit = 1000): Promise<Persiste
   // defecto); se pagina con range() hasta el limite pedido.
   const pageSize = 1000;
   const rows: RawSummary[] = [];
-  for (let from = 0; from < limit; from += pageSize) {
+  const safeLimit = Math.max(Math.floor(limit), 0);
+  const safeOffset = Math.max(Math.floor(offset), 0);
+  for (let fetched = 0; fetched < safeLimit; fetched += pageSize) {
+    const from = safeOffset + fetched;
+    const to = safeOffset + Math.min(fetched + pageSize, safeLimit) - 1;
     const { data, error } = await getDB()
       .from("shopify_orders")
       .select(PERSISTED_ORDER_SUMMARY_COLUMNS)
       .order("shopify_created_at", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false })
-      .range(from, Math.min(from + pageSize, limit) - 1);
+      .range(from, to);
     if (error) throw new Error(`listPersistedShopifyOrders: ${error.message}`);
     const page = (data ?? []) as unknown as RawSummary[];
     rows.push(...page);
@@ -410,11 +414,12 @@ export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {
     listExpenses(),
   ]);
 
-  const costBySku = new Map(
-    costs
-      .filter((cost) => cost.active)
-      .map((cost) => [cost.sku.toLowerCase(), cost])
-  );
+  const costBySku = new Map<string, ProductCost>();
+  for (const cost of costs.filter((item) => item.active)) {
+    costBySku.set(cost.sku.toLowerCase(), cost);
+    const titleKey = getProductCostKey({ title: cost.product_name });
+    if (titleKey && !costBySku.has(titleKey)) costBySku.set(titleKey, cost);
+  }
   const missingCostSkus = new Set<string>();
 
   const codCollected = sum(rows.map((row) => row.cod_amount));
@@ -431,11 +436,11 @@ export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {
   for (const row of rows) {
     if (row.internal_status !== "delivered") continue;
     for (const item of row.order_items ?? []) {
-      const sku = (item.sku || "").toLowerCase();
-      if (!sku) continue;
-      const cost = costBySku.get(sku);
+      const costKey = getProductCostKey(item);
+      if (!costKey) continue;
+      const cost = costBySku.get(costKey);
       if (!cost) {
-        missingCostSkus.add(sku);
+        missingCostSkus.add(costKey);
         continue;
       }
       productCosts += (cost.unit_cost + cost.packaging_cost) * Number(item.quantity || 0);
@@ -474,4 +479,23 @@ function sum(values: number[]): number {
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function getProductCostKey(item: { sku?: string | null; title?: string | null }): string {
+  const sku = String(item.sku || "").trim().toLowerCase();
+  if (sku) return sku;
+
+  const cleanTitle = String(item.title || "")
+    .replace(/^\s*\d+\s*x\s*/i, "")
+    .trim();
+  if (!cleanTitle || cleanTitle === "Producto sin registrar") return "";
+
+  const slug = cleanTitle
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return slug ? `producto:${slug}` : "";
 }

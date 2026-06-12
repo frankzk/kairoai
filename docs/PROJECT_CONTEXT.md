@@ -1,6 +1,6 @@
 # Kairo AI Webapp Context
 
-Last updated: 2026-06-11
+Last updated: 2026-06-12
 
 ## Purpose
 
@@ -106,7 +106,7 @@ Tabs:
 
 - `Pedidos`: shows Shopify orders as the baseline tracking list, filters by operational tracking state and liquidation state, includes a search box for order codes, guide numbers, and customers, opens Boxful logistics Excel upload from the table header action button/modal, inspects matched rows, and tracks operational follow-up state.
 - `Liquidaciones`: upload settlement/liquidation Excel files by cutoff date, select previously imported files, sort them by recent/oldest, delete imports when needed, inspect financial settlement rows, filter Shopify match state, source Excel traceability, claim alerts, and anomalies. Liquidation Boxful files belong here, not in the logistics file-control tab.
-- `Costos SKU`: loads Shopify products/variants and manages product costs by SKU with explicit edit/save rows, saved/missing cost tabs, and versioned effective dates. Cost history is accessed per product row through a modal button, enabled only when that SKU has more than one saved version.
+- `Productos`: single surface for product performance and product costs. The former standalone `Costos SKU` workflow is folded into the product table as a compact `Costo SKU` column with edit/history actions.
 - `Gastos`: manual CRUD for ads, payroll, and miscellaneous expenses, organized into three internal tabs with contextual modal buttons.
 - `Cierre mensual`: single profitability and monthly-close surface. It must stay simple: month selector, executive result, first-priority issues, registered-cost composition, then collapsible details for orders, anomalies, missing SKU costs, and month comparison.
 - `Logistica Boxful`: read-only logistics file history. It consolidates files imported from the `Pedidos` Boxful logistics modal. It must not upload/register files manually and must not show liquidation-file controls.
@@ -141,7 +141,7 @@ Excel parsing:
 - If the user does not enter `period_start`, the importer infers the earliest `Creado en` date from the Excel and uses that to limit Shopify order fetching. This prevents long Vercel imports and avoids opaque non-JSON server errors.
 - Shopify matching accepts exact order names, `#MCRC` order names, and numeric order numbers when reconciling imported files.
 - Shopify matching also accepts iConflate/chatbot order codes stored in Shopify order notes, for example `Pedido #3685 - Venta por bot - WhatsApp ...`. Importers fetch `note` and `note_attributes`, extract `Pedido #NNN`, and use it as an alternate match key before falling back to Shopify numeric `order_number`.
-- `/admin/finance` requests one bounded live Shopify page with `status=any` from `2025-09-16T00:00:00-06:00` so the Pedidos tab can show recent store orders even before a Boxful logistics file is imported. It also reads up to 20,000 persisted Shopify orders from Supabase. It must not use `all=1` during normal page load because Shopify pagination can exceed Vercel serverless timeouts. Boxful rows replace/enrich matching Shopify rows instead of creating duplicates.
+- `/admin/finance` requests one bounded live Shopify page with `status=any` from `2026-01-01T00:00:00-06:00` so the Pedidos tab can show recent store orders even before a Boxful logistics file is imported. It also reads persisted Shopify orders from Supabase in paginated chunks. It must not use `all=1` during normal page load because Shopify pagination can exceed Vercel serverless timeouts. Boxful rows replace/enrich matching Shopify rows instead of creating duplicates.
 - The `Pedidos` tab keeps the Shopify/Boxful table as the main surface. The Boxful logistics importer is an action button on the right side of the table header and opens a modal; it should not return to a persistent side-panel form.
 - The `Pedidos` tab search filters the visible table client-side by order code (`#MCRC...`, `MCRC...`, iConflate note code, or numeric partials), guide number, customer name, SKU, and item title. The search should remain above the table because it is the primary lookup workflow during reconciliation.
 - The `Pedidos` tab main controls are tracking-state filters: `Todos`, `Pendientes`, `Anulados`, `Entregados`, and `No entregados`. Technical import counts such as Boxful rows, Shopify matches, and unmatched rows are diagnostic context only, not primary KPIs.
@@ -200,7 +200,7 @@ Important implementation detail:
 - Financial anomalies can be moved through a claim workflow: `pendiente`, `reclamado`, `resuelto`, `descartado`, with notes. The key is `finance_claims.anomaly_key`.
 - Exportables are client-side CSV downloads for anomalies, order profitability, monthly close, and Boxful file control.
 - The monthly close tab must not be only a summary. It should let the user select `Todos` or a month, see counts for `Pendientes`, `Entregados`, `No entregados`, `Anulados`, liquidated/unliquidated orders, claim candidates, duplicate settlement rows, and inspect/export the order list behind that month.
-- Shopify historical sync must be done via `/api/finance/shopify-sync` in bounded batches. The normal `/admin/finance` page load must not paginate all Shopify orders because Vercel can time out. The UI sync button loops through bounded batches from `2025-09-16T00:00:00-06:00` and persists into `shopify_orders`.
+- Shopify historical sync must be done via `/api/finance/shopify-sync` in bounded batches. The finance UI treats Shopify as the complete order base from `2026-01-01T00:00:00-06:00`; Boxful logistics and liquidations only enrich tracking/cash state. Page load reads persisted Shopify orders in small paginated API calls (`limit` + `offset`) so January onward can be shown without one oversized Vercel response.
 - Settlement/liquidation files also include per-order Boxful charged service costs:
   - `Monto de comision COD`
   - `Costo de entrega`
@@ -548,7 +548,7 @@ Implemented close view:
 Important limitation:
 
 - Ads, payroll, and miscellaneous expenses are still allocated only at aggregate/month level. Per-order profitability is contribution margin before those shared expenses.
-- Shopify historical order sync is bounded and persisted through `/api/finance/shopify-sync`. Page load reads persisted orders from Supabase and only fetches one live Shopify page for freshness, avoiding browser-triggered full pagination.
+- Shopify historical order sync is bounded and persisted through `/api/finance/shopify-sync`. Page load reads the persisted Supabase history in small pages and fetches one live Shopify page for freshness, avoiding browser-triggered full Shopify pagination and avoiding a single huge JSON payload.
 
 ## MVP Recommendation
 
@@ -573,6 +573,26 @@ Build in this order:
 
 ## Validation Log
 
+2026-06-12:
+
+- `npm run lint`: passed
+- `npm run build`: passed
+- Supabase `shopify_orders` currently contains `10,699` persisted Shopify orders from `2026-01-19` through June 2026. First persisted order observed: `#MCRC1001`.
+- Persisted Shopify order distribution at validation time: January `64`, February `1,994`, March `1,652`, April `2,379`, May `3,410`, June `1,200`.
+- `logistics_rows` currently contains `7,736` Boxful rows and `7,664` consolidated logistics rows. Imported logistics distribution: `Entregado 4,802`, `No entregado 2,355`, `En ruta a destino 140`, `Problemas en gestion 96`, `Recolectado 275`, `Registrado 23`, `Guia cancelada 45`.
+- `/api/finance/shopify-sync` GET now supports `limit` and `offset`, so `/admin/finance` can load the full persisted Shopify base in pages instead of relying on one large JSON response.
+- `/admin/finance` now renders the base finance UI before the full Shopify history is loaded. Persisted Shopify orders are appended in background batches of `2,000`, with a visible progress banner, so the page no longer stays blank while January-to-date data is downloaded and recalculated.
+- Hardened Boxful Excel parsing. `lib/xlsx.ts` now exposes `sheetToJson`, sanitizes every worksheet before conversion, and converts unsupported formula cell types such as `t="f"` into safe string/number/date cells. `/api/finance/logistics` and `/api/finance/settlements` now use this helper for every parsed sheet, including `Consolidado`, to prevent the upload error `unrecognized type f`.
+- Local audit of `C:\Users\Pc\Downloads\01-12-2025 hasta 11-06-2026.xlsx` after formula sanitization:
+  - `total_rows = 7736`
+  - `guide_rows = 7736`
+  - status counts from Boxful column M: `Entregado = 4808`, `No entregado = 2349`, `Recolectado = 275`, `Registrado = 23`, `En ruta a destino = 140`, `Problemas en gestion = 96`, `Guia cancelada = 45`
+  - order code shapes: `#MCRC... = 6871`, numeric bot/iConflate aliases = `863`, other = `2`
+  This means a dashboard showing only ~800 delivered and ~350 not delivered after importing this file should be investigated as a data-loading/consolidation issue, not as an Excel-source issue.
+- `Productos` and the former `Costos SKU` workflow remain unified in one compact product table. Added a `Despachados` product filter and kept `Sin costo` / `Sin producto` filters for cost completion and unknown-product audits.
+- Product rows are now consolidated conservatively after Shopify catalog enrichment: rows with the same SKU merge; rows with one missing SKU can merge only when product titles are compatible; rows with conflicting SKUs remain separate. This reduces duplicate rows where one source has the SKU and another source only has the product title.
+- Product rates remain order-based, not unit-based: `Tasa despacho = product-orders con guia / product-orders Shopify`; `Efectividad entrega = product-orders entregados / product-orders con guia`. The UI shows numerator/denominator beside each rate so a 100% rate is auditable as, for example, `1/1` rather than an unexplained percentage.
+
 2026-06-11:
 
 - `npm run lint`: passed
@@ -583,12 +603,25 @@ Build in this order:
 - Removed the standalone `Rentabilidad` tab. `Cierre mensual` now owns profitability KPIs, financial anomalies, missing SKU costs, and the stacked cost-composition bar for Boxful, product, ads, payroll, and miscellaneous costs.
 - Simplified `Cierre mensual` UI into an executive close view: one month selector, result card, priority-review card, cost card, and collapsed detail sections.
 - The first screen of `Cierre mensual` now avoids month tables and giant detail grids by default. It shows only the selected month result, `Que revisar primero`, `Costos registrados`, and expandable sections for orders, anomalies, missing SKUs, and month comparison.
-- Shopify historical sync now uses a 2025-09-16 lower bound, reads up to 20,000 persisted orders, and syncs in larger bounded batches for complete monthly close coverage.
+- Shopify historical sync now uses a 2026-01-01 lower bound and reads persisted orders in paginated chunks for complete monthly close coverage from the first January order onward.
 - `Archivos Boxful` was renamed to `Logistica Boxful` and now only registers/displays logistics files. Liquidation files stay in `Liquidaciones`.
-- Added `Productos` analysis tab for product-level operational performance. It uses the same normalized finance order rows as `Pedidos`/`Cierre mensual`, preserves line items on `OrderProfitabilityRow`, and aggregates by SKU when available or by product title otherwise.
-- Product-level dispatch rule: a product order is `despachado` only when the Shopify order is not cancelled/voided and tracking has final movement (`Entregado` or `No entregado`). Dispatch rate = dispatched product-orders / total product-orders. Delivery effectiveness = delivered / dispatched.
-- Product-level status counts classify Shopify cancelled/voided first as `Anulado`; otherwise they follow tracking as `Entregado`, `No entregado`, or `Pendiente`. The `Productos` tab includes search by product/SKU, status filters, order/unit counts, rate bars, and CSV export.
+- Added `Productos` analysis tab for product-level operational performance and cost completion. It uses the same normalized finance order rows as `Pedidos`/`Cierre mensual`, preserves line items on `OrderProfitabilityRow`, and aggregates by SKU when available or by product title otherwise.
+- Product-level dispatch rule: `Tasa despacho = product-orders con guia Boxful / product-orders que ingresaron a Shopify`. Product analysis excludes orphan settlement/logistics rows that cannot be tied back to Shopify. A guide means the order left the warehouse with transport, even if it is still in progress and has not reached `Entregado` or `No entregado`. Delivery effectiveness is `Entregados / product-orders con guia Boxful`, so guided orders still in progress count in the denominator until their final outcome arrives.
+- Product-level status counts classify Shopify cancelled/voided first as `Anulado`; otherwise they follow tracking as `Entregado`, `No entregado`, or `Pendiente`. The `Productos` tab includes search by product/SKU/order example, status filters, `Sin costo`, `Sin producto`, compact funnel counts, rate bars with numerator/denominator, cost edit/history actions, and CSV export.
+- Product-level grouping is catalog-aware: SKU is authoritative when present, and rows without SKU can be merged into a catalog/SKU row only when the product title is compatible and there is no conflicting SKU.
+- In `Productos`, `Producto sin registrar` is only a fallback when an order reaches the product analysis without readable line items, package items, or item summary. The table shows an alert with the grouped order count and includes `Pedidos ejemplo` so the user can search those order codes in `Pedidos` and audit whether the source lacked Shopify `line_items` or only arrived through Boxful/liquidacion. The grouping also parses `items_summary` before falling back to `Producto sin registrar`.
+- Products without Shopify SKU can still be costed from the `Productos` tab. The UI stores those costs with an internal key derived from the product title (`producto:<slug>`). Cost lookup uses SKU first, then this title key for SKU-less items. `Producto sin registrar` remains uncostable because the real product is unknown.
 - `Notas Shopify` now defaults to the actionable alias view: only rows with an extracted bot/order code are shown first. The user can switch to `Todas` to audit notes without extracted codes.
+- Large Boxful logistics files can exceed the Vercel function timeout when uploaded from the UI because the serverless route must parse Excel formulas, fetch/index Shopify orders, match rows, and insert thousands of records. On 2026-06-11, `01-12-2025 hasta 11-06-2026.xlsx` was imported directly from the local Codex environment into Supabase in chunks:
+  - `logistics_imports.id = 1`
+  - `total_rows = 7736`
+  - `matched_rows = 7407`
+  - `unmatched_rows = 329`
+  - `boxful_file_controls.status = importado`
+  Future product work should replace this emergency path with an async/background import flow or chunked client upload.
+- `Pedidos` consolidates multiple Boxful logistics rows for the same Shopify order into one visible order row. When duplicate logistics rows exist, a final column-M status (`Entregado` or `No entregado`) wins over intermediate states like `Registrado`, `Recolectado`, `En ruta a destino`, or `Problemas en gestión`; if there are multiple final rows, the newest logistics date wins. This prevents the UI from showing a Shopify order as `Pendiente` when the uploaded Boxful history already contains its final delivery outcome.
+- `Gastos > Planilla` captures payroll in Peruvian soles (`PEN`) with a required exchange rate to Costa Rican colones (`CRC`). The app stores the converted CRC amount in `business_expenses.amount` so monthly profitability remains comparable; the original PEN amount and exchange rate are persisted in `business_expenses.notes` for audit display.
+- `Gastos > Varios` supports expenses paid in `CRC`, `USD`, or `PEN`. If the original currency is not CRC, the modal requires an exchange rate and stores the converted CRC amount in `business_expenses.amount`; the original amount/currency and exchange rate are persisted in `business_expenses.notes`.
 
 2026-06-10:
 
@@ -613,7 +646,7 @@ Build in this order:
 - Added cancelled-with-movement handling: if Shopify is cancelled/voided but Boxful or liquidation shows movement, tracking follows Boxful/liquidation and the financial anomaly center reports `Anulado Shopify con movimiento`.
 - `Pedidos` now uses status filter buttons (`Todos`, `Pendientes`, `Anulados`, `Entregados`, `No entregados`) instead of treating Boxful/import match counts as the primary controls. Boxful row/match/unmatched counts remain as import diagnostics.
 - Improved import reliability: finance upload handlers now surface non-JSON server responses with a readable message, and importers infer date ranges from Excel rows when period dates are omitted.
-- `Costos SKU` now fetches `/api/shopify/products` and displays Shopify variants with SKU, Shopify price, explicit row editing, `Sin costo` / `Con costo` internal views, `Empaque propio`, effective dates, and saved/missing cost state.
+- `Productos` now fetches `/api/shopify/products` to enrich the product table with catalog variants. Cost lookup reads by SKU first and then by the internal `producto:<slug>` title key, so products that were costed before receiving a SKU do not appear as missing cost.
 - Profitability summary now exposes settlement charged-cost breakdown:
   - COD collected
   - COD commission
