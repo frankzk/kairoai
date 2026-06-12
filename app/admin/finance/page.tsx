@@ -16,6 +16,7 @@ import {
   FileSpreadsheet,
   History,
   Package,
+  Pencil,
   Plus,
   ReceiptText,
   RefreshCw,
@@ -947,7 +948,12 @@ export default function FinancePage() {
               />
             )}
             {tab === "products" && (
-              <ProductAnalysisTab rows={productAnalysisRows} />
+              <ProductAnalysisTab
+                rows={productAnalysisRows}
+                costs={costs}
+                costVersions={costVersions}
+                onSaveProductCost={saveProductCost}
+              />
             )}
             {tab === "notes" && (
               <ShopifyNotesTab orders={shopifyOrders} />
@@ -1466,14 +1472,17 @@ function OrdersTable({
   );
 }
 
+type ProductColumnKey = keyof ProductAnalysisRow | "cost";
+
 const PRODUCT_TABLE_COLUMNS: Array<{
-  key: keyof ProductAnalysisRow;
+  key: ProductColumnKey;
   label: string;
   numeric: boolean;
   headerClass?: string;
 }> = [
   { key: "product_name", label: "Producto", numeric: false },
   { key: "sku", label: "SKU", numeric: false },
+  { key: "cost", label: "Costo", numeric: true },
   { key: "orders", label: "Pedidos", numeric: true },
   { key: "units", label: "Unid.", numeric: true },
   { key: "dispatch_rate", label: "Tasa despacho", numeric: true, headerClass: "text-cyan-300" },
@@ -1486,15 +1495,49 @@ const PRODUCT_TABLE_COLUMNS: Array<{
 ];
 
 // Las columnas de barra alinean a la izquierda aunque sean numericas.
-const PRODUCT_METER_COLUMNS = new Set<keyof ProductAnalysisRow>([
+const PRODUCT_METER_COLUMNS = new Set<ProductColumnKey>([
   "dispatch_rate",
   "delivery_effectiveness",
 ]);
 
-function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
+function ProductAnalysisTab({
+  rows,
+  costs,
+  costVersions,
+  onSaveProductCost,
+}: {
+  rows: ProductAnalysisRow[];
+  costs: ProductCost[];
+  costVersions: ProductCostVersion[];
+  onSaveProductCost: (input: ProductCostSaveInput) => Promise<void>;
+}) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<ProductAnalysisFilter>("all");
-  const [sort, setSort] = useState<{ key: keyof ProductAnalysisRow; dir: "asc" | "desc" } | null>(null);
+  const [sort, setSort] = useState<{ key: ProductColumnKey; dir: "asc" | "desc" } | null>(null);
+  const [editingCostSku, setEditingCostSku] = useState("");
+  const [historyCostSku, setHistoryCostSku] = useState("");
+  const costBySku = useMemo(
+    () => new Map(costs.map((cost) => [cost.sku.toLowerCase(), cost])),
+    [costs]
+  );
+  const versionsBySku = useMemo(() => {
+    const grouped = new Map<string, ProductCostVersion[]>();
+    for (const version of costVersions) {
+      const key = version.sku.toLowerCase();
+      grouped.set(key, [...(grouped.get(key) ?? []), version]);
+    }
+    for (const [key, list] of Array.from(grouped.entries())) {
+      grouped.set(
+        key,
+        [...list].sort(
+          (a, b) =>
+            b.effective_from.localeCompare(a.effective_from) ||
+            b.created_at.localeCompare(a.created_at)
+        )
+      );
+    }
+    return grouped;
+  }, [costVersions]);
   const filteredRows = useMemo(
     () =>
       rows.filter((row) => {
@@ -1506,10 +1549,18 @@ function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
   );
   const sortedRows = useMemo(() => {
     if (!sort) return filteredRows;
-    const factor = sort.dir === "asc" ? 1 : -1;
+    const { key, dir } = sort;
+    const factor = dir === "asc" ? 1 : -1;
+    const valueOf = (row: ProductAnalysisRow): number | string => {
+      if (key === "cost") {
+        const cost = row.sku ? costBySku.get(row.sku.toLowerCase()) : undefined;
+        return cost ? cost.unit_cost + cost.packaging_cost : -1;
+      }
+      return row[key];
+    };
     return [...filteredRows].sort((a, b) => {
-      const aValue = a[sort.key];
-      const bValue = b[sort.key];
+      const aValue = valueOf(a);
+      const bValue = valueOf(b);
       if (typeof aValue === "number" && typeof bValue === "number") {
         return (aValue - bValue) * factor;
       }
@@ -1518,11 +1569,20 @@ function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
         factor
       );
     });
-  }, [filteredRows, sort]);
+  }, [filteredRows, sort, costBySku]);
   const summary = useMemo(() => summarizeProductAnalysisRows(filteredRows), [filteredRows]);
   const filterCounts = useMemo(() => getProductAnalysisFilterCounts(rows), [rows]);
+  const editingRow = editingCostSku
+    ? rows.find((row) => row.sku.toLowerCase() === editingCostSku.toLowerCase())
+    : undefined;
+  const historyVersions = historyCostSku
+    ? versionsBySku.get(historyCostSku.toLowerCase()) ?? []
+    : [];
+  const historyRow = historyCostSku
+    ? rows.find((row) => row.sku.toLowerCase() === historyCostSku.toLowerCase())
+    : undefined;
 
-  function toggleSort(key: keyof ProductAnalysisRow, numeric: boolean) {
+  function toggleSort(key: ProductColumnKey, numeric: boolean) {
     setSort((current) => {
       if (current?.key === key) {
         return { key, dir: current.dir === "asc" ? "desc" : "asc" };
@@ -1641,6 +1701,18 @@ function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
                     {row.product_name}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{row.sku || "-"}</td>
+                  <td className="px-3 py-2">
+                    {row.sku ? (
+                      <ProductCostCell
+                        cost={costBySku.get(row.sku.toLowerCase())}
+                        versionCount={(versionsBySku.get(row.sku.toLowerCase()) ?? []).length}
+                        onEdit={() => setEditingCostSku(row.sku)}
+                        onHistory={() => setHistoryCostSku(row.sku)}
+                      />
+                    ) : (
+                      <span className="block text-right text-xs text-muted-foreground">-</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">{row.orders}</td>
                   <td className="px-3 py-2 text-right font-mono text-xs">{row.units}</td>
                   <td className="px-3 py-2">
@@ -1658,7 +1730,7 @@ function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
               ))}
               {!filteredRows.length && (
                 <tr>
-                  <td colSpan={11} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  <td colSpan={12} className="px-3 py-8 text-center text-sm text-muted-foreground">
                     No hay productos para este filtro.
                   </td>
                 </tr>
@@ -1672,7 +1744,193 @@ function ProductAnalysisTab({ rows }: { rows: ProductAnalysisRow[] }) {
           )}
         </div>
       </CardContent>
+      {editingRow && (
+        <ProductCostQuickEditModal
+          row={editingRow}
+          savedCost={costBySku.get(editingRow.sku.toLowerCase())}
+          onClose={() => setEditingCostSku("")}
+          onSave={onSaveProductCost}
+        />
+      )}
+      {historyCostSku && (
+        <CostHistoryModal
+          productName={historyRow?.product_name ?? historyVersions[0]?.product_name ?? "Producto"}
+          sku={historyCostSku}
+          versions={historyVersions}
+          onClose={() => setHistoryCostSku("")}
+        />
+      )}
     </Card>
+  );
+}
+
+function ProductCostCell({
+  cost,
+  versionCount,
+  onEdit,
+  onHistory,
+}: {
+  cost?: ProductCost;
+  versionCount: number;
+  onEdit: () => void;
+  onHistory: () => void;
+}) {
+  const totalCost = cost ? Number(cost.unit_cost || 0) + Number(cost.packaging_cost || 0) : 0;
+  return (
+    <div className="flex items-center justify-end gap-1.5">
+      {cost && totalCost > 0 ? (
+        <span className="font-mono text-xs">{currency(totalCost)}</span>
+      ) : (
+        <span className="text-xs text-amber-300">Sin costo</span>
+      )}
+      <button
+        type="button"
+        onClick={onEdit}
+        title="Editar costo"
+        aria-label="Editar costo"
+        className="text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </button>
+      {versionCount > 1 && (
+        <button
+          type="button"
+          onClick={onHistory}
+          title={`Historial (${versionCount} versiones)`}
+          aria-label="Historial de costos"
+          className="text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <History className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ProductCostQuickEditModal({
+  row,
+  savedCost,
+  onClose,
+  onSave,
+}: {
+  row: ProductAnalysisRow;
+  savedCost?: ProductCost;
+  onClose: () => void;
+  onSave: (input: ProductCostSaveInput) => Promise<void>;
+}) {
+  const [unitCost, setUnitCost] = useState(String(savedCost?.unit_cost || ""));
+  const [packagingCost, setPackagingCost] = useState(String(savedCost?.packaging_cost || ""));
+  const [effectiveFrom, setEffectiveFrom] = useState(
+    savedCost?.effective_from || new Date().toISOString().slice(0, 10)
+  );
+  const [saving, setSaving] = useState(false);
+  const [validationMessage, setValidationMessage] = useState("");
+
+  async function handleSave() {
+    const parsedUnitCost = Number(unitCost);
+    const parsedPackagingCost = Number(packagingCost || 0);
+    if (!Number.isFinite(parsedUnitCost) || parsedUnitCost <= 0) {
+      setValidationMessage("El costo unitario debe ser mayor que cero.");
+      return;
+    }
+    if (!Number.isFinite(parsedPackagingCost) || parsedPackagingCost < 0) {
+      setValidationMessage("El empaque propio no puede ser negativo.");
+      return;
+    }
+    if (!effectiveFrom) {
+      setValidationMessage("Selecciona la fecha desde la que aplica este costo.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await onSave({
+        sku: row.sku,
+        product_name: row.product_name,
+        unit_cost: parsedUnitCost,
+        packaging_cost: parsedPackagingCost,
+        effective_from: effectiveFrom,
+      });
+      onClose();
+    } catch {
+      setValidationMessage("No se pudo guardar el costo. Intenta de nuevo.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="product-cost-edit-title"
+    >
+      <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-2xl">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div className="min-w-0 space-y-1">
+            <h3 id="product-cost-edit-title" className="text-base font-semibold">
+              Costo del producto
+            </h3>
+            <p className="truncate text-sm text-muted-foreground" title={row.product_name}>
+              {row.product_name}
+            </p>
+            <p className="font-mono text-xs text-muted-foreground">SKU {row.sku}</p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="space-y-3">
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Costo unitario
+            <Input
+              type="number"
+              min="0"
+              step="any"
+              value={unitCost}
+              onChange={(event) => setUnitCost(event.target.value)}
+              placeholder="0"
+            />
+          </label>
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Empaque propio (por unidad)
+            <Input
+              type="number"
+              min="0"
+              step="any"
+              value={packagingCost}
+              onChange={(event) => setPackagingCost(event.target.value)}
+              placeholder="0"
+            />
+          </label>
+          <label className="grid gap-1 text-xs text-muted-foreground">
+            Vigente desde
+            <Input
+              type="date"
+              value={effectiveFrom}
+              onChange={(event) => setEffectiveFrom(event.target.value)}
+            />
+          </label>
+          {validationMessage && (
+            <p className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-200">
+              {validationMessage}
+            </p>
+          )}
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button type="button" disabled={saving} onClick={handleSave} className="gap-2">
+            {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+            {saving ? "Guardando..." : "Guardar costo"}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -3037,6 +3295,11 @@ function CostCompositionBar({
   );
 }
 
+interface MonthProjectionBasis {
+  delivery_effectiveness: number;
+  avg_margin_per_delivered: number;
+}
+
 const MONTH_ROW_GRID =
   "grid grid-cols-[2rem_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.3fr)] items-center gap-2 lg:grid-cols-[2rem_minmax(110px,1.3fr)_repeat(7,minmax(0,1fr))_minmax(0,1.2fr)]";
 
@@ -3054,6 +3317,31 @@ function MonthlyCloseTab({
   onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
 }) {
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+  // Tasa de entrega y margen historicos (sobre pedidos ya despachados o
+  // liquidados) para proyectar meses que aun no tienen liquidaciones.
+  const projectionBasis = useMemo(() => {
+    let delivered = 0;
+    let dispatched = 0;
+    let marginSum = 0;
+    let marginCount = 0;
+    for (const order of control.orders) {
+      const isDelivered = order.tracking_status === "delivered";
+      const isDispatched =
+        isDelivered ||
+        order.tracking_status === "not_delivered" ||
+        order.tracking_status === "returned";
+      if (isDispatched) dispatched += 1;
+      if (isDelivered) delivered += 1;
+      if (order.settlement_count === 1) {
+        marginSum += order.contribution_margin;
+        marginCount += 1;
+      }
+    }
+    return {
+      delivery_effectiveness: dispatched ? delivered / dispatched : 0,
+      avg_margin_per_delivered: marginCount ? marginSum / marginCount : 0,
+    };
+  }, [control.orders]);
 
   return (
     <div className="space-y-4">
@@ -3099,6 +3387,7 @@ function MonthlyCloseTab({
               }
               control={control}
               summary={summary}
+              projectionBasis={projectionBasis}
               claimByAnomalyKey={claimByAnomalyKey}
               onSaveClaim={onSaveClaim}
             />
@@ -3115,6 +3404,7 @@ function MonthlyCloseMonthRow({
   onToggle,
   control,
   summary,
+  projectionBasis,
   claimByAnomalyKey,
   onSaveClaim,
 }: {
@@ -3123,6 +3413,7 @@ function MonthlyCloseMonthRow({
   onToggle: () => void;
   control: FinanceControlCenter;
   summary: ProfitabilitySummary | null;
+  projectionBasis: MonthProjectionBasis;
   claimByAnomalyKey: Map<string, FinanceClaim>;
   onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
 }) {
@@ -3157,6 +3448,7 @@ function MonthlyCloseMonthRow({
             close={row}
             control={control}
             summary={summary}
+            projectionBasis={projectionBasis}
             claimByAnomalyKey={claimByAnomalyKey}
             onSaveClaim={onSaveClaim}
           />
@@ -3170,12 +3462,14 @@ function MonthCloseDetail({
   close,
   control,
   summary,
+  projectionBasis,
   claimByAnomalyKey,
   onSaveClaim,
 }: {
   close: MonthlyCloseRow;
   control: FinanceControlCenter;
   summary: ProfitabilitySummary | null;
+  projectionBasis: MonthProjectionBasis;
   claimByAnomalyKey: Map<string, FinanceClaim>;
   onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
 }) {
@@ -3233,32 +3527,85 @@ function MonthCloseDetail({
     { label: "Varios", value: close.misc, className: "bg-rose-400" },
   ];
 
+  // Mes sin liquidaciones (tipicamente el mes en curso): se muestra la foto
+  // operativa y una proyeccion con la tasa de entrega y margen historicos.
+  const hasSettlementData = close.settled > 0 || close.cash_received > 0;
+  const pendingOrders = monthOrders.filter((order) => order.tracking_status === "pending");
+  const pipelineCod = sum(pendingOrders.map((order) => order.expected_cod));
+  const annulledCod = sum(
+    monthOrders
+      .filter((order) => order.tracking_status === "annulled")
+      .map((order) => order.expected_cod)
+  );
+  const annulledRate = close.orders ? (close.annulled / close.orders) * 100 : 0;
+  const projectedDeliveries = Math.round(
+    pendingOrders.length * projectionBasis.delivery_effectiveness
+  );
+  const projectedCash = pipelineCod * projectionBasis.delivery_effectiveness;
+  const projectedMargin =
+    projectedDeliveries * projectionBasis.avg_margin_per_delivered - operatingExpenses;
+
   return (
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="border border-border bg-card p-4">
-          <p className="text-xs text-muted-foreground">Utilidad neta estimada</p>
-          <p className={`mt-1 font-mono text-3xl font-semibold ${close.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
-            {currency(close.net_profit)}
-          </p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <MiniStat label="Margen pedidos" value={currency(close.contribution_margin)} />
-            <MiniStat label="Caja liquidada" value={currency(close.cash_received)} />
-            <MiniStat label="Caja por reclamar" value={currency(close.cash_pending)} />
-            <MiniStat label="Entregados" value={`${close.delivered} (${formatPercent(deliveredRate)})`} />
-            <MiniStat label="Liquidados" value={`${close.settled} (${formatPercent(settledRate)})`} />
-            <MiniStat label="No entregados / Anulados" value={`${close.not_delivered} / ${close.annulled}`} />
-          </div>
-          <div className="mt-4">
-            <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-              <span>Caja por reclamar</span>
-              <span>{formatPercent(claimShare)} del total pendiente + liquidado</span>
+        {hasSettlementData ? (
+          <div className="border border-border bg-card p-4">
+            <p className="text-xs text-muted-foreground">Utilidad neta estimada</p>
+            <p className={`mt-1 font-mono text-3xl font-semibold ${close.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
+              {currency(close.net_profit)}
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <MiniStat label="Margen pedidos" value={currency(close.contribution_margin)} />
+              <MiniStat label="Caja liquidada" value={currency(close.cash_received)} />
+              <MiniStat label="Caja por reclamar" value={currency(close.cash_pending)} />
+              <MiniStat label="Entregados" value={`${close.delivered} (${formatPercent(deliveredRate)})`} />
+              <MiniStat label="Liquidados" value={`${close.settled} (${formatPercent(settledRate)})`} />
+              <MiniStat label="No entregados / Anulados" value={`${close.not_delivered} / ${close.annulled}`} />
             </div>
-            <div className="h-2 overflow-hidden border border-border bg-background">
-              <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, claimShare)}%` }} />
+            <div className="mt-4">
+              <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+                <span>Caja por reclamar</span>
+                <span>{formatPercent(claimShare)} del total pendiente + liquidado</span>
+              </div>
+              <div className="h-2 overflow-hidden border border-border bg-background">
+                <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, claimShare)}%` }} />
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="border border-border bg-card p-4">
+            <div className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              Mes sin liquidaciones todavia: la utilidad real aparece con el proximo corte de
+              Boxful. Mientras tanto, esta es la foto operativa del mes en curso.
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Caja proyectada (COD en ruta x {formatPercent(projectionBasis.delivery_effectiveness * 100)} entrega historica)
+            </p>
+            <p className="mt-1 font-mono text-3xl font-semibold text-primary">
+              {currency(projectedCash)}
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <MiniStat
+                label={`COD en ruta (${pendingOrders.length} pedidos)`}
+                value={currency(pipelineCod)}
+              />
+              <MiniStat
+                label="Entregas esperadas"
+                value={`${projectedDeliveries} de ${pendingOrders.length}`}
+              />
+              <MiniStat
+                label={`Anulados (${formatPercent(annulledRate)} del mes)`}
+                value={`${close.annulled} · ${currency(annulledCod)}`}
+              />
+              <MiniStat label="Gastos registrados del mes" value={currency(operatingExpenses)} />
+              <MiniStat label="Margen proyectado (estimado)" value={currency(projectedMargin)} />
+              <MiniStat
+                label="Ticket promedio en ruta"
+                value={currency(pendingOrders.length ? pipelineCod / pendingOrders.length : 0)}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="space-y-2 border border-border bg-card p-4">
           <div>
@@ -3806,8 +4153,17 @@ function toCsv(rows: unknown[]): string {
 }
 
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
-  const lineItems = (order.line_items as ShopifyOrderSummary["line_items"]) ?? [];
   const rawOrder = (order.raw_order as Record<string, unknown> | null) ?? {};
+  const columnLineItems = (order.line_items as ShopifyOrderSummary["line_items"]) ?? [];
+  // Filas sincronizadas antes de que existiera la columna line_items la tienen
+  // vacia; el pedido crudo siempre trae las lineas.
+  const rawLineItems = ((rawOrder.line_items as Array<Record<string, unknown>>) ?? []).map((item) => ({
+    sku: String(item.sku ?? ""),
+    title: String(item.title ?? ""),
+    quantity: Number(item.quantity ?? 0),
+    price: Number(item.price ?? 0),
+  }));
+  const lineItems = columnLineItems.length ? columnLineItems : rawLineItems;
   const noteAttributes = (rawOrder.note_attributes as ShopifyOrderSummary["note_attributes"]) ?? [];
   return {
     id: String(order.shopify_order_id ?? order.id ?? ""),
