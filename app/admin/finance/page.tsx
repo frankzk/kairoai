@@ -996,6 +996,8 @@ export default function FinancePage() {
                 rows={monthlyCloseRows}
                 control={financeControl}
                 summary={summary}
+                costs={costs}
+                onSaveProductCost={saveProductCost}
                 claimByAnomalyKey={claimByAnomalyKey}
                 onSaveClaim={saveClaim}
               />
@@ -1746,7 +1748,8 @@ function ProductAnalysisTab({
       </CardContent>
       {editingRow && (
         <ProductCostQuickEditModal
-          row={editingRow}
+          sku={editingRow.sku}
+          productName={editingRow.product_name}
           savedCost={costBySku.get(editingRow.sku.toLowerCase())}
           onClose={() => setEditingCostSku("")}
           onSave={onSaveProductCost}
@@ -1808,12 +1811,14 @@ function ProductCostCell({
 }
 
 function ProductCostQuickEditModal({
-  row,
+  sku,
+  productName,
   savedCost,
   onClose,
   onSave,
 }: {
-  row: ProductAnalysisRow;
+  sku: string;
+  productName: string;
   savedCost?: ProductCost;
   onClose: () => void;
   onSave: (input: ProductCostSaveInput) => Promise<void>;
@@ -1845,8 +1850,8 @@ function ProductCostQuickEditModal({
     setSaving(true);
     try {
       await onSave({
-        sku: row.sku,
-        product_name: row.product_name,
+        sku,
+        product_name: productName,
         unit_cost: parsedUnitCost,
         packaging_cost: parsedPackagingCost,
         effective_from: effectiveFrom,
@@ -1872,10 +1877,10 @@ function ProductCostQuickEditModal({
             <h3 id="product-cost-edit-title" className="text-base font-semibold">
               Costo del producto
             </h3>
-            <p className="truncate text-sm text-muted-foreground" title={row.product_name}>
-              {row.product_name}
+            <p className="truncate text-sm text-muted-foreground" title={productName}>
+              {productName}
             </p>
-            <p className="font-mono text-xs text-muted-foreground">SKU {row.sku}</p>
+            <p className="font-mono text-xs text-muted-foreground">SKU {sku}</p>
           </div>
           <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
             <X className="h-4 w-4" />
@@ -3308,12 +3313,16 @@ function MonthlyCloseTab({
   rows,
   control,
   summary,
+  costs,
+  onSaveProductCost,
   claimByAnomalyKey,
   onSaveClaim,
 }: {
   rows: MonthlyCloseRow[];
   control: FinanceControlCenter;
   summary: ProfitabilitySummary | null;
+  costs: ProductCost[];
+  onSaveProductCost: (input: ProductCostSaveInput) => Promise<void>;
   claimByAnomalyKey: Map<string, FinanceClaim>;
   onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
 }) {
@@ -3388,6 +3397,8 @@ function MonthlyCloseTab({
               }
               control={control}
               summary={summary}
+              costs={costs}
+              onSaveProductCost={onSaveProductCost}
               projectionBasis={projectionBasis}
               claimByAnomalyKey={claimByAnomalyKey}
               onSaveClaim={onSaveClaim}
@@ -3405,6 +3416,8 @@ function MonthlyCloseMonthRow({
   onToggle,
   control,
   summary,
+  costs,
+  onSaveProductCost,
   projectionBasis,
   claimByAnomalyKey,
   onSaveClaim,
@@ -3414,6 +3427,8 @@ function MonthlyCloseMonthRow({
   onToggle: () => void;
   control: FinanceControlCenter;
   summary: ProfitabilitySummary | null;
+  costs: ProductCost[];
+  onSaveProductCost: (input: ProductCostSaveInput) => Promise<void>;
   projectionBasis: MonthProjectionBasis;
   claimByAnomalyKey: Map<string, FinanceClaim>;
   onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
@@ -3449,6 +3464,8 @@ function MonthlyCloseMonthRow({
             close={row}
             control={control}
             summary={summary}
+            costs={costs}
+            onSaveProductCost={onSaveProductCost}
             projectionBasis={projectionBasis}
             claimByAnomalyKey={claimByAnomalyKey}
             onSaveClaim={onSaveClaim}
@@ -3463,6 +3480,8 @@ function MonthCloseDetail({
   close,
   control,
   summary,
+  costs,
+  onSaveProductCost,
   projectionBasis,
   claimByAnomalyKey,
   onSaveClaim,
@@ -3470,14 +3489,15 @@ function MonthCloseDetail({
   close: MonthlyCloseRow;
   control: FinanceControlCenter;
   summary: ProfitabilitySummary | null;
+  costs: ProductCost[];
+  onSaveProductCost: (input: ProductCostSaveInput) => Promise<void>;
   projectionBasis: MonthProjectionBasis;
   claimByAnomalyKey: Map<string, FinanceClaim>;
   onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
 }) {
-  const [orderFilter, setOrderFilter] = useState<MonthlyOrderFilter>("all");
-  const [showOrders, setShowOrders] = useState(false);
-  const [showAnomalies, setShowAnomalies] = useState(false);
-  const [showSkus, setShowSkus] = useState(false);
+  const [ordersModalFilter, setOrdersModalFilter] = useState<MonthlyOrderFilter | null>(null);
+  const [showAnomaliesModal, setShowAnomaliesModal] = useState(false);
+  const [showSkusModal, setShowSkusModal] = useState(false);
 
   const monthOrders = useMemo(
     () =>
@@ -3498,18 +3518,20 @@ function MonthCloseDetail({
       }),
     [control.anomalies, control.orders, close.month]
   );
-  const orderFilterCounts = useMemo(
-    () => getMonthlyOrderFilterCounts(monthOrders),
-    [monthOrders]
-  );
-  const visibleOrders = useMemo(
-    () => monthOrders.filter((order) => matchesMonthlyOrderFilter(order, orderFilter)),
-    [monthOrders, orderFilter]
-  );
   const missingCostSkus = useMemo(
     () => uniqueKeys(monthOrders.flatMap((order) => order.missing_cost_skus)),
     [monthOrders]
   );
+  const skuTitleBySku = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const order of monthOrders) {
+      for (const item of order.items ?? []) {
+        const sku = String(item.sku || "").toLowerCase();
+        if (sku && !map.has(sku)) map.set(sku, item.title || sku);
+      }
+    }
+    return map;
+  }, [monthOrders]);
 
   const criticalAnomalies = monthAnomalies.filter((anomaly) => anomaly.severity === "high").length;
   const totalRegisteredCosts =
@@ -3614,37 +3636,51 @@ function MonthCloseDetail({
         </div>
 
         <div className="border border-border bg-card p-3">
-          <p className="text-sm font-semibold">Que revisar primero</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-semibold">Que revisar primero</p>
+            <button
+              type="button"
+              onClick={() => setOrdersModalFilter("all")}
+              className="text-[11px] text-primary transition-colors hover:underline"
+            >
+              Ver todos los pedidos del mes ({monthOrders.length})
+            </button>
+          </div>
           <div className="mt-2 space-y-1.5">
             <CloseSignalRow
               label="Pedidos operativos pendientes"
               value={close.pending}
               hint="Aun no son entregados, devueltos ni anulados."
               tone={close.pending ? "warning" : "ok"}
+              onClick={() => setOrdersModalFilter("pending")}
             />
             <CloseSignalRow
               label="Entregados sin liquidacion"
               value={close.to_claim}
               hint="Si Boxful ya los entrego, toca reclamar pago."
               tone={close.to_claim ? "warning" : "ok"}
+              onClick={() => setOrdersModalFilter("to_claim")}
             />
             <CloseSignalRow
               label="Liquidaciones duplicadas"
               value={close.duplicate_settlements}
               hint="Un pedido no deberia aparecer dos veces."
               tone={close.duplicate_settlements ? "danger" : "ok"}
+              onClick={() => setOrdersModalFilter("duplicate")}
             />
             <CloseSignalRow
               label="SKUs sin costo"
               value={missingCostSkus.length}
               hint="Sin costo de producto, la utilidad queda incompleta."
               tone={missingCostSkus.length ? "warning" : "ok"}
+              onClick={() => setShowSkusModal(true)}
             />
             <CloseSignalRow
-              label="Alertas criticas"
-              value={criticalAnomalies}
-              hint="Casos de alta prioridad en anomalias."
-              tone={criticalAnomalies ? "danger" : "ok"}
+              label="Anomalias del mes"
+              value={monthAnomalies.length}
+              hint={`${criticalAnomalies} criticas de alta prioridad.`}
+              tone={criticalAnomalies ? "danger" : monthAnomalies.length ? "warning" : "ok"}
+              onClick={() => setShowAnomaliesModal(true)}
             />
           </div>
         </div>
@@ -3674,89 +3710,34 @@ function MonthCloseDetail({
         </p>
       </div>
 
-      <CloseDetailCard
-        title="Pedidos que explican el cierre"
-        meta={`${visibleOrders.length} de ${monthOrders.length} pedidos visibles`}
-        open={showOrders}
-        onToggle={() => setShowOrders((value) => !value)}
-        action={
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={(event) => {
-              event.stopPropagation();
-              exportCsv(`pedidos-cierre-${close.month}.csv`, visibleOrders);
-            }}
-          >
-            <Download className="h-4 w-4" /> Exportar pedidos
-          </Button>
-        }
-      >
-        <div className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            {MONTHLY_ORDER_FILTERS.map((filter) => (
-              <button
-                key={filter.value}
-                type="button"
-                onClick={() => setOrderFilter(filter.value)}
-                className={`border px-3 py-1.5 text-sm transition-colors ${
-                  orderFilter === filter.value
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                }`}
-              >
-                {filter.label}{" "}
-                <span className="ml-1 font-mono text-xs text-foreground">{orderFilterCounts[filter.value]}</span>
-              </button>
-            ))}
-          </div>
-          <MonthlyOrdersTable rows={visibleOrders} />
-        </div>
-      </CloseDetailCard>
-
-      <CloseDetailCard
-        title="Anomalias y reclamos"
-        meta={`${monthAnomalies.length} alertas del mes`}
-        open={showAnomalies}
-        onToggle={() => setShowAnomalies((value) => !value)}
-        action={
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={(event) => {
-              event.stopPropagation();
-              exportCsv(`anomalias-${close.month}.csv`, monthAnomalies);
-            }}
-          >
-            <Download className="h-4 w-4" /> Exportar anomalias
-          </Button>
-        }
-      >
-        <FinancialAnomaliesTable
+      {ordersModalFilter && (
+        <MonthOrdersModal
+          monthLabel={formatMonthLabel(close.month)}
+          month={close.month}
+          orders={monthOrders}
+          initialFilter={ordersModalFilter}
+          onClose={() => setOrdersModalFilter(null)}
+        />
+      )}
+      {showAnomaliesModal && (
+        <MonthAnomaliesModal
+          monthLabel={formatMonthLabel(close.month)}
+          month={close.month}
           anomalies={monthAnomalies}
           claimByAnomalyKey={claimByAnomalyKey}
           onSaveClaim={onSaveClaim}
+          onClose={() => setShowAnomaliesModal(false)}
         />
-      </CloseDetailCard>
-
-      <CloseDetailCard
-        title="SKUs sin costo"
-        meta={`${missingCostSkus.length} pendientes`}
-        open={showSkus}
-        onToggle={() => setShowSkus((value) => !value)}
-      >
-        {missingCostSkus.length ? (
-          <div className="flex flex-wrap gap-2">
-            {missingCostSkus.slice(0, 120).map((sku) => (
-              <Badge key={sku} variant="warning">{sku}</Badge>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">No hay SKUs pendientes de costo en este mes.</p>
-        )}
-      </CloseDetailCard>
+      )}
+      {showSkusModal && (
+        <MonthSkuCostsModal
+          skus={missingCostSkus}
+          titleBySku={skuTitleBySku}
+          costs={costs}
+          onSave={onSaveProductCost}
+          onClose={() => setShowSkusModal(false)}
+        />
+      )}
     </div>
   );
 }
@@ -3766,11 +3747,13 @@ function CloseSignalRow({
   value,
   hint,
   tone,
+  onClick,
 }: {
   label: string;
   value: number;
   hint: string;
   tone: "ok" | "warning" | "danger";
+  onClick?: () => void;
 }) {
   const toneClass =
     tone === "danger"
@@ -3779,11 +3762,8 @@ function CloseSignalRow({
         ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
         : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
 
-  return (
-    <div
-      className="flex items-center justify-between gap-2 border border-border bg-background px-2.5 py-1.5"
-      title={hint}
-    >
+  const content = (
+    <>
       <div className="min-w-0">
         <p className="truncate text-xs font-medium">{label}</p>
         <p className="truncate text-[10px] text-muted-foreground">{hint}</p>
@@ -3791,6 +3771,28 @@ function CloseSignalRow({
       <span className={`inline-flex min-w-10 shrink-0 justify-center border px-2 py-0.5 font-mono text-xs font-semibold ${toneClass}`}>
         {value}
       </span>
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title={hint}
+        className="flex w-full items-center justify-between gap-2 border border-border bg-background px-2.5 py-1.5 text-left transition-colors hover:border-primary/50"
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="flex items-center justify-between gap-2 border border-border bg-background px-2.5 py-1.5"
+      title={hint}
+    >
+      {content}
     </div>
   );
 }
@@ -3818,42 +3820,218 @@ function CompactStat({
   );
 }
 
-function CloseDetailCard({
-  title,
-  meta,
-  open,
-  onToggle,
-  action,
-  children,
+function MonthOrdersModal({
+  monthLabel,
+  month,
+  orders,
+  initialFilter,
+  onClose,
 }: {
-  title: string;
-  meta: string;
-  open: boolean;
-  onToggle: () => void;
-  action?: React.ReactNode;
-  children: React.ReactNode;
+  monthLabel: string;
+  month: string;
+  orders: OrderProfitabilityRow[];
+  initialFilter: MonthlyOrderFilter;
+  onClose: () => void;
+}) {
+  const [orderFilter, setOrderFilter] = useState<MonthlyOrderFilter>(initialFilter);
+  const filterCounts = useMemo(() => getMonthlyOrderFilterCounts(orders), [orders]);
+  const visibleOrders = useMemo(
+    () => orders.filter((order) => matchesMonthlyOrderFilter(order, orderFilter)),
+    [orders, orderFilter]
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="month-orders-title"
+    >
+      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col rounded-lg border border-border bg-card p-4 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h3 id="month-orders-title" className="text-base font-semibold">
+              Pedidos de {monthLabel}
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              {visibleOrders.length} de {orders.length} pedidos visibles
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => exportCsv(`pedidos-cierre-${month}.csv`, visibleOrders)}
+            >
+              <Download className="h-4 w-4" /> Exportar
+            </Button>
+            <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {MONTHLY_ORDER_FILTERS.map((filter) => (
+            <button
+              key={filter.value}
+              type="button"
+              onClick={() => setOrderFilter(filter.value)}
+              className={`border px-2.5 py-1 text-sm transition-colors ${
+                orderFilter === filter.value
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+              }`}
+            >
+              {filter.label}{" "}
+              <span className="ml-1 font-mono text-xs text-foreground">{filterCounts[filter.value]}</span>
+            </button>
+          ))}
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
+          <MonthlyOrdersTable rows={visibleOrders} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MonthAnomaliesModal({
+  monthLabel,
+  month,
+  anomalies,
+  claimByAnomalyKey,
+  onSaveClaim,
+  onClose,
+}: {
+  monthLabel: string;
+  month: string;
+  anomalies: FinancialAnomaly[];
+  claimByAnomalyKey: Map<string, FinanceClaim>;
+  onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
+  onClose: () => void;
 }) {
   return (
-    <Card>
-      <CardHeader className="gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex min-w-0 flex-1 items-center gap-3 text-left"
-          aria-expanded={open}
-        >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center border border-border bg-background">
-            {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </span>
-          <span className="min-w-0">
-            <span className="block text-base font-semibold">{title}</span>
-            <span className="mt-1 block text-xs text-muted-foreground">{meta}</span>
-          </span>
-        </button>
-        {action}
-      </CardHeader>
-      {open && <CardContent>{children}</CardContent>}
-    </Card>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="month-anomalies-title"
+    >
+      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col rounded-lg border border-border bg-card p-4 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h3 id="month-anomalies-title" className="text-base font-semibold">
+              Anomalias y reclamos de {monthLabel}
+            </h3>
+            <p className="text-xs text-muted-foreground">{anomalies.length} alertas del mes</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => exportCsv(`anomalias-${month}.csv`, anomalies)}
+            >
+              <Download className="h-4 w-4" /> Exportar
+            </Button>
+            <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
+          <FinancialAnomaliesTable
+            anomalies={anomalies}
+            claimByAnomalyKey={claimByAnomalyKey}
+            onSaveClaim={onSaveClaim}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MonthSkuCostsModal({
+  skus,
+  titleBySku,
+  costs,
+  onSave,
+  onClose,
+}: {
+  skus: string[];
+  titleBySku: Map<string, string>;
+  costs: ProductCost[];
+  onSave: (input: ProductCostSaveInput) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [editingSku, setEditingSku] = useState("");
+  const costBySku = useMemo(
+    () => new Map(costs.map((cost) => [cost.sku.toLowerCase(), cost])),
+    [costs]
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="month-skus-title"
+    >
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-card p-4 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h3 id="month-skus-title" className="text-base font-semibold">
+              SKUs sin costo
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Asigna el costo aqui mismo; la utilidad se recalcula al guardar.
+            </p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        {skus.length ? (
+          <div className="min-h-0 flex-1 space-y-1.5 overflow-auto">
+            {skus.slice(0, 200).map((sku) => (
+              <div
+                key={sku}
+                className="flex items-center justify-between gap-3 border border-border bg-background px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm" title={titleBySku.get(sku.toLowerCase()) ?? sku}>
+                    {titleBySku.get(sku.toLowerCase()) ?? sku}
+                  </p>
+                  <p className="font-mono text-xs text-muted-foreground">{sku}</p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 gap-2"
+                  onClick={() => setEditingSku(sku)}
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Asignar costo
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+            Todo al dia: no hay SKUs pendientes de costo en este mes.
+          </p>
+        )}
+      </div>
+      {editingSku && (
+        <ProductCostQuickEditModal
+          sku={editingSku}
+          productName={titleBySku.get(editingSku.toLowerCase()) ?? editingSku}
+          savedCost={costBySku.get(editingSku.toLowerCase())}
+          onClose={() => setEditingSku("")}
+          onSave={onSave}
+        />
+      )}
+    </div>
   );
 }
 
