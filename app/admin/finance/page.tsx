@@ -1645,7 +1645,8 @@ function ProductAnalysisTab({
     const factor = dir === "asc" ? 1 : -1;
     const valueOf = (row: ProductAnalysisRow): number | string => {
       if (key === "cost") {
-        const cost = row.sku ? costBySku.get(row.sku.toLowerCase()) : undefined;
+        const costKey = getProductAnalysisCostKey(row);
+        const cost = costKey ? costBySku.get(costKey) : undefined;
         return cost ? cost.unit_cost + cost.packaging_cost : -1;
       }
       const value = row[key];
@@ -1666,13 +1667,13 @@ function ProductAnalysisTab({
   const summary = useMemo(() => summarizeProductAnalysisRows(filteredRows), [filteredRows]);
   const filterCounts = useMemo(() => getProductAnalysisFilterCounts(rows), [rows]);
   const editingRow = editingCostSku
-    ? rows.find((row) => row.sku.toLowerCase() === editingCostSku.toLowerCase())
+    ? rows.find((row) => getProductAnalysisCostKey(row) === editingCostSku.toLowerCase())
     : undefined;
   const historyVersions = historyCostSku
     ? versionsBySku.get(historyCostSku.toLowerCase()) ?? []
     : [];
   const historyRow = historyCostSku
-    ? rows.find((row) => row.sku.toLowerCase() === historyCostSku.toLowerCase())
+    ? rows.find((row) => getProductAnalysisCostKey(row) === historyCostSku.toLowerCase())
     : undefined;
 
   function toggleSort(key: ProductColumnKey, numeric: boolean) {
@@ -1802,12 +1803,12 @@ function ProductAnalysisTab({
                     {row.sample_orders.join(", ") || "-"}
                   </td>
                   <td className="px-3 py-2">
-                    {row.sku ? (
+                    {getProductAnalysisCostKey(row) ? (
                       <ProductCostCell
-                        cost={costBySku.get(row.sku.toLowerCase())}
-                        versionCount={(versionsBySku.get(row.sku.toLowerCase()) ?? []).length}
-                        onEdit={() => setEditingCostSku(row.sku)}
-                        onHistory={() => setHistoryCostSku(row.sku)}
+                        cost={costBySku.get(getProductAnalysisCostKey(row))}
+                        versionCount={(versionsBySku.get(getProductAnalysisCostKey(row)) ?? []).length}
+                        onEdit={() => setEditingCostSku(getProductAnalysisCostKey(row))}
+                        onHistory={() => setHistoryCostSku(getProductAnalysisCostKey(row))}
                       />
                     ) : (
                       <span className="block text-right text-xs text-muted-foreground">-</span>
@@ -1846,9 +1847,10 @@ function ProductAnalysisTab({
       </CardContent>
       {editingRow && (
         <ProductCostQuickEditModal
-          sku={editingRow.sku}
+          sku={getProductAnalysisCostKey(editingRow)}
           productName={editingRow.product_name}
-          savedCost={costBySku.get(editingRow.sku.toLowerCase())}
+          referenceLabel={editingRow.sku ? `SKU ${editingRow.sku}` : "Clave interna por producto sin SKU"}
+          savedCost={costBySku.get(getProductAnalysisCostKey(editingRow))}
           onClose={() => setEditingCostSku("")}
           onSave={onSaveProductCost}
         />
@@ -1911,12 +1913,14 @@ function ProductCostCell({
 function ProductCostQuickEditModal({
   sku,
   productName,
+  referenceLabel,
   savedCost,
   onClose,
   onSave,
 }: {
   sku: string;
   productName: string;
+  referenceLabel?: string;
   savedCost?: ProductCost;
   onClose: () => void;
   onSave: (input: ProductCostSaveInput) => Promise<void>;
@@ -1978,7 +1982,7 @@ function ProductCostQuickEditModal({
             <p className="truncate text-sm text-muted-foreground" title={productName}>
               {productName}
             </p>
-            <p className="font-mono text-xs text-muted-foreground">SKU {sku}</p>
+            <p className="font-mono text-xs text-muted-foreground">{referenceLabel ?? `SKU ${sku}`}</p>
           </div>
           <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
             <X className="h-4 w-4" />
@@ -3634,8 +3638,8 @@ function MonthCloseDetail({
     const map = new Map<string, string>();
     for (const order of monthOrders) {
       for (const item of order.items ?? []) {
-        const sku = String(item.sku || "").toLowerCase();
-        if (sku && !map.has(sku)) map.set(sku, item.title || sku);
+        const costKey = getProductItemCostKey(item);
+        if (costKey && !map.has(costKey)) map.set(costKey, item.title || costKey);
       }
     }
     return map;
@@ -5401,6 +5405,31 @@ function cleanProductTitle(title: string): string {
     .trim() || UNKNOWN_PRODUCT_LABEL;
 }
 
+function getProductAnalysisCostKey(row: Pick<ProductAnalysisRow, "sku" | "product_name">): string {
+  const sku = String(row.sku || "").trim().toLowerCase();
+  if (sku) return sku;
+  return getProductTitleCostKey(row.product_name);
+}
+
+function getProductItemCostKey(item: Pick<ProductLineItem, "sku" | "title">): string {
+  const sku = String(item.sku || "").trim().toLowerCase();
+  if (sku) return sku;
+  return getProductTitleCostKey(item.title);
+}
+
+function getProductTitleCostKey(title: string): string {
+  const cleanTitle = cleanProductTitle(title);
+  if (!cleanTitle || cleanTitle === UNKNOWN_PRODUCT_LABEL) return "";
+  const slug = cleanTitle
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return slug ? `producto:${slug}` : "";
+}
+
 function hasBoxfulGuide(order: Pick<OrderProfitabilityRow, "guide_number">): boolean {
   const guide = String(order.guide_number || "").trim();
   return Boolean(guide && guide !== "-" && guide !== "0");
@@ -5659,11 +5688,11 @@ function calculateProductCost(
   let productCost = 0;
 
   for (const item of items) {
-    const sku = String(item.sku ?? "").trim().toLowerCase();
-    if (!sku) continue;
-    const cost = pickCostVersion(costVersionsBySku.get(sku) ?? [], orderDate);
+    const costKey = getProductItemCostKey(item);
+    if (!costKey) continue;
+    const cost = pickCostVersion(costVersionsBySku.get(costKey) ?? [], orderDate);
     if (!cost) {
-      missingCostSkus.add(sku);
+      missingCostSkus.add(costKey);
       continue;
     }
     productCost += (Number(cost.unit_cost || 0) + Number(cost.packaging_cost || 0)) * Number(item.quantity || 0);

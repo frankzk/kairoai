@@ -613,11 +613,11 @@ export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {
   for (const row of rows) {
     if (row.internal_status !== "delivered") continue;
     for (const item of row.order_items ?? []) {
-      const sku = (item.sku || "").toLowerCase();
-      if (!sku) continue;
-      const cost = costBySku.get(sku);
+      const costKey = getProductCostKey(item);
+      if (!costKey) continue;
+      const cost = costBySku.get(costKey);
       if (!cost) {
-        missingCostSkus.add(sku);
+        missingCostSkus.add(costKey);
         continue;
       }
       productCosts += (cost.unit_cost + cost.packaging_cost) * Number(item.quantity || 0);
@@ -656,4 +656,23 @@ function sum(values: number[]): number {
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function getProductCostKey(item: { sku?: string | null; title?: string | null }): string {
+  const sku = String(item.sku || "").trim().toLowerCase();
+  if (sku) return sku;
+
+  const cleanTitle = String(item.title || "")
+    .replace(/^\s*\d+\s*x\s*/i, "")
+    .trim();
+  if (!cleanTitle || cleanTitle === "Producto sin registrar") return "";
+
+  const slug = cleanTitle
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return slug ? `producto:${slug}` : "";
 }
