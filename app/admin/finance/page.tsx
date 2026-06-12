@@ -259,6 +259,8 @@ interface BusinessExpense {
   category: string;
   description: string;
   amount: number;
+  currency: string;
+  notes: string;
 }
 
 interface ProfitabilitySummary {
@@ -387,7 +389,20 @@ const emptyExpense = {
   category: "",
   description: "",
   amount: "",
+  currency: "CRC",
+  exchange_rate: "",
   notes: "",
+};
+type ExpensePayload = {
+  type: ExpenseType;
+  expense_date: string;
+  month: string;
+  platform: string;
+  category: string;
+  description: string;
+  amount: number;
+  currency: string;
+  notes: string;
 };
 
 const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string }> = [
@@ -473,9 +488,9 @@ const EXPENSE_VIEW_CONFIG: Array<{
     buttonLabel: "Registrar Planilla",
     modalTitle: "Registrar Planilla",
     emptyLabel: "No hay planilla registrada.",
-    platformPlaceholder: "Persona / rol",
-    categoryPlaceholder: "Tipo: fijo, comision, bono",
-    descriptionPlaceholder: "Descripcion",
+    platformPlaceholder: "Persona",
+    categoryPlaceholder: "Tipo de pago: fijo, comision, bono",
+    descriptionPlaceholder: "Funcion / detalle",
   },
   {
     type: "misc",
@@ -876,10 +891,16 @@ export default function FinancePage() {
 
   async function saveExpense(event: FormEvent<HTMLFormElement>): Promise<boolean> {
     event.preventDefault();
+    const expensePayload = buildExpensePayload(expenseForm);
+    if (!expensePayload.ok) {
+      setError(expensePayload.error);
+      return false;
+    }
+
     const res = await fetch("/api/finance/expenses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(expenseForm),
+      body: JSON.stringify(expensePayload.expense),
     });
     const json = await readApiJson(res);
     if (!res.ok) {
@@ -3122,6 +3143,21 @@ function ExpensesTab({
   const activeView =
     EXPENSE_VIEW_CONFIG.find((view) => view.type === activeType) ?? EXPENSE_VIEW_CONFIG[0];
   const visibleExpenses = expenses.filter((expense) => expense.type === activeType);
+  const payrollPeople = uniqueKeys(
+    expenses
+      .filter((expense) => expense.type === "payroll" && expense.platform)
+      .map((expense) => expense.platform)
+  ).sort((a, b) => a.localeCompare(b));
+  const payrollAmount = Number(form.amount);
+  const payrollExchangeRate = Number(form.exchange_rate);
+  const payrollConvertedAmount =
+    activeType === "payroll" &&
+    Number.isFinite(payrollAmount) &&
+    payrollAmount > 0 &&
+    Number.isFinite(payrollExchangeRate) &&
+    payrollExchangeRate > 0
+      ? roundMoney(payrollAmount * payrollExchangeRate)
+      : 0;
   const currentMonth = new Date().toISOString().slice(0, 7);
   const currentMonthTotal = sum(
     visibleExpenses
@@ -3189,9 +3225,9 @@ function ExpensesTab({
                 <tr>
                   <th className="px-3 py-2">Fecha</th>
                   <th className="px-3 py-2">Mes</th>
-                  <th className="px-3 py-2">Plataforma / proveedor</th>
-                  <th className="px-3 py-2">Categoria</th>
-                  <th className="px-3 py-2">Descripcion</th>
+                  <th className="px-3 py-2">{activeType === "payroll" ? "Persona" : "Plataforma / proveedor"}</th>
+                  <th className="px-3 py-2">{activeType === "payroll" ? "Tipo" : "Categoria"}</th>
+                  <th className="px-3 py-2">{activeType === "payroll" ? "Funcion / detalle" : "Descripcion"}</th>
                   <th className="px-3 py-2 text-right">Monto</th>
                   <th className="px-3 py-2" />
                 </tr>
@@ -3204,7 +3240,14 @@ function ExpensesTab({
                     <td className="px-3 py-2">{expense.platform || "-"}</td>
                     <td className="px-3 py-2">{expense.category || "-"}</td>
                     <td className="px-3 py-2">{expense.description || "-"}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{currency(expense.amount)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">
+                      {currency(expense.amount)}
+                      {expense.type === "payroll" && getPayrollOriginalPaymentLabel(expense) && (
+                        <span className="block text-[11px] text-muted-foreground">
+                          {getPayrollOriginalPaymentLabel(expense)}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <button
                         type="button"
@@ -3258,38 +3301,106 @@ function ExpensesTab({
               </Button>
             </div>
             <form onSubmit={handleExpenseSubmit} className="space-y-3">
-              <Input
-                type="date"
-                value={form.expense_date}
-                onChange={(e) => setForm({ ...form, expense_date: e.target.value, type: activeType })}
-              />
-              <Input
-                type="month"
-                value={form.month}
-                onChange={(e) => setForm({ ...form, month: e.target.value, type: activeType })}
-              />
-              <Input
-                placeholder={activeView.platformPlaceholder}
-                value={form.platform}
-                onChange={(e) => setForm({ ...form, platform: e.target.value, type: activeType })}
-              />
-              <Input
-                placeholder={activeView.categoryPlaceholder}
-                value={form.category}
-                onChange={(e) => setForm({ ...form, category: e.target.value, type: activeType })}
-              />
-              <Input
-                placeholder={activeView.descriptionPlaceholder}
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value, type: activeType })}
-              />
-              <Input
-                type="number"
-                placeholder="Monto"
-                value={form.amount}
-                onChange={(e) => setForm({ ...form, amount: e.target.value, type: activeType })}
-                required
-              />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <LabeledField label="Fecha de pago">
+                  <Input
+                    type="date"
+                    value={form.expense_date}
+                    onChange={(e) => setForm({ ...form, expense_date: e.target.value, type: activeType })}
+                  />
+                </LabeledField>
+                <LabeledField label="Mes contable">
+                  <Input
+                    type="month"
+                    value={form.month}
+                    onChange={(e) => setForm({ ...form, month: e.target.value, type: activeType })}
+                  />
+                </LabeledField>
+              </div>
+
+              <LabeledField label={activeType === "payroll" ? "Persona" : "Plataforma / proveedor"}>
+                <Input
+                  placeholder={activeView.platformPlaceholder}
+                  value={form.platform}
+                  list={activeType === "payroll" ? "payroll-people" : undefined}
+                  onChange={(e) => setForm({ ...form, platform: e.target.value, type: activeType })}
+                  required={activeType === "payroll"}
+                />
+                {activeType === "payroll" && (
+                  <datalist id="payroll-people">
+                    {payrollPeople.map((person) => (
+                      <option key={person} value={person} />
+                    ))}
+                  </datalist>
+                )}
+              </LabeledField>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <LabeledField label={activeType === "payroll" ? "Tipo de pago" : "Categoria"}>
+                  <Input
+                    placeholder={activeView.categoryPlaceholder}
+                    value={form.category}
+                    onChange={(e) => setForm({ ...form, category: e.target.value, type: activeType })}
+                  />
+                </LabeledField>
+                <LabeledField label={activeType === "payroll" ? "Funcion / detalle" : "Descripcion"}>
+                  <Input
+                    placeholder={activeView.descriptionPlaceholder}
+                    value={form.description}
+                    onChange={(e) => setForm({ ...form, description: e.target.value, type: activeType })}
+                  />
+                </LabeledField>
+              </div>
+
+              {activeType === "payroll" ? (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <LabeledField label="Monto pagado en soles">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        inputMode="decimal"
+                        placeholder="S/ 0.00"
+                        value={form.amount}
+                        onChange={(e) => setForm({ ...form, amount: e.target.value, type: activeType })}
+                        required
+                      />
+                    </LabeledField>
+                    <LabeledField label="Tipo de cambio a colones">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        inputMode="decimal"
+                        placeholder="CRC por 1 PEN"
+                        value={form.exchange_rate}
+                        onChange={(e) => setForm({ ...form, exchange_rate: e.target.value, type: activeType })}
+                        required
+                      />
+                    </LabeledField>
+                  </div>
+                  <div className="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                    {payrollConvertedAmount
+                      ? `Se guardara en cierre mensual como ${currency(payrollConvertedAmount)}.`
+                      : "Ingresa monto y tipo de cambio para calcular el gasto en CRC."}
+                  </div>
+                </>
+              ) : (
+                <LabeledField label="Monto en colones">
+                  <Input
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputMode="numeric"
+                    placeholder="Monto"
+                    value={form.amount}
+                    onChange={(e) => setForm({ ...form, amount: e.target.value, type: activeType })}
+                    required
+                  />
+                </LabeledField>
+              )}
+
               <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
                 <Button type="button" variant="outline" onClick={() => setIsExpenseModalOpen(false)}>
                   Cancelar
@@ -3305,6 +3416,33 @@ function ExpensesTab({
       )}
     </div>
   );
+}
+
+function LabeledField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block space-y-1">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function getPayrollOriginalPaymentLabel(expense: BusinessExpense): string {
+  const originalAmount = expense.notes.match(/Monto original:\s*PEN\s*([0-9.,]+)/i)?.[1];
+  const exchangeRate = expense.notes.match(/Tipo de cambio PEN->CRC:\s*([0-9.,]+)/i)?.[1];
+  if (!originalAmount && !exchangeRate) return "";
+
+  const amount = Number(String(originalAmount ?? "").replace(",", "."));
+  const amountLabel = Number.isFinite(amount) && amount > 0
+    ? `S/ ${amount.toLocaleString("es-PE", { maximumFractionDigits: 2 })}`
+    : "PEN";
+  return exchangeRate ? `${amountLabel} @ ${exchangeRate}` : amountLabel;
 }
 
 function FinancialAnomaliesTable({
@@ -4902,6 +5040,53 @@ async function readApiJson(res: Response) {
     const preview = text.replace(/\s+/g, " ").trim().slice(0, 180);
     throw new Error(`El servidor devolvio una respuesta invalida (${res.status}). ${preview}`);
   }
+}
+
+function buildExpensePayload(
+  form: typeof emptyExpense
+): { ok: true; expense: ExpensePayload } | { ok: false; error: string } {
+  const amount = Number(form.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { ok: false, error: "El monto debe ser numerico y mayor que cero." };
+  }
+
+  const baseExpense = {
+    type: form.type,
+    expense_date: form.expense_date,
+    month: form.month,
+    platform: form.platform.trim(),
+    category: form.category.trim(),
+    description: form.description.trim(),
+    amount,
+    currency: "CRC",
+    notes: form.notes.trim(),
+  };
+
+  if (form.type !== "payroll") return { ok: true, expense: baseExpense };
+
+  const exchangeRate = Number(form.exchange_rate);
+  if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+    return { ok: false, error: "Ingresa el tipo de cambio PEN a CRC para registrar la planilla." };
+  }
+  if (!baseExpense.platform) {
+    return { ok: false, error: "Ingresa la persona asociada al pago de planilla." };
+  }
+
+  const convertedAmount = roundMoney(amount * exchangeRate);
+  const conversionNote = [
+    `Monto original: PEN ${amount.toFixed(2)}`,
+    `Tipo de cambio PEN->CRC: ${exchangeRate}`,
+    baseExpense.notes ? `Nota: ${baseExpense.notes}` : "",
+  ].filter(Boolean).join("\n");
+
+  return {
+    ok: true,
+    expense: {
+      ...baseExpense,
+      amount: convertedAmount,
+      notes: conversionNote,
+    },
+  };
 }
 
 function exportCsv(filename: string, rows: unknown[]) {
