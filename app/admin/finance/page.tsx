@@ -178,6 +178,7 @@ interface TrackableOrderRow {
   shopify_cancelled_at: string | null;
   shopify_note?: string;
   shopify_created_at: string | null;
+  finalized_on?: string | null;
   package_items: ProductLineItem[];
 }
 
@@ -307,6 +308,7 @@ interface OrderProfitabilityRow {
   issue_count: number;
   created_at: string | null;
   days_since_order: number | null;
+  delivered_on: string | null;
 }
 
 interface ProductAnalysisRow {
@@ -3397,10 +3399,15 @@ function MonthlyCloseTab({
             <span className="hidden text-right lg:block">Costos</span>
             <span className="text-right">Utilidad neta</span>
           </div>
-          {rows.map((row) => (
+          {rows.map((row, index) => (
             <MonthlyCloseMonthRow
               key={row.month}
               row={row}
+              previous={
+                row.month === "sin-fecha"
+                  ? undefined
+                  : rows.slice(index + 1).find((item) => item.month !== "sin-fecha")
+              }
               open={expandedMonth === row.month}
               onToggle={() =>
                 setExpandedMonth((value) => (value === row.month ? null : row.month))
@@ -3422,6 +3429,7 @@ function MonthlyCloseTab({
 
 function MonthlyCloseMonthRow({
   row,
+  previous,
   open,
   onToggle,
   control,
@@ -3433,6 +3441,7 @@ function MonthlyCloseMonthRow({
   onSaveClaim,
 }: {
   row: MonthlyCloseRow;
+  previous?: MonthlyCloseRow;
   open: boolean;
   onToggle: () => void;
   control: FinanceControlCenter;
@@ -3472,6 +3481,7 @@ function MonthlyCloseMonthRow({
         <div className="border-t border-border/50 bg-background/40 p-3 sm:p-4">
           <MonthCloseDetail
             close={row}
+            previous={previous}
             control={control}
             summary={summary}
             costs={costs}
@@ -3488,6 +3498,7 @@ function MonthlyCloseMonthRow({
 
 function MonthCloseDetail({
   close,
+  previous,
   control,
   summary,
   costs,
@@ -3497,6 +3508,7 @@ function MonthCloseDetail({
   onSaveClaim,
 }: {
   close: MonthlyCloseRow;
+  previous?: MonthlyCloseRow;
   control: FinanceControlCenter;
   summary: ProfitabilitySummary | null;
   costs: ProductCost[];
@@ -3554,6 +3566,33 @@ function MonthCloseDetail({
   const claimShare = claimBase ? (close.cash_pending / claimBase) * 100 : 0;
   // Monto COD bruto cobrado: lo liquidado mas lo que Boxful retuvo en costos.
   const grossCodIncome = close.cash_received + close.boxful_costs;
+  const previousGrossIncome = previous ? previous.cash_received + previous.boxful_costs : null;
+  // Dinero quemado en envios fallidos: lo que Boxful cobro sobre no entregados.
+  const failedDeliveryLoss = roundMoney(
+    sum(
+      monthOrders
+        .filter(
+          (order) =>
+            order.tracking_status === "not_delivered" || order.tracking_status === "returned"
+        )
+        .map((order) => order.settlement_charged_costs)
+    )
+  );
+  const toClaimAging = useMemo(() => {
+    const buckets = {
+      fresh: { count: 0, amount: 0 },
+      warn: { count: 0, amount: 0 },
+      late: { count: 0, amount: 0 },
+    };
+    for (const order of monthOrders) {
+      if (order.tracking_status !== "delivered" || order.settlement_count !== 0) continue;
+      const days = daysSince(order.delivered_on ?? order.created_at ?? "");
+      const bucket = days <= 7 ? buckets.fresh : days <= 15 ? buckets.warn : buckets.late;
+      bucket.count += 1;
+      bucket.amount += order.expected_cod;
+    }
+    return buckets;
+  }, [monthOrders]);
   const costSegments = [
     { label: "Comision COD", value: close.boxful_cod_commission, className: "bg-sky-400" },
     { label: "Costo entrega", value: close.boxful_delivery_cost, className: "bg-cyan-400" },
@@ -3590,27 +3629,133 @@ function MonthCloseDetail({
         {hasSettlementData ? (
           <>
             <div className="border border-border bg-card p-3">
-              <p className="text-sm font-semibold">P&G del mes</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold">P&G del mes</p>
+                <span className="flex items-baseline gap-2 text-[10px] text-muted-foreground">
+                  <span className="w-10 text-right">% ing.</span>
+                  {previous && <span className="w-12 text-right">Δ mes ant.</span>}
+                </span>
+              </div>
               <div className="mt-2 space-y-1">
-                <StatementRow label="Ingresos COD cobrados" value={currency(grossCodIncome)} />
-                <StatementRow label="Comision COD" value={currency(close.boxful_cod_commission)} sign="minus" />
-                <StatementRow label="Costo de entrega" value={currency(close.boxful_delivery_cost)} sign="minus" />
-                <StatementRow label="Pick&Pack" value={currency(close.boxful_pick_pack_cost)} sign="minus" />
-                <StatementRow label="Empaque Boxful" value={currency(close.boxful_packaging_cost)} sign="minus" />
+                <StatementRow
+                  label="Ingresos COD cobrados"
+                  value={currency(grossCodIncome)}
+                  pct={pctOf(grossCodIncome, grossCodIncome)}
+                  delta={pctChange(grossCodIncome, previousGrossIncome)}
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Comision COD"
+                  value={currency(close.boxful_cod_commission)}
+                  sign="minus"
+                  pct={pctOf(close.boxful_cod_commission, grossCodIncome)}
+                  delta={pctChange(close.boxful_cod_commission, previous?.boxful_cod_commission)}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Costo de entrega"
+                  value={currency(close.boxful_delivery_cost)}
+                  sign="minus"
+                  pct={pctOf(close.boxful_delivery_cost, grossCodIncome)}
+                  delta={pctChange(close.boxful_delivery_cost, previous?.boxful_delivery_cost)}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Pick&Pack"
+                  value={currency(close.boxful_pick_pack_cost)}
+                  sign="minus"
+                  pct={pctOf(close.boxful_pick_pack_cost, grossCodIncome)}
+                  delta={pctChange(close.boxful_pick_pack_cost, previous?.boxful_pick_pack_cost)}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Empaque Boxful"
+                  value={currency(close.boxful_packaging_cost)}
+                  sign="minus"
+                  pct={pctOf(close.boxful_packaging_cost, grossCodIncome)}
+                  delta={pctChange(close.boxful_packaging_cost, previous?.boxful_packaging_cost)}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
                 {close.boxful_card_commission > 0 && (
-                  <StatementRow label="Comision tarjeta" value={currency(close.boxful_card_commission)} sign="minus" />
+                  <StatementRow
+                    label="Comision tarjeta"
+                    value={currency(close.boxful_card_commission)}
+                    sign="minus"
+                    pct={pctOf(close.boxful_card_commission, grossCodIncome)}
+                    delta={pctChange(close.boxful_card_commission, previous?.boxful_card_commission)}
+                    deltaInverted
+                    showDeltaCol={Boolean(previous)}
+                  />
                 )}
-                <StatementRow label="Caja liquidada" value={currency(close.cash_received)} emphasis />
-                <StatementRow label="Costo de producto" value={currency(close.product_costs)} sign="minus" />
-                <StatementRow label="Margen de pedidos" value={currency(close.contribution_margin)} emphasis />
-                <StatementRow label="Ads" value={currency(close.ads)} sign="minus" />
-                <StatementRow label="Planilla" value={currency(close.payroll)} sign="minus" />
-                <StatementRow label="Varios" value={currency(close.misc)} sign="minus" />
+                <StatementRow
+                  label="Caja liquidada"
+                  value={currency(close.cash_received)}
+                  emphasis
+                  pct={pctOf(close.cash_received, grossCodIncome)}
+                  delta={pctChange(close.cash_received, previous?.cash_received)}
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Costo de producto"
+                  value={currency(close.product_costs)}
+                  sign="minus"
+                  pct={pctOf(close.product_costs, grossCodIncome)}
+                  delta={pctChange(close.product_costs, previous?.product_costs)}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Margen de pedidos"
+                  value={currency(close.contribution_margin)}
+                  emphasis
+                  pct={pctOf(close.contribution_margin, grossCodIncome)}
+                  delta={pctChange(close.contribution_margin, previous?.contribution_margin)}
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Ads"
+                  value={currency(close.ads)}
+                  sign="minus"
+                  pct={pctOf(close.ads, grossCodIncome)}
+                  delta={pctChange(close.ads, previous?.ads)}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Planilla"
+                  value={currency(close.payroll)}
+                  sign="minus"
+                  pct={pctOf(close.payroll, grossCodIncome)}
+                  delta={pctChange(close.payroll, previous?.payroll)}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="Varios"
+                  value={currency(close.misc)}
+                  sign="minus"
+                  pct={pctOf(close.misc, grossCodIncome)}
+                  delta={pctChange(close.misc, previous?.misc)}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
               </div>
               <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2">
                 <span className="text-xs font-semibold">Utilidad neta estimada</span>
-                <span className={`font-mono text-xl font-semibold ${close.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
-                  {currency(close.net_profit)}
+                <span className="flex items-baseline gap-2">
+                  <span className={`font-mono text-xl font-semibold ${close.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
+                    {currency(close.net_profit)}
+                  </span>
+                  <span className="w-10 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+                    {pctOf(close.net_profit, grossCodIncome) == null
+                      ? ""
+                      : `${(pctOf(close.net_profit, grossCodIncome) as number).toFixed(1)}%`}
+                  </span>
+                  {previous && <DeltaCell delta={pctChange(close.net_profit, previous.net_profit)} />}
                 </span>
               </div>
             </div>
@@ -3628,6 +3773,12 @@ function MonthCloseDetail({
                   label="No entregados"
                   value={String(close.not_delivered)}
                   tone={close.not_delivered ? "negative" : undefined}
+                />
+                <StatementRow
+                  label="Perdida no-entrega (Boxful)"
+                  value={currency(failedDeliveryLoss)}
+                  sign="minus"
+                  tone={failedDeliveryLoss ? "negative" : undefined}
                 />
                 <StatementRow
                   label="Anulados"
@@ -3654,6 +3805,22 @@ function MonthCloseDetail({
                 <div className="h-1.5 overflow-hidden border border-border bg-background">
                   <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, claimShare)}%` }} />
                 </div>
+                {close.to_claim > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                    <span className="inline-flex items-center gap-1 border border-border bg-background px-2 py-0.5 text-muted-foreground">
+                      0-7 d <span className="font-mono text-foreground">{toClaimAging.fresh.count}</span>
+                      <span className="font-mono">{currency(toClaimAging.fresh.amount)}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-amber-200">
+                      8-15 d <span className="font-mono">{toClaimAging.warn.count}</span>
+                      <span className="font-mono">{currency(toClaimAging.warn.amount)}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-red-200">
+                      +15 d <span className="font-mono">{toClaimAging.late.count}</span>
+                      <span className="font-mono">{currency(toClaimAging.late.amount)}</span>
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </>
@@ -3743,6 +3910,36 @@ function MonthCloseDetail({
           </div>
         </div>
       </div>
+
+      {hasSettlementData && close.delivered > 0 && (
+        <div className="border border-border bg-card p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold">Unit economics</p>
+            <p className="text-[11px] text-muted-foreground">
+              por pedido entregado ({close.delivered} entregados)
+            </p>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+            <CompactStat label="Ingreso" value={currency(grossCodIncome / close.delivered)} />
+            <CompactStat label="Costo logistico" value={currency(close.boxful_costs / close.delivered)} />
+            <CompactStat label="Costo producto" value={currency(close.product_costs / close.delivered)} />
+            <CompactStat label="Margen" value={currency(close.contribution_margin / close.delivered)} />
+            <CompactStat
+              label="Utilidad"
+              value={currency(close.net_profit / close.delivered)}
+              tone={close.net_profit < 0 ? "warning" : undefined}
+            />
+            <CompactStat
+              label="CPA real (ads)"
+              value={close.ads > 0 ? currency(close.ads / close.delivered) : "Sin ads"}
+            />
+            <CompactStat
+              label="ROAS caja"
+              value={close.ads > 0 ? `${(close.cash_received / close.ads).toFixed(1)}x` : "Sin ads"}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="border border-border bg-card p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3884,12 +4081,20 @@ function StatementRow({
   sign,
   emphasis,
   tone,
+  pct,
+  delta,
+  deltaInverted,
+  showDeltaCol,
 }: {
   label: string;
   value: string;
   sign?: "minus";
   emphasis?: boolean;
   tone?: "positive" | "negative" | "warning";
+  pct?: number | null;
+  delta?: number | null;
+  deltaInverted?: boolean;
+  showDeltaCol?: boolean;
 }) {
   const valueClass =
     tone === "positive"
@@ -3907,11 +4112,43 @@ function StatementRow({
       <span className={emphasis ? "text-xs font-semibold" : "text-xs text-muted-foreground"}>
         {label}
       </span>
-      <span className={`font-mono text-xs ${emphasis ? "font-semibold" : ""} ${valueClass}`}>
-        {sign === "minus" ? `(${value})` : value}
+      <span className="flex items-baseline gap-2">
+        <span className={`font-mono text-xs ${emphasis ? "font-semibold" : ""} ${valueClass}`}>
+          {sign === "minus" ? `(${value})` : value}
+        </span>
+        {pct !== undefined && (
+          <span className="w-10 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+            {pct == null ? "" : `${pct.toFixed(1)}%`}
+          </span>
+        )}
+        {showDeltaCol && <DeltaCell delta={delta ?? null} inverted={deltaInverted} />}
       </span>
     </div>
   );
+}
+
+function DeltaCell({ delta, inverted }: { delta: number | null; inverted?: boolean }) {
+  if (delta == null) {
+    return <span className="w-12 shrink-0" />;
+  }
+  const improving = inverted ? delta < 0 : delta > 0;
+  const colorClass = delta === 0 ? "text-muted-foreground" : improving ? "text-emerald-300" : "text-red-300";
+  const magnitude = Math.abs(delta) > 999 ? ">999" : Math.abs(delta).toFixed(0);
+  return (
+    <span className={`w-12 shrink-0 text-right font-mono text-[10px] ${colorClass}`}>
+      {delta > 0 ? "+" : delta < 0 ? "-" : ""}
+      {magnitude}%
+    </span>
+  );
+}
+
+function pctOf(value: number, base: number): number | null {
+  return base ? (value / base) * 100 : null;
+}
+
+function pctChange(current: number, previousValue?: number | null): number | null {
+  if (previousValue == null || previousValue === 0) return null;
+  return ((current - previousValue) / Math.abs(previousValue)) * 100;
 }
 
 
@@ -5198,6 +5435,7 @@ function buildOrderProfitabilityRow({
     issue_count: issueCount,
     created_at: order.shopify_created_at,
     days_since_order: order.shopify_created_at ? daysSince(order.shopify_created_at) : null,
+    delivered_on: order.finalized_on ?? null,
   };
 }
 
