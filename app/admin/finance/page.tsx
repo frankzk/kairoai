@@ -2183,6 +2183,8 @@ function SettlementsTab({
   const [importSort, setImportSort] = useState<SettlementImportSort>("recent");
   const [shopifyFilter, setShopifyFilter] = useState<SettlementShopifyFilter>("all");
   const [deletingImportId, setDeletingImportId] = useState<number | null>(null);
+  const [showClaimList, setShowClaimList] = useState(false);
+  const [showDoubleList, setShowDoubleList] = useState(false);
   const fileByImportId = useMemo(
     () => new Map(imports.map((item) => [item.id, item.file_name])),
     [imports]
@@ -2248,8 +2250,71 @@ function SettlementsTab({
     }
   }
 
+  const claimAlertTotal = sum(liquidationAlertRows.map((row) => Number(row.cod_amount || 0)));
+
   return (
-    <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
+    <div className="space-y-4">
+      {(liquidationAlertRows.length > 0 || doubleSettlementAnomalies.length > 0) && (
+        <Card className="border-amber-500/30">
+          <CardHeader>
+            <CardTitle className="text-base">Alertas de cobro</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Globales sobre todas las liquidaciones importadas; no dependen del archivo seleccionado.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {liquidationAlertRows.length > 0 && (
+              <div className="border border-amber-500/40 bg-amber-500/10">
+                <button
+                  type="button"
+                  onClick={() => setShowClaimList((value) => !value)}
+                  aria-expanded={showClaimList}
+                  className="flex w-full items-center justify-between gap-3 p-3 text-left"
+                >
+                  <span className="flex items-center gap-2 text-amber-100">
+                    {showClaimList ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    <AlertTriangle className="h-4 w-4" />
+                    <span className="text-sm font-semibold">Entregados sin liquidacion</span>
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-amber-100">{currency(claimAlertTotal)}</span>
+                    <Badge variant="warning">{liquidationAlertRows.length} por reclamar</Badge>
+                  </span>
+                </button>
+                {showClaimList && (
+                  <div className="border-t border-amber-500/30 p-3">
+                    <ClaimAlertsTable rows={liquidationAlertRows} />
+                  </div>
+                )}
+              </div>
+            )}
+            {doubleSettlementAnomalies.length > 0 && (
+              <div className="border border-red-500/40 bg-red-500/10">
+                <button
+                  type="button"
+                  onClick={() => setShowDoubleList((value) => !value)}
+                  aria-expanded={showDoubleList}
+                  className="flex w-full items-center justify-between gap-3 p-3 text-left"
+                >
+                  <span className="flex items-center gap-2 text-red-100">
+                    {showDoubleList ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    <AlertTriangle className="h-4 w-4" />
+                    <span className="text-sm font-semibold">Doble liquidacion detectada</span>
+                  </span>
+                  <Badge variant="destructive">{doubleSettlementAnomalies.length} anomalias</Badge>
+                </button>
+                {showDoubleList && (
+                  <div className="border-t border-red-500/30 p-3">
+                    <DoubleSettlementTable anomalies={doubleSettlementAnomalies} />
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Importar liquidacion</CardTitle>
@@ -2354,30 +2419,6 @@ function SettlementsTab({
             <MiniStat label="Sin match" value={settlementMatchCounts.unmatched} />
             <MiniStat label="A liquidar" value={currency(selectedImport?.total_to_liquidate ?? 0)} />
           </div>
-          {liquidationAlertRows.length > 0 && (
-            <div className="border border-amber-500/40 bg-amber-500/10 p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-amber-100">
-                  <AlertTriangle className="h-4 w-4" />
-                  <span className="text-sm font-semibold">Entregados sin liquidacion</span>
-                </div>
-                <Badge variant="warning">{liquidationAlertRows.length} por reclamar</Badge>
-              </div>
-              <ClaimAlertsTable rows={liquidationAlertRows} />
-            </div>
-          )}
-          {doubleSettlementAnomalies.length > 0 && (
-            <div className="border border-red-500/40 bg-red-500/10 p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-red-100">
-                  <AlertTriangle className="h-4 w-4" />
-                  <span className="text-sm font-semibold">Doble liquidacion detectada</span>
-                </div>
-                <Badge variant="destructive">{doubleSettlementAnomalies.length} anomalias</Badge>
-              </div>
-              <DoubleSettlementTable anomalies={doubleSettlementAnomalies} />
-            </div>
-          )}
           <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-muted-foreground">
               Mostrando {visibleSettlementRows.length} de {selectedRows.length} filas de esta liquidacion.
@@ -2411,6 +2452,7 @@ function SettlementsTab({
           />
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }
