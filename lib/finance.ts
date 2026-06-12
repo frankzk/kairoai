@@ -437,14 +437,43 @@ export async function listLogisticsRows(importId?: number): Promise<LogisticsRow
   return (data ?? []) as LogisticsRow[];
 }
 
-export async function listPersistedShopifyOrders(limit = 1000): Promise<PersistedShopifyOrder[]> {
+// Sin raw_order completo: las lineas y notas se resuelven aca para que la
+// respuesta con miles de pedidos no se dispare de tamano.
+const PERSISTED_ORDER_SUMMARY_COLUMNS =
+  "id, shopify_order_id, order_number, name, customer_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note:raw_order->>note, note_attributes:raw_order->note_attributes, raw_line_items:raw_order->line_items";
+
+export interface PersistedShopifyOrderSummary
+  extends Omit<PersistedShopifyOrder, "raw_order"> {
+  note: string;
+  note_attributes: Array<{ name?: string | null; value?: string | null }>;
+}
+
+export async function listPersistedShopifyOrders(limit = 1000): Promise<PersistedShopifyOrderSummary[]> {
   const { data, error } = await getDB()
     .from("shopify_orders")
-    .select("*")
+    .select(PERSISTED_ORDER_SUMMARY_COLUMNS)
     .order("shopify_created_at", { ascending: false, nullsFirst: false })
     .limit(limit);
   if (error) throw new Error(`listPersistedShopifyOrders: ${error.message}`);
-  return (data ?? []) as PersistedShopifyOrder[];
+
+  type RawSummary = PersistedShopifyOrderSummary & {
+    raw_line_items: Array<Record<string, unknown>> | null;
+  };
+  return ((data ?? []) as unknown as RawSummary[]).map(({ raw_line_items, ...order }) => ({
+    ...order,
+    note: order.note ?? "",
+    note_attributes: order.note_attributes ?? [],
+    // Filas sincronizadas antes de que existiera la columna line_items la
+    // tienen vacia; el pedido crudo siempre trae las lineas.
+    line_items: order.line_items?.length
+      ? order.line_items
+      : (raw_line_items ?? []).map((item) => ({
+          sku: String(item.sku ?? ""),
+          title: String(item.title ?? ""),
+          quantity: Number(item.quantity ?? 0),
+          price: Number(item.price ?? 0),
+        })),
+  }));
 }
 
 export async function upsertPersistedShopifyOrders(
