@@ -1004,6 +1004,7 @@ export default function FinancePage() {
             {tab === "settlements" && (
               <SettlementsTab
                 imports={imports}
+                shopifyCoverage={shopifyCoverage}
                 rows={matchedSettlementRows}
                 shopifyOrders={shopifyOrders}
                 liquidationAlertRows={liquidationAlertRows}
@@ -2289,6 +2290,7 @@ function ShopifyNotesTab({ orders }: { orders: ShopifyOrderSummary[] }) {
 
 function SettlementsTab({
   imports,
+  shopifyCoverage,
   rows,
   shopifyOrders,
   liquidationAlertRows,
@@ -2300,6 +2302,7 @@ function SettlementsTab({
   imports: SettlementImport[];
   rows: SettlementRow[];
   shopifyOrders: ShopifyOrderSummary[];
+  shopifyCoverage: { count: number; oldest: string | null; newest: string | null } | null;
   liquidationAlertRows: LogisticsRow[];
   doubleSettlementAnomalies: DoubleSettlementAnomaly[];
   importing: boolean;
@@ -2511,12 +2514,22 @@ function SettlementsTab({
                       <span className="mt-1 block text-xs text-muted-foreground">
                         {item.period_end ? formatDate(item.period_end) : "Sin corte"} - {item.total_rows} filas - {currency(item.total_to_liquidate)}
                       </span>
-                      <span className="mt-1.5 block">
+                      <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         {(unmatchedByImport.get(item.id) ?? 0) > 0 ? (
                           <Badge variant="warning">{unmatchedByImport.get(item.id)} sin match</Badge>
                         ) : (
                           <Badge variant="success">0 sin match</Badge>
                         )}
+                        {shopifyCoverage?.oldest &&
+                          item.period_end &&
+                          item.period_end < shopifyCoverage.oldest.slice(0, 10) && (
+                            <Badge
+                              variant="destructive"
+                              title={`Este corte es anterior a tu base sincronizada (desde ${formatDate(shopifyCoverage.oldest.slice(0, 10))}). Corre Sync Shopify para extender el historico y estos pedidos cruzaran solos.`}
+                            >
+                              corte fuera de la base
+                            </Badge>
+                          )}
                       </span>
                     </button>
                     <button
