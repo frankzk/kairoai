@@ -4153,10 +4153,10 @@ function toCsv(rows: unknown[]): string {
 }
 
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
+  // El endpoint ya resuelve lineas y notas; raw_order queda solo como
+  // respaldo por si llega una respuesta vieja cacheada.
   const rawOrder = (order.raw_order as Record<string, unknown> | null) ?? {};
   const columnLineItems = (order.line_items as ShopifyOrderSummary["line_items"]) ?? [];
-  // Filas sincronizadas antes de que existiera la columna line_items la tienen
-  // vacia; el pedido crudo siempre trae las lineas.
   const rawLineItems = ((rawOrder.line_items as Array<Record<string, unknown>>) ?? []).map((item) => ({
     sku: String(item.sku ?? ""),
     title: String(item.title ?? ""),
@@ -4164,7 +4164,10 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     price: Number(item.price ?? 0),
   }));
   const lineItems = columnLineItems.length ? columnLineItems : rawLineItems;
-  const noteAttributes = (rawOrder.note_attributes as ShopifyOrderSummary["note_attributes"]) ?? [];
+  const noteAttributes =
+    (order.note_attributes as ShopifyOrderSummary["note_attributes"]) ??
+    (rawOrder.note_attributes as ShopifyOrderSummary["note_attributes"]) ??
+    [];
   return {
     id: String(order.shopify_order_id ?? order.id ?? ""),
     order_number: Number(order.order_number ?? 0),
@@ -4178,7 +4181,7 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     financial_status: String(order.financial_status ?? ""),
     fulfillment_status: String(order.fulfillment_status ?? ""),
     cancelled_at: (order.cancelled_at as string | null) ?? null,
-    note: String(rawOrder.note ?? ""),
+    note: String(order.note ?? rawOrder.note ?? ""),
     note_attributes: noteAttributes,
     created_at: String(order.shopify_created_at ?? ""),
     line_items: lineItems,
@@ -4411,7 +4414,9 @@ function buildVisibleOrderRows(
       shopify_cancelled_at: shopify?.cancelled_at ?? row.shopify_cancelled_at,
       shopify_note: shopify?.note ?? "",
       shopify_created_at: shopify?.created_at ?? row.shopify_created_at,
-      package_items: row.package_items?.length ? row.package_items : shopifyItems,
+      // Shopify manda: las lineas del pedido definen el producto; los
+      // "Paquete N" de Boxful quedan solo como respaldo sin match.
+      package_items: shopifyItems.length ? shopifyItems : row.package_items ?? [],
     };
   });
 
