@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, startTransition, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import Link from "next/link";
 import {
@@ -55,6 +55,7 @@ type MonthlyOrderFilter =
   | "unsettled"
   | "to_claim"
   | "duplicate";
+type ShopifyHistoryProgress = { loaded: number; total: number | null };
 type SettlementImportSort = "recent" | "oldest";
 type SettlementShopifyFilter = "all" | "matched" | "unmatched";
 type ProductLineItem = { sku?: string; title: string; quantity: number; price: number };
@@ -523,7 +524,7 @@ const FINANCE_SHOPIFY_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
 const FINANCE_SHOPIFY_ORDERS_URL =
   `/api/shopify/orders?status=any&limit=250&created_at_min=${encodeURIComponent(FINANCE_SHOPIFY_CREATED_AT_MIN)}`;
 const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
-const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 1000;
+const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 2000;
 const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
 
 export default function FinancePage() {
@@ -552,8 +553,14 @@ export default function FinancePage() {
   const [importing, setImporting] = useState(false);
   const [importingLogistics, setImportingLogistics] = useState(false);
   const [syncingShopify, setSyncingShopify] = useState(false);
+  const [shopifyHistoryLoading, setShopifyHistoryLoading] = useState(false);
+  const [shopifyHistoryProgress, setShopifyHistoryProgress] = useState<ShopifyHistoryProgress>({
+    loaded: 0,
+    total: null,
+  });
   const [syncMessage, setSyncMessage] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
+  const refreshRunRef = useRef(0);
 
   const latestLogisticsImport = logisticsImports[0];
   const liquidationAlertRows = useMemo(
@@ -594,8 +601,13 @@ export default function FinancePage() {
   );
 
   async function refresh() {
+    const refreshRun = refreshRunRef.current + 1;
+    refreshRunRef.current = refreshRun;
+    const isCurrentRun = () => refreshRunRef.current === refreshRun;
     setLoading(true);
     setError("");
+    setShopifyHistoryLoading(false);
+    setShopifyHistoryProgress({ loaded: 0, total: null });
     try {
       const [settlementsRes, logisticsRes, costsRes, expensesRes, summaryRes] =
         await Promise.all([
@@ -613,8 +625,6 @@ export default function FinancePage() {
       const summaryJson = await readApiJson(summaryRes);
       let shopifyOrdersJson: Record<string, unknown> = {};
       let shopifyNoteOrdersJson: Record<string, unknown> = {};
-      let persistedShopifyJson: Record<string, unknown> = {};
-      let persistedShopifyError = "";
       let claimsJson: Record<string, unknown> = {};
       let boxfulFilesJson: Record<string, unknown> = {};
       try {
@@ -633,12 +643,6 @@ export default function FinancePage() {
         shopifyNoteOrdersJson = {};
       }
       try {
-        persistedShopifyJson = await fetchPersistedShopifySnapshot();
-      } catch (err) {
-        persistedShopifyError = err instanceof Error ? err.message : "No se pudo leer el historico Shopify";
-        persistedShopifyJson = {};
-      }
-      try {
         const claimsRes = await fetch("/api/finance/claims", { cache: "no-store" });
         claimsJson = await readApiJson(claimsRes);
       } catch {
@@ -651,6 +655,8 @@ export default function FinancePage() {
         boxfulFilesJson = {};
       }
 
+      if (!isCurrentRun()) return;
+
       setImports(settlementsJson.imports ?? []);
       setRows(settlementsJson.rows ?? []);
       setLogisticsImports(logisticsJson.imports ?? []);
@@ -659,16 +665,10 @@ export default function FinancePage() {
       const noteShopifyOrders = Array.isArray(shopifyNoteOrdersJson.orders)
         ? shopifyNoteOrdersJson.orders as ShopifyOrderSummary[]
         : [];
-      const persistedShopifyOrders = Array.isArray(persistedShopifyJson.orders)
-        ? (persistedShopifyJson.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
-        : [];
       // Orden de fusion: lo sincronizado primero y las lecturas en vivo despues,
       // para que una nota recien editada en Shopify pise la copia vieja de la base.
-      setShopifyOrders(mergeShopifyOrderSummaries(persistedShopifyOrders, noteShopifyOrders, liveShopifyOrders));
-      setShopifyCoverage(
-        (persistedShopifyJson.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
-          null
-      );
+      setShopifyOrders(mergeShopifyOrderSummaries(noteShopifyOrders, liveShopifyOrders));
+      setShopifyCoverage(null);
       setCosts(costsJson.costs ?? []);
       setCostVersions(Array.isArray(costsJson.versions) ? costsJson.versions as ProductCostVersion[] : []);
       setExpenses(expensesJson.expenses ?? []);
@@ -681,13 +681,57 @@ export default function FinancePage() {
         logisticsJson.error ??
         costsJson.error ??
         expensesJson.error ??
-        summaryJson.error ??
-        persistedShopifyError;
+        summaryJson.error;
       if (firstError) setError(firstError);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
-    } finally {
       setLoading(false);
+
+      setShopifyHistoryLoading(true);
+      try {
+        const persistedShopifyJson = await fetchPersistedShopifySnapshot((partial) => {
+          if (!isCurrentRun()) return;
+          const persistedShopifyOrders = Array.isArray(partial.orders)
+            ? (partial.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
+            : [];
+          const coverage =
+            (partial.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
+            null;
+          startTransition(() => {
+            setShopifyOrders(mergeShopifyOrderSummaries(persistedShopifyOrders, noteShopifyOrders, liveShopifyOrders));
+            setShopifyCoverage(coverage);
+            setShopifyHistoryProgress({
+              loaded: persistedShopifyOrders.length,
+              total: coverage?.count ?? null,
+            });
+          });
+        });
+
+        if (!isCurrentRun()) return;
+        const persistedShopifyOrders = Array.isArray(persistedShopifyJson.orders)
+          ? (persistedShopifyJson.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
+          : [];
+        const coverage =
+          (persistedShopifyJson.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
+          null;
+        startTransition(() => {
+          setShopifyOrders(mergeShopifyOrderSummaries(persistedShopifyOrders, noteShopifyOrders, liveShopifyOrders));
+          setShopifyCoverage(coverage);
+          setShopifyHistoryProgress({
+            loaded: persistedShopifyOrders.length,
+            total: coverage?.count ?? null,
+          });
+        });
+      } catch (err) {
+        if (isCurrentRun()) {
+          const message = err instanceof Error ? err.message : "No se pudo leer el historico Shopify";
+          setError((current) => current || message);
+        }
+      } finally {
+        if (isCurrentRun()) setShopifyHistoryLoading(false);
+      }
+    } catch (err) {
+      if (isCurrentRun()) setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
+    } finally {
+      if (isCurrentRun()) setLoading(false);
     }
   }
 
@@ -997,14 +1041,27 @@ export default function FinancePage() {
           </div>
         )}
 
+        {shopifyHistoryLoading && (
+          <div className="flex flex-wrap items-center gap-2 border border-primary/30 bg-primary/10 px-4 py-2 text-sm text-primary">
+            <RefreshCw className="h-4 w-4 animate-spin" />
+            <span>
+              Cargando historico Shopify por lotes:{" "}
+              <span className="font-mono text-foreground">
+                {shopifyHistoryProgress.loaded}
+                {shopifyHistoryProgress.total ? `/${shopifyHistoryProgress.total}` : ""}
+              </span>
+            </span>
+          </div>
+        )}
+
         <section className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
-          <MetricCard label="Entregados" value={String(orderStats.delivered)} />
-          <MetricCard label="No entregados" value={String(orderStats.notDelivered)} />
-          <MetricCard label="Anulados" value={String(orderStats.annulled)} />
-          <MetricCard label="Pendientes" value={String(orderStats.pending)} />
-          <MetricCard label="Por reclamar" value={String(orderStats.liquidationAlerts)} warning />
-              <MetricCard label="Anomalias" value={String(financeControl.anomalies.length)} warning />
-          <MetricCard label="Utilidad neta" value={currency(summary?.net_profit ?? 0)} accent />
+          <MetricCard label="Entregados" value={loading ? "..." : String(orderStats.delivered)} />
+          <MetricCard label="No entregados" value={loading ? "..." : String(orderStats.notDelivered)} />
+          <MetricCard label="Anulados" value={loading ? "..." : String(orderStats.annulled)} />
+          <MetricCard label="Pendientes" value={loading ? "..." : String(orderStats.pending)} />
+          <MetricCard label="Por reclamar" value={loading ? "..." : String(orderStats.liquidationAlerts)} warning />
+          <MetricCard label="Anomalias" value={loading ? "..." : String(financeControl.anomalies.length)} warning />
+          <MetricCard label="Utilidad neta" value={loading ? "..." : currency(summary?.net_profit ?? 0)} accent />
         </section>
 
         <div className="flex gap-2 overflow-x-auto border-b border-border">
@@ -1032,7 +1089,12 @@ export default function FinancePage() {
         </div>
 
         {loading ? (
-          <div className="h-80 animate-pulse border border-border bg-card" />
+          <div className="flex h-80 items-center justify-center border border-border bg-card text-sm text-muted-foreground">
+            <span className="inline-flex items-center gap-2">
+              <RefreshCw className="h-4 w-4 animate-spin" />
+              Cargando datos base...
+            </span>
+          </div>
         ) : (
           <>
             {tab === "orders" && (
@@ -5589,7 +5651,9 @@ function toCsv(rows: unknown[]): string {
   return [headers.join(","), ...records.map((row) => headers.map((header) => escape(row[header])).join(","))].join("\n");
 }
 
-async function fetchPersistedShopifySnapshot(): Promise<Record<string, unknown>> {
+async function fetchPersistedShopifySnapshot(
+  onProgress?: (snapshot: Record<string, unknown>) => void
+): Promise<Record<string, unknown>> {
   const orders: Array<Record<string, unknown>> = [];
   let coverage: { count: number; oldest: string | null; newest: string | null } | null = null;
   let offset = 0;
@@ -5608,6 +5672,7 @@ async function fetchPersistedShopifySnapshot(): Promise<Record<string, unknown>>
 
     const pageOrders = Array.isArray(json.orders) ? json.orders as Array<Record<string, unknown>> : [];
     orders.push(...pageOrders);
+    onProgress?.({ orders: [...orders], total: orders.length, coverage });
 
     if (!json.has_more || !pageOrders.length) break;
     const nextOffset = Number(json.next_offset ?? offset + pageOrders.length);

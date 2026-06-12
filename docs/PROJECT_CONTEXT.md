@@ -581,6 +581,7 @@ Build in this order:
 - Persisted Shopify order distribution at validation time: January `64`, February `1,994`, March `1,652`, April `2,379`, May `3,410`, June `1,200`.
 - `logistics_rows` currently contains `7,736` Boxful rows and `7,664` consolidated logistics rows. Imported logistics distribution: `Entregado 4,802`, `No entregado 2,355`, `En ruta a destino 140`, `Problemas en gestion 96`, `Recolectado 275`, `Registrado 23`, `Guia cancelada 45`.
 - `/api/finance/shopify-sync` GET now supports `limit` and `offset`, so `/admin/finance` can load the full persisted Shopify base in pages instead of relying on one large JSON response.
+- `/admin/finance` now renders the base finance UI before the full Shopify history is loaded. Persisted Shopify orders are appended in background batches of `2,000`, with a visible progress banner, so the page no longer stays blank while January-to-date data is downloaded and recalculated.
 - Hardened Boxful Excel parsing. `lib/xlsx.ts` now exposes `sheetToJson`, sanitizes every worksheet before conversion, and converts unsupported formula cell types such as `t="f"` into safe string/number/date cells. `/api/finance/logistics` and `/api/finance/settlements` now use this helper for every parsed sheet, including `Consolidado`, to prevent the upload error `unrecognized type f`.
 - Local audit of `C:\Users\Pc\Downloads\01-12-2025 hasta 11-06-2026.xlsx` after formula sanitization:
   - `total_rows = 7736`
