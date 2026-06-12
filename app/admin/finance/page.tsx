@@ -3232,6 +3232,41 @@ function ExpensesTab({
   const formExchangeRate = Number(form.exchange_rate);
   const originalCurrency = getExpenseOriginalCurrency(form);
   const needsExchangeRate = originalCurrency !== "CRC";
+  const [fxHint, setFxHint] = useState("");
+  const formRef = useRef(form);
+  formRef.current = form;
+
+  // Trae el tipo de cambio del dia y lo precarga si el campo esta vacio;
+  // siempre editable por si se pago a un tipo distinto.
+  useEffect(() => {
+    if (!needsExchangeRate) {
+      setFxHint("");
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/finance/exchange-rate?from=${originalCurrency}`, {
+          cache: "no-store",
+        });
+        const json = (await res.json()) as { rate?: number; updated?: string; stale?: boolean };
+        if (cancelled || !res.ok || !json.rate) return;
+        const rate = Number(json.rate);
+        setFxHint(
+          `TC del dia: ${rate.toFixed(2)} CRC por 1 ${originalCurrency}${json.stale ? " (cacheado)" : ""}`
+        );
+        if (!formRef.current.exchange_rate) {
+          setForm({ ...formRef.current, exchange_rate: rate.toFixed(2) });
+        }
+      } catch {
+        if (!cancelled) setFxHint("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [originalCurrency, needsExchangeRate]);
   const convertedExpenseAmount =
     needsExchangeRate &&
     Number.isFinite(formAmount) &&
@@ -3460,6 +3495,11 @@ function ExpensesTab({
                         onChange={(e) => setForm({ ...form, exchange_rate: e.target.value, type: activeType })}
                         required
                       />
+                      {fxHint && (
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {fxHint} · autocompletado, editable
+                        </p>
+                      )}
                     </LabeledField>
                   </div>
                   <div className="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
@@ -3514,6 +3554,11 @@ function ExpensesTab({
                         onChange={(e) => setForm({ ...form, exchange_rate: e.target.value, type: activeType })}
                         required
                       />
+                      {fxHint && (
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {fxHint} · autocompletado, editable
+                        </p>
+                      )}
                     </LabeledField>
                   )}
                   <div className="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
