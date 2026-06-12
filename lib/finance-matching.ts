@@ -82,17 +82,34 @@ async function listPersistedOrdersSlim(): Promise<{
 }> {
   const orders: MatchableShopifyOrder[] = [];
   let latestUpdatedAt = "";
+  // Camino rapido sin tocar raw_order (requiere migracion 0003); extraer del
+  // JSONB completo por fila dispara el statement timeout con 10k+ pedidos.
+  const FAST_COLUMNS =
+    "shopify_order_id, order_number, name, financial_status, fulfillment_status, cancelled_at, total_price, shopify_created_at, shopify_updated_at, line_items, note, note_attributes";
+  const LEGACY_COLUMNS =
+    "shopify_order_id, order_number, name, financial_status, fulfillment_status, cancelled_at, total_price, shopify_created_at, shopify_updated_at, line_items, note:raw_order->>note, note_attributes:raw_order->note_attributes";
+  let useLegacyColumns = false;
   for (let from = 0; ; from += DB_PAGE_SIZE) {
-    const { data, error } = await getDB()
-      .from("shopify_orders")
-      .select(
-        "shopify_order_id, order_number, name, financial_status, fulfillment_status, cancelled_at, total_price, shopify_created_at, shopify_updated_at, line_items, note:raw_order->>note, note_attributes:raw_order->note_attributes"
-      )
-      .order("id", { ascending: true })
-      .range(from, from + DB_PAGE_SIZE - 1);
-    if (error) throw new Error(`listPersistedOrdersSlim: ${error.message}`);
+    const fetchPage = (columns: string) =>
+      getDB()
+        .from("shopify_orders")
+        .select(columns)
+        .order("id", { ascending: true })
+        .range(from, from + DB_PAGE_SIZE - 1);
 
-    const page = (data ?? []) as unknown as PersistedOrderSlim[];
+    let result = await fetchPage(useLegacyColumns ? LEGACY_COLUMNS : FAST_COLUMNS);
+    if (
+      result.error &&
+      !useLegacyColumns &&
+      /note/.test(result.error.message) &&
+      /does not exist|42703/.test(result.error.message)
+    ) {
+      useLegacyColumns = true;
+      result = await fetchPage(LEGACY_COLUMNS);
+    }
+    if (result.error) throw new Error(`listPersistedOrdersSlim: ${result.error.message}`);
+
+    const page = (result.data ?? []) as unknown as PersistedOrderSlim[];
     for (const row of page) {
       if (row.shopify_updated_at && row.shopify_updated_at > latestUpdatedAt) {
         latestUpdatedAt = row.shopify_updated_at;

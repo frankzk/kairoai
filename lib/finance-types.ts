@@ -172,6 +172,8 @@ export interface PersistedShopifyOrder {
   total_price: number;
   currency: string;
   line_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
+  note?: string;
+  note_attributes?: Array<{ name?: string | null; value?: string | null }>;
   raw_order: Record<string, unknown>;
   shopify_created_at: string | null;
   shopify_updated_at: string | null;
