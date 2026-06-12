@@ -2320,6 +2320,14 @@ function SettlementsTab({
     () => enrichSettlementRowsWithShopify(rows, shopifyOrders),
     [rows, shopifyOrders]
   );
+  const unmatchedByImport = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const row of rows) {
+      if (row.match_status === "matched") continue;
+      counts.set(row.import_id, (counts.get(row.import_id) ?? 0) + 1);
+    }
+    return counts;
+  }, [rows]);
   const sortedImports = useMemo(() => {
     return [...imports].sort((a, b) => {
       const aDate = a.period_end || a.created_at || "";
@@ -2502,6 +2510,13 @@ function SettlementsTab({
                       </span>
                       <span className="mt-1 block text-xs text-muted-foreground">
                         {item.period_end ? formatDate(item.period_end) : "Sin corte"} - {item.total_rows} filas - {currency(item.total_to_liquidate)}
+                      </span>
+                      <span className="mt-1.5 block">
+                        {(unmatchedByImport.get(item.id) ?? 0) > 0 ? (
+                          <Badge variant="warning">{unmatchedByImport.get(item.id)} sin match</Badge>
+                        ) : (
+                          <Badge variant="success">0 sin match</Badge>
+                        )}
                       </span>
                     </button>
                     <button
