@@ -1579,7 +1579,7 @@ const PRODUCT_TABLE_COLUMNS: Array<{
   { key: "units", label: "Unid.", numeric: true },
   { key: "dispatch_rate", label: "Tasa despacho", numeric: true, headerClass: "text-cyan-300" },
   { key: "delivery_effectiveness", label: "Efectividad entrega", numeric: true, headerClass: "text-emerald-300" },
-  { key: "dispatched", label: "Desp.", numeric: true },
+  { key: "dispatched", label: "Con guia", numeric: true },
   { key: "delivered", label: "Entreg.", numeric: true },
   { key: "not_delivered", label: "No entreg.", numeric: true },
   { key: "annulled", label: "Anul.", numeric: true },
@@ -1692,7 +1692,7 @@ function ProductAnalysisTab({
           <div>
             <CardTitle className="text-base">Analisis por producto</CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              Despacho = no anulado en Shopify y con movimiento Boxful: entregado o no entregado.
+              Tasa despacho = pedidos del producto con guia Boxful / pedidos del producto en Shopify.
             </p>
           </div>
           <Button
@@ -1708,7 +1708,7 @@ function ProductAnalysisTab({
                   pedidos_ejemplo: row.sample_orders.join(", "),
                   pedidos: row.orders,
                   unidades: row.units,
-                  despachados: row.dispatched,
+                  con_guia: row.dispatched,
                   tasa_despacho: formatPercent(row.dispatch_rate),
                   efectividad_entrega: formatPercent(row.delivery_effectiveness),
                   entregados: row.delivered,
@@ -5288,6 +5288,8 @@ function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnaly
   const byProduct = new Map<string, ProductAnalysisRow>();
 
   for (const order of orders) {
+    if (!isShopifyProductAnalysisOrder(order)) continue;
+
     const itemsByProduct = new Map<string, { sku: string; title: string; quantity: number }>();
     const items = getProductAnalysisItems(order);
 
@@ -5330,10 +5332,10 @@ function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnaly
         existing.sample_orders.push(sampleOrder);
       }
       existing[status] += 1;
-      existing.dispatched = existing.delivered + existing.not_delivered;
+      if (hasBoxfulGuide(order)) existing.dispatched += 1;
       existing.dispatch_rate = existing.orders ? (existing.dispatched / existing.orders) * 100 : 0;
-      existing.delivery_effectiveness = existing.dispatched
-        ? (existing.delivered / existing.dispatched) * 100
+      existing.delivery_effectiveness = existing.delivered + existing.not_delivered
+        ? (existing.delivered / (existing.delivered + existing.not_delivered)) * 100
         : 0;
       byProduct.set(key, existing);
     }
@@ -5399,6 +5401,22 @@ function cleanProductTitle(title: string): string {
     .trim() || UNKNOWN_PRODUCT_LABEL;
 }
 
+function hasBoxfulGuide(order: Pick<OrderProfitabilityRow, "guide_number">): boolean {
+  const guide = String(order.guide_number || "").trim();
+  return Boolean(guide && guide !== "-" && guide !== "0");
+}
+
+function isShopifyProductAnalysisOrder(
+  order: Pick<
+    OrderProfitabilityRow,
+    "source" | "order_name" | "shopify_financial_status" | "shopify_cancelled_at" | "created_at"
+  >
+): boolean {
+  if (order.source === "shopify") return true;
+  if (order.shopify_financial_status || order.shopify_cancelled_at || order.created_at) return true;
+  return /^#?MCRC/i.test(order.order_name);
+}
+
 function getProductOrderAnalysisStatus(
   row: Pick<OrderProfitabilityRow, "tracking_status" | "shopify_cancelled_at" | "shopify_financial_status">
 ): Exclude<ProductAnalysisFilter, "all"> {
@@ -5431,7 +5449,7 @@ function summarizeProductAnalysisRows(rows: ProductAnalysisRow[]): Pick<
     annulled,
     pending,
     dispatch_rate: orders ? (dispatched / orders) * 100 : 0,
-    delivery_effectiveness: dispatched ? (delivered / dispatched) * 100 : 0,
+    delivery_effectiveness: delivered + notDelivered ? (delivered / (delivered + notDelivered)) * 100 : 0,
   };
 }
 
