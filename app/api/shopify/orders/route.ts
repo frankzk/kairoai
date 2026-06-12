@@ -37,6 +37,7 @@ export async function GET(req: NextRequest) {
   const requestedMaxPages = Number(req.nextUrl.searchParams.get("max_pages") || (shouldPaginate ? 6 : 1));
   const maxPages = Math.min(Math.max(requestedMaxPages || 1, 1), 12);
   const createdAtMin = req.nextUrl.searchParams.get("created_at_min");
+  const updatedAtMin = req.nextUrl.searchParams.get("updated_at_min");
   const fields = [
     "id",
     "order_number",
@@ -60,10 +61,11 @@ export async function GET(req: NextRequest) {
   const params = new URLSearchParams({
     status,
     limit: String(limit),
-    order: "created_at desc",
+    order: updatedAtMin ? "updated_at desc" : "created_at desc",
     fields,
   });
   if (createdAtMin) params.set("created_at_min", createdAtMin);
+  if (updatedAtMin) params.set("updated_at_min", updatedAtMin);
 
   let url = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/orders.json?${params.toString()}`;
 

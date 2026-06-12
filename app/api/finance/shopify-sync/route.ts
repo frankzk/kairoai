@@ -12,7 +12,7 @@ export const maxDuration = 60;
 const DEFAULT_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
 const DEFAULT_SYNC_PAGES_PER_REQUEST = 8;
 const MAX_SYNC_PAGES_PER_REQUEST = 12;
-const MAX_GET_LIMIT = 2000;
+const MAX_GET_LIMIT = 4000;
 // Shopify REST permite ~2 req/s; un respiro entre paginas evita 429 en rafaga.
 const PAGE_DELAY_MS = 350;
 

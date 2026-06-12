@@ -396,10 +396,9 @@ const EXPENSE_VIEW_CONFIG: Array<{
 ];
 
 const FINANCE_SHOPIFY_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
-const FINANCE_SHOPIFY_ORDERS_URL =
-  `/api/shopify/orders?status=any&limit=250&created_at_min=${encodeURIComponent(FINANCE_SHOPIFY_CREATED_AT_MIN)}`;
-const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
-const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 2000;
+const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 4000;
+// Ventana de "pedidos actualizados recientemente" leida en vivo de Shopify.
+const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
 const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
 
 export default function FinancePage() {
@@ -498,37 +497,29 @@ export default function FinancePage() {
       const costsJson = await readApiJson(costsRes);
       const expensesJson = await readApiJson(expensesRes);
       const summaryJson = await readApiJson(summaryRes);
-      let shopifyOrdersJson: Record<string, unknown> = {};
-      let shopifyNoteOrdersJson: Record<string, unknown> = {};
-      let claimsJson: Record<string, unknown> = {};
-      let boxfulFilesJson: Record<string, unknown> = {};
-      try {
-        const shopifyOrdersRes = await fetch(FINANCE_SHOPIFY_ORDERS_URL, { cache: "no-store" });
-        shopifyOrdersJson = await readApiJson(shopifyOrdersRes);
-      } catch {
-        shopifyOrdersJson = {};
-      }
-      try {
-        const shopifyNoteOrdersRes = await fetch(
-          `/api/shopify/note-orders?created_at_min=${encodeURIComponent(getShopifyNotesCreatedAtMin())}&max_pages=30`,
-          { cache: "no-store" }
-        );
-        shopifyNoteOrdersJson = await readApiJson(shopifyNoteOrdersRes);
-      } catch {
-        shopifyNoteOrdersJson = {};
-      }
-      try {
-        const claimsRes = await fetch("/api/finance/claims", { cache: "no-store" });
-        claimsJson = await readApiJson(claimsRes);
-      } catch {
-        claimsJson = {};
-      }
-      try {
-        const boxfulFilesRes = await fetch("/api/finance/boxful-files", { cache: "no-store" });
-        boxfulFilesJson = await readApiJson(boxfulFilesRes);
-      } catch {
-        boxfulFilesJson = {};
-      }
+      // Un solo fetch en vivo: pedidos ACTUALIZADOS recientemente (capta notas
+      // editadas y cambios de estado en pedidos de cualquier antiguedad); el
+      // resto viene de la base sincronizada. Las llamadas son en paralelo.
+      const safeJson = async (input: Promise<Response>): Promise<Record<string, unknown>> => {
+        try {
+          return await readApiJson(await input);
+        } catch {
+          return {};
+        }
+      };
+      const recentUpdatesMin = new Date(
+        Date.now() - FINANCE_SHOPIFY_RECENT_UPDATES_DAYS * 24 * 60 * 60 * 1000
+      ).toISOString();
+      const [shopifyOrdersJson, claimsJson, boxfulFilesJson] = await Promise.all([
+        safeJson(
+          fetch(
+            `/api/shopify/orders?status=any&all=1&max_pages=4&updated_at_min=${encodeURIComponent(recentUpdatesMin)}`,
+            { cache: "no-store" }
+          )
+        ),
+        safeJson(fetch("/api/finance/claims", { cache: "no-store" })),
+        safeJson(fetch("/api/finance/boxful-files", { cache: "no-store" })),
+      ]);
 
       if (!isCurrentRun()) return;
 
@@ -537,12 +528,7 @@ export default function FinancePage() {
       setLogisticsImports(logisticsJson.imports ?? []);
       setLogisticsRows(logisticsJson.rows ?? []);
       const liveShopifyOrders = Array.isArray(shopifyOrdersJson.orders) ? shopifyOrdersJson.orders as ShopifyOrderSummary[] : [];
-      const noteShopifyOrders = Array.isArray(shopifyNoteOrdersJson.orders)
-        ? shopifyNoteOrdersJson.orders as ShopifyOrderSummary[]
-        : [];
-      // Orden de fusion: lo sincronizado primero y las lecturas en vivo despues,
-      // para que una nota recien editada en Shopify pise la copia vieja de la base.
-      setShopifyOrders(mergeShopifyOrderSummaries(noteShopifyOrders, liveShopifyOrders));
+      setShopifyOrders(mergeShopifyOrderSummaries(liveShopifyOrders));
       setShopifyCoverage(null);
       setCosts(costsJson.costs ?? []);
       setCostVersions(Array.isArray(costsJson.versions) ? costsJson.versions as ProductCostVersion[] : []);
@@ -571,7 +557,7 @@ export default function FinancePage() {
             (partial.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
             null;
           startTransition(() => {
-            setShopifyOrders(mergeShopifyOrderSummaries(persistedShopifyOrders, noteShopifyOrders, liveShopifyOrders));
+            setShopifyOrders(mergeShopifyOrderSummaries(persistedShopifyOrders, liveShopifyOrders));
             setShopifyCoverage(coverage);
             setShopifyHistoryProgress({
               loaded: persistedShopifyOrders.length,
@@ -588,7 +574,7 @@ export default function FinancePage() {
           (persistedShopifyJson.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
           null;
         startTransition(() => {
-          setShopifyOrders(mergeShopifyOrderSummaries(persistedShopifyOrders, noteShopifyOrders, liveShopifyOrders));
+          setShopifyOrders(mergeShopifyOrderSummaries(persistedShopifyOrders, liveShopifyOrders));
           setShopifyCoverage(coverage);
           setShopifyHistoryProgress({
             loaded: persistedShopifyOrders.length,
@@ -2190,7 +2176,7 @@ function ShopifyNotesTab({ orders }: { orders: ShopifyOrderSummary[] }) {
         <div className="space-y-1.5">
           <CardTitle className="text-base">Notas Shopify</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Alias de notas Shopify de los ultimos {FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS} dias para cruzar codigos del bot.
+            Alias de notas Shopify de la base sincronizada para cruzar codigos del bot.
           </p>
         </div>
         <Button type="button" variant="outline" onClick={exportAliases} className="gap-2">
@@ -5656,11 +5642,6 @@ function mergeShopifyOrderSummary(
     line_items: incoming.line_items?.length ? incoming.line_items : existing.line_items,
     created_at: incoming.created_at || existing.created_at,
   };
-}
-
-function getShopifyNotesCreatedAtMin(): string {
-  const date = new Date(Date.now() - FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
-  return date.toISOString();
 }
 
 function buildMonthlyCloseRows(
