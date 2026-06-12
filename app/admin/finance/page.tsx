@@ -3255,15 +3255,15 @@ function CostCompositionBar({
 
   if (!total) {
     return (
-      <p className="border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
+      <p className="border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
         No hay costos registrados para este cierre.
       </p>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex h-5 overflow-hidden border border-border bg-background">
+    <div className="space-y-2">
+      <div className="flex h-2 overflow-hidden border border-border bg-background">
         {visibleSegments.map((segment) => {
           const percentage = (segment.value / total) * 100;
           return (
@@ -3276,18 +3276,19 @@ function CostCompositionBar({
           );
         })}
       </div>
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="flex flex-wrap gap-1.5">
         {visibleSegments.map((segment) => {
           const percentage = (segment.value / total) * 100;
           return (
-            <div key={segment.label} className="border border-border bg-background p-3">
-              <div className="flex items-center gap-2">
-                <span className={`h-2.5 w-2.5 ${segment.className}`} />
-                <span className="text-xs text-muted-foreground">{segment.label}</span>
-              </div>
-              <div className="mt-2 font-mono text-sm">{currency(segment.value)}</div>
-              <div className="text-xs text-muted-foreground">{percentage.toFixed(1)}% del total</div>
-            </div>
+            <span
+              key={segment.label}
+              className="inline-flex items-center gap-1.5 border border-border bg-background px-2 py-1 text-[11px]"
+            >
+              <span className={`h-2 w-2 shrink-0 ${segment.className}`} />
+              <span className="text-muted-foreground">{segment.label}</span>
+              <span className="font-mono font-semibold">{currency(segment.value)}</span>
+              <span className="text-muted-foreground">({percentage.toFixed(1)}%)</span>
+            </span>
           );
         })}
       </div>
@@ -3546,123 +3547,131 @@ function MonthCloseDetail({
     projectedDeliveries * projectionBasis.avg_margin_per_delivered - operatingExpenses;
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-        {hasSettlementData ? (
-          <div className="border border-border bg-card p-4">
-            <p className="text-xs text-muted-foreground">Utilidad neta estimada</p>
-            <p className={`mt-1 font-mono text-3xl font-semibold ${close.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
-              {currency(close.net_profit)}
-            </p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <MiniStat label="Margen pedidos" value={currency(close.contribution_margin)} />
-              <MiniStat label="Caja liquidada" value={currency(close.cash_received)} />
-              <MiniStat label="Caja por reclamar" value={currency(close.cash_pending)} />
-              <MiniStat label="Entregados" value={`${close.delivered} (${formatPercent(deliveredRate)})`} />
-              <MiniStat label="Liquidados" value={`${close.settled} (${formatPercent(settledRate)})`} />
-              <MiniStat label="No entregados / Anulados" value={`${close.not_delivered} / ${close.annulled}`} />
-            </div>
-            <div className="mt-4">
-              <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-                <span>Caja por reclamar</span>
-                <span>{formatPercent(claimShare)} del total pendiente + liquidado</span>
+    <div className="space-y-3">
+      <div className="grid gap-3 xl:grid-cols-[1.15fr_0.85fr]">
+        <div className="border border-border bg-card p-3">
+          {hasSettlementData ? (
+            <>
+              <p className="text-xs text-muted-foreground">Utilidad neta estimada</p>
+              <p className={`mt-0.5 font-mono text-2xl font-semibold ${close.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
+                {currency(close.net_profit)}
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <CompactStat label="Margen pedidos" value={currency(close.contribution_margin)} />
+                <CompactStat label="Caja liquidada" value={currency(close.cash_received)} />
+                <CompactStat
+                  label="Caja por reclamar"
+                  value={currency(close.cash_pending)}
+                  tone={close.cash_pending ? "warning" : undefined}
+                />
+                <CompactStat label="Entregados" value={`${close.delivered} (${formatPercent(deliveredRate)})`} />
+                <CompactStat label="Liquidados" value={`${close.settled} (${formatPercent(settledRate)})`} />
+                <CompactStat label="No entreg. / Anulados" value={`${close.not_delivered} / ${close.annulled}`} />
               </div>
-              <div className="h-2 overflow-hidden border border-border bg-background">
-                <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, claimShare)}%` }} />
+              <div className="mt-3">
+                <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>Caja por reclamar</span>
+                  <span>{formatPercent(claimShare)} del total pendiente + liquidado</span>
+                </div>
+                <div className="h-1.5 overflow-hidden border border-border bg-background">
+                  <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, claimShare)}%` }} />
+                </div>
               </div>
-            </div>
-          </div>
-        ) : (
-          <div className="border border-border bg-card p-4">
-            <div className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-              Mes sin liquidaciones todavia: la utilidad real aparece con el proximo corte de
-              Boxful. Mientras tanto, esta es la foto operativa del mes en curso.
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Caja proyectada (COD en ruta x {formatPercent(projectionBasis.delivery_effectiveness * 100)} entrega historica)
-            </p>
-            <p className="mt-1 font-mono text-3xl font-semibold text-primary">
-              {currency(projectedCash)}
-            </p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <MiniStat
-                label={`COD en ruta (${pendingOrders.length} pedidos)`}
-                value={currency(pipelineCod)}
-              />
-              <MiniStat
-                label="Entregas esperadas"
-                value={`${projectedDeliveries} de ${pendingOrders.length}`}
-              />
-              <MiniStat
-                label={`Anulados (${formatPercent(annulledRate)} del mes)`}
-                value={`${close.annulled} · ${currency(annulledCod)}`}
-              />
-              <MiniStat label="Gastos registrados del mes" value={currency(operatingExpenses)} />
-              <MiniStat label="Margen proyectado (estimado)" value={currency(projectedMargin)} />
-              <MiniStat
-                label="Ticket promedio en ruta"
-                value={currency(pendingOrders.length ? pipelineCod / pendingOrders.length : 0)}
-              />
-            </div>
-          </div>
-        )}
+            </>
+          ) : (
+            <>
+              <div className="mb-2 border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">
+                Mes sin liquidaciones todavia: la utilidad real llega con el proximo corte de Boxful.
+              </div>
+              <p className="text-xs text-muted-foreground">
+                COD real en ruta ({pendingOrders.length} pedidos pendientes)
+              </p>
+              <p className="mt-0.5 font-mono text-2xl font-semibold text-primary">
+                {currency(pipelineCod)}
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <CompactStat
+                  label={`Anulados (${formatPercent(annulledRate)})`}
+                  value={`${close.annulled} · ${currency(annulledCod)}`}
+                  tone={close.annulled ? "warning" : undefined}
+                />
+                <CompactStat label="Gastos del mes" value={currency(operatingExpenses)} />
+                <CompactStat
+                  label="Ticket promedio"
+                  value={currency(pendingOrders.length ? pipelineCod / pendingOrders.length : 0)}
+                />
+                <CompactStat label="Entregados" value={close.delivered} />
+                <CompactStat label="No entregados" value={close.not_delivered} />
+                <CompactStat label="Liquidados" value={close.settled} />
+              </div>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Proyeccion ({formatPercent(projectionBasis.delivery_effectiveness * 100)} entrega
+                historica): caja {currency(projectedCash)} · {projectedDeliveries} entregas esperadas
+                · margen estimado {currency(projectedMargin)}
+              </p>
+            </>
+          )}
+        </div>
 
-        <div className="space-y-2 border border-border bg-card p-4">
-          <div>
-            <p className="text-sm font-semibold">Que revisar primero</p>
-            <p className="text-xs text-muted-foreground">
-              Lista corta de acciones para cerrar el mes sin perder dinero.
-            </p>
+        <div className="border border-border bg-card p-3">
+          <p className="text-sm font-semibold">Que revisar primero</p>
+          <div className="mt-2 space-y-1.5">
+            <CloseSignalRow
+              label="Pedidos operativos pendientes"
+              value={close.pending}
+              hint="Aun no son entregados, devueltos ni anulados."
+              tone={close.pending ? "warning" : "ok"}
+            />
+            <CloseSignalRow
+              label="Entregados sin liquidacion"
+              value={close.to_claim}
+              hint="Si Boxful ya los entrego, toca reclamar pago."
+              tone={close.to_claim ? "warning" : "ok"}
+            />
+            <CloseSignalRow
+              label="Liquidaciones duplicadas"
+              value={close.duplicate_settlements}
+              hint="Un pedido no deberia aparecer dos veces."
+              tone={close.duplicate_settlements ? "danger" : "ok"}
+            />
+            <CloseSignalRow
+              label="SKUs sin costo"
+              value={missingCostSkus.length}
+              hint="Sin costo de producto, la utilidad queda incompleta."
+              tone={missingCostSkus.length ? "warning" : "ok"}
+            />
+            <CloseSignalRow
+              label="Alertas criticas"
+              value={criticalAnomalies}
+              hint="Casos de alta prioridad en anomalias."
+              tone={criticalAnomalies ? "danger" : "ok"}
+            />
           </div>
-          <CloseSignalRow
-            label="Pedidos operativos pendientes"
-            value={close.pending}
-            hint="Aun no son entregados, devueltos ni anulados."
-            tone={close.pending ? "warning" : "ok"}
-          />
-          <CloseSignalRow
-            label="Entregados sin liquidacion"
-            value={close.to_claim}
-            hint="Si Boxful ya los entrego, toca reclamar pago."
-            tone={close.to_claim ? "warning" : "ok"}
-          />
-          <CloseSignalRow
-            label="Liquidaciones duplicadas"
-            value={close.duplicate_settlements}
-            hint="Un pedido no deberia aparecer dos veces."
-            tone={close.duplicate_settlements ? "danger" : "ok"}
-          />
-          <CloseSignalRow
-            label="SKUs sin costo"
-            value={missingCostSkus.length}
-            hint="Sin costo de producto, la utilidad queda incompleta."
-            tone={missingCostSkus.length ? "warning" : "ok"}
-          />
-          <CloseSignalRow
-            label="Alertas criticas"
-            value={criticalAnomalies}
-            hint="Casos de alta prioridad en anomalias."
-            tone={criticalAnomalies ? "danger" : "ok"}
-          />
         </div>
       </div>
 
-      <div className="space-y-4 border border-border bg-card p-4">
-        <div>
+      <div className="border border-border bg-card p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-semibold">Costos registrados</p>
-          <p className="text-xs text-muted-foreground">
-            Participacion de cada costo dentro del 100% de costos registrados.
-          </p>
+          <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+            <span>
+              Directos <span className="font-mono font-semibold text-foreground">{currency(directCosts)}</span>
+            </span>
+            <span>
+              Operativos <span className="font-mono font-semibold text-foreground">{currency(operatingExpenses)}</span>
+            </span>
+            <span>
+              Total <span className="font-mono font-semibold text-foreground">{currency(totalRegisteredCosts)}</span>
+            </span>
+          </div>
         </div>
-        <CostCompositionBar segments={costSegments} />
-        <div className="grid gap-3 md:grid-cols-3">
-          <MiniStat label="Costos directos" value={currency(directCosts)} />
-          <MiniStat label="Gastos operativos" value={currency(operatingExpenses)} />
-          <MiniStat label="Total costos registrados" value={currency(totalRegisteredCosts)} />
+        <div className="mt-2">
+          <CostCompositionBar segments={costSegments} />
         </div>
-        <div className="border border-border bg-background p-3 text-xs text-muted-foreground">
-          A liquidar = Monto COD - Comision COD - Costo entrega - Pick&Pack - Empaque. La comision tarjeta queda solo como dato informativo cuando aplica: {currency(summary?.card_commission ?? 0)}.
-        </div>
+        <p className="mt-2 border border-border bg-background px-2.5 py-1.5 text-[11px] text-muted-foreground">
+          A liquidar = Monto COD - Comision COD - Costo entrega - Pick&Pack - Empaque. La comision
+          tarjeta queda solo como dato informativo cuando aplica: {currency(summary?.card_commission ?? 0)}.
+        </p>
       </div>
 
       <CloseDetailCard
@@ -3771,14 +3780,40 @@ function CloseSignalRow({
         : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
 
   return (
-    <div className="grid gap-3 border border-border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-center">
-      <div>
-        <p className="text-sm font-medium">{label}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+    <div
+      className="flex items-center justify-between gap-2 border border-border bg-background px-2.5 py-1.5"
+      title={hint}
+    >
+      <div className="min-w-0">
+        <p className="truncate text-xs font-medium">{label}</p>
+        <p className="truncate text-[10px] text-muted-foreground">{hint}</p>
       </div>
-      <span className={`inline-flex min-w-12 justify-center border px-3 py-1 font-mono text-sm font-semibold ${toneClass}`}>
+      <span className={`inline-flex min-w-10 shrink-0 justify-center border px-2 py-0.5 font-mono text-xs font-semibold ${toneClass}`}>
         {value}
       </span>
+    </div>
+  );
+}
+
+function CompactStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  tone?: "warning";
+}) {
+  return (
+    <div
+      className={`border px-2.5 py-1.5 ${
+        tone === "warning" ? "border-amber-500/40 bg-amber-500/5" : "border-border bg-background"
+      }`}
+    >
+      <p className="truncate text-[11px] text-muted-foreground" title={label}>
+        {label}
+      </p>
+      <p className="mt-0.5 truncate font-mono text-sm font-semibold">{value}</p>
     </div>
   );
 }
