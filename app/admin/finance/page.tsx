@@ -5334,8 +5334,8 @@ function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnaly
       existing[status] += 1;
       if (hasBoxfulGuide(order)) existing.dispatched += 1;
       existing.dispatch_rate = existing.orders ? (existing.dispatched / existing.orders) * 100 : 0;
-      existing.delivery_effectiveness = existing.delivered + existing.not_delivered
-        ? (existing.delivered / (existing.delivered + existing.not_delivered)) * 100
+      existing.delivery_effectiveness = existing.dispatched
+        ? (existing.delivered / existing.dispatched) * 100
         : 0;
       byProduct.set(key, existing);
     }
@@ -5449,7 +5449,7 @@ function summarizeProductAnalysisRows(rows: ProductAnalysisRow[]): Pick<
     annulled,
     pending,
     dispatch_rate: orders ? (dispatched / orders) * 100 : 0,
-    delivery_effectiveness: delivered + notDelivered ? (delivered / (delivered + notDelivered)) * 100 : 0,
+    delivery_effectiveness: dispatched ? (delivered / dispatched) * 100 : 0,
   };
 }
 
