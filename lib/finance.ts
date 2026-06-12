@@ -592,11 +592,12 @@ export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {
     listExpenses(),
   ]);
 
-  const costBySku = new Map(
-    costs
-      .filter((cost) => cost.active)
-      .map((cost) => [cost.sku.toLowerCase(), cost])
-  );
+  const costBySku = new Map<string, ProductCost>();
+  for (const cost of costs.filter((item) => item.active)) {
+    costBySku.set(cost.sku.toLowerCase(), cost);
+    const titleKey = getProductCostKey({ title: cost.product_name });
+    if (titleKey && !costBySku.has(titleKey)) costBySku.set(titleKey, cost);
+  }
   const missingCostSkus = new Set<string>();
 
   const codCollected = sum(rows.map((row) => row.cod_amount));

@@ -5302,6 +5302,7 @@ function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnaly
       const existing = itemsByProduct.get(normalized.key);
       if (existing) {
         existing.quantity += normalized.quantity;
+        if (!existing.sku && normalized.sku) existing.sku = normalized.sku;
         continue;
       }
       itemsByProduct.set(normalized.key, {
@@ -5331,6 +5332,7 @@ function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnaly
 
       existing.orders += 1;
       existing.units += item.quantity;
+      if (!existing.sku && item.sku) existing.sku = item.sku;
       const sampleOrder = order.order_name || order.guide_number || order.customer_name;
       if (sampleOrder && existing.sample_orders.length < 5 && !existing.sample_orders.includes(sampleOrder)) {
         existing.sample_orders.push(sampleOrder);
@@ -5390,7 +5392,8 @@ function looksLikeSkuOnly(value: string): boolean {
 function normalizeProductLineItem(item: ProductLineItem): { key: string; sku: string; title: string; quantity: number } {
   const sku = String(item.sku ?? "").trim();
   const title = cleanProductTitle(item.title || sku || UNKNOWN_PRODUCT_LABEL);
-  const key = sku ? `sku:${sku.toLowerCase()}` : `title:${title.toLowerCase()}`;
+  const titleKey = getProductTitleCostKey(title);
+  const key = titleKey || (sku ? `sku:${sku.toLowerCase()}` : `title:${title.toLowerCase()}`);
   return {
     key,
     sku,
@@ -5663,6 +5666,9 @@ function buildCostVersionsBySku(
   for (const version of allVersions) {
     const key = version.sku.toLowerCase();
     bySku.set(key, [...(bySku.get(key) ?? []), version]);
+
+    const titleKey = getProductTitleCostKey(version.product_name);
+    if (titleKey && titleKey !== key) bySku.set(titleKey, [...(bySku.get(titleKey) ?? []), version]);
   }
 
   for (const [sku, skuVersions] of Array.from(bySku.entries())) {
