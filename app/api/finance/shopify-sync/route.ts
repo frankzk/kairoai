@@ -207,6 +207,13 @@ function mapShopifyOrder(order: Record<string, unknown>): Omit<PersistedShopifyO
     cancelled_at: (order.cancelled_at as string | null) ?? null,
     total_price: Number(order.total_price ?? 0),
     currency: String(order.currency ?? "CRC"),
+    note: String(order.note ?? ""),
+    note_attributes: ((order.note_attributes as Array<Record<string, unknown>>) ?? []).map(
+      (attribute) => ({
+        name: String(attribute.name ?? ""),
+        value: String(attribute.value ?? ""),
+      })
+    ),
     line_items: lineItems.map((item) => ({
       sku: String(item.sku ?? ""),
       title: String(item.title ?? ""),
