@@ -3552,6 +3552,8 @@ function MonthCloseDetail({
   const settledRate = close.orders ? (close.settled / close.orders) * 100 : 0;
   const claimBase = close.cash_received + close.cash_pending;
   const claimShare = claimBase ? (close.cash_pending / claimBase) * 100 : 0;
+  // Monto COD bruto cobrado: lo liquidado mas lo que Boxful retuvo en costos.
+  const grossCodIncome = close.cash_received + close.boxful_costs;
   const costSegments = [
     { label: "Comision COD", value: close.boxful_cod_commission, className: "bg-sky-400" },
     { label: "Costo entrega", value: close.boxful_delivery_cost, className: "bg-cyan-400" },
@@ -3584,25 +3586,65 @@ function MonthCloseDetail({
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 xl:grid-cols-[1.15fr_0.85fr]">
-        <div className="border border-border bg-card p-3">
-          {hasSettlementData ? (
-            <>
-              <p className="text-xs text-muted-foreground">Utilidad neta estimada</p>
-              <p className={`mt-0.5 font-mono text-2xl font-semibold ${close.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
-                {currency(close.net_profit)}
-              </p>
-              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <CompactStat label="Margen pedidos" value={currency(close.contribution_margin)} />
-                <CompactStat label="Caja liquidada" value={currency(close.cash_received)} />
-                <CompactStat
-                  label="Caja por reclamar"
-                  value={currency(close.cash_pending)}
-                  tone={close.cash_pending ? "warning" : undefined}
+      <div className={`grid gap-3 ${hasSettlementData ? "xl:grid-cols-[1fr_0.72fr_0.95fr]" : "xl:grid-cols-[1.15fr_0.85fr]"}`}>
+        {hasSettlementData ? (
+          <>
+            <div className="border border-border bg-card p-3">
+              <p className="text-sm font-semibold">P&G del mes</p>
+              <div className="mt-2 space-y-1">
+                <StatementRow label="Ingresos COD cobrados" value={currency(grossCodIncome)} />
+                <StatementRow label="Comision COD" value={currency(close.boxful_cod_commission)} sign="minus" />
+                <StatementRow label="Costo de entrega" value={currency(close.boxful_delivery_cost)} sign="minus" />
+                <StatementRow label="Pick&Pack" value={currency(close.boxful_pick_pack_cost)} sign="minus" />
+                <StatementRow label="Empaque Boxful" value={currency(close.boxful_packaging_cost)} sign="minus" />
+                {close.boxful_card_commission > 0 && (
+                  <StatementRow label="Comision tarjeta" value={currency(close.boxful_card_commission)} sign="minus" />
+                )}
+                <StatementRow label="Caja liquidada" value={currency(close.cash_received)} emphasis />
+                <StatementRow label="Costo de producto" value={currency(close.product_costs)} sign="minus" />
+                <StatementRow label="Margen de pedidos" value={currency(close.contribution_margin)} emphasis />
+                <StatementRow label="Ads" value={currency(close.ads)} sign="minus" />
+                <StatementRow label="Planilla" value={currency(close.payroll)} sign="minus" />
+                <StatementRow label="Varios" value={currency(close.misc)} sign="minus" />
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2">
+                <span className="text-xs font-semibold">Utilidad neta estimada</span>
+                <span className={`font-mono text-xl font-semibold ${close.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
+                  {currency(close.net_profit)}
+                </span>
+              </div>
+            </div>
+
+            <div className="border border-border bg-card p-3">
+              <p className="text-sm font-semibold">Operacion logistica</p>
+              <div className="mt-2 space-y-1">
+                <StatementRow label="Pedidos del mes" value={String(close.orders)} />
+                <StatementRow
+                  label="Entregados"
+                  value={`${close.delivered} (${formatPercent(deliveredRate)})`}
+                  tone={close.delivered ? "positive" : undefined}
                 />
-                <CompactStat label="Entregados" value={`${close.delivered} (${formatPercent(deliveredRate)})`} />
-                <CompactStat label="Liquidados" value={`${close.settled} (${formatPercent(settledRate)})`} />
-                <CompactStat label="No entreg. / Anulados" value={`${close.not_delivered} / ${close.annulled}`} />
+                <StatementRow
+                  label="No entregados"
+                  value={String(close.not_delivered)}
+                  tone={close.not_delivered ? "negative" : undefined}
+                />
+                <StatementRow
+                  label="Anulados"
+                  value={String(close.annulled)}
+                  tone={close.annulled ? "warning" : undefined}
+                />
+                <StatementRow label="Pendientes" value={String(close.pending)} />
+                <StatementRow
+                  label="Liquidados"
+                  value={`${close.settled} (${formatPercent(settledRate)})`}
+                  emphasis
+                />
+                <StatementRow
+                  label="Por reclamar"
+                  value={`${close.to_claim} · ${currency(close.cash_pending)}`}
+                  tone={close.to_claim ? "warning" : undefined}
+                />
               </div>
               <div className="mt-3">
                 <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
@@ -3613,8 +3655,10 @@ function MonthCloseDetail({
                   <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, claimShare)}%` }} />
                 </div>
               </div>
-            </>
-          ) : (
+            </div>
+          </>
+        ) : (
+          <div className="border border-border bg-card p-3">
             <>
               <div className="mb-2 border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">
                 Mes sin liquidaciones todavia: la utilidad real llega con el proximo corte de Boxful.
@@ -3646,8 +3690,8 @@ function MonthCloseDetail({
                 · margen estimado {currency(projectedMargin)}
               </p>
             </>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="border border-border bg-card p-3">
           <div className="flex items-center justify-between gap-2">
@@ -3833,6 +3877,43 @@ function CompactStat({
     </div>
   );
 }
+
+function StatementRow({
+  label,
+  value,
+  sign,
+  emphasis,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sign?: "minus";
+  emphasis?: boolean;
+  tone?: "positive" | "negative" | "warning";
+}) {
+  const valueClass =
+    tone === "positive"
+      ? "text-emerald-300"
+      : tone === "negative"
+        ? "text-red-300"
+        : tone === "warning"
+          ? "text-amber-300"
+          : sign === "minus"
+            ? "text-red-300/80"
+            : "";
+
+  return (
+    <div className={`flex items-center justify-between gap-2 ${emphasis ? "mt-1.5 border-t border-border pt-1.5" : ""}`}>
+      <span className={emphasis ? "text-xs font-semibold" : "text-xs text-muted-foreground"}>
+        {label}
+      </span>
+      <span className={`font-mono text-xs ${emphasis ? "font-semibold" : ""} ${valueClass}`}>
+        {sign === "minus" ? `(${value})` : value}
+      </span>
+    </div>
+  );
+}
+
 
 function MonthOrdersModal({
   monthLabel,
