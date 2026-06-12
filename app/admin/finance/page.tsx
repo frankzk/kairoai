@@ -163,6 +163,7 @@ interface ShopifyNoteAliasRow {
 }
 
 interface TrackableOrderRow {
+  id?: number;
   row_key: string;
   source: "boxful" | "shopify" | "liquidacion";
   guide_number: string;
@@ -179,6 +180,8 @@ interface TrackableOrderRow {
   shopify_cancelled_at: string | null;
   shopify_note?: string;
   shopify_created_at: string | null;
+  created_on?: string | null;
+  created_at?: string | null;
   finalized_on?: string | null;
   package_items: ProductLineItem[];
 }
@@ -5182,7 +5185,7 @@ function buildVisibleOrderRows(
   shopifyOrders: ShopifyOrderSummary[]
 ): TrackableOrderRow[] {
   const shopifyByMatchKey = buildShopifyOrderMatchIndex(shopifyOrders);
-  const logisticsDisplayRows = logisticsRows.map((row) => {
+  const logisticsDisplayRows = logisticsRows.map((row): TrackableOrderRow => {
     const shopify = findShopifyOrderForRow(row, shopifyByMatchKey);
     const shopifyItems = shopify
       ? shopify.line_items.map((item) => ({
@@ -5212,9 +5215,10 @@ function buildVisibleOrderRows(
       package_items: shopifyItems.length ? shopifyItems : row.package_items ?? [],
     };
   });
+  const consolidatedLogisticsRows = consolidateLogisticsRows(logisticsDisplayRows);
 
   const existingKeys = new Set<string>();
-  for (const row of logisticsDisplayRows) {
+  for (const row of consolidatedLogisticsRows) {
     for (const key of getOrderMatchKeys(row)) existingKeys.add(key);
   }
 
@@ -5246,9 +5250,61 @@ function buildVisibleOrderRows(
       })),
     }));
 
-  return [...logisticsDisplayRows, ...shopifyOnlyRows].sort((a, b) =>
+  return [...consolidatedLogisticsRows, ...shopifyOnlyRows].sort((a, b) =>
     String(b.shopify_created_at || "").localeCompare(String(a.shopify_created_at || ""))
   );
+}
+
+function consolidateLogisticsRows(rows: TrackableOrderRow[]): TrackableOrderRow[] {
+  const byOrder = new Map<string, TrackableOrderRow>();
+
+  for (const row of rows) {
+    const key = getLogisticsConsolidationKey(row);
+    const current = byOrder.get(key);
+    byOrder.set(key, current ? pickBestLogisticsRow(current, row) : row);
+  }
+
+  return Array.from(byOrder.values());
+}
+
+function getLogisticsConsolidationKey(row: TrackableOrderRow): string {
+  return (
+    normalizeMatchKey(row.shopify_order_name) ||
+    (row.shopify_order_number ? normalizeMatchKey(`#MCRC${row.shopify_order_number}`) : "") ||
+    normalizeMatchKey(row.order_name) ||
+    normalizeMatchKey(row.guide_number) ||
+    row.row_key
+  );
+}
+
+function pickBestLogisticsRow(current: TrackableOrderRow, candidate: TrackableOrderRow): TrackableOrderRow {
+  const currentScore = getLogisticsTrackingScore(current);
+  const candidateScore = getLogisticsTrackingScore(candidate);
+  if (candidateScore !== currentScore) return candidateScore > currentScore ? candidate : current;
+
+  const currentDate = getLogisticsStatusDate(current);
+  const candidateDate = getLogisticsStatusDate(candidate);
+  if (candidateDate !== currentDate) return candidateDate > currentDate ? candidate : current;
+
+  const currentHasShopify = normalizeMatchKey(current.shopify_order_name) ? 1 : 0;
+  const candidateHasShopify = normalizeMatchKey(candidate.shopify_order_name) ? 1 : 0;
+  if (candidateHasShopify !== currentHasShopify) return candidateHasShopify > currentHasShopify ? candidate : current;
+
+  return candidate.id && current.id && candidate.id > current.id ? candidate : current;
+}
+
+function getLogisticsTrackingScore(row: TrackableOrderRow): number {
+  const inferredStatus = isFinalTrackingStatus(row.internal_status)
+    ? row.internal_status
+    : inferTrackingStatusFromText(row.boxful_status);
+  const status = getTrackingFilterFromStatus(inferredStatus);
+  if (status === "delivered" || status === "not_delivered") return 3;
+  if (row.source === "boxful" && row.guide_number) return 2;
+  return 1;
+}
+
+function getLogisticsStatusDate(row: TrackableOrderRow): string {
+  return String(row.finalized_on || row.created_on || row.shopify_created_at || row.created_at || "");
 }
 
 function enrichSettlementRowsWithShopify(
