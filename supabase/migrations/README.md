@@ -17,7 +17,7 @@ Estado actual:
 | `0001_schema.sql` | Tablas base del agente de voz (calls, retries, upsell, settings) | Si |
 | `0002_finance_schema.sql` | Modulo financiero (shopify_orders, settlements, logistics, costos, gastos, claims) | Si |
 | `0003_shopify_orders_note_columns.sql` | Columnas note/note_attributes + backfill line_items (fix statement timeout) | Pendiente de confirmar |
-| `0004_payroll_staff.sql` | Catalogo de personal de planilla | **Pendiente** |
+| `0004_payroll_staff.sql` | Catalogo de personal de planilla | Si (12/06/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de
