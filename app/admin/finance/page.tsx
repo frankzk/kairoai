@@ -15,7 +15,6 @@ import {
   Download,
   FileSpreadsheet,
   History,
-  Package,
   Pencil,
   Plus,
   ReceiptText,
@@ -31,11 +30,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
-type Tab = "orders" | "products" | "notes" | "settlements" | "costs" | "expenses" | "monthly" | "files";
+type Tab = "orders" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 type ExpenseType = "ads" | "payroll" | "misc";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 type OrderTrackingFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
-type ProductAnalysisFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
+type ProductAnalysisFilter =
+  | "all"
+  | "no_cost"
+  | "unknown_product"
+  | "pending"
+  | "annulled"
+  | "delivered"
+  | "not_delivered";
 type OrderSettlementFilter = "all" | "settled" | "unsettled" | "to_claim" | "duplicate";
 type OrderPeriodMode = "all" | "month" | "range";
 type MonthlyOrderFilter =
@@ -417,6 +423,8 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
 
 const PRODUCT_ANALYSIS_FILTERS: Array<{ value: ProductAnalysisFilter; label: string }> = [
   { value: "all", label: "Todos" },
+  { value: "no_cost", label: "Sin costo" },
+  { value: "unknown_product", label: "Sin producto" },
   { value: "pending", label: "Pendientes" },
   { value: "annulled", label: "Anulados" },
   { value: "delivered", label: "Entregados" },
@@ -531,7 +539,6 @@ export default function FinancePage() {
   const [boxfulFiles, setBoxfulFiles] = useState<BoxfulFileControl[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsError, setProductsError] = useState("");
-  const [productSearch, setProductSearch] = useState("");
   const [expenses, setExpenses] = useState<BusinessExpense[]>([]);
   const [summary, setSummary] = useState<ProfitabilitySummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1005,9 +1012,6 @@ export default function FinancePage() {
           <TabButton active={tab === "settlements"} onClick={() => setTab("settlements")} icon={<ReceiptText />}>
             Liquidaciones
           </TabButton>
-          <TabButton active={tab === "costs"} onClick={() => setTab("costs")} icon={<Package />}>
-            Costos SKU
-          </TabButton>
           <TabButton active={tab === "expenses"} onClick={() => setTab("expenses")} icon={<ReceiptText />}>
             Gastos
           </TabButton>
@@ -1043,6 +1047,9 @@ export default function FinancePage() {
                 rows={productAnalysisRows}
                 costs={costs}
                 costVersions={costVersions}
+                products={shopifyProducts}
+                productsLoading={productsLoading}
+                productsError={productsError}
                 onSaveProductCost={saveProductCost}
               />
             )}
@@ -1059,18 +1066,6 @@ export default function FinancePage() {
                 importing={importing}
                 onImport={handleImport}
                 onDeleteImport={deleteSettlementImport}
-              />
-            )}
-            {tab === "costs" && (
-              <CostsTab
-                costs={costs}
-                products={shopifyProducts}
-                productsLoading={productsLoading}
-                productsError={productsError}
-                productSearch={productSearch}
-                setProductSearch={setProductSearch}
-                versions={costVersions}
-                onSaveProductCost={saveProductCost}
               />
             )}
             {tab === "expenses" && (
@@ -1589,44 +1584,23 @@ function OrdersTable({
   );
 }
 
-type ProductColumnKey = keyof ProductAnalysisRow | "cost";
-
-const PRODUCT_TABLE_COLUMNS: Array<{
-  key: ProductColumnKey;
-  label: string;
-  numeric: boolean;
-  headerClass?: string;
-}> = [
-  { key: "product_name", label: "Producto", numeric: false },
-  { key: "sku", label: "SKU", numeric: false },
-  { key: "sample_orders", label: "Pedidos ejemplo", numeric: false },
-  { key: "cost", label: "Costo", numeric: true },
-  { key: "orders", label: "Pedidos", numeric: true },
-  { key: "units", label: "Unid.", numeric: true },
-  { key: "dispatch_rate", label: "Tasa despacho", numeric: true, headerClass: "text-cyan-300" },
-  { key: "delivery_effectiveness", label: "Efectividad entrega", numeric: true, headerClass: "text-emerald-300" },
-  { key: "dispatched", label: "Con guia", numeric: true },
-  { key: "delivered", label: "Entreg.", numeric: true },
-  { key: "not_delivered", label: "No entreg.", numeric: true },
-  { key: "annulled", label: "Anul.", numeric: true },
-  { key: "pending", label: "Pend.", numeric: true },
-];
-
-// Las columnas de barra alinean a la izquierda aunque sean numericas.
-const PRODUCT_METER_COLUMNS = new Set<ProductColumnKey>([
-  "dispatch_rate",
-  "delivery_effectiveness",
-]);
+type ProductColumnKey = "product_name" | "cost" | "orders" | "dispatch_rate" | "delivery_effectiveness";
 
 function ProductAnalysisTab({
   rows,
   costs,
   costVersions,
+  products,
+  productsLoading,
+  productsError,
   onSaveProductCost,
 }: {
   rows: ProductAnalysisRow[];
   costs: ProductCost[];
   costVersions: ProductCostVersion[];
+  products: ShopifyProductOption[];
+  productsLoading: boolean;
+  productsError: string;
   onSaveProductCost: (input: ProductCostSaveInput) => Promise<void>;
 }) {
   const [search, setSearch] = useState("");
@@ -1656,14 +1630,18 @@ function ProductAnalysisTab({
     }
     return grouped;
   }, [costVersions]);
+  const displayRows = useMemo(
+    () => mergeProductAnalysisWithCatalog(rows, products),
+    [rows, products]
+  );
   const filteredRows = useMemo(
     () =>
-      rows.filter((row) => {
-        const haystack = `${row.product_name} ${row.sku}`.toLowerCase();
+      displayRows.filter((row) => {
+        const haystack = `${row.product_name} ${row.sku} ${row.sample_orders.join(" ")}`.toLowerCase();
         const matchesSearch = haystack.includes(search.trim().toLowerCase());
-        return matchesSearch && matchesProductAnalysisFilter(row, statusFilter);
+        return matchesSearch && matchesProductAnalysisFilter(row, statusFilter, costBySku);
       }),
-    [rows, search, statusFilter]
+    [displayRows, search, statusFilter, costBySku]
   );
   const sortedRows = useMemo(() => {
     if (!sort) return filteredRows;
@@ -1671,8 +1649,7 @@ function ProductAnalysisTab({
     const factor = dir === "asc" ? 1 : -1;
     const valueOf = (row: ProductAnalysisRow): number | string => {
       if (key === "cost") {
-        const costKey = getProductAnalysisCostKey(row);
-        const cost = costKey ? costBySku.get(costKey) : undefined;
+        const cost = getProductCostForAnalysisRow(row, costBySku);
         return cost ? cost.unit_cost + cost.packaging_cost : -1;
       }
       const value = row[key];
@@ -1691,16 +1668,23 @@ function ProductAnalysisTab({
     });
   }, [filteredRows, sort, costBySku]);
   const summary = useMemo(() => summarizeProductAnalysisRows(filteredRows), [filteredRows]);
-  const filterCounts = useMemo(() => getProductAnalysisFilterCounts(rows), [rows]);
+  const filterCounts = useMemo(
+    () => getProductAnalysisFilterCounts(displayRows, costBySku),
+    [displayRows, costBySku]
+  );
   const editingRow = editingCostSku
-    ? rows.find((row) => getProductAnalysisCostKey(row) === editingCostSku.toLowerCase())
+    ? displayRows.find((row) => getProductAnalysisCostKey(row) === editingCostSku.toLowerCase())
     : undefined;
   const historyVersions = historyCostSku
     ? versionsBySku.get(historyCostSku.toLowerCase()) ?? []
     : [];
   const historyRow = historyCostSku
-    ? rows.find((row) => getProductAnalysisCostKey(row) === historyCostSku.toLowerCase())
+    ? displayRows.find((row) => getProductAnalysisCostLookupKeys(row).includes(historyCostSku.toLowerCase()))
     : undefined;
+  const unknownProductRow = useMemo(
+    () => displayRows.find((row) => row.product_name === UNKNOWN_PRODUCT_LABEL),
+    [displayRows]
+  );
 
   function toggleSort(key: ProductColumnKey, numeric: boolean) {
     setSort((current) => {
@@ -1719,7 +1703,7 @@ function ProductAnalysisTab({
           <div>
             <CardTitle className="text-base">Analisis por producto</CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              Tasa despacho = pedidos del producto con guia Boxful / pedidos del producto en Shopify.
+              Productos, costos y tasas en una sola vista. Despacho = con guia / pedidos Shopify.
             </p>
           </div>
           <Button
@@ -1733,6 +1717,7 @@ function ProductAnalysisTab({
                   producto: row.product_name,
                   sku: row.sku,
                   pedidos_ejemplo: row.sample_orders.join(", "),
+                  costo_guardado: getProductCostForAnalysisRow(row, costBySku)?.unit_cost ?? "",
                   pedidos: row.orders,
                   unidades: row.units,
                   con_guia: row.dispatched,
@@ -1751,12 +1736,23 @@ function ProductAnalysisTab({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <MiniStat label="Productos visibles" value={filteredRows.length} />
-          <MiniStat label="Pedidos-producto" value={summary.orders} />
-          <MiniStat label="Tasa despacho" value={formatPercent(summary.dispatch_rate)} />
-          <MiniStat label="Efectividad entrega" value={formatPercent(summary.delivery_effectiveness)} />
-        </div>
+        {productsError && (
+          <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-200">
+            {productsError}
+          </div>
+        )}
+        <ProductFunnelStats
+          productsVisible={filteredRows.length}
+          productsLoading={productsLoading}
+          summary={summary}
+        />
+        {unknownProductRow && (
+          <div className="border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            Producto sin registrar agrupa {unknownProductRow.orders} pedidos donde no llego detalle de lineas
+            Shopify ni resumen de items. Revisa sus pedidos ejemplo en la tabla para ubicar si falta sincronizar
+            line_items o si el pedido entro solo desde Boxful/liquidacion.
+          </div>
+        )}
 
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="relative xl:w-[420px]">
@@ -1786,78 +1782,92 @@ function ProductAnalysisTab({
           </div>
         </div>
 
-        <div className="max-h-[640px] overflow-auto border border-border">
-          <table className="w-full min-w-[1480px] text-sm">
+        <div className="max-h-[640px] overflow-y-auto border border-border">
+          <table className="w-full table-fixed text-sm">
+            <colgroup>
+              <col className="w-[34%]" />
+              <col className="w-[20%]" />
+              <col className="w-[22%]" />
+              <col className="w-[12%]" />
+              <col className="w-[12%]" />
+            </colgroup>
             <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
               <tr>
-                {PRODUCT_TABLE_COLUMNS.map((column) => {
-                  const rightAligned = column.numeric && !PRODUCT_METER_COLUMNS.has(column.key);
-                  return (
-                    <th key={column.key} className={`px-3 py-2 ${rightAligned ? "text-right" : ""}`}>
-                      <button
-                        type="button"
-                        onClick={() => toggleSort(column.key, column.numeric)}
-                        className={`inline-flex w-full items-center gap-1 transition-colors hover:text-foreground ${
-                          rightAligned ? "justify-end" : ""
-                        } ${column.headerClass ?? ""}`}
-                        title="Ordenar por esta columna"
-                      >
-                        {column.label}
-                        {sort?.key === column.key &&
-                          (sort.dir === "asc" ? (
-                            <ArrowUp className="h-3 w-3 shrink-0" />
-                          ) : (
-                            <ArrowDown className="h-3 w-3 shrink-0" />
-                          ))}
-                      </button>
-                    </th>
-                  );
-                })}
+                <ProductSortableHeader label="Producto" columnKey="product_name" sort={sort} onSort={toggleSort} />
+                <ProductSortableHeader label="Costo SKU" columnKey="cost" sort={sort} onSort={toggleSort} numeric />
+                <ProductSortableHeader label="Funnel" columnKey="orders" sort={sort} onSort={toggleSort} numeric />
+                <ProductSortableHeader
+                  label="Despacho"
+                  columnKey="dispatch_rate"
+                  sort={sort}
+                  onSort={toggleSort}
+                  numeric
+                  className="text-cyan-300"
+                />
+                <ProductSortableHeader
+                  label="Entrega"
+                  columnKey="delivery_effectiveness"
+                  sort={sort}
+                  onSort={toggleSort}
+                  numeric
+                  className="text-emerald-300"
+                />
               </tr>
             </thead>
             <tbody>
               {sortedRows.slice(0, 800).map((row) => (
                 <tr key={row.key} className="border-t border-border/50">
-                  <td className="max-w-[360px] truncate px-3 py-2 font-medium" title={row.product_name}>
-                    {row.product_name}
+                  <td className="px-3 py-3 align-top">
+                    <p className="truncate font-medium" title={row.product_name}>{row.product_name}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                      {row.sku ? (
+                        <span className="font-mono">SKU {row.sku}</span>
+                      ) : row.product_name === UNKNOWN_PRODUCT_LABEL ? (
+                        <Badge variant="warning">Sin producto</Badge>
+                      ) : (
+                        <span>Sin SKU Shopify</span>
+                      )}
+                      {row.sample_orders.length > 0 && (
+                        <span className="truncate font-mono" title={row.sample_orders.join(", ")}>
+                          Ej: {row.sample_orders.slice(0, 2).join(", ")}
+                        </span>
+                      )}
+                    </div>
                   </td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{row.sku || "-"}</td>
-                  <td
-                    className="max-w-[260px] truncate px-3 py-2 font-mono text-xs text-muted-foreground"
-                    title={row.sample_orders.join(", ")}
-                  >
-                    {row.sample_orders.join(", ") || "-"}
-                  </td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-3 align-top">
                     {getProductAnalysisCostKey(row) ? (
                       <ProductCostCell
-                        cost={costBySku.get(getProductAnalysisCostKey(row))}
-                        versionCount={(versionsBySku.get(getProductAnalysisCostKey(row)) ?? []).length}
+                        cost={getProductCostForAnalysisRow(row, costBySku)}
+                        versionCount={getProductVersionsForAnalysisRow(row, versionsBySku).length}
                         onEdit={() => setEditingCostSku(getProductAnalysisCostKey(row))}
-                        onHistory={() => setHistoryCostSku(getProductAnalysisCostKey(row))}
+                        onHistory={() =>
+                          setHistoryCostSku(
+                            getProductVersionKeyForAnalysisRow(row, versionsBySku) || getProductAnalysisCostKey(row)
+                          )
+                        }
                       />
                     ) : (
-                      <span className="block text-right text-xs text-muted-foreground">-</span>
+                      <span className="text-xs text-muted-foreground">Falta detalle de producto</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">{row.orders}</td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">{row.units}</td>
-                  <td className="px-3 py-2">
-                    <RateMeter value={row.dispatch_rate} tone="cyan" />
+                  <td className="px-3 py-3 align-top">
+                    <ProductFunnelCell row={row} />
                   </td>
-                  <td className="px-3 py-2">
-                    <RateMeter value={row.delivery_effectiveness} tone="emerald" />
+                  <td className="px-3 py-3 align-top">
+                    <RateMeter value={row.dispatch_rate} tone="cyan" detail={`${row.dispatched}/${row.orders}`} />
                   </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">{row.dispatched}</td>
-                  <td className="px-3 py-2 text-right font-mono text-xs text-emerald-300">{row.delivered}</td>
-                  <td className="px-3 py-2 text-right font-mono text-xs text-red-300">{row.not_delivered}</td>
-                  <td className="px-3 py-2 text-right font-mono text-xs text-amber-300">{row.annulled}</td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">{row.pending}</td>
+                  <td className="px-3 py-3 align-top">
+                    <RateMeter
+                      value={row.delivery_effectiveness}
+                      tone="emerald"
+                      detail={`${row.delivered}/${row.dispatched}`}
+                    />
+                  </td>
                 </tr>
               ))}
               {!filteredRows.length && (
                 <tr>
-                  <td colSpan={PRODUCT_TABLE_COLUMNS.length} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted-foreground">
                     No hay productos para este filtro.
                   </td>
                 </tr>
@@ -1876,7 +1886,7 @@ function ProductAnalysisTab({
           sku={getProductAnalysisCostKey(editingRow)}
           productName={editingRow.product_name}
           referenceLabel={editingRow.sku ? `SKU ${editingRow.sku}` : "Clave interna por producto sin SKU"}
-          savedCost={costBySku.get(getProductAnalysisCostKey(editingRow))}
+          savedCost={getProductCostForAnalysisRow(editingRow, costBySku)}
           onClose={() => setEditingCostSku("")}
           onSave={onSaveProductCost}
         />
@@ -1893,6 +1903,95 @@ function ProductAnalysisTab({
   );
 }
 
+function ProductSortableHeader({
+  label,
+  columnKey,
+  sort,
+  onSort,
+  numeric = false,
+  className = "",
+}: {
+  label: string;
+  columnKey: ProductColumnKey;
+  sort: { key: ProductColumnKey; dir: "asc" | "desc" } | null;
+  onSort: (key: ProductColumnKey, numeric: boolean) => void;
+  numeric?: boolean;
+  className?: string;
+}) {
+  return (
+    <th className="px-3 py-2">
+      <button
+        type="button"
+        onClick={() => onSort(columnKey, numeric)}
+        className={`inline-flex w-full items-center gap-1 transition-colors hover:text-foreground ${className}`}
+        title="Ordenar por esta columna"
+      >
+        {label}
+        {sort?.key === columnKey &&
+          (sort.dir === "asc" ? (
+            <ArrowUp className="h-3 w-3 shrink-0" />
+          ) : (
+            <ArrowDown className="h-3 w-3 shrink-0" />
+          ))}
+      </button>
+    </th>
+  );
+}
+
+function ProductFunnelStats({
+  productsVisible,
+  productsLoading,
+  summary,
+}: {
+  productsVisible: number;
+  productsLoading: boolean;
+  summary: Pick<
+    ProductAnalysisRow,
+    "orders" | "dispatched" | "delivered" | "not_delivered" | "annulled" | "pending" | "dispatch_rate" | "delivery_effectiveness"
+  >;
+}) {
+  const stats = [
+    { label: "Productos", value: productsLoading ? "..." : productsVisible },
+    { label: "Pedidos", value: summary.orders },
+    { label: "Despachados", value: summary.dispatched },
+    { label: "Anulados", value: summary.annulled },
+    { label: "Entregados", value: summary.delivered },
+    { label: "No entregados", value: summary.not_delivered },
+    { label: "Pendientes", value: summary.pending },
+  ];
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+      {stats.map((stat) => (
+        <div key={stat.label} className="border border-border bg-background px-3 py-2">
+          <p className="text-[11px] text-muted-foreground">{stat.label}</p>
+          <p className="mt-1 font-mono text-lg font-semibold">{stat.value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProductFunnelCell({ row }: { row: ProductAnalysisRow }) {
+  const items = [
+    ["Ped", row.orders],
+    ["Desp", row.dispatched],
+    ["Anul", row.annulled],
+    ["Ent", row.delivered],
+    ["No", row.not_delivered],
+    ["Pend", row.pending],
+  ];
+  return (
+    <div className="grid grid-cols-3 gap-1 text-[11px]">
+      {items.map(([label, value]) => (
+        <div key={label} className="flex items-center justify-between gap-1 border border-border/60 px-1.5 py-1">
+          <span className="text-muted-foreground">{label}</span>
+          <span className="font-mono">{value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ProductCostCell({
   cost,
   versionCount,
@@ -1906,32 +2005,41 @@ function ProductCostCell({
 }) {
   const totalCost = cost ? Number(cost.unit_cost || 0) + Number(cost.packaging_cost || 0) : 0;
   return (
-    <div className="flex items-center justify-end gap-1.5">
-      {cost && totalCost > 0 ? (
-        <span className="font-mono text-xs">{currency(totalCost)}</span>
-      ) : (
-        <span className="text-xs text-amber-300">Sin costo</span>
-      )}
-      <button
-        type="button"
-        onClick={onEdit}
-        title="Editar costo"
-        aria-label="Editar costo"
-        className="text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <Pencil className="h-3.5 w-3.5" />
-      </button>
-      {versionCount > 1 && (
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0">
+        {cost && totalCost > 0 ? (
+          <>
+            <p className="font-mono text-xs">{currency(totalCost)}</p>
+            <p className="text-[11px] text-muted-foreground">
+              Unitario {currency(cost.unit_cost)} + empaque {currency(cost.packaging_cost)}
+            </p>
+          </>
+        ) : (
+          <span className="text-xs font-medium text-amber-300">Sin costo</span>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
         <button
           type="button"
-          onClick={onHistory}
-          title={`Historial (${versionCount} versiones)`}
-          aria-label="Historial de costos"
+          onClick={onEdit}
+          title="Editar costo"
+          aria-label="Editar costo"
           className="text-muted-foreground transition-colors hover:text-foreground"
         >
-          <History className="h-3.5 w-3.5" />
+          <Pencil className="h-3.5 w-3.5" />
         </button>
-      )}
+        {versionCount > 1 && (
+          <button
+            type="button"
+            onClick={onHistory}
+            title={`Historial (${versionCount} versiones)`}
+            aria-label="Historial de costos"
+            className="text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <History className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -2067,7 +2175,15 @@ function ProductCostQuickEditModal({
   );
 }
 
-function RateMeter({ value, tone }: { value: number; tone: "cyan" | "emerald" }) {
+function RateMeter({
+  value,
+  tone,
+  detail,
+}: {
+  value: number;
+  tone: "cyan" | "emerald";
+  detail?: string;
+}) {
   const clampedValue = Math.max(0, Math.min(100, Number(value || 0)));
   const barClass = tone === "emerald" ? "bg-emerald-400" : "bg-cyan-400";
   const textClass = tone === "emerald" ? "text-emerald-300" : "text-cyan-300";
@@ -2075,13 +2191,16 @@ function RateMeter({ value, tone }: { value: number; tone: "cyan" | "emerald" })
   // El % va antes de la barra y en su mismo color para que no se confunda
   // con la barra de la columna vecina.
   return (
-    <div className="flex min-w-[150px] items-center gap-2">
-      <span className={`w-10 shrink-0 text-right font-mono text-xs font-semibold ${textClass}`}>
-        {formatPercent(clampedValue)}
-      </span>
-      <div className="h-2 flex-1 overflow-hidden bg-muted">
-        <div className={`h-full ${barClass}`} style={{ width: `${clampedValue}%` }} />
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <span className={`w-10 shrink-0 text-right font-mono text-xs font-semibold ${textClass}`}>
+          {formatPercent(clampedValue)}
+        </span>
+        <div className="h-2 flex-1 overflow-hidden bg-muted">
+          <div className={`h-full ${barClass}`} style={{ width: `${clampedValue}%` }} />
+        </div>
       </div>
+      {detail && <p className="text-right font-mono text-[11px] text-muted-foreground">{detail}</p>}
     </div>
   );
 }
@@ -5862,6 +5981,58 @@ function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnaly
   );
 }
 
+function mergeProductAnalysisWithCatalog(
+  rows: ProductAnalysisRow[],
+  products: ShopifyProductOption[]
+): ProductAnalysisRow[] {
+  const merged = rows.map((row) => ({ ...row, sample_orders: [...row.sample_orders] }));
+  const byTitleKey = new Map<string, ProductAnalysisRow>();
+  const seenSkus = new Set<string>();
+
+  for (const row of merged) {
+    const sku = row.sku.trim().toLowerCase();
+    if (sku) seenSkus.add(sku);
+    const titleKey = getProductTitleCostKey(row.product_name);
+    if (titleKey && !byTitleKey.has(titleKey)) byTitleKey.set(titleKey, row);
+  }
+
+  for (const product of products) {
+    const sku = String(product.sku || "").trim();
+    const skuKey = sku.toLowerCase();
+    const titleKey = getProductTitleCostKey(product.display_name);
+    if (skuKey && seenSkus.has(skuKey)) continue;
+
+    const titleMatch = titleKey ? byTitleKey.get(titleKey) : undefined;
+    if (titleMatch) {
+      if (!titleMatch.sku && sku) {
+        titleMatch.sku = sku;
+        seenSkus.add(skuKey);
+      }
+      continue;
+    }
+
+    merged.push({
+      key: skuKey ? `catalog:${skuKey}` : titleKey || `catalog:${product.variant_id}`,
+      product_name: product.display_name,
+      sku,
+      sample_orders: [],
+      orders: 0,
+      units: 0,
+      dispatched: 0,
+      dispatch_rate: 0,
+      delivery_effectiveness: 0,
+      delivered: 0,
+      not_delivered: 0,
+      annulled: 0,
+      pending: 0,
+    });
+    if (skuKey) seenSkus.add(skuKey);
+    if (titleKey) byTitleKey.set(titleKey, merged[merged.length - 1]);
+  }
+
+  return merged;
+}
+
 function getProductAnalysisItems(order: OrderProfitabilityRow): ProductLineItem[] {
   if (order.items.length) return order.items;
   const parsedSummaryItems = parseItemsSummary(order.items_summary);
@@ -5921,6 +6092,42 @@ function getProductAnalysisCostKey(row: Pick<ProductAnalysisRow, "sku" | "produc
   return getProductTitleCostKey(row.product_name);
 }
 
+function getProductAnalysisCostLookupKeys(row: Pick<ProductAnalysisRow, "sku" | "product_name">): string[] {
+  return uniqueKeys([
+    String(row.sku || "").trim().toLowerCase(),
+    getProductTitleCostKey(row.product_name),
+  ]);
+}
+
+function getProductCostForAnalysisRow(
+  row: Pick<ProductAnalysisRow, "sku" | "product_name">,
+  costBySku: Map<string, ProductCost>
+): ProductCost | undefined {
+  for (const key of getProductAnalysisCostLookupKeys(row)) {
+    const cost = costBySku.get(key);
+    if (cost) return cost;
+  }
+  return undefined;
+}
+
+function getProductVersionsForAnalysisRow(
+  row: Pick<ProductAnalysisRow, "sku" | "product_name">,
+  versionsBySku: Map<string, ProductCostVersion[]>
+): ProductCostVersion[] {
+  for (const key of getProductAnalysisCostLookupKeys(row)) {
+    const versions = versionsBySku.get(key);
+    if (versions?.length) return versions;
+  }
+  return [];
+}
+
+function getProductVersionKeyForAnalysisRow(
+  row: Pick<ProductAnalysisRow, "sku" | "product_name">,
+  versionsBySku: Map<string, ProductCostVersion[]>
+): string {
+  return getProductAnalysisCostLookupKeys(row).find((key) => (versionsBySku.get(key) ?? []).length > 0) ?? "";
+}
+
 function getProductItemCostKey(item: Pick<ProductLineItem, "sku" | "title">): string {
   const sku = String(item.sku || "").trim().toLowerCase();
   if (sku) return sku;
@@ -5958,15 +6165,26 @@ function isShopifyProductAnalysisOrder(
 
 function getProductOrderAnalysisStatus(
   row: Pick<OrderProfitabilityRow, "tracking_status" | "shopify_cancelled_at" | "shopify_financial_status">
-): Exclude<ProductAnalysisFilter, "all"> {
+): "pending" | "annulled" | "delivered" | "not_delivered" {
   if (isShopifyCancelled(row)) return "annulled";
   if (row.tracking_status === "delivered") return "delivered";
   if (row.tracking_status === "not_delivered" || row.tracking_status === "returned") return "not_delivered";
   return "pending";
 }
 
-function matchesProductAnalysisFilter(row: ProductAnalysisRow, filter: ProductAnalysisFilter): boolean {
+function matchesProductAnalysisFilter(
+  row: ProductAnalysisRow,
+  filter: ProductAnalysisFilter,
+  costBySku: Map<string, ProductCost>
+): boolean {
   if (filter === "all") return true;
+  if (filter === "unknown_product") return row.product_name === UNKNOWN_PRODUCT_LABEL;
+  if (filter === "no_cost") {
+    const costKey = getProductAnalysisCostKey(row);
+    if (!costKey) return false;
+    const cost = getProductCostForAnalysisRow(row, costBySku);
+    return !cost || Number(cost.unit_cost || 0) <= 0;
+  }
   return row[filter] > 0;
 }
 
@@ -5992,9 +6210,14 @@ function summarizeProductAnalysisRows(rows: ProductAnalysisRow[]): Pick<
   };
 }
 
-function getProductAnalysisFilterCounts(rows: ProductAnalysisRow[]): Record<ProductAnalysisFilter, number> {
+function getProductAnalysisFilterCounts(
+  rows: ProductAnalysisRow[],
+  costBySku: Map<string, ProductCost>
+): Record<ProductAnalysisFilter, number> {
   return {
     all: rows.length,
+    no_cost: rows.filter((row) => matchesProductAnalysisFilter(row, "no_cost", costBySku)).length,
+    unknown_product: rows.filter((row) => row.product_name === UNKNOWN_PRODUCT_LABEL).length,
     pending: rows.filter((row) => row.pending > 0).length,
     annulled: rows.filter((row) => row.annulled > 0).length,
     delivered: rows.filter((row) => row.delivered > 0).length,
