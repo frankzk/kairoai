@@ -3459,6 +3459,39 @@ function MonthlyCloseTab({
       avg_margin_per_delivered: marginCount ? marginSum / marginCount : 0,
     };
   }, [control.orders]);
+  // Meses cronologicos primero; "sin fecha" al final como caso residual.
+  const orderedRows = useMemo(
+    () => [
+      ...rows.filter((row) => row.month !== "sin-fecha"),
+      ...rows.filter((row) => row.month === "sin-fecha"),
+    ],
+    [rows]
+  );
+  const totals = useMemo(() => {
+    const acc = {
+      orders: 0,
+      delivered: 0,
+      pending: 0,
+      settled: 0,
+      unsettled: 0,
+      to_claim: 0,
+      costs: 0,
+      net_profit: 0,
+      gross: 0,
+    };
+    for (const row of rows) {
+      acc.orders += row.orders;
+      acc.delivered += row.delivered;
+      acc.pending += row.pending;
+      acc.settled += row.settled;
+      acc.unsettled += row.unsettled;
+      acc.to_claim += row.to_claim;
+      acc.costs += row.boxful_costs + row.product_costs + row.ads + row.payroll + row.misc;
+      acc.net_profit += row.net_profit;
+      acc.gross += row.cash_received + row.boxful_costs;
+    }
+    return acc;
+  }, [rows]);
 
   return (
     <div className="space-y-4">
@@ -3494,14 +3527,14 @@ function MonthlyCloseTab({
             <span className="hidden text-right lg:block">Costos</span>
             <span className="text-right">Utilidad neta</span>
           </div>
-          {rows.map((row, index) => (
+          {orderedRows.map((row, index) => (
             <MonthlyCloseMonthRow
               key={row.month}
               row={row}
               previous={
                 row.month === "sin-fecha"
                   ? undefined
-                  : rows.slice(index + 1).find((item) => item.month !== "sin-fecha")
+                  : orderedRows.slice(index + 1).find((item) => item.month !== "sin-fecha")
               }
               open={expandedMonth === row.month}
               onToggle={() =>
@@ -3516,6 +3549,39 @@ function MonthlyCloseTab({
               onSaveClaim={onSaveClaim}
             />
           ))}
+          <div className={`${MONTH_ROW_GRID} border-t-2 border-border bg-card px-3 py-2.5`}>
+            <span />
+            <span className="font-mono text-xs font-semibold">TOTAL</span>
+            <span className="text-right font-mono text-xs font-semibold">{totals.orders}</span>
+            <span className="hidden text-right font-mono text-xs font-semibold lg:block">
+              {totals.delivered}
+              {totals.orders > 0 && (
+                <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                  {Math.round((totals.delivered / totals.orders) * 100)}%
+                </span>
+              )}
+            </span>
+            <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.pending}</span>
+            <span className="hidden text-right font-mono text-xs font-semibold lg:block">
+              {totals.settled}
+              {totals.orders > 0 && (
+                <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                  {Math.round((totals.settled / totals.orders) * 100)}%
+                </span>
+              )}
+            </span>
+            <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.unsettled}</span>
+            <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.to_claim}</span>
+            <span className="hidden text-right font-mono text-xs font-semibold lg:block">{currency(totals.costs)}</span>
+            <span className={`text-right font-mono text-xs font-semibold ${totals.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
+              {currency(totals.net_profit)}
+              {totals.gross > 0 && (
+                <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                  {Math.round((totals.net_profit / totals.gross) * 100)}%
+                </span>
+              )}
+            </span>
+          </div>
         </div>
       )}
     </div>
@@ -3548,6 +3614,18 @@ function MonthlyCloseMonthRow({
   onSaveClaim: (anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes?: string) => void;
 }) {
   const registeredCosts = row.boxful_costs + row.product_costs + row.ads + row.payroll + row.misc;
+  const deliveredPct = row.orders ? Math.round((row.delivered / row.orders) * 100) : 0;
+  const settledPct = row.orders ? Math.round((row.settled / row.orders) * 100) : 0;
+  const grossIncome = row.cash_received + row.boxful_costs;
+  const marginPct = grossIncome ? Math.round((row.net_profit / grossIncome) * 100) : null;
+  const incompleteData = row.orders > 0 && row.settled === 0 && row.cash_received === 0;
+  const trend = previous
+    ? row.net_profit > previous.net_profit
+      ? "up"
+      : row.net_profit < previous.net_profit
+        ? "down"
+        : null
+    : null;
 
   return (
     <div className="border-t border-border/50 first:border-t-0">
@@ -3560,16 +3638,39 @@ function MonthlyCloseMonthRow({
         <span className="flex h-6 w-6 items-center justify-center border border-border bg-background">
           {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </span>
-        <span className="truncate font-mono text-xs font-semibold">{formatMonthLabel(row.month)}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate font-mono text-xs font-semibold">{formatMonthLabel(row.month)}</span>
+          {incompleteData && (
+            <span
+              className="h-1.5 w-1.5 shrink-0 bg-amber-400"
+              title="Sin cortes de Boxful que cubran este mes: la utilidad esta incompleta."
+            />
+          )}
+        </span>
         <span className="text-right font-mono text-xs">{row.orders}</span>
-        <span className="hidden text-right font-mono text-xs lg:block">{row.delivered}</span>
+        <span className="hidden text-right font-mono text-xs lg:block">
+          {row.delivered}
+          {row.orders > 0 && (
+            <span className="ml-1 text-[10px] text-muted-foreground">{deliveredPct}%</span>
+          )}
+        </span>
         <span className="hidden text-right font-mono text-xs lg:block">{row.pending}</span>
-        <span className="hidden text-right font-mono text-xs lg:block">{row.settled}</span>
+        <span className="hidden text-right font-mono text-xs lg:block">
+          {row.settled}
+          {row.orders > 0 && (
+            <span className="ml-1 text-[10px] text-muted-foreground">{settledPct}%</span>
+          )}
+        </span>
         <span className="hidden text-right font-mono text-xs lg:block">{row.unsettled}</span>
         <span className="hidden text-right font-mono text-xs lg:block">{row.to_claim}</span>
         <span className="hidden text-right font-mono text-xs lg:block">{currency(registeredCosts)}</span>
-        <span className={`text-right font-mono text-xs ${row.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
+        <span className={`flex items-baseline justify-end gap-1 font-mono text-xs ${row.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
+          {trend === "up" && <span className="text-[9px] text-emerald-300">▲</span>}
+          {trend === "down" && <span className="text-[9px] text-red-300">▼</span>}
           {currency(row.net_profit)}
+          {marginPct != null && (
+            <span className="text-[10px] text-muted-foreground">{marginPct}%</span>
+          )}
         </span>
       </button>
       {open && (
