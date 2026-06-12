@@ -1458,7 +1458,7 @@ function OrdersTable({
 }) {
   return (
     <div className="max-h-[620px] overflow-auto border border-border">
-      <table className="w-full min-w-[1340px] text-sm">
+      <table className="w-full min-w-[1440px] text-sm">
         <thead className="sticky top-0 bg-card">
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
             <th className="px-3 py-2">Orden</th>
@@ -1467,6 +1467,7 @@ function OrdersTable({
             <th className="px-3 py-2">Cliente</th>
             <th className="px-3 py-2">Estado seguimiento</th>
             <th className="px-3 py-2">Shopify</th>
+            <th className="px-3 py-2">Fecha Shopify</th>
             <th className="px-3 py-2">Estado liquidacion</th>
             <th className="px-3 py-2">Archivo liquidacion</th>
             <th className="px-3 py-2 text-right">A liquidar</th>
@@ -1499,6 +1500,9 @@ function OrdersTable({
                     {row.match_status === "matched" ? row.shopify_order_name : "sin match"}
                   </Badge>
                 </td>
+                <td className="px-3 py-2 font-mono text-xs">
+                  {row.shopify_created_at ? formatDate(row.shopify_created_at) : "-"}
+                </td>
                 <td className="px-3 py-2">
                   <SettlementStatusBadge traces={traces} />
                 </td>
@@ -1519,7 +1523,7 @@ function OrdersTable({
           })}
           {!rows.length && (
             <tr>
-              <td colSpan={11} className="px-3 py-8 text-center text-sm text-muted-foreground">
+              <td colSpan={12} className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {emptyLabel}
               </td>
             </tr>
