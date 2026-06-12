@@ -476,6 +476,37 @@ export async function listPersistedShopifyOrders(limit = 1000): Promise<Persiste
   }));
 }
 
+export interface PersistedShopifyCoverage {
+  count: number;
+  oldest: string | null;
+  newest: string | null;
+}
+
+export async function getPersistedShopifyCoverage(): Promise<PersistedShopifyCoverage> {
+  const db = getDB();
+  const [countRes, oldestRes, newestRes] = await Promise.all([
+    db.from("shopify_orders").select("id", { count: "exact", head: true }),
+    db
+      .from("shopify_orders")
+      .select("shopify_created_at")
+      .not("shopify_created_at", "is", null)
+      .order("shopify_created_at", { ascending: true })
+      .limit(1),
+    db
+      .from("shopify_orders")
+      .select("shopify_created_at")
+      .not("shopify_created_at", "is", null)
+      .order("shopify_created_at", { ascending: false })
+      .limit(1),
+  ]);
+  if (countRes.error) throw new Error(`getPersistedShopifyCoverage: ${countRes.error.message}`);
+  return {
+    count: countRes.count ?? 0,
+    oldest: (oldestRes.data?.[0]?.shopify_created_at as string | undefined) ?? null,
+    newest: (newestRes.data?.[0]?.shopify_created_at as string | undefined) ?? null,
+  };
+}
+
 export async function upsertPersistedShopifyOrders(
   orders: Omit<PersistedShopifyOrder, "id" | "synced_at">[]
 ): Promise<void> {
