@@ -20,7 +20,7 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const INSERT_BATCH_SIZE = 500;
+const INSERT_BATCH_SIZE = 250;
 const INSERT_CONCURRENCY = 4;
 
 interface ParsedLogisticsRow {
@@ -121,12 +121,20 @@ export async function POST(req: NextRequest) {
       buildLogisticsRow(logisticsImport.id, row, shopify)
     );
 
-    const batches: (typeof rowsToInsert)[] = [];
-    for (let i = 0; i < rowsToInsert.length; i += INSERT_BATCH_SIZE) {
-      batches.push(rowsToInsert.slice(i, i + INSERT_BATCH_SIZE));
-    }
-    for (let i = 0; i < batches.length; i += INSERT_CONCURRENCY) {
-      await Promise.all(batches.slice(i, i + INSERT_CONCURRENCY).map(insertLogisticsRows));
+    // Si las filas no entran, el import se revierte: un archivo nunca debe
+    // quedar registrado con 0 filas.
+    try {
+      const batches: (typeof rowsToInsert)[] = [];
+      for (let i = 0; i < rowsToInsert.length; i += INSERT_BATCH_SIZE) {
+        batches.push(rowsToInsert.slice(i, i + INSERT_BATCH_SIZE));
+      }
+      for (let i = 0; i < batches.length; i += INSERT_CONCURRENCY) {
+        await Promise.all(batches.slice(i, i + INSERT_CONCURRENCY).map(insertLogisticsRows));
+      }
+    } catch (insertError) {
+      await deleteLogisticsImport(logisticsImport.id).catch(() => undefined);
+      const detail = insertError instanceof Error ? insertError.message : String(insertError);
+      throw new Error(`No se pudieron guardar las filas (import revertido): ${detail}`);
     }
 
     return NextResponse.json({
@@ -346,7 +354,8 @@ function buildLogisticsRow(
     shopify_fulfillment_status: shopify?.fulfillment_status ?? "",
     shopify_cancelled_at: shopify?.cancelled_at ?? null,
     shopify_total: Number(shopify?.total_price ?? 0),
-    shopify_created_at: shopify?.created_at ?? null,
+    // "" en timestamptz revienta el insert; solo fechas reales o null.
+    shopify_created_at: shopify?.created_at || null,
     raw_row: row.raw,
   };
 }
