@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getShopifyCredentials, getStoreFromSearchParams } from "@/lib/stores";
+import { getRequiredStoreFromSearchParams, getShopifyCredentials } from "@/lib/stores";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +16,13 @@ export interface ShopifyProductOption {
 }
 
 export async function GET(req: NextRequest) {
-  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) {
+    return NextResponse.json(
+      { error: "store requerido: usa mireva-cr o mireva-hn" },
+      { status: 400 }
+    );
+  }
   const { shop, token, missing } = getShopifyCredentials(store);
   if (!shop || !token) {
     return NextResponse.json(
@@ -65,4 +71,3 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ products, store: store.code });
 }
-

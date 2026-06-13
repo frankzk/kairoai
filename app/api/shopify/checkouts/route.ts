@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { getRequiredStoreFromSearchParams, getShopifyCredentials } from "@/lib/stores";
 
 export const runtime = "nodejs";
 
@@ -15,17 +16,29 @@ export interface ShopifyCartSummary {
   updated_at: string;
 }
 
-export async function GET() {
-  if (!process.env.SHOPIFY_SHOP_DOMAIN || !process.env.SHOPIFY_ACCESS_TOKEN) {
-    return NextResponse.json({ error: "Shopify no configurado." }, { status: 503 });
+export async function GET(req: NextRequest) {
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) {
+    return NextResponse.json(
+      { error: "store requerido: usa mireva-cr o mireva-hn" },
+      { status: 400 }
+    );
   }
 
-  const url = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/checkouts.json?limit=50`;
+  const { shop, token, missing } = getShopifyCredentials(store);
+  if (!shop || !token) {
+    return NextResponse.json(
+      { error: `Shopify ${store.shortLabel} no configurado: faltan ${missing.join(" y ")} en Vercel.` },
+      { status: 503 }
+    );
+  }
+
+  const url = `https://${shop}/admin/api/2024-01/checkouts.json?limit=50`;
 
   try {
     const res = await fetch(url, {
       headers: {
-        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+        "X-Shopify-Access-Token": token,
         "Content-Type": "application/json",
       },
       cache: "no-store",
@@ -80,7 +93,7 @@ export async function GET() {
       }
     );
 
-    return NextResponse.json({ carts });
+    return NextResponse.json({ carts, store: store.code });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Error desconocido";
     return NextResponse.json({ error: `Error: ${msg}` }, { status: 500 });

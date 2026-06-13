@@ -1,22 +1,34 @@
 import { NextRequest } from "next/server";
 
-import { getShopifyOAuthCredentials, getStoreConfig, normalizeFinanceStoreCode } from "@/lib/stores";
+import { getShopifyOAuthCredentials, getStoreConfig, parseFinanceStoreCode } from "@/lib/stores";
 
 // Shopify redirects here after merchant approves the app.
 // This exchanges the code for a permanent access token and displays it once.
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const code = searchParams.get("code");
-  const shop = searchParams.get("shop") ?? process.env.SHOPIFY_SHOP_DOMAIN ?? "";
-  const store = getStoreConfig(getStoreCodeFromOAuthState(searchParams.get("state")));
+  const shop = searchParams.get("shop") ?? "";
+  const storeCode = getStoreCodeFromOAuthState(searchParams.get("state"));
+  if (!storeCode) {
+    return textResponse("Error: estado OAuth invalido o sin tienda.", 400);
+  }
+  const store = getStoreConfig(storeCode);
   const tokenEnv = store.accessTokenEnv;
 
   if (!code) {
     return textResponse("Error: no se recibio el codigo de autorizacion.", 400);
   }
 
+  if (!shop) {
+    return textResponse("Error: no se recibio la tienda Shopify.", 400);
+  }
+
   const { clientId, clientSecret, missing } = getShopifyOAuthCredentials(store);
-  if (!shop) missing.push(store.shopDomainEnv);
+  const expectedShop =
+    process.env[store.shopDomainEnv] ||
+    (store.legacyShopDomainEnv ? process.env[store.legacyShopDomainEnv] : "") ||
+    "";
+  if (!expectedShop) missing.push(store.shopDomainEnv);
 
   if (missing.length > 0) {
     return textResponse(
@@ -27,6 +39,19 @@ export async function GET(req: NextRequest) {
         `Variables faltantes: ${missing.join(", ")}`,
       ].join("\n"),
       500
+    );
+  }
+
+  if (normalizeShopDomain(shop) !== normalizeShopDomain(expectedShop)) {
+    return textResponse(
+      [
+        "Error: la tienda Shopify devuelta no coincide con la tienda seleccionada.",
+        "",
+        `Tienda seleccionada: ${store.label}`,
+        `Shop esperado: ${expectedShop}`,
+        `Shop recibido: ${shop}`,
+      ].join("\n"),
+      400
     );
   }
 
@@ -104,7 +129,7 @@ export async function GET(req: NextRequest) {
 }
 
 function getStoreCodeFromOAuthState(state: string | null) {
-  return normalizeFinanceStoreCode(state?.split(":")[0]);
+  return parseFinanceStoreCode(state?.split(":")[0]);
 }
 
 function textResponse(message: string, status: number) {
@@ -120,4 +145,8 @@ function escapeHtml(value: string) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function normalizeShopDomain(value: string): string {
+  return value.trim().replace(/^https?:\/\//i, "").replace(/\/+$/g, "").toLowerCase();
 }

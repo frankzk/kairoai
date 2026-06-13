@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listBoxfulFileControls } from "@/lib/finance";
-import { getStoreFromSearchParams } from "@/lib/stores";
+import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
-  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) {
+    return NextResponse.json(
+      { error: "store requerido: usa mireva-cr o mireva-hn" },
+      { status: 400 }
+    );
+  }
   try {
     const files = await listBoxfulFileControls(store.id);
     return NextResponse.json({ files });

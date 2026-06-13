@@ -108,6 +108,8 @@ Multi-store rule:
   - `mireva-cr` (`store_id = 1`, currency `CRC`)
   - `mireva-hn` (`store_id = 2`, currency `HNL`)
 - The `/admin/finance` header includes a store selector. Every finance API request must carry the selected `store` value.
+- Store isolation is enforced at the API boundary: finance and Shopify data endpoints require an explicit valid `store` (`mireva-cr` or `mireva-hn`) and return `400` instead of defaulting to Costa Rica.
+- Finance writes, uploads, deletes, syncs, and reads must always pass `store_id` to Supabase. Boxful logistics/liquidation imports must set `store_id` on both the import record and every row.
 - Costa Rica keeps the legacy env fallback `SHOPIFY_SHOP_DOMAIN` + `SHOPIFY_ACCESS_TOKEN`.
 - Costa Rica OAuth can also use `SHOPIFY_CR_CLIENT_ID` / `SHOPIFY_CR_CLIENT_SECRET`, with legacy fallback to `SHOPIFY_CLIENT_ID` / `SHOPIFY_CLIENT_SECRET`.
 - Honduras must use `SHOPIFY_HN_SHOP_DOMAIN`, `SHOPIFY_HN_CLIENT_ID`, `SHOPIFY_HN_CLIENT_SECRET`, and `SHOPIFY_HN_ACCESS_TOKEN`.
@@ -116,8 +118,12 @@ Multi-store rule:
   - Costa Rica: `/api/shopify/auth?store=mireva-cr`
   - Honduras: `/api/shopify/auth?store=mireva-hn`
   - The callback uses the OAuth `state` value to show the correct Vercel token variable (`SHOPIFY_CR_ACCESS_TOKEN` or `SHOPIFY_HN_ACCESS_TOKEN`) after Shopify returns the token.
+  - OAuth now rejects missing/invalid `store` state; never generate tokens from a store-ambiguous URL.
 - Shopify is the authoritative order universe inside each store. A Boxful logistics/liquidation row from Honduras must never create or count as a Costa Rica order, and vice versa.
+- Boxful data is reconciliation data only. If a Boxful row does not match a Shopify order in the same `store_id`, it stays unmatched and may become an anomaly/reclaim, but it must not create a new order in another store.
+- Supabase uniqueness is store-scoped for the key tables: Shopify orders (`store_id, shopify_order_id`), SKU costs (`store_id, sku`), finance claims (`store_id, anomaly_key`), and Boxful file controls (`store_id, file_name, file_type`).
 - Until `0003_multi_store_finance.sql` is applied, Costa Rica read APIs fall back to legacy unscoped tables if Supabase does not have `store_id` yet. This preserves visibility of existing CR costs, settlements, logistics, expenses, claims, and file controls. Honduras does not use that fallback, to avoid mixing countries.
+- Webhook/call-confirmation legacy routes still use the original Shopify/Retell configuration and should be treated as Costa Rica-only until they receive explicit `store_id`, per-store webhook secret validation, and per-store call metadata. Do not connect Honduras webhooks to those legacy routes yet.
 
 Navigation:
 
@@ -603,6 +609,17 @@ Build in this order:
   - Shopify and Retell webhooks remain accessible
 
 ## Validation Log
+
+2026-06-13:
+
+- `npm run lint`: passed
+- `npm run build`: passed
+- Hardened multi-store isolation for finance and Shopify data routes:
+  - `lib/stores.ts` now exposes strict store parsing helpers that reject missing/unknown store codes instead of normalizing to Costa Rica.
+  - Finance APIs for summary, product costs, expenses, claims, Boxful file controls, logistics uploads/deletes, settlement uploads/deletes, and Shopify sync require an explicit `store`.
+  - Shopify data APIs for products, orders, note orders, checkouts, and draft orders require an explicit `store` and resolve credentials from that store only.
+  - Shopify OAuth token generation requires `store`; OAuth callback rejects invalid store state and validates that the returned `shop` domain matches the selected store.
+  - Remaining Shopify webhook/call-confirmation legacy paths still use the original global Shopify/Retell configuration and are documented as Costa Rica-only until per-store webhook/call metadata is implemented.
 
 2026-06-12:
 
