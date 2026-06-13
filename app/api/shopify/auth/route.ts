@@ -1,14 +1,21 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+
+import { getStoreConfig } from "@/lib/stores";
 
 // One-time OAuth flow to obtain a permanent Shopify access token.
-// Visit: https://kairoai-pearl.vercel.app/api/shopify/auth
-export async function GET() {
+// Visit:
+// - Costa Rica: https://kairoai-pearl.vercel.app/api/shopify/auth?store=mireva-cr
+// - Honduras: https://kairoai-pearl.vercel.app/api/shopify/auth?store=mireva-hn
+export async function GET(req: NextRequest) {
+  const store = getStoreConfig(req.nextUrl.searchParams.get("store"));
   const clientId = process.env.SHOPIFY_CLIENT_ID;
-  const shop = process.env.SHOPIFY_SHOP_DOMAIN;
+  const shop =
+    process.env[store.shopDomainEnv] ||
+    (store.legacyShopDomainEnv ? process.env[store.legacyShopDomainEnv] : "");
 
   if (!clientId || !shop) {
     return new NextResponse(
-      "Faltan variables: SHOPIFY_CLIENT_ID y SHOPIFY_SHOP_DOMAIN deben estar en Vercel.",
+      `Faltan variables: SHOPIFY_CLIENT_ID y ${store.shopDomainEnv} deben estar en Vercel.`,
       { status: 500 }
     );
   }
@@ -25,14 +32,14 @@ export async function GET() {
   ].join(",");
 
   const redirectUri = `https://kairoai-pearl.vercel.app/api/shopify/auth/callback`;
-  const state = Math.random().toString(36).slice(2);
+  const state = `${store.code}:${Math.random().toString(36).slice(2)}`;
 
   const authUrl =
     `https://${shop}/admin/oauth/authorize` +
     `?client_id=${clientId}` +
     `&scope=${scopes}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-    `&state=${state}`;
+    `&state=${encodeURIComponent(state)}`;
 
   return NextResponse.redirect(authUrl);
 }

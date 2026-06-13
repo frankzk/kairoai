@@ -110,6 +110,10 @@ Multi-store rule:
 - The `/admin/finance` header includes a store selector. Every finance API request must carry the selected `store` value.
 - Costa Rica keeps the legacy env fallback `SHOPIFY_SHOP_DOMAIN` + `SHOPIFY_ACCESS_TOKEN`.
 - Honduras must use `SHOPIFY_HN_SHOP_DOMAIN` + `SHOPIFY_HN_ACCESS_TOKEN`.
+- Shopify OAuth token generation is store-aware:
+  - Costa Rica: `/api/shopify/auth?store=mireva-cr`
+  - Honduras: `/api/shopify/auth?store=mireva-hn`
+  - The callback uses the OAuth `state` value to show the correct Vercel token variable (`SHOPIFY_CR_ACCESS_TOKEN` or `SHOPIFY_HN_ACCESS_TOKEN`) after Shopify returns the token.
 - Shopify is the authoritative order universe inside each store. A Boxful logistics/liquidation row from Honduras must never create or count as a Costa Rica order, and vice versa.
 - Until `0003_multi_store_finance.sql` is applied, Costa Rica read APIs fall back to legacy unscoped tables if Supabase does not have `store_id` yet. This preserves visibility of existing CR costs, settlements, logistics, expenses, claims, and file controls. Honduras does not use that fallback, to avoid mixing countries.
 
