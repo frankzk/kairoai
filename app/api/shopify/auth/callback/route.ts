@@ -1,11 +1,15 @@
 import { NextRequest } from "next/server";
 
+import { getStoreConfig, normalizeFinanceStoreCode } from "@/lib/stores";
+
 // Shopify redirects here after merchant approves the app.
 // This exchanges the code for a permanent access token and displays it once.
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const code = searchParams.get("code");
   const shop = searchParams.get("shop") ?? process.env.SHOPIFY_SHOP_DOMAIN ?? "";
+  const store = getStoreConfig(getStoreCodeFromOAuthState(searchParams.get("state")));
+  const tokenEnv = store.accessTokenEnv;
 
   if (!code) {
     return textResponse("Error: no se recibio el codigo de autorizacion.", 400);
@@ -74,7 +78,7 @@ export async function GET(req: NextRequest) {
 <body>
   <h1>Token obtenido exitosamente</h1>
   <div class="box">
-    <div class="label">SHOPIFY_ACCESS_TOKEN</div>
+    <div class="label">${escapeHtml(tokenEnv)}</div>
     <div class="token">${escapeHtml(access_token)}</div>
   </div>
   <div class="box">
@@ -89,7 +93,7 @@ export async function GET(req: NextRequest) {
   <h2>Proximos pasos</h2>
   <div class="step">1. Copia el token de arriba.</div>
   <div class="step">2. Ve a <code>Vercel -> kairoai -> Settings -> Environment Variables</code>.</div>
-  <div class="step">3. Actualiza <code>SHOPIFY_ACCESS_TOKEN</code> con ese valor.</div>
+  <div class="step">3. Actualiza <code>${escapeHtml(tokenEnv)}</code> con ese valor.</div>
   <div class="step">4. Haz redeploy sin cache.</div>
   <div class="step">5. Guarda el token en un lugar seguro. Shopify no lo vuelve a mostrar.</div>
 </body>
@@ -98,6 +102,10 @@ export async function GET(req: NextRequest) {
   return new Response(html, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
+}
+
+function getStoreCodeFromOAuthState(state: string | null) {
+  return normalizeFinanceStoreCode(state?.split(":")[0]);
 }
 
 function textResponse(message: string, status: number) {
