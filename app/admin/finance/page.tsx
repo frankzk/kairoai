@@ -248,6 +248,8 @@ interface MonthlyCloseRow {
   settled: number;
   unsettled: number;
   to_claim: number;
+  to_claim_fresh: number;
+  to_claim_overdue: number;
   duplicate_settlements: number;
   boxful_costs: number;
   boxful_cod_commission: number;
@@ -4061,7 +4063,7 @@ interface MonthProjectionBasis {
 }
 
 const MONTH_ROW_GRID =
-  "grid grid-cols-[2rem_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.3fr)] items-center gap-2 lg:grid-cols-[2rem_minmax(110px,1.3fr)_repeat(7,minmax(0,1fr))_minmax(0,1.2fr)]";
+  "grid grid-cols-[2rem_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.3fr)] items-center gap-2 lg:grid-cols-[2rem_minmax(110px,1.3fr)_repeat(8,minmax(0,1fr))_minmax(0,1.2fr)]";
 
 function MonthlyCloseTab({
   rows,
@@ -4124,6 +4126,8 @@ function MonthlyCloseTab({
       settled: 0,
       unsettled: 0,
       to_claim: 0,
+      to_claim_fresh: 0,
+      to_claim_overdue: 0,
       costs: 0,
       net_profit: 0,
       gross: 0,
@@ -4138,6 +4142,8 @@ function MonthlyCloseTab({
       acc.settled += row.settled;
       acc.unsettled += row.unsettled;
       acc.to_claim += row.to_claim;
+      acc.to_claim_fresh += row.to_claim_fresh;
+      acc.to_claim_overdue += row.to_claim_overdue;
       acc.costs += row.boxful_costs + row.product_costs + row.ads + row.payroll + row.misc;
       acc.net_profit += row.net_profit;
       acc.gross += row.cash_received + row.boxful_costs;
@@ -4288,6 +4294,7 @@ function MonthlyCloseTab({
             <span className="hidden text-right lg:block">Pendientes</span>
             <span className="hidden text-right lg:block">Liquidados</span>
             <span className="hidden text-right lg:block">Sin liquidacion</span>
+            <span className="hidden text-right lg:block">Pend. liquidacion</span>
             <span className="hidden text-right lg:block">Por reclamar</span>
             <span className="hidden text-right lg:block">Costos</span>
             <span className="text-right">Utilidad neta</span>
@@ -4336,7 +4343,10 @@ function MonthlyCloseTab({
               )}
             </span>
             <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.unsettled}</span>
-            <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.to_claim}</span>
+            <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.to_claim_fresh}</span>
+            <span className={`hidden text-right font-mono text-xs font-semibold lg:block ${totals.to_claim_overdue ? "text-amber-300" : ""}`}>
+              {totals.to_claim_overdue}
+            </span>
             <span className="hidden text-right font-mono text-xs font-semibold lg:block">{currency(totals.costs)}</span>
             <span className={`text-right font-mono text-xs font-semibold ${totals.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
               {currency(totals.net_profit)}
@@ -4437,7 +4447,10 @@ function MonthlyCloseMonthRow({
           )}
         </span>
         <span className="hidden text-right font-mono text-xs lg:block">{row.unsettled}</span>
-        <span className="hidden text-right font-mono text-xs lg:block">{row.to_claim}</span>
+        <span className="hidden text-right font-mono text-xs lg:block">{row.to_claim_fresh}</span>
+        <span className={`hidden text-right font-mono text-xs lg:block ${row.to_claim_overdue ? "text-amber-300" : ""}`}>
+          {row.to_claim_overdue}
+        </span>
         <span className="hidden text-right font-mono text-xs lg:block">{currency(registeredCosts)}</span>
         <span className={`flex items-baseline justify-end gap-1 font-mono text-xs ${row.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
           {trend === "up" && <span className="text-[9px] text-emerald-300">▲</span>}
@@ -5931,6 +5944,8 @@ function buildMonthlyCloseRows(
       settled: 0,
       unsettled: 0,
       to_claim: 0,
+      to_claim_fresh: 0,
+      to_claim_overdue: 0,
       duplicate_settlements: 0,
       boxful_costs: 0,
       boxful_cod_commission: 0,
@@ -5963,7 +5978,14 @@ function buildMonthlyCloseRows(
     if (order.tracking_status === "pending") row.pending += 1;
     if (order.settlement_count === 1) row.settled += 1;
     if (!order.settlement_count) row.unsettled += 1;
-    if (order.tracking_status === "delivered" && !order.settlement_count) row.to_claim += 1;
+    if (order.tracking_status === "delivered" && !order.settlement_count) {
+      row.to_claim += 1;
+      // <=7 dias desde la entrega: pendiente normal del proximo corte de
+      // Boxful; mas alla de eso ya es cobro por reclamar.
+      const daysWaiting = daysSince(order.delivered_on ?? order.created_at ?? "");
+      if (daysWaiting <= 7) row.to_claim_fresh += 1;
+      else row.to_claim_overdue += 1;
+    }
     if (order.settlement_count > 1) row.duplicate_settlements += 1;
     if (order.cash_status === "cobrado") row.cash_received += order.amount_to_liquidate;
     if (order.cash_status === "por_cobrar") row.cash_pending += order.expected_cod;
