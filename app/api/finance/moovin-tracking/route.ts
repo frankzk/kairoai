@@ -13,29 +13,20 @@ const MOOVIN_NEXT_ACTION =
 // Cookie opcional por si Moovin exige sesion; normalmente no hace falta.
 const MOOVIN_COOKIE = process.env.MOOVIN_COOKIE || "";
 
-// Titulos de estado conocidos de Moovin, del mas avanzado al mas temprano.
-// El primero que aparezca en la respuesta es el "ultimo estado" mas probable.
-const MOOVIN_STATUS_TITLES = [
-  "Entregado por el Moover",
-  "Devolución al remitente",
-  "Devolucion al remitente",
-  "Incidencia en la entrega",
-  "Coordinado",
-  "En ruta para entregar a lo largo del día",
-  "En ruta para entregar a lo largo del dia",
-  "Sede de Moovin",
-  "En tránsito",
-  "En transito",
-  "Recolectado",
-  "Punto de recolección",
-  "Punto de recoleccion",
-  "Registrado",
-];
+// Codigos de estado de Moovin agrupados en un estado interno reconciliable
+// con el seguimiento de Boxful/Shopify.
+const MOOVIN_STATUS_GROUP: Record<string, "delivered" | "failed" | "returned" | "in_progress"> = {
+  DELIVERED: "delivered",
+  FAILED: "failed",
+  RETURNED: "returned",
+  RETURN: "returned",
+  RETURNTOSENDER: "returned",
+};
 
 export async function GET(req: NextRequest) {
   const idPackage = (req.nextUrl.searchParams.get("idPackage") || "").trim();
   const lastName = (req.nextUrl.searchParams.get("lastName") || "").trim();
-  const includeRaw = req.nextUrl.searchParams.get("raw") !== "0";
+  const includeRaw = req.nextUrl.searchParams.get("raw") === "1";
   if (!idPackage) {
     return NextResponse.json({ error: "idPackage requerido" }, { status: 400 });
   }
@@ -43,16 +34,10 @@ export async function GET(req: NextRequest) {
   const pageUrl = `${MOOVIN_BASE}/?tracking/lastName=${encodeURIComponent(
     lastName
   )}&idPackage=${encodeURIComponent(idPackage)}`;
-  // Replica del next-router-state-tree del navegador para esta ruta.
   const routerStateTree = JSON.stringify([
     "",
     {
-      children: [
-        "__PAGE__",
-        {},
-        `/?tracking/lastName=${lastName}&idPackage=${idPackage}`,
-        "refresh",
-      ],
+      children: ["__PAGE__", {}, `/?tracking/lastName=${lastName}&idPackage=${idPackage}`, "refresh"],
     },
     null,
     null,
@@ -78,18 +63,30 @@ export async function GET(req: NextRequest) {
     });
 
     const text = await res.text();
-    const events = parseMoovinEvents(text);
-    const latest = events[0] ?? null;
+    const detail = parseMoovinResponse(text);
+    if (!detail) {
+      return NextResponse.json({
+        ok: false,
+        http_status: res.status,
+        id_package: idPackage,
+        error: "No se pudo interpretar la respuesta de Moovin",
+        ...(includeRaw ? { raw: text.slice(0, 20000) } : {}),
+      });
+    }
 
+    const latest = detail.events[0] ?? null;
     return NextResponse.json({
       ok: res.ok,
       http_status: res.status,
       id_package: idPackage,
-      last_name: lastName,
+      tracking_number: detail.tracking_number,
+      profile: detail.profile,
       latest_status: latest?.title ?? null,
-      latest_at: latest?.timestamp ?? null,
-      events,
-      // Respuesta cruda (chica, ~2KB) para validar el formato y afinar el parser.
+      latest_status_code: latest?.code ?? null,
+      latest_group: latest?.group ?? null,
+      latest_at: latest?.date ?? null,
+      delivery_address: detail.delivery_address,
+      events: detail.events,
       ...(includeRaw ? { raw: text.slice(0, 20000) } : {}),
     });
   } catch (err) {
@@ -99,46 +96,86 @@ export async function GET(req: NextRequest) {
 }
 
 interface MoovinEvent {
+  code: string;
+  group: "delivered" | "failed" | "returned" | "in_progress";
   title: string;
-  timestamp: string | null;
   description: string;
+  date: string | null;
+  note: string;
 }
 
-// Parser best-effort del formato RSC (text/x-component). Busca cada titulo de
-// estado conocido en la respuesta y la marca de tiempo mas cercana. Devuelve
-// los eventos en el orden del catalogo (mas avanzado primero).
-function parseMoovinEvents(raw: string): MoovinEvent[] {
-  const found: MoovinEvent[] = [];
-  const seen = new Set<string>();
-  for (const title of MOOVIN_STATUS_TITLES) {
-    const idx = raw.indexOf(title);
-    if (idx === -1) continue;
-    const key = title
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    found.push({
-      title,
-      timestamp: findNearbyTimestamp(raw, idx),
-      description: findNearbyDescription(raw, idx, title),
-    });
+interface MoovinDetail {
+  tracking_number: string;
+  profile: string;
+  delivery_address: string;
+  events: MoovinEvent[];
+}
+
+interface RawStatus {
+  idStatus?: number;
+  date?: string;
+  status?: string;
+  title?: string;
+  description?: string;
+  comments?: Array<{ value?: string; reason?: string }>;
+}
+
+interface RawPayload {
+  serialNumber?: string;
+  nameProfile?: string;
+  listStatus?: RawStatus[];
+  coorList?: Array<{ name?: string; address?: string }>;
+}
+
+// La respuesta RSC son lineas "<id>:<json>"; el payload de tracking es la
+// linea cuyo JSON tiene listStatus. Se parsea ese objeto directamente.
+function parseMoovinResponse(raw: string): MoovinDetail | null {
+  const payload = findTrackingPayload(raw);
+  if (!payload || !Array.isArray(payload.listStatus)) return null;
+
+  const events: MoovinEvent[] = payload.listStatus
+    .map((status) => {
+      const code = String(status.status ?? "").toUpperCase();
+      const note = (status.comments ?? [])
+        .map((comment) => [comment.reason, comment.value].filter(Boolean).join(": "))
+        .filter(Boolean)
+        .join(" | ");
+      return {
+        code,
+        group: MOOVIN_STATUS_GROUP[code] ?? "in_progress",
+        title: String(status.title ?? ""),
+        description: String(status.description ?? ""),
+        date: status.date ?? null,
+        note,
+      };
+    })
+    // Mas reciente primero: por fecha y, a igualdad, por idStatus.
+    .sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
+
+  const delivery = (payload.coorList ?? []).find((point) =>
+    String(point.name ?? "").toLowerCase().includes("entrega")
+  );
+
+  return {
+    tracking_number: String(payload.serialNumber ?? ""),
+    profile: String(payload.nameProfile ?? ""),
+    delivery_address: String(delivery?.address ?? ""),
+    events,
+  };
+}
+
+function findTrackingPayload(raw: string): RawPayload | null {
+  for (const line of raw.split("\n")) {
+    const colon = line.indexOf(":");
+    if (colon === -1) continue;
+    const jsonPart = line.slice(colon + 1).trim();
+    if (!jsonPart.startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(jsonPart) as RawPayload;
+      if (parsed && Array.isArray(parsed.listStatus)) return parsed;
+    } catch {
+      // Linea no-JSON o truncada; se ignora.
+    }
   }
-  return found;
-}
-
-// Fecha/hora tipo "11/06/26 16:18" o ISO cerca de la posicion del titulo.
-function findNearbyTimestamp(raw: string, near: number): string | null {
-  const window = raw.slice(near, near + 400);
-  const dmy = window.match(/\b\d{1,2}\/\d{1,2}\/\d{2,4}[ T]?\d{0,2}:?\d{0,2}\b/);
-  if (dmy) return dmy[0].trim();
-  const iso = window.match(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?/);
-  return iso ? iso[0] : null;
-}
-
-function findNearbyDescription(raw: string, near: number, title: string): string {
-  const window = raw.slice(near + title.length, near + title.length + 300);
-  const text = window.match(/El [^"\\]{8,200}\./);
-  return text ? text[0].trim() : "";
+  return null;
 }
