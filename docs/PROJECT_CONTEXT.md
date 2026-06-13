@@ -1,6 +1,9 @@
 # Kairo AI Webapp Context
 
-Last updated: 2026-06-12
+Last updated: 2026-06-13
+
+> See "Session 2026-06-13 additions" near the end for the latest architecture
+> and finance/logistics features, plus the list of pending Supabase migrations.
 
 ## Purpose
 
@@ -660,6 +663,64 @@ Build in this order:
   - settlement packaging
   - card commission as informational, outside the Boxful charged-cost total
   - net `A Liquidar`
+
+## Session 2026-06-13 additions
+
+### Architecture / robustness
+- **Shared order matching** in `lib/order-matching.ts` (pure, tested) consumed by
+  the finance page and both import routes; no more divergent copies. Numeric
+  Boxful codes only match via an explicit note alias ("Pedido <code>"), never by
+  bare order number. Reshipped guides (`#MCRC10099-V2`) match their base order.
+- **Shared finance types** in `lib/finance-types.ts` (no imports), used by server
+  and client.
+- **Vitest + GitHub Actions CI** (`.github/workflows/ci.yml`): typecheck + lint +
+  tests + build on every PR and push to `main`. Tests live in `tests/`.
+- **Numbered migrations** in `supabase/migrations/` with a README tracking what is
+  applied. Reads paginate past PostgREST's 1000-row cap.
+- Shopify history sync is **resumable** (backfill mode walks from the oldest
+  synced order back to January) and rate-limit aware; reads avoid detoasting
+  `raw_order` by using real `note`/`note_attributes`/`line_items` columns.
+
+### Finance/logistics features
+- **En ruta** tracking status: an order with a Boxful guide/courier is "En ruta"
+  (dispatched, in transit), distinct from "Pendiente" (confirmed, not shipped).
+  Aggregations treat en_route as pending-like via `isPendingLike`.
+- **Customer first/last name** as real columns (migration 0005); the orders table
+  shows the surname.
+- **Payroll staff catalog** (migration 0004): register people once with their
+  role; payroll entries pick from a dropdown. Payment type is a fixed select.
+  Expense tabs have dynamic month/person/category filters and sortable headers.
+- **Daily exchange rate** for expenses: `/api/finance/exchange-rate` (open.er-api.com,
+  6h cache) auto-fills the CRC rate for USD/PEN, still editable.
+- **Cierre mensual** is a full COD P&L cascade (ingresos → margen bruto → operativo
+  → contribución → utilidad), with %-of-revenue, MoM deltas, unit economics, COD
+  funnel, claim aging, month-maturity badges, KPI strip and automatic alerts.
+- **SKU cost editing** moved into the Productos table (pencil + history); tables are
+  sortable by header.
+
+### Moovin courier tracking (lib/moovin.ts, migration 0006)
+- Moovin's public tracking is a Next.js Server Action; replicated server-side with
+  the `next-action` header (configurable via `MOOVIN_NEXT_ACTION` env because it
+  rotates on Moovin redeploys; optional `MOOVIN_COOKIE`).
+- `GET /api/finance/moovin-tracking?idPackage=&lastName=` — on-demand lookup, caches
+  result. `POST/GET /api/finance/moovin-sync` — batch update of en-route Moovin
+  orders (rate-limited, skips guides checked within 6h) and cache read.
+- Orders table "Transportadora" column shows the cached Moovin status (colored,
+  incident-flagged) with a button to open the full timeline; "Actualizar Moovin"
+  batch-updates all en-route Moovin orders.
+- **Reconciliation** (`lib/moovin-reconcile.ts`, tested): flags Moovin-vs-system
+  mismatches (Moovin delivered but unrecorded, returned not reflected, unresolved
+  incident, system-delivered while Moovin not confirmed) as a clickable alert +
+  modal in Pedidos.
+
+### Pending Supabase migrations (run in SQL Editor, idempotent)
+At the time of writing these were not yet confirmed applied in production — check
+`supabase/migrations/README.md` for current state:
+- `0003_shopify_orders_note_columns.sql` — fixes the statement-timeout on page load.
+- `0005_customer_name_parts.sql` — first/last name columns (Moovin tracking needs
+  `last_name`).
+- `0006_moovin_tracking.sql` — Moovin status cache. Until applied, Moovin works
+  on-demand but nothing is cached and reconciliation stays empty.
 
 ## Open Questions
 
