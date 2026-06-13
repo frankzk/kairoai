@@ -103,6 +103,7 @@ interface ShopifyOrderSummary {
   order_number: number;
   name: string;
   customer_name: string;
+  last_name?: string;
   phone: string | null;
   products: string;
   total: string;
@@ -133,6 +134,7 @@ interface TrackableOrderRow {
   courier?: string;
   order_name: string;
   customer_name: string;
+  last_name?: string;
   boxful_status: string;
   internal_status: string;
   match_status: string;
@@ -1490,7 +1492,14 @@ function OrdersTable({
                     <span className="mt-0.5 block font-sans text-[10px] text-muted-foreground">{row.courier}</span>
                   )}
                 </td>
-                <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
+                <td className="px-3 py-2">
+                  {row.customer_name || "Sin nombre"}
+                  {row.last_name && (
+                    <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                      Apellido: {row.last_name}
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-2">
                   <StatusBadge
                     status={trackingStatus}
@@ -6020,6 +6029,7 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     order_number: Number(order.order_number ?? 0),
     name: String(order.name ?? ""),
     customer_name: String(order.customer_name ?? "Sin nombre"),
+    last_name: String(order.last_name ?? ""),
     phone: (order.phone as string | null) ?? null,
     products: lineItems.map((item) => `${item.quantity}x ${item.title}`).join(", "),
     total: `${order.total_price ?? 0} ${order.currency ?? "CRC"}`,
@@ -6298,6 +6308,7 @@ function buildVisibleOrderRows(
       source: "boxful" as const,
       courier: row.courier,
       customer_name: row.customer_name || shopify?.customer_name || "",
+      last_name: row.last_name || shopify?.last_name || "",
       match_status: shopify ? "matched" : row.match_status,
       cod_amount: row.cod_amount || Number(shopify?.total_price || parseMoneyText(shopify?.total ?? "")),
       shopify_order_name: shopify?.name ?? row.shopify_order_name,
@@ -6329,6 +6340,7 @@ function buildVisibleOrderRows(
       guide_number: "",
       order_name: order.name,
       customer_name: order.customer_name,
+      last_name: order.last_name || "",
       boxful_status: "",
       internal_status:
         order.cancelled_at || order.financial_status === "voided" ? "annulled" : "pending",

@@ -30,6 +30,8 @@ interface ParsedSettlementRow {
   order_name: string;
   store_order_number: string;
   customer_name: string;
+  first_name: string;
+  last_name: string;
   customer_phone: string;
   created_on: string | null;
   courier: string;
@@ -192,6 +194,8 @@ function parseSettlementRows(workbook: XLSX.WorkBook): ParsedSettlementRow[] {
         order_name: text(raw.Orden),
         store_order_number: text(raw["No. Orden tienda"]),
         customer_name: `${firstName} ${lastName}`.trim(),
+        first_name: firstName,
+        last_name: lastName,
         customer_phone: text(raw.Telefono),
         created_on: parseDate(text(raw["Creado en"])),
         courier: text(raw.Courier),
@@ -253,6 +257,8 @@ function buildSettlementRow(
     order_name: row.order_name,
     store_order_number: row.store_order_number,
     customer_name: row.customer_name,
+    first_name: row.first_name,
+    last_name: row.last_name,
     customer_phone: row.customer_phone,
     created_on: row.created_on,
     courier: row.courier,

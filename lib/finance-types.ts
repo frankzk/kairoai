@@ -78,6 +78,8 @@ export interface SettlementRow {
   order_name: string;
   store_order_number: string;
   customer_name: string;
+  first_name?: string;
+  last_name?: string;
   customer_phone: string;
   created_on: string | null;
   courier: string;
@@ -130,6 +132,8 @@ export interface LogisticsRow {
   order_name: string;
   store_order_number: string;
   customer_name: string;
+  first_name?: string;
+  last_name?: string;
   customer_phone: string;
   created_on: string | null;
   courier: string;
@@ -164,6 +168,8 @@ export interface PersistedShopifyOrder {
   order_number: number | null;
   name: string;
   customer_name: string;
+  first_name?: string;
+  last_name?: string;
   phone: string | null;
   email: string | null;
   financial_status: string;
