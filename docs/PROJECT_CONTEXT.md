@@ -168,6 +168,7 @@ Database schema:
 - This SQL must be executed in Supabase SQL Editor before production finance APIs can persist data.
 - Multi-store migration file: `supabase/migrations/0003_multi_store_finance.sql`
 - This SQL adds `stores`, backfills current finance rows to Costa Rica, and adds `store_id` to Shopify orders, logistics, liquidations, costs, cost versions, expenses, claims, and Boxful file controls.
+- The `shopify_order_syncs` table is optional in older Supabase installs. The multi-store migration checks for it before adding `store_id`, so the migration can run safely even when that sync-audit table was never created.
 - If tables/columns are missing, `/admin/finance` shows a message instructing the user to run `supabase/migrations/0002_finance_schema.sql` and `supabase/migrations/0003_multi_store_finance.sql`.
 - Additional finance-control tables:
   - `shopify_orders`: persisted Shopify order master, synced in batches.
