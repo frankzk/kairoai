@@ -70,13 +70,18 @@ CREATE INDEX IF NOT EXISTS shopify_orders_store_created_idx
 CREATE INDEX IF NOT EXISTS shopify_orders_store_name_idx ON shopify_orders (store_id, name);
 CREATE INDEX IF NOT EXISTS shopify_orders_store_number_idx ON shopify_orders (store_id, order_number);
 
-ALTER TABLE shopify_order_syncs ADD COLUMN IF NOT EXISTS store_id BIGINT;
-UPDATE shopify_order_syncs SET store_id = 1 WHERE store_id IS NULL;
-ALTER TABLE shopify_order_syncs ALTER COLUMN store_id SET NOT NULL;
-ALTER TABLE shopify_order_syncs DROP CONSTRAINT IF EXISTS shopify_order_syncs_store_fk;
-ALTER TABLE shopify_order_syncs
-  ADD CONSTRAINT shopify_order_syncs_store_fk
-  FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE RESTRICT;
+DO $$
+BEGIN
+  IF to_regclass('public.shopify_order_syncs') IS NOT NULL THEN
+    ALTER TABLE shopify_order_syncs ADD COLUMN IF NOT EXISTS store_id BIGINT;
+    UPDATE shopify_order_syncs SET store_id = 1 WHERE store_id IS NULL;
+    ALTER TABLE shopify_order_syncs ALTER COLUMN store_id SET NOT NULL;
+    ALTER TABLE shopify_order_syncs DROP CONSTRAINT IF EXISTS shopify_order_syncs_store_fk;
+    ALTER TABLE shopify_order_syncs
+      ADD CONSTRAINT shopify_order_syncs_store_fk
+      FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE RESTRICT;
+  END IF;
+END $$;
 
 ALTER TABLE business_expenses ADD COLUMN IF NOT EXISTS store_id BIGINT;
 UPDATE business_expenses SET store_id = 1 WHERE store_id IS NULL;
