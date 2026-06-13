@@ -1475,34 +1475,35 @@ function OrdersTab({
               size="sm"
               className="gap-2"
               onClick={() =>
-                exportCsv(
-                  "pedidos.csv",
+                exportXlsx(
+                  `pedidos-${new Date().toISOString().slice(0, 10)}.xlsx`,
                   filteredRows.map((row) => {
                     const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
                     const status = getEffectiveTrackingStatus(row, traces);
                     const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
                     return {
-                      orden: row.order_name || row.shopify_order_name,
-                      origen: row.source,
-                      guia: row.guide_number,
-                      transportadora: row.courier ?? "",
-                      estado_moovin: moovin?.latest_status ?? "",
-                      incidencia_moovin: moovin?.has_incident ? "si" : "",
-                      cliente: row.customer_name,
-                      apellido: row.last_name ?? "",
-                      estado_seguimiento: getTrackingStatusLabel(row, traces, status),
-                      shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
-                      fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
-                      estado_liquidacion: traces.map((t) => t.settlement_status).join(" | ") || "sin liquidacion",
-                      a_liquidar: traces.length ? sum(traces.map((t) => t.amount_to_liquidate)) : "",
-                      cod: row.cod_amount,
-                      items: (row.package_items ?? []).map((item) => item.title).join("; "),
+                      Orden: row.order_name || row.shopify_order_name,
+                      Origen: row.source,
+                      Guia: row.guide_number,
+                      Transportadora: row.courier ?? "",
+                      "Estado Moovin": moovin?.latest_status ?? "",
+                      "Incidencia Moovin": moovin?.has_incident ? "si" : "",
+                      Cliente: row.customer_name,
+                      Apellido: row.last_name ?? "",
+                      "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
+                      Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
+                      Fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
+                      "Estado liquidacion": traces.map((t) => t.settlement_status).join(" | ") || "sin liquidacion",
+                      "A liquidar": traces.length ? sum(traces.map((t) => t.amount_to_liquidate)) : "",
+                      COD: row.cod_amount,
+                      Items: (row.package_items ?? []).map((item) => item.title).join("; "),
                     };
-                  })
+                  }),
+                  "Pedidos"
                 )
               }
             >
-              <Download className="h-4 w-4" /> Exportar ({filteredRows.length})
+              <Download className="h-4 w-4" /> Exportar XLSX ({filteredRows.length})
             </Button>
           </div>
           <OrdersTable
@@ -6445,6 +6446,30 @@ function buildExpensePayload(
 function exportCsv(filename: string, rows: unknown[]) {
   const csv = toCsv(rows);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+// XLSX se carga de forma diferida (solo al exportar) para no sumar la libreria
+// al bundle inicial.
+async function exportXlsx(
+  filename: string,
+  rows: Array<Record<string, unknown>>,
+  sheetName = "Datos"
+) {
+  if (!rows.length) return;
+  const XLSX = await import("xlsx");
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName.slice(0, 31));
+  const output = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+  const blob = new Blob([output], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
