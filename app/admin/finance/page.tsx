@@ -57,7 +57,7 @@ import { Input } from "@/components/ui/input";
 
 type Tab = "orders" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
-type OrderTrackingFilter = "all" | "pending" | "annulled" | "delivered" | "not_delivered";
+type OrderTrackingFilter = "all" | "pending" | "en_route" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
   | "all"
   | "no_cost"
@@ -308,6 +308,7 @@ type ExpenseOriginalCurrency = (typeof EXPENSE_ORIGINAL_CURRENCIES)[number];
 const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "pending", label: "Pendientes" },
+  { value: "en_route", label: "En ruta" },
   { value: "annulled", label: "Anulados" },
   { value: "delivered", label: "Entregados" },
   { value: "not_delivered", label: "No entregados" },
@@ -864,6 +865,7 @@ export default function FinancePage() {
       annulled: effectiveStatuses.filter((status) => status === "annulled").length,
       liquidationAlerts: liquidationAlertRows.length,
       anomalies: liquidationAlertRows.length + doubleSettlementAnomalies.length,
+      enRoute: effectiveStatuses.filter((status) => status === "en_route").length,
       pending: effectiveStatuses.filter((status) => status === "pending" || status === "unmatched").length,
       unmatched: logisticsRows.filter((row) => row.match_status === "unmatched").length,
       total: money(rows.reduce((acc, row) => acc + Number(row.amount_to_liquidate || 0), 0)),
@@ -932,6 +934,7 @@ export default function FinancePage() {
           <MetricCard label="Entregados" value={loading ? "..." : String(orderStats.delivered)} />
           <MetricCard label="No entregados" value={loading ? "..." : String(orderStats.notDelivered)} />
           <MetricCard label="Anulados" value={loading ? "..." : String(orderStats.annulled)} />
+          <MetricCard label="En ruta" value={loading ? "..." : String(orderStats.enRoute)} />
           <MetricCard label="Pendientes" value={loading ? "..." : String(orderStats.pending)} />
           <MetricCard label="Por reclamar" value={loading ? "..." : String(orderStats.liquidationAlerts)} warning />
           <MetricCard label="Anomalias" value={loading ? "..." : String(financeControl.anomalies.length)} warning />
@@ -1101,6 +1104,7 @@ function OrdersTab({
     const counts: Record<OrderTrackingFilter, number> = {
       all: searchedRows.length,
       pending: 0,
+      en_route: 0,
       annulled: 0,
       delivered: 0,
       not_delivered: 0,
@@ -4974,7 +4978,7 @@ function MonthCloseDetail({
   // Mes sin liquidaciones (tipicamente el mes en curso): se muestra la foto
   // operativa y una proyeccion con la tasa de entrega y margen historicos.
   const hasSettlementData = close.settled > 0 || close.cash_received > 0;
-  const pendingOrders = monthOrders.filter((order) => order.tracking_status === "pending");
+  const pendingOrders = monthOrders.filter((order) => isPendingLike(order.tracking_status));
   const pipelineCod = sum(pendingOrders.map((order) => order.expected_cod));
   const annulledCod = sum(
     monthOrders
@@ -6052,6 +6056,7 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   }
   if (status === "annulled") return <Badge variant="warning">Anulado</Badge>;
   if (status === "unmatched") return <Badge variant="warning">Sin match</Badge>;
+  if (status === "en_route") return <Badge variant="info">{label || "En ruta"}</Badge>;
   return <Badge variant="muted">{label || "Pendiente"}</Badge>;
 }
 
@@ -6328,7 +6333,7 @@ function buildMonthlyCloseRows(
     if (order.tracking_status === "delivered") row.delivered += 1;
     if (order.tracking_status === "not_delivered" || order.tracking_status === "returned") row.not_delivered += 1;
     if (order.tracking_status === "annulled") row.annulled += 1;
-    if (order.tracking_status === "pending") row.pending += 1;
+    if (isPendingLike(order.tracking_status)) row.pending += 1;
     if (order.settlement_count === 1) row.settled += 1;
     if (!order.settlement_count) row.unsettled += 1;
     if (order.tracking_status === "delivered" && !order.settlement_count) {
@@ -6419,7 +6424,7 @@ function getMonthlyOrderFilterCounts(orders: OrderProfitabilityRow[]): Record<Mo
 
 function matchesMonthlyOrderFilter(order: OrderProfitabilityRow, filter: MonthlyOrderFilter): boolean {
   if (filter === "all") return true;
-  if (filter === "pending") return order.tracking_status === "pending";
+  if (filter === "pending") return isPendingLike(order.tracking_status);
   if (filter === "delivered") return order.tracking_status === "delivered";
   if (filter === "not_delivered") {
     return order.tracking_status === "not_delivered" || order.tracking_status === "returned";
@@ -7756,8 +7761,16 @@ function getEffectiveTrackingStatus(
 
   const hasOperationalMovement = row.source !== "shopify" || traces.length > 0;
   if (isShopifyCancelled(row) && !hasOperationalMovement) return "annulled";
+  // Con guia/courier (movimiento logistico) y sin estado final = en reparto.
+  if (hasOperationalMovement) return "en_route";
 
   return "pending";
+}
+
+// "Pendiente operativo" para agregaciones: incluye en ruta (despachado pero
+// aun sin entregar) y pendiente (sin despachar).
+function isPendingLike(status: string): boolean {
+  return status === "pending" || status === "en_route";
 }
 
 function inferTrackingStatusFromText(status: string): string {
@@ -7771,6 +7784,7 @@ function getTrackingFilterFromStatus(status: string): Exclude<OrderTrackingFilte
   if (status === "annulled") return "annulled";
   if (status === "delivered") return "delivered";
   if (status === "not_delivered" || status === "returned") return "not_delivered";
+  if (status === "en_route") return "en_route";
   return "pending";
 }
 
@@ -7788,6 +7802,7 @@ function getTrackingStatusLabel(
   if (settlementTrace?.settlement_status) return settlementTrace.settlement_status;
   if (status === "delivered") return "Entregado";
   if (status === "not_delivered" || status === "returned") return "No entregado";
+  if (status === "en_route") return row.boxful_status || "En ruta";
   return "Pendiente";
 }
 
