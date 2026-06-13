@@ -7,7 +7,7 @@ Last updated: 2026-06-13
 
 ## Purpose
 
-Kairo AI is an internal operations webapp for COD e-commerce in LATAM, currently focused on Costa Rica orders. It combines Shopify order data, voice-agent call outcomes, logistics settlement files, and business expenses so the team can understand:
+Kairo AI is an internal operations webapp for COD e-commerce in LATAM, currently supporting Mireva Costa Rica and being extended for Mireva Honduras. It combines Shopify order data, voice-agent call outcomes, logistics settlement files, and business expenses so the team can understand:
 
 - which COD orders were delivered
 - which orders were not delivered or returned
@@ -101,6 +101,17 @@ Main file: `app/admin/finance/page.tsx`
 
 Status: implemented locally.
 
+Multi-store rule:
+
+- The finance module is multi-store through `stores` / `store_id`.
+- Current configured stores:
+  - `mireva-cr` (`store_id = 1`, currency `CRC`)
+  - `mireva-hn` (`store_id = 2`, currency `HNL`)
+- The `/admin/finance` header includes a store selector. Every finance API request must carry the selected `store` value.
+- Costa Rica keeps the legacy env fallback `SHOPIFY_SHOP_DOMAIN` + `SHOPIFY_ACCESS_TOKEN`.
+- Honduras must use `SHOPIFY_HN_SHOP_DOMAIN` + `SHOPIFY_HN_ACCESS_TOKEN`.
+- Shopify is the authoritative order universe inside each store. A Boxful logistics/liquidation row from Honduras must never create or count as a Costa Rica order, and vice versa.
+
 Navigation:
 
 - Dashboard now links to `/admin/finance` with the label `Gestion`.
@@ -157,7 +168,9 @@ Database schema:
 
 - New migration file: `supabase/migrations/0002_finance_schema.sql`
 - This SQL must be executed in Supabase SQL Editor before production finance APIs can persist data.
-- If tables are missing, `/admin/finance` shows a message instructing the user to run `supabase/migrations/0002_finance_schema.sql`.
+- Multi-store migration file: `supabase/migrations/0003_multi_store_finance.sql`
+- This SQL adds `stores`, backfills current finance rows to Costa Rica, and adds `store_id` to Shopify orders, logistics, liquidations, costs, cost versions, expenses, claims, and Boxful file controls.
+- If tables/columns are missing, `/admin/finance` shows a message instructing the user to run `supabase/migrations/0002_finance_schema.sql` and `supabase/migrations/0003_multi_store_finance.sql`.
 - Additional finance-control tables:
   - `shopify_orders`: persisted Shopify order master, synced in batches.
   - `shopify_order_syncs`: reserved sync audit table.
@@ -571,7 +584,7 @@ Build in this order:
 - Do not commit `.env.local` or secrets.
 - `.vercel` is local metadata and should remain ignored.
 - Vercel production deploys from `main`.
-- Finance persistence requires running `supabase/migrations/0002_finance_schema.sql` in Supabase before use.
+- Finance persistence requires running `supabase/migrations/0002_finance_schema.sql` and `supabase/migrations/0003_multi_store_finance.sql` in Supabase before use.
 - After changing protected routes, verify:
   - `/login` returns 200
   - `/` redirects to `/login` when unauthenticated
@@ -583,6 +596,14 @@ Build in this order:
 
 - `npm run lint`: passed
 - `npm run build`: passed
+- Added multi-store finance architecture for Mireva Honduras without duplicating the app:
+  - New shared store config: `lib/store-config.ts`
+  - Server credential resolver: `lib/stores.ts`
+  - New DB migration: `supabase/migrations/0003_multi_store_finance.sql`
+  - `/admin/finance` now has a store selector and sends `store=mireva-cr` or `store=mireva-hn` to finance and Shopify endpoints.
+  - Finance reads/writes are scoped by `store_id` for Shopify orders, Boxful logistics, Boxful liquidations, product costs, cost versions, expenses, claims, and file controls.
+  - Existing Costa Rica data is backfilled to `store_id = 1`; Honduras starts isolated on `store_id = 2`.
+  - Required Honduras envs in Vercel: `SHOPIFY_HN_SHOP_DOMAIN` and `SHOPIFY_HN_ACCESS_TOKEN`.
 - Supabase `shopify_orders` currently contains `10,756` persisted Shopify orders, matching the direct Shopify API count from `2026-01-01T00:00:00-06:00` at validation time. First persisted order observed: `#MCRC1001` on `2026-01-19`.
 - Persisted Shopify order distribution at validation time: January `64`, February `1,994`, March `1,652`, April `2,379`, May `3,410`, June `1,257`.
 - `logistics_rows` currently contains `7,736` Boxful rows and `7,696` consolidated logistics keys. `7,368` of those consolidated logistics keys are Shopify-backed; `329` raw logistics rows remain unmatched and must not count as pedidos. Imported logistics distribution: `Entregado 4,802`, `No entregado 2,355`, `En ruta a destino 140`, `Problemas en gestion 96`, `Recolectado 275`, `Registrado 23`, `Guia cancelada 45`.

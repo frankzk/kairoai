@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getShopifyCredentials, getStoreFromSearchParams } from "@/lib/stores";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -18,9 +19,11 @@ interface ShopifyNoteOrder {
 }
 
 export async function GET(req: NextRequest) {
-  if (!process.env.SHOPIFY_SHOP_DOMAIN || !process.env.SHOPIFY_ACCESS_TOKEN) {
+  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
+  const { shop, token, missing } = getShopifyCredentials(store);
+  if (!shop || !token) {
     return NextResponse.json(
-      { error: "Shopify no configurado: faltan SHOPIFY_SHOP_DOMAIN o SHOPIFY_ACCESS_TOKEN en Vercel." },
+      { error: `Shopify ${store.shortLabel} no configurado: faltan ${missing.join(" y ")} en Vercel.` },
       { status: 503 }
     );
   }
@@ -50,7 +53,7 @@ export async function GET(req: NextRequest) {
     fields,
   });
 
-  let url = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/orders.json?${params.toString()}`;
+  let url = `https://${shop}/admin/api/2024-01/orders.json?${params.toString()}`;
   const orders = [];
   let pagesChecked = 0;
 
@@ -58,7 +61,7 @@ export async function GET(req: NextRequest) {
     for (let page = 0; page < maxPages && url; page++) {
       const res = await fetch(url, {
         headers: {
-          "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+          "X-Shopify-Access-Token": token,
           "Content-Type": "application/json",
         },
         cache: "no-store",
@@ -91,6 +94,7 @@ export async function GET(req: NextRequest) {
       max_pages: maxPages,
       pages_checked: pagesChecked,
       created_at_min: createdAtMin,
+      store: store.code,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error desconocido";

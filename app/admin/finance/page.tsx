@@ -52,6 +52,12 @@ import type {
   SettlementImport,
   SettlementRow,
 } from "@/lib/finance-types";
+import {
+  DEFAULT_FINANCE_STORE_CODE,
+  FINANCE_STORES,
+  getFinanceStore,
+  type FinanceStoreCode,
+} from "@/lib/store-config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -434,11 +440,15 @@ const FINANCE_SHOPIFY_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
 const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 4000;
 // Ventana de "pedidos actualizados recientemente" leida en vivo de Shopify.
 const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
+const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
 const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
   const [kpiRange, setKpiRange] = useState<KpiRange>("30d");
+  const [selectedStoreCode, setSelectedStoreCode] = useState<FinanceStoreCode>(
+    DEFAULT_FINANCE_STORE_CODE
+  );
   const [imports, setImports] = useState<SettlementImport[]>([]);
   const [rows, setRows] = useState<SettlementRow[]>([]);
   const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
@@ -472,6 +482,7 @@ export default function FinancePage() {
   const [syncMessage, setSyncMessage] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
+  const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
 
   const latestLogisticsImport = logisticsImports[0];
   const liquidationAlertRows = useMemo(
@@ -515,6 +526,7 @@ export default function FinancePage() {
     const refreshRun = refreshRunRef.current + 1;
     refreshRunRef.current = refreshRun;
     const isCurrentRun = () => refreshRunRef.current === refreshRun;
+    const activeStoreCode = selectedStore.code;
     setLoading(true);
     setError("");
     setShopifyHistoryLoading(false);
@@ -522,11 +534,11 @@ export default function FinancePage() {
     try {
       const [settlementsRes, logisticsRes, costsRes, expensesRes, summaryRes] =
         await Promise.all([
-          fetch("/api/finance/settlements", { cache: "no-store" }),
-          fetch("/api/finance/logistics", { cache: "no-store" }),
-          fetch("/api/finance/product-costs", { cache: "no-store" }),
-          fetch("/api/finance/expenses", { cache: "no-store" }),
-          fetch("/api/finance/summary", { cache: "no-store" }),
+          fetch(withStore("/api/finance/settlements", activeStoreCode), { cache: "no-store" }),
+          fetch(withStore("/api/finance/logistics", activeStoreCode), { cache: "no-store" }),
+          fetch(withStore("/api/finance/product-costs", activeStoreCode), { cache: "no-store" }),
+          fetch(withStore("/api/finance/expenses", activeStoreCode), { cache: "no-store" }),
+          fetch(withStore("/api/finance/summary", activeStoreCode), { cache: "no-store" }),
         ]);
 
       const settlementsJson = await readApiJson(settlementsRes);
@@ -534,6 +546,7 @@ export default function FinancePage() {
       const costsJson = await readApiJson(costsRes);
       const expensesJson = await readApiJson(expensesRes);
       const summaryJson = await readApiJson(summaryRes);
+
       // Un solo fetch en vivo: pedidos ACTUALIZADOS recientemente (capta notas
       // editadas y cambios de estado en pedidos de cualquier antiguedad); el
       // resto viene de la base sincronizada. Las llamadas son en paralelo.
@@ -547,15 +560,27 @@ export default function FinancePage() {
       const recentUpdatesMin = new Date(
         Date.now() - FINANCE_SHOPIFY_RECENT_UPDATES_DAYS * 24 * 60 * 60 * 1000
       ).toISOString();
-      const [shopifyOrdersJson, claimsJson, boxfulFilesJson] = await Promise.all([
+      const [shopifyOrdersJson, shopifyNoteOrdersJson, claimsJson, boxfulFilesJson] = await Promise.all([
         safeJson(
           fetch(
-            `/api/shopify/orders?status=any&all=1&max_pages=4&updated_at_min=${encodeURIComponent(recentUpdatesMin)}`,
+            withStore(
+              `/api/shopify/orders?status=any&all=1&max_pages=4&updated_at_min=${encodeURIComponent(recentUpdatesMin)}`,
+              activeStoreCode
+            ),
             { cache: "no-store" }
           )
         ),
-        safeJson(fetch("/api/finance/claims", { cache: "no-store" })),
-        safeJson(fetch("/api/finance/boxful-files", { cache: "no-store" })),
+        safeJson(
+          fetch(
+            withStore(
+              `/api/shopify/note-orders?created_at_min=${encodeURIComponent(getShopifyNotesCreatedAtMin())}&max_pages=30`,
+              activeStoreCode
+            ),
+            { cache: "no-store" }
+          )
+        ),
+        safeJson(fetch(withStore("/api/finance/claims", activeStoreCode), { cache: "no-store" })),
+        safeJson(fetch(withStore("/api/finance/boxful-files", activeStoreCode), { cache: "no-store" })),
       ]);
 
       if (!isCurrentRun()) return;
@@ -564,7 +589,13 @@ export default function FinancePage() {
       setRows(settlementsJson.rows ?? []);
       setLogisticsImports(logisticsJson.imports ?? []);
       setLogisticsRows(logisticsJson.rows ?? []);
-      const liveShopifyOrders = Array.isArray(shopifyOrdersJson.orders) ? shopifyOrdersJson.orders as ShopifyOrderSummary[] : [];
+      const recentShopifyOrders = Array.isArray(shopifyOrdersJson.orders)
+        ? (shopifyOrdersJson.orders as ShopifyOrderSummary[])
+        : [];
+      const noteShopifyOrders = Array.isArray(shopifyNoteOrdersJson.orders)
+        ? (shopifyNoteOrdersJson.orders as ShopifyOrderSummary[])
+        : [];
+      const liveShopifyOrders = mergeShopifyOrderSummaries(recentShopifyOrders, noteShopifyOrders);
       setShopifyOrders(mergeShopifyOrderSummaries(liveShopifyOrders));
       setShopifyCoverage(null);
       setCosts(costsJson.costs ?? []);
@@ -585,7 +616,7 @@ export default function FinancePage() {
 
       setShopifyHistoryLoading(true);
       try {
-        const persistedShopifyJson = await fetchPersistedShopifySnapshot((partial) => {
+        const persistedShopifyJson = await fetchPersistedShopifySnapshot(activeStoreCode, (partial) => {
           if (!isCurrentRun()) return;
           const persistedShopifyOrders = Array.isArray(partial.orders)
             ? (partial.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
@@ -637,13 +668,17 @@ export default function FinancePage() {
     refresh();
     loadShopifyProducts();
     reloadMoovin();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStoreCode]);
 
   async function loadShopifyProducts() {
+    const activeStoreCode = selectedStore.code;
     setProductsLoading(true);
     setProductsError("");
     try {
-      const res = await fetch("/api/shopify/products", { cache: "no-store" });
+      const res = await fetch(withStore("/api/shopify/products", activeStoreCode), {
+        cache: "no-store",
+      });
       const json = await readApiJson(res);
       if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar productos Shopify");
       setShopifyProducts(json.products ?? []);
@@ -658,10 +693,11 @@ export default function FinancePage() {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    data.set("store", selectedStore.code);
     setImporting(true);
     setError("");
     try {
-      const res = await fetch("/api/finance/settlements", {
+      const res = await fetch(withStore("/api/finance/settlements", selectedStore.code), {
         method: "POST",
         body: data,
       });
@@ -677,7 +713,9 @@ export default function FinancePage() {
   }
 
   async function deleteSettlementImport(id: number) {
-    const res = await fetch(`/api/finance/settlements?id=${id}`, { method: "DELETE" });
+    const res = await fetch(withStore(`/api/finance/settlements?id=${id}`, selectedStore.code), {
+      method: "DELETE",
+    });
     const json = await readApiJson(res);
     if (!res.ok) {
       setError(json.error ?? "No se pudo eliminar liquidacion");
@@ -690,10 +728,11 @@ export default function FinancePage() {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    data.set("store", selectedStore.code);
     setImportingLogistics(true);
     setError("");
     try {
-      const res = await fetch("/api/finance/logistics", {
+      const res = await fetch(withStore("/api/finance/logistics", selectedStore.code), {
         method: "POST",
         body: data,
       });
@@ -712,10 +751,10 @@ export default function FinancePage() {
   }
 
   async function saveProductCost(input: ProductCostSaveInput) {
-    const res = await fetch("/api/finance/product-costs", {
+    const res = await fetch(withStore("/api/finance/product-costs", selectedStore.code), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
+      body: JSON.stringify({ ...input, store: selectedStore.code }),
     });
     const json = await readApiJson(res);
     if (!res.ok) {
@@ -733,6 +772,7 @@ export default function FinancePage() {
     setCostVersions((current) => [
       {
         id: Date.now(),
+        store_id: savedCost.store_id,
         sku: savedCost.sku,
         product_name: savedCost.product_name,
         unit_cost: savedCost.unit_cost,
@@ -746,7 +786,9 @@ export default function FinancePage() {
     // El refresco del resumen es secundario: si falla (endpoint pesado o
     // migracion pendiente) no debe reportar el guardado como fallido.
     try {
-      const summaryRes = await fetch("/api/finance/summary", { cache: "no-store" });
+      const summaryRes = await fetch(withStore("/api/finance/summary", selectedStore.code), {
+        cache: "no-store",
+      });
       const summaryJson = await readApiJson(summaryRes);
       if (summaryRes.ok) setSummary(summaryJson.summary ?? null);
     } catch {
@@ -755,7 +797,9 @@ export default function FinancePage() {
   }
 
   async function reloadCosts() {
-    const res = await fetch("/api/finance/product-costs", { cache: "no-store" });
+    const res = await fetch(withStore("/api/finance/product-costs", selectedStore.code), {
+      cache: "no-store",
+    });
     const json = await readApiJson(res);
     setCosts(json.costs ?? []);
     setCostVersions(Array.isArray(json.versions) ? (json.versions as ProductCostVersion[]) : []);
@@ -763,7 +807,9 @@ export default function FinancePage() {
 
   async function reloadMoovin() {
     try {
-      const json = await readApiJson(await fetch("/api/finance/moovin-sync", { cache: "no-store" }));
+      const json = await readApiJson(
+        await fetch(withStore("/api/finance/moovin-sync", selectedStore.code), { cache: "no-store" })
+      );
       if (Array.isArray(json.rows)) {
         setMoovinByPackage(new Map((json.rows as MoovinTrackingRow[]).map((r) => [r.id_package, r])));
       }
@@ -777,15 +823,17 @@ export default function FinancePage() {
     setSyncMessage("Sincronizando Shopify...");
     setError("");
     let totalSynced = 0;
+    const activeStoreCode = selectedStore.code;
 
     // Fase 1: pedidos recientes (de lo mas nuevo hacia atras con cursor).
     try {
       let nextUrl: string | null = null;
       for (let batch = 0; batch < 40; batch++) {
-        const res = await fetch("/api/finance/shopify-sync", {
+        const res = await fetch(withStore("/api/finance/shopify-sync", activeStoreCode), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            store: activeStoreCode,
             created_at_min: FINANCE_SHOPIFY_CREATED_AT_MIN,
             max_pages: 8,
             next_url: nextUrl,
@@ -810,10 +858,11 @@ export default function FinancePage() {
     try {
       let oldestReached: string | null = null;
       for (let batch = 0; batch < 80; batch++) {
-        const res = await fetch("/api/finance/shopify-sync", {
+        const res = await fetch(withStore("/api/finance/shopify-sync", activeStoreCode), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            store: activeStoreCode,
             created_at_min: FINANCE_SHOPIFY_CREATED_AT_MIN,
             max_pages: 8,
             mode: "backfill",
@@ -847,10 +896,11 @@ export default function FinancePage() {
   }
 
   async function saveClaim(anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes = "") {
-    const res = await fetch("/api/finance/claims", {
+    const res = await fetch(withStore("/api/finance/claims", selectedStore.code), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        store: selectedStore.code,
         anomaly_key: anomaly.id,
         order_name: anomaly.order_name,
         guide_number: anomaly.guide_number,
@@ -881,10 +931,10 @@ export default function FinancePage() {
       return false;
     }
 
-    const res = await fetch("/api/finance/expenses", {
+    const res = await fetch(withStore("/api/finance/expenses", selectedStore.code), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(expensePayload.expense),
+      body: JSON.stringify({ ...expensePayload.expense, store: selectedStore.code }),
     });
     const json = await readApiJson(res);
     if (!res.ok) {
@@ -897,7 +947,7 @@ export default function FinancePage() {
   }
 
   async function deleteExpense(id: number) {
-    await fetch(`/api/finance/expenses?id=${id}`, { method: "DELETE" });
+    await fetch(withStore(`/api/finance/expenses?id=${id}`, selectedStore.code), { method: "DELETE" });
     await refresh();
   }
 
@@ -968,6 +1018,20 @@ export default function FinancePage() {
               Liquidaciones, costos por SKU, gastos y utilidad neta
             </p>
           </div>
+          <label className="ml-auto flex min-w-[190px] flex-col gap-1 text-[11px] text-muted-foreground">
+            Tienda
+            <select
+              value={selectedStore.code}
+              onChange={(event) => setSelectedStoreCode(event.target.value as FinanceStoreCode)}
+              className="h-9 rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground outline-none focus:border-primary"
+            >
+              {FINANCE_STORES.map((store) => (
+                <option key={store.code} value={store.code}>
+                  {store.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <Button
             variant="outline"
             size="sm"
@@ -975,7 +1039,7 @@ export default function FinancePage() {
               refresh();
               loadShopifyProducts();
             }}
-            className="ml-auto gap-2"
+            className="gap-2"
           >
             <RefreshCw className="h-3.5 w-3.5" /> Actualizar
           </Button>
@@ -985,8 +1049,10 @@ export default function FinancePage() {
       <main className="container mx-auto space-y-6 px-4 py-6">
         {error && (
           <div className="border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-red-200">
-            {error.includes("Could not find the table") || error.includes("schema cache")
-              ? "Faltan tablas financieras en Supabase. Ejecuta supabase/migrations/0002_finance_schema.sql en SQL Editor."
+            {error.includes("Could not find the table") ||
+            error.includes("schema cache") ||
+            (error.includes("store_id") && error.toLowerCase().includes("column"))
+              ? "Faltan tablas financieras en Supabase. Ejecuta supabase/migrations/0002_finance_schema.sql y supabase/migrations/0003_multi_store_finance.sql en SQL Editor."
               : error}
           </div>
         )}
@@ -6960,10 +7026,10 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   return <Badge variant="muted">{label || "Pendiente"}</Badge>;
 }
 
-function currency(value: number): string {
-  return new Intl.NumberFormat("es-CR", {
+function currency(value: number, store = FINANCE_STORES[0]): string {
+  return new Intl.NumberFormat(store.locale, {
     style: "currency",
-    currency: "CRC",
+    currency: store.currency,
     maximumFractionDigits: 0,
   }).format(Number(value || 0));
 }
@@ -6989,6 +7055,18 @@ function roundMoney(value: number): number {
 
 function sum(values: number[]): number {
   return values.reduce((acc, value) => acc + Number(value || 0), 0);
+}
+
+function withStore(path: string, storeCode: FinanceStoreCode): string {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}store=${encodeURIComponent(storeCode)}`;
+}
+
+function buildLiveShopifyOrdersUrl(storeCode: FinanceStoreCode): string {
+  return withStore(
+    `/api/shopify/orders?status=any&limit=250&created_at_min=${encodeURIComponent(FINANCE_SHOPIFY_CREATED_AT_MIN)}`,
+    storeCode
+  );
 }
 
 async function readApiJson(res: Response) {
@@ -7108,6 +7186,7 @@ function toCsv(rows: unknown[]): string {
 }
 
 async function fetchPersistedShopifySnapshot(
+  storeCode: FinanceStoreCode,
   onProgress?: (snapshot: Record<string, unknown>) => void
 ): Promise<Record<string, unknown>> {
   const orders: Array<Record<string, unknown>> = [];
@@ -7116,7 +7195,10 @@ async function fetchPersistedShopifySnapshot(
 
   while (orders.length < FINANCE_SHOPIFY_SYNC_MAX_ROWS) {
     const res = await fetch(
-      `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_PAGE_SIZE}&offset=${offset}`,
+      withStore(
+        `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_PAGE_SIZE}&offset=${offset}`,
+        storeCode
+      ),
       { cache: "no-store" }
     );
     const json = await readApiJson(res);
@@ -7403,6 +7485,7 @@ function mergeLogisticsBoxfulFiles(
     if (byName.has(item.file_name)) continue;
     byName.set(item.file_name, {
       id: -item.id,
+      store_id: item.store_id,
       file_name: item.file_name,
       file_type: "logistica",
       cutoff_date: item.period_end,
@@ -8250,6 +8333,7 @@ function buildCostVersionsBySku(
       .filter((cost) => cost.active)
       .map((cost) => ({
         id: -cost.id,
+        store_id: cost.store_id,
         sku: cost.sku,
         product_name: cost.product_name,
         unit_cost: cost.unit_cost,

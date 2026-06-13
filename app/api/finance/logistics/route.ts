@@ -17,6 +17,7 @@ import {
   type LogisticsPackageItem,
   type LogisticsRow,
 } from "@/lib/finance";
+import { getStoreFromSearchParams } from "@/lib/stores";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -48,11 +49,12 @@ interface ParsedLogisticsRow {
 }
 
 export async function GET(req: NextRequest) {
+  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
   try {
     const importId = Number(req.nextUrl.searchParams.get("import_id"));
     const [imports, rows] = await Promise.all([
-      listLogisticsImports(),
-      listLogisticsRows(importId || undefined),
+      listLogisticsImports(store.id),
+      listLogisticsRows(importId || undefined, store.id),
     ]);
     return NextResponse.json({ imports, rows });
   } catch (err) {
@@ -64,6 +66,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
+    const store = getStoreFromSearchParams(new URLSearchParams({ store: String(form.get("store") ?? "") }));
     const file = form.get("file");
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "Archivo requerido" }, { status: 400 });
@@ -80,7 +83,8 @@ export async function POST(req: NextRequest) {
     }
 
     const shopifyOrders = await loadShopifyOrdersForMatching(
-      periodStart ?? inferEarliestDate(boxfulRows)
+      periodStart ?? inferEarliestDate(boxfulRows),
+      store.id
     );
     const matchIndex = buildShopifyMatchIndex(shopifyOrders);
     const statusSummary: Record<string, { count: number }> = {};
@@ -97,31 +101,37 @@ export async function POST(req: NextRequest) {
       return { row, shopify };
     });
 
-    const logisticsImport = await createLogisticsImport({
-      file_name: file.name,
-      period_label: periodLabel,
-      period_start: periodStart,
-      period_end: periodEnd,
-      total_rows: boxfulRows.length,
-      matched_rows: matchedRows,
-      unmatched_rows: boxfulRows.length - matchedRows,
-      status_summary: statusSummary,
-    });
-    try {
-      await upsertBoxfulFileControl({
+    const logisticsImport = await createLogisticsImport(
+      {
         file_name: file.name,
-        file_type: "logistica",
-        cutoff_date: periodEnd,
-        status: "importado",
-        import_id: logisticsImport.id,
-        imported_at: logisticsImport.created_at,
-      });
+        period_label: periodLabel,
+        period_start: periodStart,
+        period_end: periodEnd,
+        total_rows: boxfulRows.length,
+        matched_rows: matchedRows,
+        unmatched_rows: boxfulRows.length - matchedRows,
+        status_summary: statusSummary,
+      },
+      store.id
+    );
+    try {
+      await upsertBoxfulFileControl(
+        {
+          file_name: file.name,
+          file_type: "logistica",
+          cutoff_date: periodEnd,
+          status: "importado",
+          import_id: logisticsImport.id,
+          imported_at: logisticsImport.created_at,
+        },
+        store.id
+      );
     } catch (fileControlError) {
       console.warn("[finance/logistics file control]", fileControlError);
     }
 
     const rowsToInsert = pendingRows.map(({ row, shopify }) =>
-      buildLogisticsRow(logisticsImport.id, row, shopify)
+      buildLogisticsRow(logisticsImport.id, row, store.id, shopify)
     );
 
     // Si las filas no entran, el import se revierte: un archivo nunca debe
@@ -135,7 +145,7 @@ export async function POST(req: NextRequest) {
         await Promise.all(batches.slice(i, i + INSERT_CONCURRENCY).map(insertLogisticsRows));
       }
     } catch (insertError) {
-      await deleteLogisticsImport(logisticsImport.id).catch(() => undefined);
+      await deleteLogisticsImport(logisticsImport.id, store.id).catch(() => undefined);
       const detail = insertError instanceof Error ? insertError.message : String(insertError);
       throw new Error(`No se pudieron guardar las filas (import revertido): ${detail}`);
     }
@@ -154,11 +164,12 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
   const id = Number(req.nextUrl.searchParams.get("id"));
   if (!id) return NextResponse.json({ error: "id requerido" }, { status: 400 });
 
   try {
-    await deleteLogisticsImport(id);
+    await deleteLogisticsImport(id, store.id);
     return NextResponse.json({ ok: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al eliminar logistica";
@@ -220,10 +231,12 @@ function parsePackageItems(raw: Record<string, unknown>): LogisticsPackageItem[]
 function buildLogisticsRow(
   importId: number,
   row: ParsedLogisticsRow,
+  storeId: number,
   shopify?: ShopifyOrder
 ): Omit<LogisticsRow, "id" | "created_at"> {
   const internalStatus = mapInternalStatus(row.boxful_status, shopify);
   return {
+    store_id: storeId,
     import_id: importId,
     guide_number: row.guide_number,
     order_name: row.order_name,
