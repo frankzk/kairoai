@@ -4063,7 +4063,7 @@ interface MonthProjectionBasis {
 }
 
 const MONTH_ROW_GRID =
-  "grid grid-cols-[2rem_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.3fr)] items-center gap-2 lg:grid-cols-[2rem_minmax(110px,1.3fr)_repeat(8,minmax(0,1fr))_minmax(0,1.2fr)]";
+  "grid grid-cols-[2rem_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.3fr)] items-center gap-2 lg:grid-cols-[2rem_minmax(110px,1.3fr)_repeat(7,minmax(0,1fr))_minmax(0,1.2fr)]";
 
 function MonthlyCloseTab({
   rows,
@@ -4295,7 +4295,6 @@ function MonthlyCloseTab({
             <span className="hidden text-right lg:block">Liquidados</span>
             <span className="hidden text-right lg:block">Sin liquidacion</span>
             <span className="hidden text-right lg:block">Pend. liquidacion</span>
-            <span className="hidden text-right lg:block">Por reclamar</span>
             <span className="hidden text-right lg:block">Costos</span>
             <span className="text-right">Utilidad neta</span>
           </div>
@@ -4343,10 +4342,7 @@ function MonthlyCloseTab({
               )}
             </span>
             <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.unsettled}</span>
-            <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.to_claim_fresh}</span>
-            <span className={`hidden text-right font-mono text-xs font-semibold lg:block ${totals.to_claim_overdue ? "text-amber-300" : ""}`}>
-              {totals.to_claim_overdue}
-            </span>
+            <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.to_claim}</span>
             <span className="hidden text-right font-mono text-xs font-semibold lg:block">{currency(totals.costs)}</span>
             <span className={`text-right font-mono text-xs font-semibold ${totals.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
               {currency(totals.net_profit)}
@@ -4447,10 +4443,7 @@ function MonthlyCloseMonthRow({
           )}
         </span>
         <span className="hidden text-right font-mono text-xs lg:block">{row.unsettled}</span>
-        <span className="hidden text-right font-mono text-xs lg:block">{row.to_claim_fresh}</span>
-        <span className={`hidden text-right font-mono text-xs lg:block ${row.to_claim_overdue ? "text-amber-300" : ""}`}>
-          {row.to_claim_overdue}
-        </span>
+        <span className="hidden text-right font-mono text-xs lg:block">{row.to_claim}</span>
         <span className="hidden text-right font-mono text-xs lg:block">{currency(registeredCosts)}</span>
         <span className={`flex items-baseline justify-end gap-1 font-mono text-xs ${row.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
           {trend === "up" && <span className="text-[9px] text-emerald-300">▲</span>}
