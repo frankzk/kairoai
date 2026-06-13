@@ -436,7 +436,10 @@ const EXPENSE_VIEW_CONFIG: Array<{
   },
 ];
 
-const FINANCE_SHOPIFY_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
+const FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE: Record<FinanceStoreCode, string> = {
+  "mireva-cr": "2026-01-01T00:00:00-06:00",
+  "mireva-hn": "2025-12-09T00:00:00-06:00",
+};
 const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 4000;
 // Ventana de "pedidos actualizados recientemente" leida en vivo de Shopify.
 const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
@@ -824,6 +827,7 @@ export default function FinancePage() {
     setError("");
     let totalSynced = 0;
     const activeStoreCode = selectedStore.code;
+    const shopifyCreatedAtMin = getShopifyCreatedAtMin(activeStoreCode);
 
     // Fase 1: pedidos recientes (de lo mas nuevo hacia atras con cursor).
     try {
@@ -834,7 +838,7 @@ export default function FinancePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             store: activeStoreCode,
-            created_at_min: FINANCE_SHOPIFY_CREATED_AT_MIN,
+            created_at_min: shopifyCreatedAtMin,
             max_pages: 8,
             next_url: nextUrl,
           }),
@@ -863,7 +867,7 @@ export default function FinancePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             store: activeStoreCode,
-            created_at_min: FINANCE_SHOPIFY_CREATED_AT_MIN,
+            created_at_min: shopifyCreatedAtMin,
             max_pages: 8,
             mode: "backfill",
           }),
@@ -7064,9 +7068,13 @@ function withStore(path: string, storeCode: FinanceStoreCode): string {
 
 function buildLiveShopifyOrdersUrl(storeCode: FinanceStoreCode): string {
   return withStore(
-    `/api/shopify/orders?status=any&limit=250&created_at_min=${encodeURIComponent(FINANCE_SHOPIFY_CREATED_AT_MIN)}`,
+    `/api/shopify/orders?status=any&limit=250&created_at_min=${encodeURIComponent(getShopifyCreatedAtMin(storeCode))}`,
     storeCode
   );
+}
+
+function getShopifyCreatedAtMin(storeCode: FinanceStoreCode): string {
+  return FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE[storeCode] ?? FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE["mireva-cr"];
 }
 
 async function readApiJson(res: Response) {

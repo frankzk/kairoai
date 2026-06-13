@@ -10,7 +10,10 @@ import { getShopifyCredentials, getStoreFromBody, getStoreFromSearchParams, type
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const DEFAULT_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
+const DEFAULT_CREATED_AT_MIN_BY_STORE: Record<string, string> = {
+  "mireva-cr": "2026-01-01T00:00:00-06:00",
+  "mireva-hn": "2025-12-09T00:00:00-06:00",
+};
 const DEFAULT_SYNC_PAGES_PER_REQUEST = 8;
 const MAX_SYNC_PAGES_PER_REQUEST = 12;
 const MAX_GET_LIMIT = 4000;
@@ -53,8 +56,8 @@ export async function POST(req: NextRequest) {
       Math.max(Number(body.max_pages ?? DEFAULT_SYNC_PAGES_PER_REQUEST), 1),
       MAX_SYNC_PAGES_PER_REQUEST
     );
-    const createdAtMin = String(body.created_at_min ?? DEFAULT_CREATED_AT_MIN);
     const mode = body.mode === "backfill" ? "backfill" : "forward";
+    const createdAtMin = String(body.created_at_min ?? getDefaultCreatedAtMin(store));
 
     let url: string;
     if (typeof body.next_url === "string" && body.next_url) {
@@ -147,6 +150,10 @@ async function fetchShopifyPage(url: string, store: FinanceStoreConfig): Promise
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getDefaultCreatedAtMin(store: FinanceStoreConfig): string {
+  return DEFAULT_CREATED_AT_MIN_BY_STORE[store.code] ?? DEFAULT_CREATED_AT_MIN_BY_STORE["mireva-cr"];
 }
 
 function buildInitialUrl(
