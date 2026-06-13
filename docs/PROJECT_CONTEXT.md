@@ -108,6 +108,7 @@ Multi-store rule:
 - Costa Rica keeps the legacy env fallback `SHOPIFY_SHOP_DOMAIN` + `SHOPIFY_ACCESS_TOKEN`.
 - Honduras must use `SHOPIFY_HN_SHOP_DOMAIN` + `SHOPIFY_HN_ACCESS_TOKEN`.
 - Shopify is the authoritative order universe inside each store. A Boxful logistics/liquidation row from Honduras must never create or count as a Costa Rica order, and vice versa.
+- Until `0003_multi_store_finance.sql` is applied, Costa Rica read APIs fall back to legacy unscoped tables if Supabase does not have `store_id` yet. This preserves visibility of existing CR costs, settlements, logistics, expenses, claims, and file controls. Honduras does not use that fallback, to avoid mixing countries.
 
 Navigation:
 
