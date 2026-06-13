@@ -142,11 +142,12 @@ Excel parsing:
 - Shopify matching accepts exact order names, `#MCRC` order names, and numeric order numbers when reconciling imported files.
 - Shopify matching also accepts iConflate/chatbot order codes stored in Shopify order notes, for example `Pedido #3685 - Venta por bot - WhatsApp ...`. Importers fetch `note` and `note_attributes`, extract `Pedido #NNN`, and use it as an alternate match key before falling back to Shopify numeric `order_number`.
 - `/admin/finance` requests one bounded live Shopify page with `status=any` from `2026-01-01T00:00:00-06:00` so the Pedidos tab can show recent store orders even before a Boxful logistics file is imported. It also reads persisted Shopify orders from Supabase in paginated chunks. It must not use `all=1` during normal page load because Shopify pagination can exceed Vercel serverless timeouts. Boxful rows replace/enrich matching Shopify rows instead of creating duplicates.
+- Shopify is the only authoritative order universe for `Pedidos`, `Productos`, `Cierre mensual`, KPIs, and profitability. A Boxful logistics row or liquidation row without a verified Shopify match must never be promoted into a new visible order. It remains reconciliation backlog: `Sin match` in the import view and/or a finance anomaly until the real Shopify order is found.
 - The `Pedidos` tab keeps the Shopify/Boxful table as the main surface. The Boxful logistics importer is an action button on the right side of the table header and opens a modal; it should not return to a persistent side-panel form.
 - The `Pedidos` tab search filters the visible table client-side by order code (`#MCRC...`, `MCRC...`, iConflate note code, or numeric partials), guide number, customer name, SKU, and item title. The search should remain above the table because it is the primary lookup workflow during reconciliation.
 - The `Pedidos` tab main controls are tracking-state filters: `Todos`, `Pendientes`, `Anulados`, `Entregados`, and `No entregados`. Technical import counts such as Boxful rows, Shopify matches, and unmatched rows are diagnostic context only, not primary KPIs.
 - The `Pedidos` tab also has liquidation filters: `Todos`, `Liquidados`, `Sin liquidacion`, `Por reclamar`, and `Duplicados`. These filters are used for corrective work, especially `Entregados` + `Por reclamar`.
-- In the `Pedidos` table, `Estado liquidacion` must stay as a simple financial state: `Liquidada`, `Sin liquidacion`, or `Doble liquidacion`. The source Excel belongs in a separate `Archivo liquidacion` column so the team can audit which Boxful file paid or charged that order. The settlement amount belongs in a separate `A liquidar` column.
+- In the `Pedidos` table, `Estado liquidacion` must stay as a simple financial state: `Liquidada`, `Sin liquidacion`, or `Doble liquidacion`. The Shopify order badge is followed by `Fecha Shopify`, sourced from `shopify_created_at`, so support can compare operational movement against the original Shopify creation date. The source Excel belongs in a separate `Archivo liquidacion` column so the team can audit which Boxful file paid or charged that order. The settlement amount belongs in a separate `A liquidar` column.
 - Existing imported Excel rows are not automatically rematched after a matching-rule code change. To apply the new iConflate-note match rule to an already imported liquidation/logistics file, delete that import and upload the Excel again, unless a future rematch tool is added.
 
 Database schema:
@@ -166,6 +167,7 @@ Important implementation detail:
 - `Estado seguimiento` and `Estado liquidacion` are different business concepts and must not be merged:
   - `Estado seguimiento` comes from Boxful logistics column M and Shopify cancellation state.
   - `Estado liquidacion` comes from settlement/liquidation Excel rows and represents whether/where the order appeared financially.
+- Order rows are Shopify-backed only. Matched Boxful logistics rows can provide guide/status/customer corrections, and matched liquidation rows can provide settlement state/cash, but unmatched Boxful/liquidation rows cannot increase the Shopify order count.
 - Operational order status uses this priority:
   - `Entregado`: Boxful logistics column M says `Entregado`.
   - `No entregado`: Boxful logistics column M says `No entregado` or equivalent returned status.
@@ -196,6 +198,7 @@ Important implementation detail:
   - missing SKU cost
   - negative order margin only when the matched settlement has COD collected (`Monto COD > 0`)
   - Shopify order without Boxful guide after 2 days
+  - liquidation row without a visible Shopify-backed order
 - Stripe / non-COD settlement rule: if a matched liquidation row has `Monto COD = 0`, a negative `A Liquidar` is expected because Boxful is only charging logistics/fulfillment services. That negative logistics balance affects profitability, but it is not a `Margen negativo` anomaly by itself.
 - Financial anomalies can be moved through a claim workflow: `pendiente`, `reclamado`, `resuelto`, `descartado`, with notes. The key is `finance_claims.anomaly_key`.
 - Exportables are client-side CSV downloads for anomalies, order profitability, monthly close, and Boxful file control.
@@ -577,11 +580,13 @@ Build in this order:
 
 - `npm run lint`: passed
 - `npm run build`: passed
-- Supabase `shopify_orders` currently contains `10,699` persisted Shopify orders from `2026-01-19` through June 2026. First persisted order observed: `#MCRC1001`.
-- Persisted Shopify order distribution at validation time: January `64`, February `1,994`, March `1,652`, April `2,379`, May `3,410`, June `1,200`.
-- `logistics_rows` currently contains `7,736` Boxful rows and `7,664` consolidated logistics rows. Imported logistics distribution: `Entregado 4,802`, `No entregado 2,355`, `En ruta a destino 140`, `Problemas en gestion 96`, `Recolectado 275`, `Registrado 23`, `Guia cancelada 45`.
+- Supabase `shopify_orders` currently contains `10,756` persisted Shopify orders, matching the direct Shopify API count from `2026-01-01T00:00:00-06:00` at validation time. First persisted order observed: `#MCRC1001` on `2026-01-19`.
+- Persisted Shopify order distribution at validation time: January `64`, February `1,994`, March `1,652`, April `2,379`, May `3,410`, June `1,257`.
+- `logistics_rows` currently contains `7,736` Boxful rows and `7,696` consolidated logistics keys. `7,368` of those consolidated logistics keys are Shopify-backed; `329` raw logistics rows remain unmatched and must not count as pedidos. Imported logistics distribution: `Entregado 4,802`, `No entregado 2,355`, `En ruta a destino 140`, `Problemas en gestion 96`, `Recolectado 275`, `Registrado 23`, `Guia cancelada 45`.
 - `/api/finance/shopify-sync` GET now supports `limit` and `offset`, so `/admin/finance` can load the full persisted Shopify base in pages instead of relying on one large JSON response.
 - `/admin/finance` now renders the base finance UI before the full Shopify history is loaded. Persisted Shopify orders are appended in background batches of `2,000`, with a visible progress banner, so the page no longer stays blank while January-to-date data is downloaded and recalculated.
+- Corrected the authoritative order architecture: `Pedidos`, `Productos`, `Cierre mensual`, KPIs, and profitability now use only Shopify-backed orders. Unmatched Boxful logistics rows and unmatched liquidation rows stay as reconciliation/anomaly records and no longer increase the visible order total.
+- Architecture audit after the fix: the old visible-order formula produced `11,084` rows because unmatched Boxful/logistics keys were promoted into the order list; the new Shopify-backed formula produces `10,756`, matching Shopify and Supabase.
 - Hardened Boxful Excel parsing. `lib/xlsx.ts` now exposes `sheetToJson`, sanitizes every worksheet before conversion, and converts unsupported formula cell types such as `t="f"` into safe string/number/date cells. `/api/finance/logistics` and `/api/finance/settlements` now use this helper for every parsed sheet, including `Consolidado`, to prevent the upload error `unrecognized type f`.
 - Local audit of `C:\Users\Pc\Downloads\01-12-2025 hasta 11-06-2026.xlsx` after formula sanitization:
   - `total_rows = 7736`
