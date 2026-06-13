@@ -17,7 +17,7 @@ import {
   type SettlementOrderItem,
   type SettlementRow,
 } from "@/lib/finance";
-import { getStoreFromSearchParams } from "@/lib/stores";
+import { getRequiredStoreConfig, getRequiredStoreFromSearchParams } from "@/lib/stores";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -47,7 +47,8 @@ interface ParsedSettlementRow {
 }
 
 export async function GET(req: NextRequest) {
-  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) return missingStoreResponse();
   try {
     const importId = Number(req.nextUrl.searchParams.get("import_id"));
     const [imports, rows] = await Promise.all([
@@ -64,7 +65,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
-    const store = getStoreFromSearchParams(new URLSearchParams({ store: String(form.get("store") ?? "") }));
+    const store = getRequiredStoreConfig(form.get("store"));
+    if (!store) return missingStoreResponse();
     const file = form.get("file");
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "Archivo requerido" }, { status: 400 });
@@ -172,7 +174,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) return missingStoreResponse();
   const id = Number(req.nextUrl.searchParams.get("id"));
   if (!id) return NextResponse.json({ error: "id requerido" }, { status: 400 });
 
@@ -183,6 +186,13 @@ export async function DELETE(req: NextRequest) {
     const message = err instanceof Error ? err.message : "Error al eliminar liquidacion";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+function missingStoreResponse() {
+  return NextResponse.json(
+    { error: "store requerido: usa mireva-cr o mireva-hn" },
+    { status: 400 }
+  );
 }
 
 function parseSettlementRows(workbook: XLSX.WorkBook): ParsedSettlementRow[] {

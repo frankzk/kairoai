@@ -45,6 +45,19 @@ export function getStoreConfig(value?: string | null): FinanceStoreConfig {
   };
 }
 
+export function parseFinanceStoreCode(value: unknown): FinanceStoreCode | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return FINANCE_STORES.some((store) => store.code === normalized)
+    ? (normalized as FinanceStoreCode)
+    : null;
+}
+
+export function getRequiredStoreConfig(value: unknown): FinanceStoreConfig | null {
+  const code = parseFinanceStoreCode(value);
+  return code ? getStoreConfig(code) : null;
+}
+
 export function getStoreId(value?: string | null): number {
   return getStoreConfig(value).id;
 }
@@ -53,8 +66,17 @@ export function getStoreFromSearchParams(params: URLSearchParams): FinanceStoreC
   return getStoreConfig(params.get("store"));
 }
 
+export function getRequiredStoreFromSearchParams(params: URLSearchParams): FinanceStoreConfig | null {
+  return getRequiredStoreConfig(params.get("store"));
+}
+
 export function getStoreFromBody(body: Record<string, unknown> | null | undefined): FinanceStoreConfig {
   return getStoreConfig(typeof body?.store === "string" ? body.store : DEFAULT_FINANCE_STORE_CODE);
+}
+
+export function getRequiredStoreFromBody(body: unknown): FinanceStoreConfig | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  return getRequiredStoreConfig((body as { store?: unknown }).store);
 }
 
 export function getShopifyCredentials(store: FinanceStoreConfig): {

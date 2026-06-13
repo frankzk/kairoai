@@ -5,7 +5,12 @@ import {
   upsertPersistedShopifyOrders,
   type PersistedShopifyOrder,
 } from "@/lib/finance";
-import { getShopifyCredentials, getStoreFromBody, getStoreFromSearchParams, type FinanceStoreConfig } from "@/lib/stores";
+import {
+  getRequiredStoreFromBody,
+  getRequiredStoreFromSearchParams,
+  getShopifyCredentials,
+  type FinanceStoreConfig,
+} from "@/lib/stores";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -21,7 +26,8 @@ const MAX_GET_LIMIT = 2000;
 const PAGE_DELAY_MS = 350;
 
 export async function GET(req: NextRequest) {
-  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) return missingStoreResponse();
   try {
     const requestedLimit = Number(req.nextUrl.searchParams.get("limit") || 1000);
     const offset = Math.max(Number(req.nextUrl.searchParams.get("offset") || 0), 0);
@@ -51,7 +57,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const store = getStoreFromBody(body);
+    const store = getRequiredStoreFromBody(body);
+    if (!store) return missingStoreResponse();
     const maxPages = Math.min(
       Math.max(Number(body.max_pages ?? DEFAULT_SYNC_PAGES_PER_REQUEST), 1),
       MAX_SYNC_PAGES_PER_REQUEST
@@ -126,6 +133,13 @@ export async function POST(req: NextRequest) {
     const message = err instanceof Error ? err.message : "Error sincronizando Shopify";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+function missingStoreResponse() {
+  return NextResponse.json(
+    { error: "store requerido: usa mireva-cr o mireva-hn" },
+    { status: 400 }
+  );
 }
 
 async function fetchShopifyPage(url: string, store: FinanceStoreConfig): Promise<Response> {

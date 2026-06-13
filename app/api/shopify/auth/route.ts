@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getShopifyOAuthCredentials, getStoreConfig } from "@/lib/stores";
+import { getRequiredStoreConfig, getShopifyOAuthCredentials } from "@/lib/stores";
 
 // One-time OAuth flow to obtain a permanent Shopify access token.
 // Visit:
 // - Costa Rica: https://kairoai-pearl.vercel.app/api/shopify/auth?store=mireva-cr
 // - Honduras: https://kairoai-pearl.vercel.app/api/shopify/auth?store=mireva-hn
 export async function GET(req: NextRequest) {
-  const store = getStoreConfig(req.nextUrl.searchParams.get("store"));
+  const store = getRequiredStoreConfig(req.nextUrl.searchParams.get("store"));
+  if (!store) {
+    return new NextResponse("store requerido: usa mireva-cr o mireva-hn.", { status: 400 });
+  }
   const { clientId, missing: missingOAuth } = getShopifyOAuthCredentials(store);
   const shop =
     process.env[store.shopDomainEnv] ||

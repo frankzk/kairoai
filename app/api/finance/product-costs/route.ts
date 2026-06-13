@@ -5,12 +5,13 @@ import {
   listProductCostVersions,
   upsertProductCost,
 } from "@/lib/finance";
-import { getStoreFromBody, getStoreFromSearchParams } from "@/lib/stores";
+import { getRequiredStoreFromBody, getRequiredStoreFromSearchParams } from "@/lib/stores";
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
-  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) return missingStoreResponse();
   try {
     const costs = await listProductCosts(store.id);
     let versions: unknown[] = [];
@@ -28,7 +29,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
-  const store = getStoreFromBody(body);
+  const store = getRequiredStoreFromBody(body);
+  if (!store) return missingStoreResponse();
   if (!body?.sku) {
     return NextResponse.json({ error: "SKU requerido" }, { status: 400 });
   }
@@ -43,7 +45,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) return missingStoreResponse();
   const id = Number(req.nextUrl.searchParams.get("id"));
   if (!id) return NextResponse.json({ error: "id requerido" }, { status: 400 });
 
@@ -54,4 +57,11 @@ export async function DELETE(req: NextRequest) {
     const message = err instanceof Error ? err.message : "Error al eliminar costo";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+function missingStoreResponse() {
+  return NextResponse.json(
+    { error: "store requerido: usa mireva-cr o mireva-hn" },
+    { status: 400 }
+  );
 }
