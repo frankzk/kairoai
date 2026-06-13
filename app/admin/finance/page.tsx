@@ -3252,13 +3252,60 @@ function ExpensesTab({
 
   const activeView =
     EXPENSE_VIEW_CONFIG.find((view) => view.type === activeType) ?? EXPENSE_VIEW_CONFIG[0];
-  const visibleExpenses = expenses
-    .filter((expense) => expense.type === activeType)
-    .sort(
-      (a, b) =>
-        String(b.expense_date || "").localeCompare(String(a.expense_date || "")) ||
-        String(b.created_at || "").localeCompare(String(a.created_at || ""))
-    );
+  const [filterMonth, setFilterMonth] = useState("all");
+  const [filterPlatform, setFilterPlatform] = useState("all");
+  const [filterCategory, setFilterCategory] = useState("all");
+  const [expenseSort, setExpenseSort] = useState<{
+    key: "expense_date" | "month" | "platform" | "category" | "description" | "amount";
+    dir: "asc" | "desc";
+  }>({ key: "expense_date", dir: "desc" });
+
+  const typeExpenses = expenses.filter((expense) => expense.type === activeType);
+  const monthFilterOptions = uniqueKeys(typeExpenses.map((expense) => expense.month).filter(Boolean))
+    .sort()
+    .reverse();
+  const platformFilterOptions = uniqueKeys(
+    typeExpenses.map((expense) => expense.platform).filter(Boolean)
+  ).sort((a, b) => a.localeCompare(b));
+  const categoryFilterOptions = uniqueKeys(
+    typeExpenses.map((expense) => expense.category).filter(Boolean)
+  ).sort((a, b) => a.localeCompare(b));
+  const hasExpenseFilters =
+    filterMonth !== "all" || filterPlatform !== "all" || filterCategory !== "all";
+
+  const visibleExpenses = typeExpenses
+    .filter(
+      (expense) =>
+        (filterMonth === "all" || expense.month === filterMonth) &&
+        (filterPlatform === "all" || expense.platform === filterPlatform) &&
+        (filterCategory === "all" || expense.category === filterCategory)
+    )
+    .sort((a, b) => {
+      const factor = expenseSort.dir === "asc" ? 1 : -1;
+      if (expenseSort.key === "amount") {
+        return (Number(a.amount || 0) - Number(b.amount || 0)) * factor;
+      }
+      const aValue = String(a[expenseSort.key] ?? "");
+      const bValue = String(b[expenseSort.key] ?? "");
+      return (
+        (aValue.localeCompare(bValue, "es", { sensitivity: "base" }) ||
+          String(a.created_at || "").localeCompare(String(b.created_at || ""))) * factor
+      );
+    });
+
+  function toggleExpenseSort(key: typeof expenseSort.key) {
+    setExpenseSort((current) => {
+      if (current.key === key) return { key, dir: current.dir === "asc" ? "desc" : "asc" };
+      // Fechas y montos arrancan de mayor a menor; texto A-Z.
+      return { key, dir: key === "amount" || key === "expense_date" || key === "month" ? "desc" : "asc" };
+    });
+  }
+
+  function clearExpenseFilters() {
+    setFilterMonth("all");
+    setFilterPlatform("all");
+    setFilterCategory("all");
+  }
   const payrollPeople = uniqueKeys(
     expenses
       .filter((expense) => expense.type === "payroll" && expense.platform)
@@ -3313,7 +3360,7 @@ function ExpensesTab({
       : 0;
   const currentMonth = new Date().toISOString().slice(0, 7);
   const currentMonthTotal = sum(
-    visibleExpenses
+    typeExpenses
       .filter((expense) => expense.month === currentMonth)
       .map((expense) => Number(expense.amount || 0))
   );
@@ -3322,6 +3369,7 @@ function ExpensesTab({
   function selectExpenseType(type: ExpenseType) {
     setActiveType(type);
     setForm(prepareExpenseFormForType(form, type));
+    clearExpenseFilters();
   }
 
   function openExpenseModal(type: ExpenseType) {
@@ -3374,21 +3422,115 @@ function ExpensesTab({
               </button>
             ))}
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Filtros</span>
+            <select
+              value={filterMonth}
+              onChange={(event) => setFilterMonth(event.target.value)}
+              className="h-8 border border-input bg-background px-2 text-sm outline-none"
+              aria-label="Filtrar por mes"
+            >
+              <option value="all">Mes: todos</option>
+              {monthFilterOptions.map((month) => (
+                <option key={month} value={month}>
+                  {month}
+                </option>
+              ))}
+            </select>
+            <select
+              value={filterPlatform}
+              onChange={(event) => setFilterPlatform(event.target.value)}
+              className="h-8 border border-input bg-background px-2 text-sm outline-none"
+              aria-label="Filtrar por persona o plataforma"
+            >
+              <option value="all">
+                {activeType === "payroll" ? "Persona: todas" : "Plataforma: todas"}
+              </option>
+              {platformFilterOptions.map((platform) => (
+                <option key={platform} value={platform}>
+                  {platform}
+                </option>
+              ))}
+            </select>
+            <select
+              value={filterCategory}
+              onChange={(event) => setFilterCategory(event.target.value)}
+              className="h-8 border border-input bg-background px-2 text-sm outline-none"
+              aria-label="Filtrar por tipo o categoria"
+            >
+              <option value="all">{activeType === "payroll" ? "Tipo: todos" : "Categoria: todas"}</option>
+              {categoryFilterOptions.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+            {hasExpenseFilters && (
+              <button
+                type="button"
+                onClick={clearExpenseFilters}
+                className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Limpiar filtros
+              </button>
+            )}
+          </div>
           <div className="grid gap-3 sm:grid-cols-3">
-            <MiniStat label="Registros" value={visibleExpenses.length} />
+            <MiniStat
+              label={hasExpenseFilters ? "Registros (filtrados)" : "Registros"}
+              value={visibleExpenses.length}
+            />
             <MiniStat label="Mes actual" value={currency(currentMonthTotal)} />
-            <MiniStat label="Total" value={currency(total)} />
+            <MiniStat
+              label={hasExpenseFilters ? "Total (filtrado)" : "Total"}
+              value={currency(total)}
+            />
           </div>
           <div className="overflow-auto border border-border">
             <table className="w-full min-w-[920px] text-sm">
               <thead className="bg-card text-left text-xs text-muted-foreground">
                 <tr>
-                  <th className="px-3 py-2">Fecha</th>
-                  <th className="px-3 py-2">Mes</th>
-                  <th className="px-3 py-2">{activeType === "payroll" ? "Persona" : "Plataforma / proveedor"}</th>
-                  <th className="px-3 py-2">{activeType === "payroll" ? "Tipo" : "Categoria"}</th>
-                  <th className="px-3 py-2">{activeType === "payroll" ? "Funcion / detalle" : "Descripcion"}</th>
-                  <th className="px-3 py-2 text-right">Monto</th>
+                  {(
+                    [
+                      { key: "expense_date", label: "Fecha", numeric: false },
+                      { key: "month", label: "Mes", numeric: false },
+                      {
+                        key: "platform",
+                        label: activeType === "payroll" ? "Persona" : "Plataforma / proveedor",
+                        numeric: false,
+                      },
+                      {
+                        key: "category",
+                        label: activeType === "payroll" ? "Tipo" : "Categoria",
+                        numeric: false,
+                      },
+                      {
+                        key: "description",
+                        label: activeType === "payroll" ? "Funcion / detalle" : "Descripcion",
+                        numeric: false,
+                      },
+                      { key: "amount", label: "Monto", numeric: true },
+                    ] as const
+                  ).map((column) => (
+                    <th key={column.key} className={`px-3 py-2 ${column.numeric ? "text-right" : ""}`}>
+                      <button
+                        type="button"
+                        onClick={() => toggleExpenseSort(column.key)}
+                        className={`inline-flex w-full items-center gap-1 transition-colors hover:text-foreground ${
+                          column.numeric ? "justify-end" : ""
+                        }`}
+                        title="Ordenar por esta columna"
+                      >
+                        {column.label}
+                        {expenseSort.key === column.key &&
+                          (expenseSort.dir === "asc" ? (
+                            <ArrowUp className="h-3 w-3 shrink-0" />
+                          ) : (
+                            <ArrowDown className="h-3 w-3 shrink-0" />
+                          ))}
+                      </button>
+                    </th>
+                  ))}
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
