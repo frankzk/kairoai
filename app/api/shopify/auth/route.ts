@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getStoreConfig } from "@/lib/stores";
+import { getShopifyOAuthCredentials, getStoreConfig } from "@/lib/stores";
 
 // One-time OAuth flow to obtain a permanent Shopify access token.
 // Visit:
@@ -8,14 +8,16 @@ import { getStoreConfig } from "@/lib/stores";
 // - Honduras: https://kairoai-pearl.vercel.app/api/shopify/auth?store=mireva-hn
 export async function GET(req: NextRequest) {
   const store = getStoreConfig(req.nextUrl.searchParams.get("store"));
-  const clientId = process.env.SHOPIFY_CLIENT_ID;
+  const { clientId, missing: missingOAuth } = getShopifyOAuthCredentials(store);
   const shop =
     process.env[store.shopDomainEnv] ||
     (store.legacyShopDomainEnv ? process.env[store.legacyShopDomainEnv] : "");
+  const missing = [...missingOAuth];
+  if (!shop) missing.push(store.shopDomainEnv);
 
-  if (!clientId || !shop) {
+  if (missing.length > 0) {
     return new NextResponse(
-      `Faltan variables: SHOPIFY_CLIENT_ID y ${store.shopDomainEnv} deben estar en Vercel.`,
+      `Faltan variables para ${store.label}: ${missing.join(", ")} deben estar en Vercel.`,
       { status: 500 }
     );
   }

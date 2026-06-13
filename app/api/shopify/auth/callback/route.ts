@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { getStoreConfig, normalizeFinanceStoreCode } from "@/lib/stores";
+import { getShopifyOAuthCredentials, getStoreConfig, normalizeFinanceStoreCode } from "@/lib/stores";
 
 // Shopify redirects here after merchant approves the app.
 // This exchanges the code for a permanent access token and displays it once.
@@ -15,17 +15,16 @@ export async function GET(req: NextRequest) {
     return textResponse("Error: no se recibio el codigo de autorizacion.", 400);
   }
 
-  const clientId = process.env.SHOPIFY_CLIENT_ID;
-  const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+  const { clientId, clientSecret, missing } = getShopifyOAuthCredentials(store);
+  if (!shop) missing.push(store.shopDomainEnv);
 
-  if (!shop || !clientId || !clientSecret) {
+  if (missing.length > 0) {
     return textResponse(
       [
         "Faltan variables para completar OAuth de Shopify.",
         "",
-        `SHOPIFY_SHOP_DOMAIN: ${shop ? "ok" : "faltante"}`,
-        `SHOPIFY_CLIENT_ID: ${clientId ? "ok" : "faltante"}`,
-        `SHOPIFY_CLIENT_SECRET: ${clientSecret ? "ok" : "faltante"}`,
+        `Tienda: ${store.label}`,
+        `Variables faltantes: ${missing.join(", ")}`,
       ].join("\n"),
       500
     );
@@ -43,7 +42,7 @@ export async function GET(req: NextRequest) {
       [
         `Error al obtener token de Shopify (${tokenRes.status}).`,
         "",
-        "Revisa que SHOPIFY_CLIENT_ID y SHOPIFY_CLIENT_SECRET correspondan a la misma app que autorizaste.",
+        `Revisa que ${store.clientIdEnv} y ${store.clientSecretEnv} correspondan a la misma app que autorizaste.`,
         "Si agregaste nuevos scopes, reautoriza la app desde /api/shopify/auth.",
         "",
         err.slice(0, 1200),
