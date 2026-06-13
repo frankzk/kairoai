@@ -200,6 +200,8 @@ function mapShopifyOrder(order: Record<string, unknown>): Omit<PersistedShopifyO
     order_number: order.order_number ? Number(order.order_number) : null,
     name: String(order.name ?? ""),
     customer_name: `${firstName} ${lastName}`.trim() || "Sin nombre",
+    first_name: firstName,
+    last_name: lastName,
     phone,
     email: (order.email as string | null) ?? null,
     financial_status: String(order.financial_status ?? ""),

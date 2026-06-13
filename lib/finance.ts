@@ -163,8 +163,11 @@ export async function insertSettlementRows(
   if (error) throw new Error(`insertSettlementRows: ${error.message}`);
 }
 
-const SETTLEMENT_ROW_COLUMNS =
+const SETTLEMENT_ROW_COLUMNS_BASE =
   "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, service_type, cod_amount, cod_commission, card_commission, delivery_cost, pick_pack_cost, packaging_cost, amount_to_liquidate, settlement_status, internal_status, match_status, shopify_order_id, shopify_order_name, shopify_financial_status, shopify_fulfillment_status, shopify_total, shopify_created_at, order_items, created_at";
+// first_name/last_name requieren la migracion 0005; si falta, se reintenta
+// sin ellas.
+let settlementNameColumnsMissing = false;
 
 export async function listSettlementRows(importId?: number): Promise<SettlementRow[]> {
   // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
@@ -172,14 +175,21 @@ export async function listSettlementRows(importId?: number): Promise<SettlementR
   const pageSize = 1000;
   const all: SettlementRow[] = [];
   for (let from = 0; from < 20000; from += pageSize) {
-    let query = getDB()
-      .from("settlement_rows")
-      .select(SETTLEMENT_ROW_COLUMNS)
-      .order("created_on", { ascending: false, nullsFirst: false })
-      .order("id", { ascending: false })
-      .range(from, from + pageSize - 1);
-    if (importId) query = query.eq("import_id", importId);
-    const { data, error } = await query;
+    const fetchPage = (withNames: boolean) => {
+      let query = getDB()
+        .from("settlement_rows")
+        .select(withNames ? `${SETTLEMENT_ROW_COLUMNS_BASE}, first_name, last_name` : SETTLEMENT_ROW_COLUMNS_BASE)
+        .order("created_on", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: false })
+        .range(from, from + pageSize - 1);
+      if (importId) query = query.eq("import_id", importId);
+      return query;
+    };
+    let { data, error } = await fetchPage(!settlementNameColumnsMissing);
+    if (error && !settlementNameColumnsMissing && isMissingColumnError(error.message)) {
+      settlementNameColumnsMissing = true;
+      ({ data, error } = await fetchPage(false));
+    }
     if (error) throw new Error(`listSettlementRows: ${error.message}`);
     const page = (data ?? []) as unknown as SettlementRow[];
     all.push(...page);
@@ -222,8 +232,9 @@ export async function insertLogisticsRows(
   if (error) throw new Error(`insertLogisticsRows: ${error.message}`);
 }
 
-const LOGISTICS_ROW_COLUMNS =
+const LOGISTICS_ROW_COLUMNS_BASE =
   "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, package_items, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
+let logisticsNameColumnsMissing = false;
 
 export async function listLogisticsRows(importId?: number): Promise<LogisticsRow[]> {
   // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
@@ -231,14 +242,21 @@ export async function listLogisticsRows(importId?: number): Promise<LogisticsRow
   const pageSize = 1000;
   const all: LogisticsRow[] = [];
   for (let from = 0; from < 20000; from += pageSize) {
-    let query = getDB()
-      .from("logistics_rows")
-      .select(LOGISTICS_ROW_COLUMNS)
-      .order("created_on", { ascending: false, nullsFirst: false })
-      .order("id", { ascending: false })
-      .range(from, from + pageSize - 1);
-    if (importId) query = query.eq("import_id", importId);
-    const { data, error } = await query;
+    const fetchPage = (withNames: boolean) => {
+      let query = getDB()
+        .from("logistics_rows")
+        .select(withNames ? `${LOGISTICS_ROW_COLUMNS_BASE}, first_name, last_name` : LOGISTICS_ROW_COLUMNS_BASE)
+        .order("created_on", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: false })
+        .range(from, from + pageSize - 1);
+      if (importId) query = query.eq("import_id", importId);
+      return query;
+    };
+    let { data, error } = await fetchPage(!logisticsNameColumnsMissing);
+    if (error && !logisticsNameColumnsMissing && isMissingColumnError(error.message)) {
+      logisticsNameColumnsMissing = true;
+      ({ data, error } = await fetchPage(false));
+    }
     if (error) throw new Error(`listLogisticsRows: ${error.message}`);
     const page = (data ?? []) as unknown as LogisticsRow[];
     all.push(...page);
@@ -253,16 +271,28 @@ export async function listLogisticsRows(importId?: number): Promise<LogisticsRow
 // de raw_order detoastea el JSONB completo por fila y revienta el statement
 // timeout de Postgres con 10k+ pedidos, asi que solo se usa como fallback
 // mientras la migracion no este aplicada.
+// Tier 0: columnas planas con nombre/apellido (requiere migraciones 0003 y 0005).
 const PERSISTED_ORDER_SUMMARY_COLUMNS_FAST =
+  "id, shopify_order_id, order_number, name, customer_name, first_name, last_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note, note_attributes";
+
+// Tier 1: nota plana pero sin first_name/last_name (0003 si, 0005 no). Sigue
+// siendo rapido: no toca raw_order.
+const PERSISTED_ORDER_SUMMARY_COLUMNS_NOTE_ONLY =
   "id, shopify_order_id, order_number, name, customer_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note, note_attributes";
 
+// Tier 2: extraccion de raw_order (pre-0003). Lento; solo como ultimo recurso.
 const PERSISTED_ORDER_SUMMARY_COLUMNS_LEGACY =
-  "id, shopify_order_id, order_number, name, customer_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note:raw_order->>note, note_attributes:raw_order->note_attributes, raw_line_items:raw_order->line_items";
+  "id, shopify_order_id, order_number, name, customer_name, first_name:raw_order->'customer'->>first_name, last_name:raw_order->'customer'->>last_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note:raw_order->>note, note_attributes:raw_order->note_attributes, raw_line_items:raw_order->line_items";
 
-let persistedNoteColumnsMissing = false;
+const PERSISTED_TIERS = [
+  PERSISTED_ORDER_SUMMARY_COLUMNS_FAST,
+  PERSISTED_ORDER_SUMMARY_COLUMNS_NOTE_ONLY,
+  PERSISTED_ORDER_SUMMARY_COLUMNS_LEGACY,
+];
+let persistedTier = 0;
 
-function isMissingNoteColumnError(message: string): boolean {
-  return /note/.test(message) && /does not exist|42703/.test(message);
+function isMissingColumnError(message: string): boolean {
+  return /does not exist|42703/.test(message);
 }
 
 export interface PersistedShopifyOrderSummary
@@ -292,14 +322,12 @@ export async function listPersistedShopifyOrders(limit = 1000, offset = 0): Prom
         .order("id", { ascending: false })
         .range(from, to);
 
-    let result = await fetchPage(
-      persistedNoteColumnsMissing
-        ? PERSISTED_ORDER_SUMMARY_COLUMNS_LEGACY
-        : PERSISTED_ORDER_SUMMARY_COLUMNS_FAST
-    );
-    if (result.error && !persistedNoteColumnsMissing && isMissingNoteColumnError(result.error.message)) {
-      persistedNoteColumnsMissing = true;
-      result = await fetchPage(PERSISTED_ORDER_SUMMARY_COLUMNS_LEGACY);
+    let result = await fetchPage(PERSISTED_TIERS[persistedTier]);
+    // Si falta una columna de una migracion no aplicada, baja al siguiente
+    // tier (sigue siendo rapido hasta el ultimo, que ya extrae de raw_order).
+    while (result.error && isMissingColumnError(result.error.message) && persistedTier < PERSISTED_TIERS.length - 1) {
+      persistedTier += 1;
+      result = await fetchPage(PERSISTED_TIERS[persistedTier]);
     }
     if (result.error) throw new Error(`listPersistedShopifyOrders: ${result.error.message}`);
     const page = (result.data ?? []) as unknown as RawSummary[];
@@ -365,10 +393,12 @@ export async function upsertPersistedShopifyOrders(
   let { error } = await getDB()
     .from("shopify_orders")
     .upsert(payload, { onConflict: "shopify_order_id" });
-  if (error && isMissingNoteColumnError(error.message)) {
-    // Pre-migracion 0003: la tabla aun no tiene note/note_attributes.
-    persistedNoteColumnsMissing = true;
-    const legacyPayload = payload.map(({ note: _note, note_attributes: _attrs, ...rest }) => rest);
+  if (error && isMissingColumnError(error.message)) {
+    // Migraciones 0003/0005 no aplicadas aun: quita las columnas opcionales
+    // (note/note_attributes/first_name/last_name) y reintenta.
+    const legacyPayload = payload.map(
+      ({ note: _note, note_attributes: _attrs, first_name: _fn, last_name: _ln, ...rest }) => rest
+    );
     ({ error } = await getDB()
       .from("shopify_orders")
       .upsert(legacyPayload, { onConflict: "shopify_order_id" }));
