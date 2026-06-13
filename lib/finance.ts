@@ -9,6 +9,7 @@ import type {
   FinanceClaim,
   LogisticsImport,
   LogisticsRow,
+  MoovinTrackingRow,
   PersistedShopifyOrder,
   ProductCost,
   ProductCostVersion,
@@ -586,4 +587,51 @@ export async function createPayrollStaff(input: { name: string; role: string }):
 export async function deletePayrollStaff(id: number): Promise<void> {
   const { error } = await getDB().from("payroll_staff").delete().eq("id", id);
   if (error) throw new Error(`deletePayrollStaff: ${error.message}`);
+}
+
+export async function listMoovinTracking(): Promise<MoovinTrackingRow[]> {
+  const pageSize = 1000;
+  const all: MoovinTrackingRow[] = [];
+  for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("moovin_tracking")
+      .select("*")
+      .order("checked_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listMoovinTracking: ${error.message}`);
+    const page = (data ?? []) as MoovinTrackingRow[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
+}
+
+export async function upsertMoovinTracking(
+  rows: Omit<MoovinTrackingRow, "checked_at">[]
+): Promise<void> {
+  if (!rows.length) return;
+  const payload = rows.map((row) => ({ ...row, checked_at: new Date().toISOString() }));
+  const { error } = await getDB()
+    .from("moovin_tracking")
+    .upsert(payload, { onConflict: "id_package" });
+  if (error) throw new Error(`upsertMoovinTracking: ${error.message}`);
+}
+
+// Guias ya consultadas dentro de la ventana fresca (no hace falta reconsultar).
+export async function getRecentlyCheckedMoovinPackages(maxAgeMinutes: number): Promise<Set<string>> {
+  const since = new Date(Date.now() - maxAgeMinutes * 60 * 1000).toISOString();
+  const fresh = new Set<string>();
+  const pageSize = 1000;
+  for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("moovin_tracking")
+      .select("id_package")
+      .gte("checked_at", since)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`getRecentlyCheckedMoovinPackages: ${error.message}`);
+    const page = (data ?? []) as Array<{ id_package: string }>;
+    for (const row of page) fresh.add(row.id_package);
+    if (page.length < pageSize) break;
+  }
+  return fresh;
 }
