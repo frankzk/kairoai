@@ -36,6 +36,7 @@ import {
   normalizeSearchText,
   type OrderMatchKeySource,
 } from "@/lib/order-matching";
+import { reconcileMoovin, type MoovinDiscrepancy } from "@/lib/moovin-reconcile";
 import type {
   BoxfulFileControl,
   BusinessExpense,
@@ -1160,10 +1161,28 @@ function OrdersTab({
     return Array.from(byGuide.values());
   }, [rows, settlementTraceByKey]);
 
-  const moovinIncidents = useMemo(
-    () => enRouteMoovinGuides.filter((g) => moovinByPackage.get(g.idPackage)?.has_incident).length,
-    [enRouteMoovinGuides, moovinByPackage]
-  );
+  // Reconciliacion: desfases entre lo que dice el sistema y lo que dice Moovin.
+  const [showMoovinDiscrepancies, setShowMoovinDiscrepancies] = useState(false);
+  const moovinDiscrepancies = useMemo(() => {
+    const out: Array<{ row: TrackableOrderRow; moovin: MoovinTrackingRow; discrepancy: MoovinDiscrepancy }> = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+      if (!isMoovinCourier(row.courier) || !row.guide_number || seen.has(row.guide_number)) continue;
+      const moovin = moovinByPackage.get(row.guide_number);
+      if (!moovin) continue;
+      const status = getEffectiveTrackingStatus(
+        row,
+        getSettlementTracesForLogisticsRow(row, settlementTraceByKey)
+      );
+      const discrepancy = reconcileMoovin(status, moovin);
+      if (!discrepancy) continue;
+      seen.add(row.guide_number);
+      out.push({ row, moovin, discrepancy });
+    }
+    return out.sort((a, b) =>
+      a.discrepancy.severity === b.discrepancy.severity ? 0 : a.discrepancy.severity === "high" ? -1 : 1
+    );
+  }, [rows, moovinByPackage, settlementTraceByKey]);
 
   async function updateMoovinStatuses() {
     if (!enRouteMoovinGuides.length) return;
@@ -1273,10 +1292,14 @@ function OrdersTab({
             </p>
             {syncMessage && <p className="text-xs text-muted-foreground">{syncMessage}</p>}
             {moovinMessage && <p className="text-xs text-muted-foreground">{moovinMessage}</p>}
-            {moovinIncidents > 0 && (
-              <p className="text-xs text-amber-300">
-                ⚠ {moovinIncidents} pedido{moovinIncidents === 1 ? "" : "s"} en ruta con incidencia Moovin
-              </p>
+            {moovinDiscrepancies.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowMoovinDiscrepancies(true)}
+                className="text-left text-xs text-amber-300 underline-offset-2 hover:underline"
+              >
+                ⚠ {moovinDiscrepancies.length} discrepancia{moovinDiscrepancies.length === 1 ? "" : "s"} Moovin vs sistema (ver)
+              </button>
             )}
           </div>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
@@ -1478,6 +1501,13 @@ function OrdersTab({
           )}
         </CardContent>
       </Card>
+
+      {showMoovinDiscrepancies && (
+        <MoovinDiscrepanciesModal
+          items={moovinDiscrepancies}
+          onClose={() => setShowMoovinDiscrepancies(false)}
+        />
+      )}
 
       {isLogisticsModalOpen && (
         <div
@@ -1884,6 +1914,94 @@ function formatMoovinDate(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function MoovinDiscrepanciesModal({
+  items,
+  onClose,
+}: {
+  items: Array<{ row: TrackableOrderRow; moovin: MoovinTrackingRow; discrepancy: MoovinDiscrepancy }>;
+  onClose: () => void;
+}) {
+  const [openGuide, setOpenGuide] = useState<{ idPackage: string; lastName: string } | null>(null);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="moovin-discrepancies-title"
+    >
+      <div className="flex max-h-[88vh] w-full max-w-3xl flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h3 id="moovin-discrepancies-title" className="text-base font-semibold">
+              Reconciliacion Moovin vs sistema
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              {items.length} pedido{items.length === 1 ? "" : "s"} donde Moovin y el seguimiento interno no coinciden.
+            </p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto border border-border">
+          <table className="w-full min-w-[760px] text-sm">
+            <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">Pedido</th>
+                <th className="px-3 py-2">Guia</th>
+                <th className="px-3 py-2">Estado Moovin</th>
+                <th className="px-3 py-2">Discrepancia</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(({ row, moovin, discrepancy }) => (
+                <tr key={row.guide_number} className="border-t border-border/50">
+                  <td className="px-3 py-2 font-mono text-xs">{row.order_name || row.shopify_order_name}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{row.guide_number}</td>
+                  <td className="px-3 py-2 text-xs">{moovin.latest_status}</td>
+                  <td className="px-3 py-2">
+                    <span
+                      className={`text-xs ${discrepancy.severity === "high" ? "text-red-300" : "text-amber-300"}`}
+                    >
+                      {discrepancy.message}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenGuide({ idPackage: row.guide_number, lastName: row.last_name ?? "" })
+                      }
+                      className="text-[11px] text-primary hover:underline"
+                    >
+                      ver ruta
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!items.length && (
+                <tr>
+                  <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    Sin discrepancias.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {openGuide && (
+        <MoovinTrackingModal
+          idPackage={openGuide.idPackage}
+          lastName={openGuide.lastName}
+          onClose={() => setOpenGuide(null)}
+        />
+      )}
+    </div>
+  );
 }
 
 type ProductColumnKey = "product_name" | "cost" | "orders" | "dispatch_rate" | "delivery_effectiveness";
