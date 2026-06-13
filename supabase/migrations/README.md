@@ -19,6 +19,7 @@ Estado actual:
 | `0003_shopify_orders_note_columns.sql` | Columnas note/note_attributes + backfill line_items (fix statement timeout) | Pendiente de confirmar |
 | `0004_payroll_staff.sql` | Catalogo de personal de planilla | Si (12/06/2026) |
 | `0005_customer_name_parts.sql` | Columnas first_name/last_name en pedidos, logistica y liquidaciones + backfill | **Pendiente** |
+| `0006_moovin_tracking.sql` | Cache de estado Moovin por guia (incidencias incluidas) | **Pendiente** |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de

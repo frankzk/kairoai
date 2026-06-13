@@ -43,6 +43,7 @@ import type {
   FinanceClaim,
   LogisticsImport,
   LogisticsRow,
+  MoovinTrackingRow,
   PayrollStaff,
   ProductCost,
   ProductCostVersion,
@@ -1126,6 +1127,83 @@ function OrdersTab({
       }),
     [searchedRows, settlementTraceByKey, trackingFilter]
   );
+  // Cache de estados Moovin: se carga una vez y se refresca al actualizar.
+  const [moovinByPackage, setMoovinByPackage] = useState<Map<string, MoovinTrackingRow>>(new Map());
+  const [moovinSyncing, setMoovinSyncing] = useState(false);
+  const [moovinMessage, setMoovinMessage] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/finance/moovin-sync", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled || !Array.isArray(json.rows)) return;
+        setMoovinByPackage(new Map((json.rows as MoovinTrackingRow[]).map((r) => [r.id_package, r])));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Pedidos Moovin en ruta (con guia) que vale la pena consultar/actualizar.
+  const enRouteMoovinGuides = useMemo(() => {
+    const byGuide = new Map<string, { idPackage: string; lastName: string }>();
+    for (const row of rows) {
+      if (!isMoovinCourier(row.courier) || !row.guide_number) continue;
+      const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
+      if (status !== "en_route") continue;
+      if (!byGuide.has(row.guide_number)) {
+        byGuide.set(row.guide_number, { idPackage: row.guide_number, lastName: row.last_name ?? "" });
+      }
+    }
+    return Array.from(byGuide.values());
+  }, [rows, settlementTraceByKey]);
+
+  const moovinIncidents = useMemo(
+    () => enRouteMoovinGuides.filter((g) => moovinByPackage.get(g.idPackage)?.has_incident).length,
+    [enRouteMoovinGuides, moovinByPackage]
+  );
+
+  async function updateMoovinStatuses() {
+    if (!enRouteMoovinGuides.length) return;
+    setMoovinSyncing(true);
+    setMoovinMessage(`Consultando Moovin: 0/${enRouteMoovinGuides.length}...`);
+    const chunkSize = 50;
+    let checked = 0;
+    let incidents = 0;
+    let delivered = 0;
+    try {
+      for (let i = 0; i < enRouteMoovinGuides.length; i += chunkSize) {
+        const chunk = enRouteMoovinGuides.slice(i, i + chunkSize);
+        const res = await fetch("/api/finance/moovin-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ packages: chunk }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? "No se pudo actualizar Moovin");
+        checked += Number(json.checked ?? 0);
+        incidents += Number(json.incidents ?? 0);
+        delivered += Number(json.delivered ?? 0);
+        setMoovinMessage(
+          `Consultando Moovin: ${Math.min(i + chunkSize, enRouteMoovinGuides.length)}/${enRouteMoovinGuides.length}...`
+        );
+      }
+      const refreshed = await fetch("/api/finance/moovin-sync", { cache: "no-store" }).then((r) => r.json());
+      if (Array.isArray(refreshed.rows)) {
+        setMoovinByPackage(new Map((refreshed.rows as MoovinTrackingRow[]).map((r) => [r.id_package, r])));
+      }
+      setMoovinMessage(
+        `Moovin actualizado: ${checked} consultados, ${delivered} entregados, ${incidents} con incidencia.`
+      );
+    } catch (err) {
+      setMoovinMessage(err instanceof Error ? err.message : "No se pudo actualizar Moovin");
+    } finally {
+      setMoovinSyncing(false);
+    }
+  }
+
   const settlementCounts = useMemo(() => {
     const counts: Record<OrderSettlementFilter, number> = {
       all: trackingFilteredRows.length,
@@ -1194,8 +1272,26 @@ function OrdersTab({
               Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.
             </p>
             {syncMessage && <p className="text-xs text-muted-foreground">{syncMessage}</p>}
+            {moovinMessage && <p className="text-xs text-muted-foreground">{moovinMessage}</p>}
+            {moovinIncidents > 0 && (
+              <p className="text-xs text-amber-300">
+                ⚠ {moovinIncidents} pedido{moovinIncidents === 1 ? "" : "s"} en ruta con incidencia Moovin
+              </p>
+            )}
           </div>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
+            {enRouteMoovinGuides.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={moovinSyncing}
+                onClick={updateMoovinStatuses}
+                className="gap-2"
+              >
+                {moovinSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                {moovinSyncing ? "Actualizando..." : `Actualizar Moovin (${enRouteMoovinGuides.length})`}
+              </Button>
+            )}
             <Button type="button" variant="outline" disabled={syncingShopify} onClick={onSyncShopify} className="gap-2">
               <Database className="h-4 w-4" />
               {syncingShopify ? "Sincronizando..." : "Sync Shopify"}
@@ -1354,6 +1450,7 @@ function OrdersTab({
           <OrdersTable
             rows={filteredRows}
             settlementTraceByKey={settlementTraceByKey}
+            moovinByPackage={moovinByPackage}
             emptyLabel={
               orderSearch
                 ? "No encontramos pedidos con ese codigo y estado."
@@ -1453,10 +1550,12 @@ function OrdersTab({
 function OrdersTable({
   rows,
   settlementTraceByKey,
+  moovinByPackage,
   emptyLabel = "No hay pedidos para mostrar.",
 }: {
   rows: TrackableOrderRow[];
   settlementTraceByKey: Map<string, SettlementTrace[]>;
+  moovinByPackage: Map<string, MoovinTrackingRow>;
   emptyLabel?: string;
 }) {
   return (
@@ -1497,7 +1596,11 @@ function OrdersTable({
                     <div className="flex flex-col items-start gap-0.5">
                       <span>{row.courier}</span>
                       {isMoovinCourier(row.courier) && row.guide_number && (
-                        <MoovinTrackingButton idPackage={row.guide_number} lastName={row.last_name ?? ""} />
+                        <MoovinTrackingButton
+                          idPackage={row.guide_number}
+                          lastName={row.last_name ?? ""}
+                          cached={moovinByPackage.get(row.guide_number)}
+                        />
                       )}
                     </div>
                   ) : (
@@ -1588,17 +1691,49 @@ interface MoovinTrackingResult {
   events?: MoovinTrackingEvent[];
 }
 
-function MoovinTrackingButton({ idPackage, lastName }: { idPackage: string; lastName: string }) {
+function MoovinTrackingButton({
+  idPackage,
+  lastName,
+  cached,
+}: {
+  idPackage: string;
+  lastName: string;
+  cached?: MoovinTrackingRow;
+}) {
   const [open, setOpen] = useState(false);
+  const groupClass =
+    cached?.latest_group === "delivered"
+      ? "text-emerald-300"
+      : cached?.latest_group === "failed" || cached?.latest_group === "returned"
+        ? "text-red-300"
+        : "text-cyan-300";
+
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:border-primary/50"
-      >
-        <Search className="h-3 w-3" /> estado
-      </button>
+      {cached?.latest_status ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Ver ruta completa"
+          className="flex flex-col items-start text-left"
+        >
+          <span className={`text-[10px] font-medium ${groupClass}`}>
+            {cached.has_incident ? "⚠ " : ""}
+            {cached.latest_status}
+          </span>
+          {cached.latest_at && (
+            <span className="text-[9px] text-muted-foreground">{formatMoovinDate(cached.latest_at)}</span>
+          )}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:border-primary/50"
+        >
+          <Search className="h-3 w-3" /> estado
+        </button>
+      )}
       {open && (
         <MoovinTrackingModal idPackage={idPackage} lastName={lastName} onClose={() => setOpen(false)} />
       )}

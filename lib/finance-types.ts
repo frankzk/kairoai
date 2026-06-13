@@ -242,3 +242,18 @@ export interface PayrollStaff {
   created_at: string;
   updated_at: string;
 }
+
+export interface MoovinTrackingRow {
+  id_package: string;
+  last_name: string;
+  tracking_number: string;
+  latest_status: string;
+  latest_code: string;
+  latest_group: string;
+  latest_at: string | null;
+  has_incident: boolean;
+  incident_reason: string;
+  delivery_address: string;
+  events: Array<{ code: string; group: string; title: string; description: string; date: string | null; note: string }>;
+  checked_at: string;
+}
