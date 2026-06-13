@@ -10,20 +10,30 @@ import {
 export interface FinanceStoreConfig extends FinanceStorePublic {
   shopDomainEnv: string;
   accessTokenEnv: string;
+  clientIdEnv: string;
+  clientSecretEnv: string;
   legacyShopDomainEnv?: string;
   legacyAccessTokenEnv?: string;
+  legacyClientIdEnv?: string;
+  legacyClientSecretEnv?: string;
 }
 
 const STORE_SECRET_ENV: Record<FinanceStoreCode, Omit<FinanceStoreConfig, keyof FinanceStorePublic>> = {
   "mireva-cr": {
     shopDomainEnv: "SHOPIFY_CR_SHOP_DOMAIN",
     accessTokenEnv: "SHOPIFY_CR_ACCESS_TOKEN",
+    clientIdEnv: "SHOPIFY_CR_CLIENT_ID",
+    clientSecretEnv: "SHOPIFY_CR_CLIENT_SECRET",
     legacyShopDomainEnv: "SHOPIFY_SHOP_DOMAIN",
     legacyAccessTokenEnv: "SHOPIFY_ACCESS_TOKEN",
+    legacyClientIdEnv: "SHOPIFY_CLIENT_ID",
+    legacyClientSecretEnv: "SHOPIFY_CLIENT_SECRET",
   },
   "mireva-hn": {
     shopDomainEnv: "SHOPIFY_HN_SHOP_DOMAIN",
     accessTokenEnv: "SHOPIFY_HN_ACCESS_TOKEN",
+    clientIdEnv: "SHOPIFY_HN_CLIENT_ID",
+    clientSecretEnv: "SHOPIFY_HN_CLIENT_SECRET",
   },
 };
 
@@ -66,9 +76,27 @@ export function getShopifyCredentials(store: FinanceStoreConfig): {
   return { shop, token, missing };
 }
 
+export function getShopifyOAuthCredentials(store: FinanceStoreConfig): {
+  clientId: string;
+  clientSecret: string;
+  missing: string[];
+} {
+  const clientId =
+    process.env[store.clientIdEnv] ||
+    (store.legacyClientIdEnv ? process.env[store.legacyClientIdEnv] : "") ||
+    "";
+  const clientSecret =
+    process.env[store.clientSecretEnv] ||
+    (store.legacyClientSecretEnv ? process.env[store.legacyClientSecretEnv] : "") ||
+    "";
+  const missing: string[] = [];
+  if (!clientId) missing.push(store.clientIdEnv);
+  if (!clientSecret) missing.push(store.clientSecretEnv);
+  return { clientId, clientSecret, missing };
+}
+
 export function getStoreCodeFromUnknown(value: unknown): FinanceStoreCode {
   return normalizeFinanceStoreCode(typeof value === "string" ? value : null);
 }
 
 export { FINANCE_STORES, DEFAULT_FINANCE_STORE_CODE, normalizeFinanceStoreCode };
-

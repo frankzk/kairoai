@@ -106,7 +106,9 @@ Multi-store rule:
   - `mireva-hn` (`store_id = 2`, currency `HNL`)
 - The `/admin/finance` header includes a store selector. Every finance API request must carry the selected `store` value.
 - Costa Rica keeps the legacy env fallback `SHOPIFY_SHOP_DOMAIN` + `SHOPIFY_ACCESS_TOKEN`.
-- Honduras must use `SHOPIFY_HN_SHOP_DOMAIN` + `SHOPIFY_HN_ACCESS_TOKEN`.
+- Costa Rica OAuth can also use `SHOPIFY_CR_CLIENT_ID` / `SHOPIFY_CR_CLIENT_SECRET`, with legacy fallback to `SHOPIFY_CLIENT_ID` / `SHOPIFY_CLIENT_SECRET`.
+- Honduras must use `SHOPIFY_HN_SHOP_DOMAIN`, `SHOPIFY_HN_CLIENT_ID`, `SHOPIFY_HN_CLIENT_SECRET`, and `SHOPIFY_HN_ACCESS_TOKEN`.
+- Do not use the Costa Rica Shopify app credentials for Honduras. Shopify blocks app installation across organizations, and the authorization screen will show the wrong app name/store owner.
 - Shopify OAuth token generation is store-aware:
   - Costa Rica: `/api/shopify/auth?store=mireva-cr`
   - Honduras: `/api/shopify/auth?store=mireva-hn`
