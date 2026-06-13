@@ -1469,6 +1469,41 @@ function OrdersTab({
                       : " - Sin Boxful importado"
                   }`}
             </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() =>
+                exportCsv(
+                  "pedidos.csv",
+                  filteredRows.map((row) => {
+                    const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
+                    const status = getEffectiveTrackingStatus(row, traces);
+                    const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
+                    return {
+                      orden: row.order_name || row.shopify_order_name,
+                      origen: row.source,
+                      guia: row.guide_number,
+                      transportadora: row.courier ?? "",
+                      estado_moovin: moovin?.latest_status ?? "",
+                      incidencia_moovin: moovin?.has_incident ? "si" : "",
+                      cliente: row.customer_name,
+                      apellido: row.last_name ?? "",
+                      estado_seguimiento: getTrackingStatusLabel(row, traces, status),
+                      shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
+                      fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
+                      estado_liquidacion: traces.map((t) => t.settlement_status).join(" | ") || "sin liquidacion",
+                      a_liquidar: traces.length ? sum(traces.map((t) => t.amount_to_liquidate)) : "",
+                      cod: row.cod_amount,
+                      items: (row.package_items ?? []).map((item) => item.title).join("; "),
+                    };
+                  })
+                )
+              }
+            >
+              <Download className="h-4 w-4" /> Exportar ({filteredRows.length})
+            </Button>
           </div>
           <OrdersTable
             rows={filteredRows}
