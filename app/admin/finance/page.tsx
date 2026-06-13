@@ -1457,21 +1457,22 @@ function OrdersTable({
 }) {
   return (
     <div className="max-h-[620px] overflow-auto border border-border">
-      <table className="w-full min-w-[1440px] text-sm">
+      <table className="w-full min-w-[1180px] text-sm">
         <thead className="sticky top-0 bg-card">
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="px-3 py-2">Orden</th>
-            <th className="px-3 py-2">Origen</th>
-            <th className="px-3 py-2">Guia</th>
-            <th className="px-3 py-2">Cliente</th>
-            <th className="px-3 py-2">Estado seguimiento</th>
-            <th className="px-3 py-2">Shopify</th>
-            <th className="px-3 py-2">Fecha Shopify</th>
-            <th className="px-3 py-2">Estado liquidacion</th>
-            <th className="px-3 py-2">Archivo liquidacion</th>
-            <th className="px-3 py-2 text-right">A liquidar</th>
-            <th className="px-3 py-2">Items</th>
-            <th className="px-3 py-2 text-right">COD</th>
+            <th className="px-2 py-1.5">Orden</th>
+            <th className="px-2 py-1.5">Origen</th>
+            <th className="px-2 py-1.5">Guia</th>
+            <th className="px-2 py-1.5">Transportadora</th>
+            <th className="px-2 py-1.5">Cliente</th>
+            <th className="px-2 py-1.5">Estado seguimiento</th>
+            <th className="px-2 py-1.5">Shopify</th>
+            <th className="px-2 py-1.5">Fecha</th>
+            <th className="px-2 py-1.5">Liquidacion</th>
+            <th className="px-2 py-1.5">Archivo</th>
+            <th className="px-2 py-1.5 text-right">A liquidar</th>
+            <th className="px-2 py-1.5">Items</th>
+            <th className="px-2 py-1.5 text-right">COD</th>
           </tr>
         </thead>
         <tbody>
@@ -1480,53 +1481,67 @@ function OrdersTable({
             const trackingStatus = getEffectiveTrackingStatus(row, traces);
             return (
               <tr key={row.row_key} className="border-b border-border/50">
-                <td className="px-3 py-2 font-mono text-xs">{row.order_name}</td>
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5 font-mono text-xs">{row.order_name}</td>
+                <td className="px-2 py-1.5">
                   <Badge variant={row.source === "boxful" ? "success" : row.source === "liquidacion" ? "warning" : "muted"}>
                     {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
                   </Badge>
                 </td>
-                <td className="px-3 py-2 font-mono text-xs">
-                  {row.guide_number || "-"}
-                  {row.courier && (
-                    <span className="mt-0.5 block font-sans text-[10px] text-muted-foreground">{row.courier}</span>
+                <td className="px-2 py-1.5 font-mono text-xs">{row.guide_number || "-"}</td>
+                <td className="px-2 py-1.5 text-xs">
+                  {row.courier ? (
+                    <div className="flex flex-col items-start gap-0.5">
+                      <span>{row.courier}</span>
+                      {isMoovinCourier(row.courier) && row.guide_number && (
+                        <MoovinTrackingButton idPackage={row.guide_number} lastName={row.last_name ?? ""} />
+                      )}
+                    </div>
+                  ) : (
+                    "-"
                   )}
                 </td>
-                <td className="px-3 py-2">
-                  {row.customer_name || "Sin nombre"}
+                <td className="px-2 py-1.5">
+                  <span className="block max-w-[150px] truncate" title={row.customer_name || "Sin nombre"}>
+                    {row.customer_name || "Sin nombre"}
+                  </span>
                   {row.last_name && (
-                    <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                    <span className="mt-0.5 block max-w-[150px] truncate text-[10px] text-muted-foreground">
                       Apellido: {row.last_name}
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5">
                   <StatusBadge
                     status={trackingStatus}
                     label={getTrackingStatusLabel(row, traces, trackingStatus)}
                   />
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5">
                   <Badge variant={row.match_status === "matched" ? "success" : "warning"}>
                     {row.match_status === "matched" ? row.shopify_order_name : "sin match"}
                   </Badge>
                 </td>
-                <td className="px-3 py-2 font-mono text-xs">
+                <td className="px-2 py-1.5 font-mono text-xs">
                   {row.shopify_created_at ? formatDate(row.shopify_created_at) : "-"}
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5">
                   <SettlementStatusBadge traces={traces} />
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5">
                   <SettlementFileBadge traces={traces} />
                 </td>
-                <td className="px-3 py-2 text-right font-mono text-xs">
+                <td className="px-2 py-1.5 text-right font-mono text-xs">
                   {traces.length ? currency(sum(traces.map((trace) => trace.amount_to_liquidate))) : "-"}
                 </td>
-                <td className="px-3 py-2 text-xs text-muted-foreground">
-                  {(row.package_items ?? []).slice(0, 2).map((item) => item.title).join(", ") || "-"}
+                <td className="px-2 py-1.5 text-xs text-muted-foreground">
+                  <span
+                    className="block max-w-[140px] truncate"
+                    title={(row.package_items ?? []).map((item) => item.title).join(", ")}
+                  >
+                    {(row.package_items ?? []).map((item) => item.title).join(", ") || "-"}
+                  </span>
                 </td>
-                <td className="px-3 py-2 text-right font-mono text-xs">
+                <td className="px-2 py-1.5 text-right font-mono text-xs">
                   {currency(row.cod_amount)}
                 </td>
               </tr>
@@ -1534,7 +1549,7 @@ function OrdersTable({
           })}
           {!rows.length && (
             <tr>
-              <td colSpan={12} className="px-3 py-8 text-center text-sm text-muted-foreground">
+              <td colSpan={13} className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {emptyLabel}
               </td>
             </tr>
@@ -1543,6 +1558,193 @@ function OrdersTable({
       </table>
     </div>
   );
+}
+
+function isMoovinCourier(courier: string | undefined): boolean {
+  return String(courier ?? "").toLowerCase().includes("moovin");
+}
+
+interface MoovinTrackingEvent {
+  code: string;
+  group: "delivered" | "failed" | "returned" | "in_progress";
+  title: string;
+  description: string;
+  date: string | null;
+  note: string;
+}
+
+interface MoovinTrackingResult {
+  ok?: boolean;
+  error?: string;
+  tracking_number?: string;
+  latest_status?: string | null;
+  latest_group?: MoovinTrackingEvent["group"] | null;
+  latest_at?: string | null;
+  delivery_address?: string;
+  events?: MoovinTrackingEvent[];
+}
+
+function MoovinTrackingButton({ idPackage, lastName }: { idPackage: string; lastName: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:border-primary/50"
+      >
+        <Search className="h-3 w-3" /> estado
+      </button>
+      {open && (
+        <MoovinTrackingModal idPackage={idPackage} lastName={lastName} onClose={() => setOpen(false)} />
+      )}
+    </>
+  );
+}
+
+function MoovinTrackingModal({
+  idPackage,
+  lastName,
+  onClose,
+}: {
+  idPackage: string;
+  lastName: string;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [data, setData] = useState<MoovinTrackingResult | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    fetch(
+      `/api/finance/moovin-tracking?idPackage=${encodeURIComponent(idPackage)}&lastName=${encodeURIComponent(lastName)}`,
+      { cache: "no-store" }
+    )
+      .then((res) => res.json())
+      .then((json: MoovinTrackingResult) => {
+        if (cancelled) return;
+        if (json.error || json.ok === false) {
+          setError(json.error || "Moovin no devolvio datos para esta guia.");
+        } else {
+          setData(json);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setError("No se pudo consultar Moovin.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [idPackage, lastName]);
+
+  const events = data?.events ?? [];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="moovin-tracking-title"
+    >
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 id="moovin-tracking-title" className="text-base font-semibold">
+              Seguimiento Moovin
+            </h3>
+            <p className="font-mono text-xs text-muted-foreground">
+              Guia {idPackage}
+              {lastName ? ` · ${lastName}` : ""}
+            </p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center gap-2 px-1 py-6 text-sm text-muted-foreground">
+            <RefreshCw className="h-4 w-4 animate-spin" /> Consultando Moovin...
+          </div>
+        ) : error ? (
+          <p className="border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{error}</p>
+        ) : (
+          <>
+            <div className="mb-3 border border-border bg-background p-3">
+              <p className="text-[11px] text-muted-foreground">Ultimo estado</p>
+              <p
+                className={`mt-0.5 text-sm font-semibold ${
+                  data?.latest_group === "delivered"
+                    ? "text-emerald-300"
+                    : data?.latest_group === "failed" || data?.latest_group === "returned"
+                      ? "text-red-300"
+                      : "text-foreground"
+                }`}
+              >
+                {data?.latest_status ?? "Sin estado"}
+              </p>
+              {data?.latest_at && (
+                <p className="text-[11px] text-muted-foreground">{formatMoovinDate(data.latest_at)}</p>
+              )}
+              {data?.delivery_address && (
+                <p className="mt-1 text-[11px] text-muted-foreground">Entrega: {data.delivery_address}</p>
+              )}
+            </div>
+            <div className="min-h-0 flex-1 space-y-2 overflow-auto">
+              {events.map((event, index) => (
+                <div key={`${event.code}-${index}`} className="flex gap-2">
+                  <span
+                    className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                      event.group === "delivered"
+                        ? "bg-emerald-400"
+                        : event.group === "failed" || event.group === "returned"
+                          ? "bg-red-400"
+                          : "bg-cyan-400"
+                    }`}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span className="text-xs font-medium">{event.title}</span>
+                      {event.date && (
+                        <span className="text-[10px] text-muted-foreground">{formatMoovinDate(event.date)}</span>
+                      )}
+                    </div>
+                    {event.description && (
+                      <p className="text-[11px] text-muted-foreground">{event.description}</p>
+                    )}
+                    {event.note && (
+                      <p className="text-[11px] text-amber-200">{event.note}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {!events.length && (
+                <p className="text-sm text-muted-foreground">Sin eventos de seguimiento.</p>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatMoovinDate(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("es-CR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 type ProductColumnKey = "product_name" | "cost" | "orders" | "dispatch_rate" | "delivery_effectiveness";
