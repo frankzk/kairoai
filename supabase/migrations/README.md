@@ -16,6 +16,7 @@ Estado actual:
 | --- | --- | --- |
 | `0001_schema.sql` | Tablas base del agente de voz (calls, retries, upsell, settings) | Si |
 | `0002_finance_schema.sql` | Modulo financiero (shopify_orders, settlements, logistics, costos, gastos, claims) | Si |
+| `0003_multi_store_finance.sql` | Dimension `stores` y `store_id` en tablas financieras para separar Costa Rica y Honduras | Pendiente |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de

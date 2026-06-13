@@ -1,4 +1,5 @@
 import { getDB } from "@/lib/db";
+import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
 
 export * from "./finance-types";
 import type {
@@ -16,20 +17,25 @@ import type {
   SettlementRow,
 } from "./finance-types";
 
-export async function listProductCosts(): Promise<ProductCost[]> {
+export async function listProductCosts(storeId = DEFAULT_FINANCE_STORE_ID): Promise<ProductCost[]> {
   const { data, error } = await getDB()
     .from("product_costs")
     .select("*")
+    .eq("store_id", storeId)
     .order("active", { ascending: false })
     .order("sku");
   if (error) throw new Error(`listProductCosts: ${error.message}`);
   return (data ?? []) as ProductCost[];
 }
 
-export async function listProductCostVersions(sku?: string): Promise<ProductCostVersion[]> {
+export async function listProductCostVersions(
+  sku?: string,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<ProductCostVersion[]> {
   let query = getDB()
     .from("product_cost_versions")
     .select("*")
+    .eq("store_id", storeId)
     .order("effective_from", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(1000);
@@ -40,9 +46,11 @@ export async function listProductCostVersions(sku?: string): Promise<ProductCost
 }
 
 export async function upsertProductCost(
-  input: Partial<ProductCost> & { sku: string }
+  input: Partial<ProductCost> & { sku: string },
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<ProductCost> {
   const payload = {
+    store_id: storeId,
     sku: input.sku.trim().toLowerCase(),
     product_name: input.product_name?.trim() ?? "",
     unit_cost: Number(input.unit_cost ?? 0),
@@ -55,7 +63,7 @@ export async function upsertProductCost(
 
   const { data, error } = await getDB()
     .from("product_costs")
-    .upsert(payload, { onConflict: "sku" })
+    .upsert(payload, { onConflict: "store_id,sku" })
     .select()
     .single();
   if (error) throw new Error(`upsertProductCost: ${error.message}`);
@@ -63,6 +71,7 @@ export async function upsertProductCost(
   const { error: versionError } = await getDB()
     .from("product_cost_versions")
     .insert({
+      store_id: storeId,
       sku: payload.sku,
       product_name: payload.product_name,
       unit_cost: payload.unit_cost,
@@ -77,15 +86,26 @@ export async function upsertProductCost(
   return data as ProductCost;
 }
 
-export async function deleteProductCost(id: number): Promise<void> {
-  const { error } = await getDB().from("product_costs").delete().eq("id", id);
+export async function deleteProductCost(
+  id: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<void> {
+  const { error } = await getDB()
+    .from("product_costs")
+    .delete()
+    .eq("id", id)
+    .eq("store_id", storeId);
   if (error) throw new Error(`deleteProductCost: ${error.message}`);
 }
 
-export async function listExpenses(type?: ExpenseType): Promise<BusinessExpense[]> {
+export async function listExpenses(
+  type?: ExpenseType,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<BusinessExpense[]> {
   let query = getDB()
     .from("business_expenses")
     .select("*")
+    .eq("store_id", storeId)
     .order("expense_date", { ascending: false })
     .order("created_at", { ascending: false });
   if (type) query = query.eq("type", type);
@@ -95,10 +115,12 @@ export async function listExpenses(type?: ExpenseType): Promise<BusinessExpense[
 }
 
 export async function createExpense(
-  input: Omit<BusinessExpense, "id" | "created_at" | "updated_at">
+  input: Omit<BusinessExpense, "id" | "created_at" | "updated_at" | "store_id">,
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<BusinessExpense> {
   const payload = {
     ...input,
+    store_id: storeId,
     amount: Number(input.amount ?? 0),
     currency: input.currency || "CRC",
     updated_at: new Date().toISOString(),
@@ -114,40 +136,60 @@ export async function createExpense(
 
 export async function updateExpense(
   id: number,
-  updates: Partial<BusinessExpense>
+  updates: Partial<BusinessExpense>,
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<void> {
   const { error } = await getDB()
     .from("business_expenses")
     .update({ ...updates, updated_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("store_id", storeId);
   if (error) throw new Error(`updateExpense: ${error.message}`);
 }
 
-export async function deleteExpense(id: number): Promise<void> {
-  const { error } = await getDB().from("business_expenses").delete().eq("id", id);
+export async function deleteExpense(
+  id: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<void> {
+  const { error } = await getDB()
+    .from("business_expenses")
+    .delete()
+    .eq("id", id)
+    .eq("store_id", storeId);
   if (error) throw new Error(`deleteExpense: ${error.message}`);
 }
 
-export async function listSettlementImports(): Promise<SettlementImport[]> {
+export async function listSettlementImports(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<SettlementImport[]> {
   const { data, error } = await getDB()
     .from("settlement_imports")
     .select("*")
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false });
   if (error) throw new Error(`listSettlementImports: ${error.message}`);
   return (data ?? []) as SettlementImport[];
 }
 
-export async function deleteSettlementImport(id: number): Promise<void> {
-  const { error } = await getDB().from("settlement_imports").delete().eq("id", id);
+export async function deleteSettlementImport(
+  id: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<void> {
+  const { error } = await getDB()
+    .from("settlement_imports")
+    .delete()
+    .eq("id", id)
+    .eq("store_id", storeId);
   if (error) throw new Error(`deleteSettlementImport: ${error.message}`);
 }
 
 export async function createSettlementImport(
-  input: Omit<SettlementImport, "id" | "created_at">
+  input: Omit<SettlementImport, "id" | "created_at" | "store_id">,
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<SettlementImport> {
   const { data, error } = await getDB()
     .from("settlement_imports")
-    .insert(input)
+    .insert({ ...input, store_id: storeId })
     .select()
     .single();
   if (error) throw new Error(`createSettlementImport: ${error.message}`);
@@ -163,9 +205,12 @@ export async function insertSettlementRows(
 }
 
 const SETTLEMENT_ROW_COLUMNS =
-  "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, service_type, cod_amount, cod_commission, card_commission, delivery_cost, pick_pack_cost, packaging_cost, amount_to_liquidate, settlement_status, internal_status, match_status, shopify_order_id, shopify_order_name, shopify_financial_status, shopify_fulfillment_status, shopify_total, shopify_created_at, order_items, created_at";
+  "id, store_id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, service_type, cod_amount, cod_commission, card_commission, delivery_cost, pick_pack_cost, packaging_cost, amount_to_liquidate, settlement_status, internal_status, match_status, shopify_order_id, shopify_order_name, shopify_financial_status, shopify_fulfillment_status, shopify_total, shopify_created_at, order_items, created_at";
 
-export async function listSettlementRows(importId?: number): Promise<SettlementRow[]> {
+export async function listSettlementRows(
+  importId?: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<SettlementRow[]> {
   // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
   // defecto); se pagina con range() para devolver todas las filas.
   const pageSize = 1000;
@@ -174,6 +219,7 @@ export async function listSettlementRows(importId?: number): Promise<SettlementR
     let query = getDB()
       .from("settlement_rows")
       .select(SETTLEMENT_ROW_COLUMNS)
+      .eq("store_id", storeId)
       .order("created_on", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false })
       .range(from, from + pageSize - 1);
@@ -187,29 +233,40 @@ export async function listSettlementRows(importId?: number): Promise<SettlementR
   return all;
 }
 
-export async function listLogisticsImports(): Promise<LogisticsImport[]> {
+export async function listLogisticsImports(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<LogisticsImport[]> {
   const { data, error } = await getDB()
     .from("logistics_imports")
     .select("*")
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false });
   if (error) throw new Error(`listLogisticsImports: ${error.message}`);
   return (data ?? []) as LogisticsImport[];
 }
 
 export async function createLogisticsImport(
-  input: Omit<LogisticsImport, "id" | "created_at">
+  input: Omit<LogisticsImport, "id" | "created_at" | "store_id">,
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<LogisticsImport> {
   const { data, error } = await getDB()
     .from("logistics_imports")
-    .insert(input)
+    .insert({ ...input, store_id: storeId })
     .select()
     .single();
   if (error) throw new Error(`createLogisticsImport: ${error.message}`);
   return data as LogisticsImport;
 }
 
-export async function deleteLogisticsImport(id: number): Promise<void> {
-  const { error } = await getDB().from("logistics_imports").delete().eq("id", id);
+export async function deleteLogisticsImport(
+  id: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<void> {
+  const { error } = await getDB()
+    .from("logistics_imports")
+    .delete()
+    .eq("id", id)
+    .eq("store_id", storeId);
   if (error) throw new Error(`deleteLogisticsImport: ${error.message}`);
 }
 
@@ -222,9 +279,12 @@ export async function insertLogisticsRows(
 }
 
 const LOGISTICS_ROW_COLUMNS =
-  "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, package_items, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
+  "id, store_id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, package_items, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
 
-export async function listLogisticsRows(importId?: number): Promise<LogisticsRow[]> {
+export async function listLogisticsRows(
+  importId?: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<LogisticsRow[]> {
   // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
   // defecto); se pagina con range() para devolver todas las filas.
   const pageSize = 1000;
@@ -233,6 +293,7 @@ export async function listLogisticsRows(importId?: number): Promise<LogisticsRow
     let query = getDB()
       .from("logistics_rows")
       .select(LOGISTICS_ROW_COLUMNS)
+      .eq("store_id", storeId)
       .order("created_on", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false })
       .range(from, from + pageSize - 1);
@@ -249,7 +310,7 @@ export async function listLogisticsRows(importId?: number): Promise<LogisticsRow
 // Sin raw_order completo: las lineas y notas se resuelven aca para que la
 // respuesta con miles de pedidos no se dispare de tamano.
 const PERSISTED_ORDER_SUMMARY_COLUMNS =
-  "id, shopify_order_id, order_number, name, customer_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note:raw_order->>note, note_attributes:raw_order->note_attributes, raw_line_items:raw_order->line_items";
+  "id, store_id, shopify_order_id, order_number, name, customer_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note:raw_order->>note, note_attributes:raw_order->note_attributes, raw_line_items:raw_order->line_items";
 
 export interface PersistedShopifyOrderSummary
   extends Omit<PersistedShopifyOrder, "raw_order"> {
@@ -257,7 +318,11 @@ export interface PersistedShopifyOrderSummary
   note_attributes: Array<{ name?: string | null; value?: string | null }>;
 }
 
-export async function listPersistedShopifyOrders(limit = 1000, offset = 0): Promise<PersistedShopifyOrderSummary[]> {
+export async function listPersistedShopifyOrders(
+  limit = 1000,
+  offset = 0,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<PersistedShopifyOrderSummary[]> {
   type RawSummary = PersistedShopifyOrderSummary & {
     raw_line_items: Array<Record<string, unknown>> | null;
   };
@@ -273,6 +338,7 @@ export async function listPersistedShopifyOrders(limit = 1000, offset = 0): Prom
     const { data, error } = await getDB()
       .from("shopify_orders")
       .select(PERSISTED_ORDER_SUMMARY_COLUMNS)
+      .eq("store_id", storeId)
       .order("shopify_created_at", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false })
       .range(from, to);
@@ -304,19 +370,23 @@ export interface PersistedShopifyCoverage {
   newest: string | null;
 }
 
-export async function getPersistedShopifyCoverage(): Promise<PersistedShopifyCoverage> {
+export async function getPersistedShopifyCoverage(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<PersistedShopifyCoverage> {
   const db = getDB();
   const [countRes, oldestRes, newestRes] = await Promise.all([
-    db.from("shopify_orders").select("id", { count: "exact", head: true }),
+    db.from("shopify_orders").select("id", { count: "exact", head: true }).eq("store_id", storeId),
     db
       .from("shopify_orders")
       .select("shopify_created_at")
+      .eq("store_id", storeId)
       .not("shopify_created_at", "is", null)
       .order("shopify_created_at", { ascending: true })
       .limit(1),
     db
       .from("shopify_orders")
       .select("shopify_created_at")
+      .eq("store_id", storeId)
       .not("shopify_created_at", "is", null)
       .order("shopify_created_at", { ascending: false })
       .limit(1),
@@ -330,32 +400,39 @@ export async function getPersistedShopifyCoverage(): Promise<PersistedShopifyCov
 }
 
 export async function upsertPersistedShopifyOrders(
-  orders: Omit<PersistedShopifyOrder, "id" | "synced_at">[]
+  orders: Omit<PersistedShopifyOrder, "id" | "synced_at" | "store_id">[],
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<void> {
   if (!orders.length) return;
   const payload = orders.map((order) => ({
     ...order,
+    store_id: storeId,
     synced_at: new Date().toISOString(),
   }));
   const { error } = await getDB()
     .from("shopify_orders")
-    .upsert(payload, { onConflict: "shopify_order_id" });
+    .upsert(payload, { onConflict: "store_id,shopify_order_id" });
   if (error) throw new Error(`upsertPersistedShopifyOrders: ${error.message}`);
 }
 
-export async function listFinanceClaims(): Promise<FinanceClaim[]> {
+export async function listFinanceClaims(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<FinanceClaim[]> {
   const { data, error } = await getDB()
     .from("finance_claims")
     .select("*")
+    .eq("store_id", storeId)
     .order("updated_at", { ascending: false });
   if (error) throw new Error(`listFinanceClaims: ${error.message}`);
   return (data ?? []) as FinanceClaim[];
 }
 
 export async function upsertFinanceClaim(
-  input: Partial<FinanceClaim> & { anomaly_key: string }
+  input: Partial<FinanceClaim> & { anomaly_key: string },
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<FinanceClaim> {
   const payload = {
+    store_id: storeId,
     anomaly_key: input.anomaly_key,
     order_name: input.order_name ?? "",
     guide_number: input.guide_number ?? "",
@@ -368,17 +445,20 @@ export async function upsertFinanceClaim(
   };
   const { data, error } = await getDB()
     .from("finance_claims")
-    .upsert(payload, { onConflict: "anomaly_key" })
+    .upsert(payload, { onConflict: "store_id,anomaly_key" })
     .select()
     .single();
   if (error) throw new Error(`upsertFinanceClaim: ${error.message}`);
   return data as FinanceClaim;
 }
 
-export async function listBoxfulFileControls(): Promise<BoxfulFileControl[]> {
+export async function listBoxfulFileControls(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<BoxfulFileControl[]> {
   const { data, error } = await getDB()
     .from("boxful_file_controls")
     .select("*")
+    .eq("store_id", storeId)
     .order("cutoff_date", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
   if (error) throw new Error(`listBoxfulFileControls: ${error.message}`);
@@ -386,9 +466,11 @@ export async function listBoxfulFileControls(): Promise<BoxfulFileControl[]> {
 }
 
 export async function upsertBoxfulFileControl(
-  input: Partial<BoxfulFileControl> & { file_name: string; file_type: "logistica" | "liquidacion" }
+  input: Partial<BoxfulFileControl> & { file_name: string; file_type: "logistica" | "liquidacion" },
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<BoxfulFileControl> {
   const payload = {
+    store_id: storeId,
     file_name: input.file_name,
     file_type: input.file_type,
     cutoff_date: input.cutoff_date ?? null,
@@ -400,18 +482,20 @@ export async function upsertBoxfulFileControl(
   };
   const { data, error } = await getDB()
     .from("boxful_file_controls")
-    .upsert(payload, { onConflict: "file_name" })
+    .upsert(payload, { onConflict: "store_id,file_name,file_type" })
     .select()
     .single();
   if (error) throw new Error(`upsertBoxfulFileControl: ${error.message}`);
   return data as BoxfulFileControl;
 }
 
-export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {
+export async function getProfitabilitySummary(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<ProfitabilitySummary> {
   const [rows, costs, expenses] = await Promise.all([
-    listSettlementRows(),
-    listProductCosts(),
-    listExpenses(),
+    listSettlementRows(undefined, storeId),
+    listProductCosts(storeId),
+    listExpenses(undefined, storeId),
   ]);
 
   const costBySku = new Map<string, ProductCost>();

@@ -5,6 +5,7 @@ import {
   upsertPersistedShopifyOrders,
   type PersistedShopifyOrder,
 } from "@/lib/finance";
+import { getShopifyCredentials, getStoreFromBody, getStoreFromSearchParams, type FinanceStoreConfig } from "@/lib/stores";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -17,13 +18,14 @@ const MAX_GET_LIMIT = 2000;
 const PAGE_DELAY_MS = 350;
 
 export async function GET(req: NextRequest) {
+  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
   try {
     const requestedLimit = Number(req.nextUrl.searchParams.get("limit") || 1000);
     const offset = Math.max(Number(req.nextUrl.searchParams.get("offset") || 0), 0);
     const limit = Math.min(Math.max(requestedLimit, 1), MAX_GET_LIMIT);
     const [orders, coverage] = await Promise.all([
-      listPersistedShopifyOrders(limit + 1, offset),
-      getPersistedShopifyCoverage(),
+      listPersistedShopifyOrders(limit + 1, offset, store.id),
+      getPersistedShopifyCoverage(store.id),
     ]);
     const pageOrders = orders.slice(0, limit);
     const hasMore = orders.length > limit;
@@ -31,6 +33,7 @@ export async function GET(req: NextRequest) {
       orders: pageOrders,
       total: pageOrders.length,
       coverage,
+      store: store.code,
       offset,
       limit,
       has_more: hasMore,
@@ -45,6 +48,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
+    const store = getStoreFromBody(body);
     const maxPages = Math.min(
       Math.max(Number(body.max_pages ?? DEFAULT_SYNC_PAGES_PER_REQUEST), 1),
       MAX_SYNC_PAGES_PER_REQUEST
@@ -58,26 +62,26 @@ export async function POST(req: NextRequest) {
     } else if (mode === "backfill") {
       // Continua hacia atras desde el pedido mas viejo ya sincronizado, asi
       // cada llamada avanza aunque la anterior haya muerto a mitad de camino.
-      const coverage = await getPersistedShopifyCoverage();
+      const coverage = await getPersistedShopifyCoverage(store.id);
       if (!coverage.oldest) {
-        url = buildInitialUrl(createdAtMin);
+        url = buildInitialUrl(createdAtMin, undefined, store);
       } else if (coverage.oldest <= createdAtMin) {
-        return NextResponse.json({ synced: 0, done: true, oldest: coverage.oldest });
+        return NextResponse.json({ synced: 0, done: true, oldest: coverage.oldest, store: store.code });
       } else {
         // Se excluye el pedido frontera (ya sincronizado) restando un segundo,
         // para que cada llamada avance en vez de repetir la misma ventana.
         const beforeOldest = new Date(new Date(coverage.oldest).getTime() - 1000).toISOString();
-        url = buildInitialUrl(createdAtMin, beforeOldest);
+        url = buildInitialUrl(createdAtMin, beforeOldest, store);
       }
     } else {
-      url = buildInitialUrl(createdAtMin);
+      url = buildInitialUrl(createdAtMin, undefined, store);
     }
 
     const rawOrders: Array<Record<string, unknown>> = [];
     let pagesChecked = 0;
     for (let page = 0; page < maxPages && url; page++) {
       if (page > 0) await sleep(PAGE_DELAY_MS);
-      const res = await fetchShopifyPage(url);
+      const res = await fetchShopifyPage(url, store);
 
       if (!res.ok) {
         const text = await res.text();
@@ -97,7 +101,7 @@ export async function POST(req: NextRequest) {
     }
 
     const orders = rawOrders.map(mapShopifyOrder);
-    await upsertPersistedShopifyOrders(orders);
+    await upsertPersistedShopifyOrders(orders, store.id);
 
     const oldestFetched = orders.reduce<string | null>((min, order) => {
       const created = order.shopify_created_at;
@@ -113,6 +117,7 @@ export async function POST(req: NextRequest) {
       oldest: oldestFetched,
       created_at_min: createdAtMin,
       pages_checked: pagesChecked,
+      store: store.code,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error sincronizando Shopify";
@@ -120,11 +125,12 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function fetchShopifyPage(url: string): Promise<Response> {
+async function fetchShopifyPage(url: string, store: FinanceStoreConfig): Promise<Response> {
+  const { token } = getShopifyCredentials(store);
   const doFetch = () =>
     fetch(url, {
       headers: {
-        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN ?? "",
+        "X-Shopify-Access-Token": token,
         "Content-Type": "application/json",
       },
       cache: "no-store",
@@ -143,9 +149,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function buildInitialUrl(createdAtMin: string, createdAtMax?: string): string {
-  if (!process.env.SHOPIFY_SHOP_DOMAIN || !process.env.SHOPIFY_ACCESS_TOKEN) {
-    throw new Error("Shopify no configurado: faltan SHOPIFY_SHOP_DOMAIN o SHOPIFY_ACCESS_TOKEN.");
+function buildInitialUrl(
+  createdAtMin: string,
+  createdAtMax: string | undefined,
+  store: FinanceStoreConfig
+): string {
+  const { shop, token, missing } = getShopifyCredentials(store);
+  if (!shop || !token) {
+    throw new Error(
+      `Shopify ${store.shortLabel} no configurado: faltan ${missing.join(" y ")} en Vercel.`
+    );
   }
 
   const fields = [
@@ -177,10 +190,12 @@ function buildInitialUrl(createdAtMin: string, createdAtMax?: string): string {
     fields,
   });
   if (createdAtMax) params.set("created_at_max", createdAtMax);
-  return `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/orders.json?${params.toString()}`;
+  return `https://${shop}/admin/api/2024-01/orders.json?${params.toString()}`;
 }
 
-function mapShopifyOrder(order: Record<string, unknown>): Omit<PersistedShopifyOrder, "id" | "synced_at"> {
+function mapShopifyOrder(
+  order: Record<string, unknown>
+): Omit<PersistedShopifyOrder, "id" | "synced_at" | "store_id"> {
   const customer = order.customer as Record<string, unknown> | undefined;
   const billing = order.billing_address as Record<string, unknown> | undefined;
   const shipping = order.shipping_address as Record<string, unknown> | undefined;

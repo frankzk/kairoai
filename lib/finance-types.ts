@@ -12,6 +12,7 @@ export type InternalOrderStatus =
 
 export interface ProductCost {
   id: number;
+  store_id: number;
   sku: string;
   product_name: string;
   unit_cost: number;
@@ -25,6 +26,7 @@ export interface ProductCost {
 
 export interface ProductCostVersion {
   id: number;
+  store_id: number;
   sku: string;
   product_name: string;
   unit_cost: number;
@@ -36,6 +38,7 @@ export interface ProductCostVersion {
 
 export interface BusinessExpense {
   id: number;
+  store_id: number;
   type: ExpenseType;
   expense_date: string;
   month: string;
@@ -51,6 +54,7 @@ export interface BusinessExpense {
 
 export interface SettlementImport {
   id: number;
+  store_id: number;
   file_name: string;
   period_label: string;
   period_start: string | null;
@@ -73,6 +77,7 @@ export interface SettlementOrderItem {
 
 export interface SettlementRow {
   id: number;
+  store_id: number;
   import_id: number;
   guide_number: string;
   order_name: string;
@@ -112,6 +117,7 @@ export interface LogisticsPackageItem {
 
 export interface LogisticsImport {
   id: number;
+  store_id: number;
   file_name: string;
   period_label: string;
   period_start: string | null;
@@ -125,6 +131,7 @@ export interface LogisticsImport {
 
 export interface LogisticsRow {
   id: number;
+  store_id: number;
   import_id: number;
   guide_number: string;
   order_name: string;
@@ -160,6 +167,7 @@ export interface LogisticsRow {
 
 export interface PersistedShopifyOrder {
   id: number;
+  store_id: number;
   shopify_order_id: string;
   order_number: number | null;
   name: string;
@@ -180,6 +188,7 @@ export interface PersistedShopifyOrder {
 
 export interface FinanceClaim {
   id: number;
+  store_id: number;
   anomaly_key: string;
   order_name: string;
   guide_number: string;
@@ -194,6 +203,7 @@ export interface FinanceClaim {
 
 export interface BoxfulFileControl {
   id: number;
+  store_id: number;
   file_name: string;
   file_type: "logistica" | "liquidacion";
   cutoff_date: string | null;

@@ -1,4 +1,6 @@
 import { getDB } from "@/lib/db";
+import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
+import { getShopifyCredentials, getStoreConfig, type FinanceStoreConfig } from "./stores";
 
 export interface MatchableShopifyOrder {
   id: number;
@@ -29,14 +31,16 @@ const FALLBACK_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
 // shopify_orders (boton "Sync Shopify") y la API solo se consulta para el
 // tramo posterior a la ultima sincronizacion.
 export async function loadShopifyOrdersForMatching(
-  periodStart: string | null
+  periodStart: string | null,
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<MatchableShopifyOrder[]> {
-  const { orders: persisted, latestUpdatedAt } = await listPersistedOrdersSlim();
+  const store = getStoreConfig(String(storeId === 2 ? "mireva-hn" : "mireva-cr"));
+  const { orders: persisted, latestUpdatedAt } = await listPersistedOrdersSlim(store.id);
   if (!persisted.length) {
     const minDate = periodStart
       ? new Date(new Date(periodStart).getTime() - 45 * 24 * 60 * 60 * 1000).toISOString()
       : FALLBACK_CREATED_AT_MIN;
-    return fetchOrdersFromShopify({ createdAtMin: minDate }, FALLBACK_MAX_PAGES);
+    return fetchOrdersFromShopify({ createdAtMin: minDate }, FALLBACK_MAX_PAGES, store);
   }
 
   const latestCreatedAt = persisted.reduce(
@@ -47,10 +51,10 @@ export async function loadShopifyOrdersForMatching(
   // agregadas a mano para forzar el match) desde la ultima sincronizacion.
   const [freshCreated, freshUpdated] = await Promise.all([
     latestCreatedAt
-      ? fetchOrdersFromShopify({ createdAtMin: latestCreatedAt }, GAP_MAX_PAGES)
+      ? fetchOrdersFromShopify({ createdAtMin: latestCreatedAt }, GAP_MAX_PAGES, store)
       : Promise.resolve([] as MatchableShopifyOrder[]),
     latestUpdatedAt
-      ? fetchOrdersFromShopify({ updatedAtMin: latestUpdatedAt }, GAP_MAX_PAGES)
+      ? fetchOrdersFromShopify({ updatedAtMin: latestUpdatedAt }, GAP_MAX_PAGES, store)
       : Promise.resolve([] as MatchableShopifyOrder[]),
   ]);
 
@@ -76,7 +80,7 @@ interface PersistedOrderSlim {
   note_attributes: Array<{ name?: string | null; value?: string | null }> | null;
 }
 
-async function listPersistedOrdersSlim(): Promise<{
+async function listPersistedOrdersSlim(storeId: number): Promise<{
   orders: MatchableShopifyOrder[];
   latestUpdatedAt: string;
 }> {
@@ -88,6 +92,7 @@ async function listPersistedOrdersSlim(): Promise<{
       .select(
         "shopify_order_id, order_number, name, financial_status, fulfillment_status, cancelled_at, total_price, shopify_created_at, shopify_updated_at, line_items, note:raw_order->>note, note_attributes:raw_order->note_attributes"
       )
+      .eq("store_id", storeId)
       .order("id", { ascending: true })
       .range(from, from + DB_PAGE_SIZE - 1);
     if (error) throw new Error(`listPersistedOrdersSlim: ${error.message}`);
@@ -120,10 +125,10 @@ async function listPersistedOrdersSlim(): Promise<{
 
 async function fetchOrdersFromShopify(
   filters: { createdAtMin?: string; updatedAtMin?: string },
-  maxPages: number
+  maxPages: number,
+  store: FinanceStoreConfig
 ): Promise<MatchableShopifyOrder[]> {
-  const shop = process.env.SHOPIFY_SHOP_DOMAIN;
-  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+  const { shop, token } = getShopifyCredentials(store);
   if (!shop || !token) return [];
 
   const params = new URLSearchParams({
