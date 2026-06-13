@@ -130,6 +130,7 @@ interface TrackableOrderRow {
   row_key: string;
   source: "boxful" | "shopify" | "liquidacion";
   guide_number: string;
+  courier?: string;
   order_name: string;
   customer_name: string;
   boxful_status: string;
@@ -1482,7 +1483,12 @@ function OrdersTable({
                     {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
                   </Badge>
                 </td>
-                <td className="px-3 py-2 font-mono text-xs">{row.guide_number || "-"}</td>
+                <td className="px-3 py-2 font-mono text-xs">
+                  {row.guide_number || "-"}
+                  {row.courier && (
+                    <span className="mt-0.5 block font-sans text-[10px] text-muted-foreground">{row.courier}</span>
+                  )}
+                </td>
                 <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
                 <td className="px-3 py-2">
                   <StatusBadge
@@ -6286,6 +6292,7 @@ function buildVisibleOrderRows(
       ...row,
       row_key: `boxful-${row.id}`,
       source: "boxful" as const,
+      courier: row.courier,
       customer_name: row.customer_name || shopify?.customer_name || "",
       match_status: shopify ? "matched" : row.match_status,
       cod_amount: row.cod_amount || Number(shopify?.total_price || parseMoneyText(shopify?.total ?? "")),
@@ -7056,6 +7063,7 @@ function settlementRowToTrackableOrder(row: SettlementRow): TrackableOrderRow {
     row_key: `liquidacion-${row.id}`,
     source: "liquidacion",
     guide_number: row.guide_number,
+    courier: row.courier,
     order_name: row.order_name || row.shopify_order_name,
     customer_name: row.customer_name,
     boxful_status: row.settlement_status,
