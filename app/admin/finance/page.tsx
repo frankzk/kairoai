@@ -721,9 +721,15 @@ export default function FinancePage() {
       },
       ...current,
     ]);
-    const summaryRes = await fetch("/api/finance/summary", { cache: "no-store" });
-    const summaryJson = await readApiJson(summaryRes);
-    if (summaryRes.ok) setSummary(summaryJson.summary ?? null);
+    // El refresco del resumen es secundario: si falla (endpoint pesado o
+    // migracion pendiente) no debe reportar el guardado como fallido.
+    try {
+      const summaryRes = await fetch("/api/finance/summary", { cache: "no-store" });
+      const summaryJson = await readApiJson(summaryRes);
+      if (summaryRes.ok) setSummary(summaryJson.summary ?? null);
+    } catch {
+      // Se recalcula en la proxima carga.
+    }
   }
 
   async function syncShopifyHistory() {
@@ -2549,8 +2555,10 @@ function ProductCostQuickEditModal({
         effective_from: effectiveFrom,
       });
       onClose();
-    } catch {
-      setValidationMessage("No se pudo guardar el costo. Intenta de nuevo.");
+    } catch (err) {
+      setValidationMessage(
+        err instanceof Error ? err.message : "No se pudo guardar el costo. Intenta de nuevo."
+      );
     } finally {
       setSaving(false);
     }
