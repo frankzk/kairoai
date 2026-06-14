@@ -137,7 +137,7 @@ interface TrackableOrderRow {
   guide_number: string;
   courier?: string;
   moovin_group?: string;
-  moovin_attempts?: number;
+  moovin_incidents?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -7021,8 +7021,8 @@ function buildVisibleOrderRows(
       source: "boxful" as const,
       courier: row.courier,
       moovin_group: row.guide_number ? deriveMoovinGroup(moovinByPackage.get(row.guide_number)) : undefined,
-      moovin_attempts: row.guide_number
-        ? countMoovinDeliveryAttempts(moovinByPackage.get(row.guide_number)?.events)
+      moovin_incidents: row.guide_number
+        ? countMoovinIncidents(moovinByPackage.get(row.guide_number)?.events)
         : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
@@ -7071,7 +7071,7 @@ function buildVisibleOrderRows(
       guide_number: shopifyGuide,
       courier: shopifyCourier,
       moovin_group: deriveMoovinGroup(moovinHit),
-      moovin_attempts: moovinHit ? countMoovinDeliveryAttempts(moovinHit.events) : undefined,
+      moovin_incidents: moovinHit ? countMoovinIncidents(moovinHit.events) : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
@@ -8276,14 +8276,14 @@ function getOrderDateKey(row: Pick<TrackableOrderRow, "shopify_created_at">): st
 }
 
 function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_attempts" | "guide_number">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
   // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
   const moovinStatus = moovinGroupToStatus(row.moovin_group);
   if (moovinStatus) {
-    // En ruta con 2+ salidas a reparto = reintento (cliente a presionar).
-    if (moovinStatus === "en_route" && (row.moovin_attempts ?? 0) >= 2) return "en_route_retry";
+    // En ruta tras fallar la entrega (1+ incidencia) = reintento a presionar.
+    if (moovinStatus === "en_route" && (row.moovin_incidents ?? 0) >= 1) return "en_route_retry";
     return moovinStatus;
   }
 
@@ -8333,7 +8333,7 @@ function getTrackingFilterFromStatus(status: string): Exclude<OrderTrackingFilte
 }
 
 function getTrackingStatusLabel(
-  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_attempts">,
+  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents">,
   traces: SettlementTrace[],
   status: string
 ): string {
@@ -8347,7 +8347,8 @@ function getTrackingStatusLabel(
   if (status === "delivered") return "Entregado";
   if (status === "not_delivered" || status === "returned") return "No entregado";
   if (status === "en_route") return row.boxful_status || "En ruta";
-  if (status === "en_route_retry") return `${row.moovin_attempts ?? 2}º intento`;
+  if (status === "en_route_retry")
+    return (row.moovin_incidents ?? 1) > 1 ? `Reintento (${row.moovin_incidents})` : "Reintento";
   if (status === "incident") return "Incidencia";
   return "Pendiente";
 }
@@ -8373,12 +8374,14 @@ function moovinGroupToStatus(group: string | undefined): string {
   }
 }
 
-// Cuenta los intentos de entrega segun los eventos "En ruta para entregar a lo
-// largo del dia" de Moovin. 2+ = el paquete ya salio a reparto dos o mas veces.
-function countMoovinDeliveryAttempts(events: MoovinTrackingRow["events"] | undefined): number {
+// Cuenta las incidencias de entrega ("Incidencia en la entrega", codigo FAILED)
+// de Moovin. Un envio en ruta con 1+ incidencia es un reintento tras fallar.
+function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): number {
   if (!events?.length) return 0;
-  return events.filter((event) =>
-    String(event.title ?? "").toLowerCase().includes("ruta para entregar")
+  return events.filter(
+    (event) =>
+      String(event.code ?? "").toUpperCase() === "FAILED" ||
+      String(event.title ?? "").toLowerCase().includes("incidencia en la entrega")
   ).length;
 }
 
