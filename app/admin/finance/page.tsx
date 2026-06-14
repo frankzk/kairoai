@@ -59,7 +59,7 @@ import { Input } from "@/components/ui/input";
 
 type Tab = "orders" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
-type OrderTrackingFilter = "all" | "pending" | "en_route" | "annulled" | "delivered" | "not_delivered";
+type OrderTrackingFilter = "all" | "pending" | "en_route" | "incident" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
   | "all"
   | "no_cost"
@@ -134,6 +134,7 @@ interface TrackableOrderRow {
   source: "boxful" | "shopify" | "liquidacion";
   guide_number: string;
   courier?: string;
+  moovin_group?: string;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -311,6 +312,7 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "all", label: "Todos" },
   { value: "pending", label: "Pendientes" },
   { value: "en_route", label: "En ruta" },
+  { value: "incident", label: "Incidencia" },
   { value: "annulled", label: "Anulados" },
   { value: "delivered", label: "Entregados" },
   { value: "not_delivered", label: "No entregados" },
@@ -438,6 +440,7 @@ export default function FinancePage() {
   const [productsError, setProductsError] = useState("");
   const [expenses, setExpenses] = useState<BusinessExpense[]>([]);
   const [summary, setSummary] = useState<ProfitabilitySummary | null>(null);
+  const [moovinByPackage, setMoovinByPackage] = useState<Map<string, MoovinTrackingRow>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
@@ -466,8 +469,8 @@ export default function FinancePage() {
     [matchedSettlementRows, imports]
   );
   const visibleOrderRows = useMemo(
-    () => buildVisibleOrderRows(logisticsRows, shopifyOrders),
-    [logisticsRows, shopifyOrders]
+    () => buildVisibleOrderRows(logisticsRows, shopifyOrders, moovinByPackage),
+    [logisticsRows, shopifyOrders, moovinByPackage]
   );
   const doubleSettlementAnomalies = useMemo(
     () => getDoubleSettlementAnomalies(settlementTraceByKey),
@@ -615,6 +618,7 @@ export default function FinancePage() {
   useEffect(() => {
     refresh();
     loadShopifyProducts();
+    reloadMoovin();
   }, []);
 
   async function loadShopifyProducts() {
@@ -737,6 +741,17 @@ export default function FinancePage() {
     const json = await readApiJson(res);
     setCosts(json.costs ?? []);
     setCostVersions(Array.isArray(json.versions) ? (json.versions as ProductCostVersion[]) : []);
+  }
+
+  async function reloadMoovin() {
+    try {
+      const json = await readApiJson(await fetch("/api/finance/moovin-sync", { cache: "no-store" }));
+      if (Array.isArray(json.rows)) {
+        setMoovinByPackage(new Map((json.rows as MoovinTrackingRow[]).map((r) => [r.id_package, r])));
+      }
+    } catch {
+      // sin cache; el estado cae al de Boxful/sistema.
+    }
   }
 
   async function syncShopifyHistory() {
@@ -881,6 +896,7 @@ export default function FinancePage() {
       liquidationAlerts: liquidationAlertRows.length,
       anomalies: liquidationAlertRows.length + doubleSettlementAnomalies.length,
       enRoute: effectiveStatuses.filter((status) => status === "en_route").length,
+      incident: effectiveStatuses.filter((status) => status === "incident").length,
       pending: effectiveStatuses.filter((status) => status === "pending" || status === "unmatched").length,
       unmatched: logisticsRows.filter((row) => row.match_status === "unmatched").length,
       total: money(rows.reduce((acc, row) => acc + Number(row.amount_to_liquidate || 0), 0)),
@@ -950,6 +966,7 @@ export default function FinancePage() {
           <MetricCard label="No entregados" value={loading ? "..." : String(orderStats.notDelivered)} />
           <MetricCard label="Anulados" value={loading ? "..." : String(orderStats.annulled)} />
           <MetricCard label="En ruta" value={loading ? "..." : String(orderStats.enRoute)} />
+          <MetricCard label="Incidencia" value={loading ? "..." : String(orderStats.incident)} warning />
           <MetricCard label="Pendientes" value={loading ? "..." : String(orderStats.pending)} />
           <MetricCard label="Por reclamar" value={loading ? "..." : String(orderStats.liquidationAlerts)} warning />
           <MetricCard label="Anomalias" value={loading ? "..." : String(financeControl.anomalies.length)} warning />
@@ -995,6 +1012,8 @@ export default function FinancePage() {
                 rows={visibleOrderRows}
                 latestLogisticsImport={latestLogisticsImport}
                 settlementTraceByKey={settlementTraceByKey}
+                moovinByPackage={moovinByPackage}
+                onReloadMoovin={reloadMoovin}
                 shopifyOrderCount={shopifyOrders.length}
                 shopifyCoverage={shopifyCoverage}
                 syncingShopify={syncingShopify}
@@ -1070,6 +1089,8 @@ function OrdersTab({
   rows,
   latestLogisticsImport,
   settlementTraceByKey,
+  moovinByPackage,
+  onReloadMoovin,
   shopifyOrderCount,
   shopifyCoverage,
   syncingShopify,
@@ -1082,6 +1103,8 @@ function OrdersTab({
   rows: TrackableOrderRow[];
   latestLogisticsImport?: LogisticsImport;
   settlementTraceByKey: Map<string, SettlementTrace[]>;
+  moovinByPackage: Map<string, MoovinTrackingRow>;
+  onReloadMoovin: () => Promise<void>;
   shopifyOrderCount: number;
   shopifyCoverage: { count: number; oldest: string | null; newest: string | null } | null;
   syncingShopify: boolean;
@@ -1121,6 +1144,7 @@ function OrdersTab({
       all: searchedRows.length,
       pending: 0,
       en_route: 0,
+      incident: 0,
       annulled: 0,
       delivered: 0,
       not_delivered: 0,
@@ -1142,61 +1166,23 @@ function OrdersTab({
       }),
     [searchedRows, settlementTraceByKey, trackingFilter]
   );
-  // Cache de estados Moovin: se carga una vez y se refresca al actualizar.
-  const [moovinByPackage, setMoovinByPackage] = useState<Map<string, MoovinTrackingRow>>(new Map());
   const [moovinSyncing, setMoovinSyncing] = useState(false);
   const [moovinMessage, setMoovinMessage] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/finance/moovin-sync", { cache: "no-store" })
-      .then((res) => res.json())
-      .then((json) => {
-        if (cancelled || !Array.isArray(json.rows)) return;
-        setMoovinByPackage(new Map((json.rows as MoovinTrackingRow[]).map((r) => [r.id_package, r])));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Pedidos Moovin en ruta (con guia) que vale la pena consultar/actualizar.
+  // Pedidos Moovin no terminales (en ruta o incidencia) que vale la pena
+  // refrescar contra Moovin.
   const enRouteMoovinGuides = useMemo(() => {
     const byGuide = new Map<string, { idPackage: string; lastName: string }>();
     for (const row of rows) {
       if (!isMoovinCourier(row.courier) || !row.guide_number) continue;
       const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      if (status !== "en_route") continue;
+      if (status !== "en_route" && status !== "incident" && status !== "pending") continue;
       if (!byGuide.has(row.guide_number)) {
         byGuide.set(row.guide_number, { idPackage: row.guide_number, lastName: row.last_name ?? "" });
       }
     }
     return Array.from(byGuide.values());
   }, [rows, settlementTraceByKey]);
-
-  // Reconciliacion: desfases entre lo que dice el sistema y lo que dice Moovin.
-  const [showMoovinDiscrepancies, setShowMoovinDiscrepancies] = useState(false);
-  const moovinDiscrepancies = useMemo(() => {
-    const out: Array<{ row: TrackableOrderRow; moovin: MoovinTrackingRow; discrepancy: MoovinDiscrepancy }> = [];
-    const seen = new Set<string>();
-    for (const row of rows) {
-      if (!isMoovinCourier(row.courier) || !row.guide_number || seen.has(row.guide_number)) continue;
-      const moovin = moovinByPackage.get(row.guide_number);
-      if (!moovin) continue;
-      const status = getEffectiveTrackingStatus(
-        row,
-        getSettlementTracesForLogisticsRow(row, settlementTraceByKey)
-      );
-      const discrepancy = reconcileMoovin(status, moovin);
-      if (!discrepancy) continue;
-      seen.add(row.guide_number);
-      out.push({ row, moovin, discrepancy });
-    }
-    return out.sort((a, b) =>
-      a.discrepancy.severity === b.discrepancy.severity ? 0 : a.discrepancy.severity === "high" ? -1 : 1
-    );
-  }, [rows, moovinByPackage, settlementTraceByKey]);
 
   async function updateMoovinStatuses() {
     if (!enRouteMoovinGuides.length) return;
@@ -1223,10 +1209,7 @@ function OrdersTab({
           `Consultando Moovin: ${Math.min(i + chunkSize, enRouteMoovinGuides.length)}/${enRouteMoovinGuides.length}...`
         );
       }
-      const refreshed = await fetch("/api/finance/moovin-sync", { cache: "no-store" }).then((r) => r.json());
-      if (Array.isArray(refreshed.rows)) {
-        setMoovinByPackage(new Map((refreshed.rows as MoovinTrackingRow[]).map((r) => [r.id_package, r])));
-      }
+      await onReloadMoovin();
       setMoovinMessage(
         `Moovin actualizado: ${checked} consultados, ${delivered} entregados, ${incidents} con incidencia.`
       );
@@ -1306,15 +1289,6 @@ function OrdersTab({
             </p>
             {syncMessage && <p className="text-xs text-muted-foreground">{syncMessage}</p>}
             {moovinMessage && <p className="text-xs text-muted-foreground">{moovinMessage}</p>}
-            {moovinDiscrepancies.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowMoovinDiscrepancies(true)}
-                className="text-left text-xs text-amber-300 underline-offset-2 hover:underline"
-              >
-                ⚠ {moovinDiscrepancies.length} discrepancia{moovinDiscrepancies.length === 1 ? "" : "s"} Moovin vs sistema (ver)
-              </button>
-            )}
           </div>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
             {enRouteMoovinGuides.length > 0 && (
@@ -1551,13 +1525,6 @@ function OrdersTab({
           )}
         </CardContent>
       </Card>
-
-      {showMoovinDiscrepancies && (
-        <MoovinDiscrepanciesModal
-          items={moovinDiscrepancies}
-          onClose={() => setShowMoovinDiscrepancies(false)}
-        />
-      )}
 
       {isLogisticsModalOpen && (
         <div
@@ -1964,94 +1931,6 @@ function formatMoovinDate(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function MoovinDiscrepanciesModal({
-  items,
-  onClose,
-}: {
-  items: Array<{ row: TrackableOrderRow; moovin: MoovinTrackingRow; discrepancy: MoovinDiscrepancy }>;
-  onClose: () => void;
-}) {
-  const [openGuide, setOpenGuide] = useState<{ idPackage: string; lastName: string } | null>(null);
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="moovin-discrepancies-title"
-    >
-      <div className="flex max-h-[88vh] w-full max-w-3xl flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h3 id="moovin-discrepancies-title" className="text-base font-semibold">
-              Reconciliacion Moovin vs sistema
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              {items.length} pedido{items.length === 1 ? "" : "s"} donde Moovin y el seguimiento interno no coinciden.
-            </p>
-          </div>
-          <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto border border-border">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2">Pedido</th>
-                <th className="px-3 py-2">Guia</th>
-                <th className="px-3 py-2">Estado Moovin</th>
-                <th className="px-3 py-2">Discrepancia</th>
-                <th className="px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {items.map(({ row, moovin, discrepancy }) => (
-                <tr key={row.guide_number} className="border-t border-border/50">
-                  <td className="px-3 py-2 font-mono text-xs">{row.order_name || row.shopify_order_name}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{row.guide_number}</td>
-                  <td className="px-3 py-2 text-xs">{moovin.latest_status}</td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`text-xs ${discrepancy.severity === "high" ? "text-red-300" : "text-amber-300"}`}
-                    >
-                      {discrepancy.message}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setOpenGuide({ idPackage: row.guide_number, lastName: row.last_name ?? "" })
-                      }
-                      className="text-[11px] text-primary hover:underline"
-                    >
-                      ver ruta
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {!items.length && (
-                <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    Sin discrepancias.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      {openGuide && (
-        <MoovinTrackingModal
-          idPackage={openGuide.idPackage}
-          lastName={openGuide.lastName}
-          onClose={() => setOpenGuide(null)}
-        />
-      )}
-    </div>
-  );
 }
 
 type ProductColumnKey = "product_name" | "cost" | "orders" | "dispatch_rate" | "delivery_effectiveness";
@@ -6576,6 +6455,7 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   if (status === "annulled") return <Badge variant="warning">Anulado</Badge>;
   if (status === "unmatched") return <Badge variant="warning">Sin match</Badge>;
   if (status === "en_route") return <Badge variant="info">{label || "En ruta"}</Badge>;
+  if (status === "incident") return <Badge variant="destructive">{label || "Incidencia"}</Badge>;
   return <Badge variant="muted">{label || "Pendiente"}</Badge>;
 }
 
@@ -7038,7 +6918,8 @@ function mergeLogisticsBoxfulFiles(
 
 function buildVisibleOrderRows(
   logisticsRows: LogisticsRow[],
-  shopifyOrders: ShopifyOrderSummary[]
+  shopifyOrders: ShopifyOrderSummary[],
+  moovinByPackage: Map<string, MoovinTrackingRow>
 ): TrackableOrderRow[] {
   const shopifyByMatchKey = buildShopifyMatchIndex(shopifyOrders);
   const logisticsDisplayRows = logisticsRows.map((row): TrackableOrderRow => {
@@ -7057,6 +6938,7 @@ function buildVisibleOrderRows(
       row_key: `boxful-${row.id}`,
       source: "boxful" as const,
       courier: row.courier,
+      moovin_group: row.guide_number ? moovinByPackage.get(row.guide_number)?.latest_group : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
       match_status: shopify ? "matched" : row.match_status,
@@ -8291,9 +8173,13 @@ function getOrderDateKey(row: Pick<TrackableOrderRow, "shopify_created_at">): st
 }
 
 function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group">,
   traces: SettlementTrace[]
 ): string {
+  // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
+  const moovinStatus = moovinGroupToStatus(row.moovin_group);
+  if (moovinStatus) return moovinStatus;
+
   if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
 
   const boxfulStatus = inferTrackingStatusFromText(row.boxful_status);
@@ -8313,7 +8199,7 @@ function getEffectiveTrackingStatus(
 // "Pendiente operativo" para agregaciones: incluye en ruta (despachado pero
 // aun sin entregar) y pendiente (sin despachar).
 function isPendingLike(status: string): boolean {
-  return status === "pending" || status === "en_route";
+  return status === "pending" || status === "en_route" || status === "incident";
 }
 
 function inferTrackingStatusFromText(status: string): string {
@@ -8328,6 +8214,7 @@ function getTrackingFilterFromStatus(status: string): Exclude<OrderTrackingFilte
   if (status === "delivered") return "delivered";
   if (status === "not_delivered" || status === "returned") return "not_delivered";
   if (status === "en_route") return "en_route";
+  if (status === "incident") return "incident";
   return "pending";
 }
 
@@ -8346,11 +8233,29 @@ function getTrackingStatusLabel(
   if (status === "delivered") return "Entregado";
   if (status === "not_delivered" || status === "returned") return "No entregado";
   if (status === "en_route") return row.boxful_status || "En ruta";
+  if (status === "incident") return "Incidencia";
   return "Pendiente";
 }
 
 function isFinalTrackingStatus(status: string): boolean {
   return status === "delivered" || status === "not_delivered" || status === "returned";
+}
+
+// Mapea el ultimo grupo de Moovin al estado de seguimiento. Vacio si no hay
+// dato de Moovin (cae a la logica de Boxful/sistema).
+function moovinGroupToStatus(group: string | undefined): string {
+  switch (group) {
+    case "delivered":
+      return "delivered";
+    case "returned":
+      return "not_delivered";
+    case "failed":
+      return "incident";
+    case "in_progress":
+      return "en_route";
+    default:
+      return "";
+  }
 }
 
 function isShopifyCancelled(
