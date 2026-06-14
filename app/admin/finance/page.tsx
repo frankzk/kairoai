@@ -42,6 +42,7 @@ import type {
   BusinessExpense,
   ExpenseType,
   FinanceClaim,
+  ForzaTrackingRow,
   LogisticsImport,
   LogisticsRow,
   MoovinTrackingRow,
@@ -57,6 +58,7 @@ import {
   FINANCE_STORES,
   getFinanceStore,
   type FinanceStoreCode,
+  type FinanceStorePublic,
 } from "@/lib/store-config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -144,6 +146,8 @@ interface TrackableOrderRow {
   courier?: string;
   moovin_group?: string;
   moovin_incidents?: number;
+  forza_group?: string;
+  forza_incidents?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -472,6 +476,7 @@ export default function FinancePage() {
   const [expenses, setExpenses] = useState<BusinessExpense[]>([]);
   const [summary, setSummary] = useState<ProfitabilitySummary | null>(null);
   const [moovinByPackage, setMoovinByPackage] = useState<Map<string, MoovinTrackingRow>>(new Map());
+  const [forzaByGuide, setForzaByGuide] = useState<Map<string, ForzaTrackingRow>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
@@ -501,8 +506,8 @@ export default function FinancePage() {
     [matchedSettlementRows, imports]
   );
   const visibleOrderRows = useMemo(
-    () => buildVisibleOrderRows(logisticsRows, shopifyOrders, moovinByPackage),
-    [logisticsRows, shopifyOrders, moovinByPackage]
+    () => buildVisibleOrderRows(logisticsRows, shopifyOrders, selectedStore, moovinByPackage, forzaByGuide),
+    [forzaByGuide, logisticsRows, selectedStore, shopifyOrders, moovinByPackage]
   );
   const doubleSettlementAnomalies = useMemo(
     () => getDoubleSettlementAnomalies(settlementTraceByKey),
@@ -670,7 +675,7 @@ export default function FinancePage() {
   useEffect(() => {
     refresh();
     loadShopifyProducts();
-    reloadMoovin();
+    reloadCarrierTracking();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStoreCode]);
 
@@ -808,16 +813,40 @@ export default function FinancePage() {
     setCostVersions(Array.isArray(json.versions) ? (json.versions as ProductCostVersion[]) : []);
   }
 
-  async function reloadMoovin() {
+  async function reloadCarrierTracking(storeCode = selectedStore.code) {
+    const store = getFinanceStore(storeCode);
+    if (store.logisticsProvider === "moovin") {
+      setForzaByGuide(new Map());
+      await reloadMoovin(storeCode);
+      return;
+    }
+    setMoovinByPackage(new Map());
+    await reloadForza(storeCode);
+  }
+
+  async function reloadMoovin(storeCode = selectedStore.code) {
     try {
       const json = await readApiJson(
-        await fetch(withStore("/api/finance/moovin-sync", selectedStore.code), { cache: "no-store" })
+        await fetch(withStore("/api/finance/moovin-sync", storeCode), { cache: "no-store" })
       );
       if (Array.isArray(json.rows)) {
         setMoovinByPackage(new Map((json.rows as MoovinTrackingRow[]).map((r) => [r.id_package, r])));
       }
     } catch {
       // sin cache; el estado cae al de Boxful/sistema.
+    }
+  }
+
+  async function reloadForza(storeCode = selectedStore.code) {
+    try {
+      const json = await readApiJson(
+        await fetch(withStore("/api/finance/forza-sync", storeCode), { cache: "no-store" })
+      );
+      if (Array.isArray(json.rows)) {
+        setForzaByGuide(buildForzaTrackingMap(json.rows as ForzaTrackingRow[]));
+      }
+    } catch {
+      // sin cache; el estado cae a guia/Boxful/sistema.
     }
   }
 
@@ -1158,12 +1187,15 @@ export default function FinancePage() {
           <>
             {tab === "orders" && (
               <OrdersTab
+                selectedStore={selectedStore}
                 logisticsImports={logisticsImports}
                 rows={visibleOrderRows}
                 latestLogisticsImport={latestLogisticsImport}
                 settlementTraceByKey={settlementTraceByKey}
                 moovinByPackage={moovinByPackage}
+                forzaByGuide={forzaByGuide}
                 onReloadMoovin={reloadMoovin}
+                onReloadForza={reloadForza}
                 shopifyOrderCount={shopifyOrders.length}
                 shopifyCoverage={shopifyCoverage}
                 syncingShopify={syncingShopify}
@@ -1305,12 +1337,15 @@ function FilterChip({
 }
 
 function OrdersTab({
+  selectedStore,
   logisticsImports,
   rows,
   latestLogisticsImport,
   settlementTraceByKey,
   moovinByPackage,
+  forzaByGuide,
   onReloadMoovin,
+  onReloadForza,
   shopifyOrderCount,
   shopifyCoverage,
   syncingShopify,
@@ -1319,12 +1354,15 @@ function OrdersTab({
   importingLogistics,
   onLogisticsImport,
 }: {
+  selectedStore: FinanceStorePublic;
   logisticsImports: LogisticsImport[];
   rows: TrackableOrderRow[];
   latestLogisticsImport?: LogisticsImport;
   settlementTraceByKey: Map<string, SettlementTrace[]>;
   moovinByPackage: Map<string, MoovinTrackingRow>;
+  forzaByGuide: Map<string, ForzaTrackingRow>;
   onReloadMoovin: () => Promise<void>;
+  onReloadForza: () => Promise<void>;
   shopifyOrderCount: number;
   shopifyCoverage: { count: number; oldest: string | null; newest: string | null } | null;
   syncingShopify: boolean;
@@ -1389,10 +1427,13 @@ function OrdersTab({
   );
   const [moovinSyncing, setMoovinSyncing] = useState(false);
   const [moovinMessage, setMoovinMessage] = useState("");
+  const [forzaSyncing, setForzaSyncing] = useState(false);
+  const [forzaMessage, setForzaMessage] = useState("");
 
   // Pedidos Moovin no terminales (en ruta o incidencia) que vale la pena
   // refrescar contra Moovin.
   const enRouteMoovinGuides = useMemo(() => {
+    if (selectedStore.logisticsProvider !== "moovin") return [];
     const byGuide = new Map<string, { idPackage: string; lastName: string }>();
     for (const row of rows) {
       if (!isMoovinCourier(row.courier) || !row.guide_number) continue;
@@ -1403,7 +1444,22 @@ function OrdersTab({
       }
     }
     return Array.from(byGuide.values());
-  }, [rows, settlementTraceByKey]);
+  }, [rows, selectedStore.logisticsProvider, settlementTraceByKey]);
+
+  const enRouteForzaGuides = useMemo(() => {
+    if (selectedStore.logisticsProvider !== "forza") return [];
+    const byGuide = new Map<string, { guide: string }>();
+    for (const row of rows) {
+      const guide = normalizeGuideForStore(row.guide_number, selectedStore);
+      if (!guide || !isForzaCourier(row.courier, selectedStore)) continue;
+      const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
+      if (status !== "en_route" && status !== "en_route_retry" && status !== "incident" && status !== "pending") continue;
+      const cached = getForzaTrackingFromMap(forzaByGuide, guide);
+      if (cached?.latest_group === "delivered" || cached?.latest_group === "returned") continue;
+      if (!byGuide.has(guide)) byGuide.set(guide, { guide });
+    }
+    return Array.from(byGuide.values());
+  }, [forzaByGuide, rows, selectedStore, settlementTraceByKey]);
 
   async function updateMoovinStatuses() {
     if (!enRouteMoovinGuides.length) return;
@@ -1438,6 +1494,42 @@ function OrdersTab({
       setMoovinMessage(err instanceof Error ? err.message : "No se pudo actualizar Moovin");
     } finally {
       setMoovinSyncing(false);
+    }
+  }
+
+  async function updateForzaStatuses() {
+    if (!enRouteForzaGuides.length) return;
+    setForzaSyncing(true);
+    setForzaMessage(`Consultando Forza: 0/${enRouteForzaGuides.length}...`);
+    const chunkSize = 60;
+    let checked = 0;
+    let incidents = 0;
+    let delivered = 0;
+    try {
+      for (let i = 0; i < enRouteForzaGuides.length; i += chunkSize) {
+        const chunk = enRouteForzaGuides.slice(i, i + chunkSize);
+        const res = await fetch(withStore("/api/finance/forza-sync", selectedStore.code), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ store: selectedStore.code, guides: chunk }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? "No se pudo actualizar Forza");
+        checked += Number(json.checked ?? 0);
+        incidents += Number(json.incidents ?? 0);
+        delivered += Number(json.delivered ?? 0);
+        setForzaMessage(
+          `Consultando Forza: ${Math.min(i + chunkSize, enRouteForzaGuides.length)}/${enRouteForzaGuides.length}...`
+        );
+      }
+      await onReloadForza();
+      setForzaMessage(
+        `Forza actualizado: ${checked} consultados, ${delivered} entregados, ${incidents} con incidencia.`
+      );
+    } catch (err) {
+      setForzaMessage(err instanceof Error ? err.message : "No se pudo actualizar Forza");
+    } finally {
+      setForzaSyncing(false);
     }
   }
 
@@ -1510,7 +1602,7 @@ function OrdersTab({
             </p>
           </div>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
-            {enRouteMoovinGuides.length > 0 && (
+            {selectedStore.logisticsProvider === "moovin" && enRouteMoovinGuides.length > 0 && (
               <Button
                 type="button"
                 variant="outline"
@@ -1520,6 +1612,18 @@ function OrdersTab({
               >
                 {moovinSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 {moovinSyncing ? "Actualizando..." : `Actualizar Moovin (${enRouteMoovinGuides.length})`}
+              </Button>
+            )}
+            {selectedStore.logisticsProvider === "forza" && enRouteForzaGuides.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={forzaSyncing}
+                onClick={updateForzaStatuses}
+                className="gap-2"
+              >
+                {forzaSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                {forzaSyncing ? "Actualizando..." : `Actualizar Forza (${enRouteForzaGuides.length})`}
               </Button>
             )}
             <Button type="button" variant="outline" disabled={syncingShopify} onClick={onSyncShopify} className="gap-2">
@@ -1541,7 +1645,7 @@ function OrdersTab({
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          {(syncMessage || moovinMessage) && (
+          {(syncMessage || moovinMessage || forzaMessage) && (
             <div className="space-y-1 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               {syncMessage && (
                 <p className="flex items-center gap-1.5">
@@ -1551,6 +1655,11 @@ function OrdersTab({
               {moovinMessage && (
                 <p className="flex items-center gap-1.5">
                   <Search className="h-3.5 w-3.5 shrink-0" /> {moovinMessage}
+                </p>
+              )}
+              {forzaMessage && (
+                <p className="flex items-center gap-1.5">
+                  <Search className="h-3.5 w-3.5 shrink-0" /> {forzaMessage}
                 </p>
               )}
             </div>
@@ -1593,13 +1702,14 @@ function OrdersTab({
                       const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
                       const status = getEffectiveTrackingStatus(row, traces);
                       const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
+                      const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
                       return {
                         Orden: row.order_name || row.shopify_order_name,
                         Origen: row.source,
                         Guia: row.guide_number,
                         Transportadora: row.courier ?? "",
-                        "Estado Moovin": moovin?.latest_status ?? "",
-                        "Incidencia Moovin": moovin?.has_incident ? "si" : "",
+                        "Estado courier": moovin?.latest_status ?? forza?.latest_status ?? "",
+                        "Incidencia courier": moovin?.has_incident || forza?.has_incident ? "si" : "",
                         Cliente: row.customer_name,
                         Apellido: row.last_name ?? "",
                         "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
@@ -1727,9 +1837,11 @@ function OrdersTab({
               : " · Sin Boxful importado"}
           </p>
           <OrdersTable
+            selectedStore={selectedStore}
             rows={filteredRows}
             settlementTraceByKey={settlementTraceByKey}
             moovinByPackage={moovinByPackage}
+            forzaByGuide={forzaByGuide}
             emptyLabel={
               orderSearch
                 ? "No encontramos pedidos con ese codigo y estado."
@@ -1822,14 +1934,18 @@ function OrdersTab({
 }
 
 function OrdersTable({
+  selectedStore,
   rows,
   settlementTraceByKey,
   moovinByPackage,
+  forzaByGuide,
   emptyLabel = "No hay pedidos para mostrar.",
 }: {
+  selectedStore: FinanceStorePublic;
   rows: TrackableOrderRow[];
   settlementTraceByKey: Map<string, SettlementTrace[]>;
   moovinByPackage: Map<string, MoovinTrackingRow>;
+  forzaByGuide: Map<string, ForzaTrackingRow>;
   emptyLabel?: string;
 }) {
   return (
@@ -1856,6 +1972,7 @@ function OrdersTable({
           {rows.slice(0, 500).map((row) => {
             const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
             const trackingStatus = getEffectiveTrackingStatus(row, traces);
+            const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
             return (
               <tr key={row.row_key} className="border-b border-border/50">
                 <td className="px-2 py-1.5 font-mono text-xs">{row.order_name}</td>
@@ -1875,6 +1992,9 @@ function OrdersTable({
                           lastName={row.last_name ?? ""}
                           cached={moovinByPackage.get(row.guide_number)}
                         />
+                      )}
+                      {isForzaCourier(row.courier, selectedStore) && row.guide_number && (
+                        <ForzaTrackingButton guide={row.guide_number} cached={forza} />
                       )}
                     </div>
                   ) : (
@@ -1945,10 +2065,13 @@ function isMoovinCourier(courier: string | undefined): boolean {
   return String(courier ?? "").toLowerCase().includes("moovin");
 }
 
-// EasySell/Shopify rotula el fulfillment con un valor generico ("Transportadora",
-// "Other", etc.) en vez del courier real. Moovin es la unica transportadora
-// activa, asi que esos valores (y los vacios) se muestran como "Moovin"; un
-// nombre real distinto se respeta tal cual.
+function isForzaCourier(courier: string | undefined, _store?: FinanceStorePublic): boolean {
+  return String(courier ?? "").toLowerCase().includes("forza");
+}
+
+// EasySell/Shopify a veces rotula el fulfillment con un valor generico
+// ("Transportadora", "Other", etc.) en vez del courier real. La transportadora
+// por defecto depende de la tienda: Costa Rica usa Moovin, Honduras usa Forza.
 const GENERIC_COURIER_LABELS = new Set([
   "",
   "transportadora",
@@ -1963,10 +2086,61 @@ const GENERIC_COURIER_LABELS = new Set([
   "easysell",
 ]);
 
-function normalizeShopifyCourier(rawCompany: string | undefined): string {
+function getDefaultCourierForStore(store: FinanceStorePublic): string {
+  return store.logisticsProvider === "forza" ? "Forza" : "Moovin";
+}
+
+function normalizeShopifyCourier(rawCompany: string | undefined, store: FinanceStorePublic): string {
   const company = String(rawCompany ?? "").trim();
-  if (GENERIC_COURIER_LABELS.has(company.toLowerCase())) return "Moovin";
+  const lower = company.toLowerCase();
+  if (GENERIC_COURIER_LABELS.has(lower)) return getDefaultCourierForStore(store);
+  if (store.logisticsProvider === "forza" && lower.includes("forza")) return "Forza";
+  if (store.logisticsProvider === "moovin" && lower.includes("moovin")) return "Moovin";
   return company;
+}
+
+function normalizeOperationalCourier(
+  rawCompany: string | undefined,
+  store: FinanceStorePublic,
+  guide?: string
+): string {
+  const company = String(rawCompany ?? "").trim();
+  if (company) return normalizeShopifyCourier(company, store);
+  return guide ? getDefaultCourierForStore(store) : "";
+}
+
+function normalizeForzaGuide(guide: string): string {
+  const trimmed = String(guide ?? "").trim().toUpperCase();
+  if (!trimmed) return "";
+  return trimmed.startsWith("FD") ? trimmed : `FD${trimmed.replace(/^FD/i, "")}`;
+}
+
+function normalizeGuideForStore(guide: string | undefined, store: FinanceStorePublic): string {
+  const trimmed = String(guide ?? "").trim();
+  if (!trimmed) return "";
+  return store.logisticsProvider === "forza" ? normalizeForzaGuide(trimmed) : trimmed;
+}
+
+function buildForzaTrackingMap(rows: ForzaTrackingRow[]): Map<string, ForzaTrackingRow> {
+  const map = new Map<string, ForzaTrackingRow>();
+  for (const row of rows) {
+    const normalized = normalizeForzaGuide(row.guide_number || row.tracking_number);
+    if (!normalized) continue;
+    map.set(normalized, row);
+    map.set(normalized.replace(/^FD/i, ""), row);
+    if (row.guide_number) map.set(String(row.guide_number).trim().toUpperCase(), row);
+    if (row.tracking_number) map.set(String(row.tracking_number).trim().toUpperCase(), row);
+  }
+  return map;
+}
+
+function getForzaTrackingFromMap(
+  map: Map<string, ForzaTrackingRow>,
+  guide: string | undefined
+): ForzaTrackingRow | undefined {
+  const normalized = normalizeForzaGuide(String(guide ?? ""));
+  if (!normalized) return undefined;
+  return map.get(normalized) ?? map.get(normalized.replace(/^FD/i, "")) ?? map.get(String(guide).trim().toUpperCase());
 }
 
 interface MoovinTrackingEvent {
@@ -2171,6 +2345,64 @@ function formatMoovinDate(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString("es-CR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function ForzaTrackingButton({
+  guide,
+  cached,
+}: {
+  guide: string;
+  cached?: ForzaTrackingRow;
+}) {
+  const groupClass =
+    cached?.latest_group === "delivered"
+      ? "text-emerald-300"
+      : cached?.latest_group === "failed" || cached?.latest_group === "returned"
+        ? "text-red-300"
+        : "text-cyan-300";
+  const url = buildForzaTrackingUrl(guide);
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      title="Abrir rastreo Forza"
+      className="flex flex-col items-start text-left"
+    >
+      {cached?.latest_status ? (
+        <>
+          <span className={`text-[10px] font-medium ${groupClass}`}>
+            {cached.has_incident ? "!" : ""} {cached.latest_status}
+          </span>
+          {cached.latest_at && (
+            <span className="text-[9px] text-muted-foreground">{formatCourierDate(cached.latest_at, "es-HN")}</span>
+          )}
+        </>
+      ) : (
+        <span className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:border-primary/50">
+          <Search className="h-3 w-3" /> rastreo
+        </span>
+      )}
+    </a>
+  );
+}
+
+function buildForzaTrackingUrl(guide: string): string {
+  const normalized = normalizeForzaGuide(guide);
+  return `https://rastreo.forzadelivery.com/${encodeURIComponent(normalized || guide)}`;
+}
+
+function formatCourierDate(value: string, locale: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString(locale, {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -7519,11 +7751,17 @@ function mergeLogisticsBoxfulFiles(
 function buildVisibleOrderRows(
   logisticsRows: LogisticsRow[],
   shopifyOrders: ShopifyOrderSummary[],
-  moovinByPackage: Map<string, MoovinTrackingRow>
+  selectedStore: FinanceStorePublic,
+  moovinByPackage: Map<string, MoovinTrackingRow>,
+  forzaByGuide: Map<string, ForzaTrackingRow>
 ): TrackableOrderRow[] {
   const shopifyByMatchKey = buildShopifyMatchIndex(shopifyOrders);
   const logisticsDisplayRows = logisticsRows.map((row): TrackableOrderRow => {
     const shopify = findShopifyOrderForRow(row, shopifyByMatchKey);
+    const guideNumber = normalizeGuideForStore(row.guide_number, selectedStore);
+    const courier = normalizeOperationalCourier(row.courier, selectedStore, guideNumber);
+    const moovinHit = isMoovinCourier(courier) && guideNumber ? moovinByPackage.get(guideNumber) : undefined;
+    const forzaHit = isForzaCourier(courier) && guideNumber ? getForzaTrackingFromMap(forzaByGuide, guideNumber) : undefined;
     const shopifyItems = shopify
       ? shopify.line_items.map((item) => ({
           sku: item.sku,
@@ -7537,11 +7775,12 @@ function buildVisibleOrderRows(
       ...row,
       row_key: `boxful-${row.id}`,
       source: "boxful" as const,
-      courier: row.courier,
-      moovin_group: row.guide_number ? deriveMoovinGroup(moovinByPackage.get(row.guide_number)) : undefined,
-      moovin_incidents: row.guide_number
-        ? countMoovinIncidents(moovinByPackage.get(row.guide_number)?.events)
-        : undefined,
+      guide_number: guideNumber,
+      courier,
+      moovin_group: deriveMoovinGroup(moovinHit),
+      moovin_incidents: moovinHit ? countMoovinIncidents(moovinHit.events) : undefined,
+      forza_group: deriveForzaGroup(forzaHit),
+      forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
       match_status: shopify ? "matched" : row.match_status,
@@ -7571,17 +7810,20 @@ function buildVisibleOrderRows(
     .filter((order) => !getShopifyOrderMatchKeys(order).some((key) => existingKeys.has(key)))
     .map((order): TrackableOrderRow => {
     // Guia desde el fulfillment de Shopify: el pedido ya salio a reparto
-    // aunque aun no este en un Excel de Boxful. Moovin es la unica
-    // transportadora activa, asi que es el courier por defecto.
-    const shopifyGuide = String(order.tracking_number ?? "").trim();
-    // Se consulta primero el cache de Moovin: si Moovin ya reconoce la guia, el
-    // courier es Moovin sin lugar a dudas. Solo si aun no hay dato de Moovin se
-    // normaliza el rotulo generico de Shopify ("Transportadora" -> "Moovin").
-    const moovinHit = shopifyGuide ? moovinByPackage.get(shopifyGuide) : undefined;
+    // aunque aun no este en un Excel logistico. La transportadora por defecto
+    // se decide por tienda para evitar cruces Costa Rica/Honduras.
+    const shopifyGuide = normalizeGuideForStore(order.tracking_number ?? "", selectedStore);
+    const baseCourier = shopifyGuide ? normalizeShopifyCourier(order.tracking_company, selectedStore) : "";
+    const moovinHit = isMoovinCourier(baseCourier) && shopifyGuide ? moovinByPackage.get(shopifyGuide) : undefined;
+    const forzaHit = isForzaCourier(baseCourier) && shopifyGuide
+      ? getForzaTrackingFromMap(forzaByGuide, shopifyGuide)
+      : undefined;
     const shopifyCourier = shopifyGuide
       ? moovinHit
         ? "Moovin"
-        : normalizeShopifyCourier(order.tracking_company)
+        : forzaHit
+          ? "Forza"
+          : baseCourier
       : "";
     return {
       row_key: `shopify-${order.id}`,
@@ -7590,6 +7832,8 @@ function buildVisibleOrderRows(
       courier: shopifyCourier,
       moovin_group: deriveMoovinGroup(moovinHit),
       moovin_incidents: moovinHit ? countMoovinIncidents(moovinHit.events) : undefined,
+      forza_group: deriveForzaGroup(forzaHit),
+      forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
@@ -8798,7 +9042,7 @@ function getOrderDateKey(row: Pick<TrackableOrderRow, "shopify_created_at">): st
 }
 
 function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "guide_number">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
   // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
@@ -8807,6 +9051,12 @@ function getEffectiveTrackingStatus(
     // En ruta tras fallar la entrega (1+ incidencia) = reintento a presionar.
     if (moovinStatus === "en_route" && (row.moovin_incidents ?? 0) >= 1) return "en_route_retry";
     return moovinStatus;
+  }
+
+  const forzaStatus = forzaGroupToStatus(row.forza_group);
+  if (forzaStatus) {
+    if (forzaStatus === "en_route" && (row.forza_incidents ?? 0) >= 1) return "en_route_retry";
+    return forzaStatus;
   }
 
   if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
@@ -8855,7 +9105,7 @@ function getTrackingFilterFromStatus(status: string): Exclude<OrderTrackingFilte
 }
 
 function getTrackingStatusLabel(
-  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents">,
+  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents" | "forza_incidents">,
   traces: SettlementTrace[],
   status: string
 ): string {
@@ -8869,8 +9119,10 @@ function getTrackingStatusLabel(
   if (status === "delivered") return "Entregado";
   if (status === "not_delivered" || status === "returned") return "No entregado";
   if (status === "en_route") return row.boxful_status || "En ruta";
-  if (status === "en_route_retry")
-    return (row.moovin_incidents ?? 1) > 1 ? `Reintento (${row.moovin_incidents})` : "Reintento";
+  if (status === "en_route_retry") {
+    const retries = Math.max(row.moovin_incidents ?? 0, row.forza_incidents ?? 0, 1);
+    return retries > 1 ? `Reintento (${retries})` : "Reintento";
+  }
   if (status === "incident") return "Incidencia";
   return "Pendiente";
 }
@@ -8896,6 +9148,21 @@ function moovinGroupToStatus(group: string | undefined): string {
   }
 }
 
+function forzaGroupToStatus(group: string | undefined): string {
+  switch (group) {
+    case "delivered":
+      return "delivered";
+    case "returned":
+      return "not_delivered";
+    case "failed":
+      return "incident";
+    case "in_progress":
+      return "en_route";
+    default:
+      return "";
+  }
+}
+
 // Cuenta las incidencias de entrega ("Incidencia en la entrega", codigo FAILED)
 // de Moovin. Un envio en ruta con 1+ incidencia es un reintento tras fallar.
 function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): number {
@@ -8907,6 +9174,14 @@ function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): 
   ).length;
 }
 
+function countForzaIncidents(events: ForzaTrackingRow["events"] | undefined): number {
+  if (!events?.length) return 0;
+  return events.filter((event) => {
+    const text = `${event.code ?? ""} ${event.title ?? ""} ${event.description ?? ""}`.toLowerCase();
+    return text.includes("fall") || text.includes("incid") || text.includes("no entreg");
+  }).length;
+}
+
 // Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"
 // (p.ej. supera intentos de entrega) quedaba como en ruta y debe ser No
 // entregado. Los demas estados conservan su grupo ya calculado.
@@ -8915,6 +9190,11 @@ function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
   const code = String(row.latest_code ?? "").toUpperCase();
   const title = String(row.latest_status ?? "").toLowerCase();
   if (code.startsWith("CANCEL") || title.includes("cancelado")) return "returned";
+  return row.latest_group ?? "";
+}
+
+function deriveForzaGroup(row: ForzaTrackingRow | undefined): string {
+  if (!row) return "";
   return row.latest_group ?? "";
 }
 

@@ -1,5 +1,6 @@
 import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
+import { normalizeForzaGuide } from "./forza";
 
 export * from "./finance-types";
 import type {
@@ -8,6 +9,7 @@ import type {
   BusinessExpense,
   ExpenseType,
   FinanceClaim,
+  ForzaTrackingRow,
   LogisticsImport,
   LogisticsRow,
   MoovinTrackingRow,
@@ -1017,4 +1019,61 @@ export async function listMoovinSyncCandidates(
     if (candidates.length >= limit) break;
   }
   return candidates;
+}
+
+export async function listForzaTracking(storeId = DEFAULT_FINANCE_STORE_ID): Promise<ForzaTrackingRow[]> {
+  const pageSize = 1000;
+  const all: ForzaTrackingRow[] = [];
+  for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("forza_tracking")
+      .select("*")
+      .eq("store_id", storeId)
+      .order("checked_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listForzaTracking: ${error.message}`);
+    const page = (data ?? []) as ForzaTrackingRow[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
+}
+
+export async function upsertForzaTracking(
+  rows: Omit<ForzaTrackingRow, "checked_at" | "store_id">[],
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<void> {
+  if (!rows.length) return;
+  const payload = rows.map((row) => ({ ...row, store_id: storeId, checked_at: new Date().toISOString() }));
+  const { error } = await getDB()
+    .from("forza_tracking")
+    .upsert(payload, { onConflict: "store_id,guide_number" });
+  if (error) throw new Error(`upsertForzaTracking: ${error.message}`);
+}
+
+export async function getRecentlyCheckedForzaGuides(
+  storeId: number,
+  maxAgeMinutes: number
+): Promise<Set<string>> {
+  const since = new Date(Date.now() - maxAgeMinutes * 60 * 1000).toISOString();
+  const fresh = new Set<string>();
+  const pageSize = 1000;
+  for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("forza_tracking")
+      .select("guide_number")
+      .eq("store_id", storeId)
+      .gte("checked_at", since)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`getRecentlyCheckedForzaGuides: ${error.message}`);
+    const page = (data ?? []) as Array<{ guide_number: string }>;
+    for (const row of page) {
+      const normalized = normalizeForzaGuide(row.guide_number);
+      if (!normalized) continue;
+      fresh.add(normalized);
+      fresh.add(normalized.replace(/^FD/i, ""));
+    }
+    if (page.length < pageSize) break;
+  }
+  return fresh;
 }

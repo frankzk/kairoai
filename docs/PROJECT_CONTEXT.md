@@ -105,8 +105,8 @@ Multi-store rule:
 
 - The finance module is multi-store through `stores` / `store_id`.
 - Current configured stores:
-  - `mireva-cr` (`store_id = 1`, currency `CRC`)
-  - `mireva-hn` (`store_id = 2`, currency `HNL`)
+  - `mireva-cr` (`store_id = 1`, currency `CRC`, logistics provider `Moovin`)
+  - `mireva-hn` (`store_id = 2`, currency `HNL`, logistics provider `Forza`)
 - The `/admin/finance` header includes a store selector. Every finance API request must carry the selected `store` value.
 - Store isolation is enforced at the API boundary: finance and Shopify data endpoints require an explicit valid `store` (`mireva-cr` or `mireva-hn`) and return `400` instead of defaulting to Costa Rica.
 - Finance writes, uploads, deletes, syncs, and reads must always pass `store_id` to Supabase. Boxful logistics/liquidation imports must set `store_id` on both the import record and every row.
@@ -121,6 +121,12 @@ Multi-store rule:
   - OAuth now rejects missing/invalid `store` state; never generate tokens from a store-ambiguous URL.
 - Shopify is the authoritative order universe inside each store. A Boxful logistics/liquidation row from Honduras must never create or count as a Costa Rica order, and vice versa.
 - Boxful data is reconciliation data only. If a Boxful row does not match a Shopify order in the same `store_id`, it stays unmatched and may become an anomaly/reclaim, but it must not create a new order in another store.
+- Carrier tracking is store-aware:
+  - Costa Rica uses Moovin (`moovin_tracking`, `/api/finance/moovin-sync`, `/api/finance/moovin-tracking`).
+  - Honduras uses Forza (`forza_tracking`, `/api/finance/forza-sync`, `/api/finance/forza-tracking`).
+  - The UI chooses the carrier from `FINANCE_STORES[].logisticsProvider`. Do not infer Honduras guides as Moovin and do not query Forza for Costa Rica.
+  - Forza guide numbers are normalized with the `FD` prefix, so `26827471` and `FD26827471` refer to the same guide.
+  - Forza public tracking uses `POST https://rastreo.forzadelivery.com/fd2/Home.aspx/API` with `Tracking/GetTrackingPublic`. The browser page may show reCAPTCHA, but the JSON endpoint currently returns package status for public guide lookups. Cache results in `forza_tracking` and avoid polling all guides on page load.
 - Supabase uniqueness is store-scoped for the key tables: Shopify orders (`store_id, shopify_order_id`), SKU costs (`store_id, sku`), finance claims (`store_id, anomaly_key`), and Boxful file controls (`store_id, file_name, file_type`).
 - Until `0010_multi_store_finance.sql` is applied, Costa Rica read APIs fall back to legacy unscoped tables if Supabase does not have `store_id` yet. This preserves visibility of existing CR costs, settlements, logistics, expenses, claims, and file controls. Honduras does not use that fallback, to avoid mixing countries.
 - Webhook/call-confirmation legacy routes still use the original Shopify/Retell configuration and should be treated as Costa Rica-only until they receive explicit `store_id`, per-store webhook secret validation, and per-store call metadata. Do not connect Honduras webhooks to those legacy routes yet.
@@ -148,6 +154,10 @@ APIs:
 - `GET/POST /api/finance/claims`
 - `GET /api/finance/boxful-files`
 - `GET /api/finance/summary`
+- `GET/POST /api/finance/moovin-sync`
+- `GET /api/finance/moovin-tracking`
+- `GET/POST /api/finance/forza-sync`
+- `GET /api/finance/forza-tracking`
 
 Core logic:
 
@@ -183,6 +193,8 @@ Database schema:
 - This SQL must be executed in Supabase SQL Editor before production finance APIs can persist data.
 - Multi-store migration file: `supabase/migrations/0010_multi_store_finance.sql`
 - This SQL adds `stores`, backfills current finance rows to Costa Rica, and adds `store_id` to Shopify orders, logistics, liquidations, costs, cost versions, expenses, claims, and Boxful file controls.
+- Forza tracking migration file: `supabase/migrations/0011_forza_tracking.sql`
+- This SQL adds the Honduras Forza status cache keyed by `(store_id, guide_number)`. It must run after `0010_multi_store_finance.sql` before the Forza sync buttons can persist statuses.
 - The `shopify_order_syncs` table is optional in older Supabase installs. The multi-store migration checks for it before adding `store_id`, so the migration can run safely even when that sync-audit table was never created.
 - If tables/columns are missing, `/admin/finance` shows a message instructing the user to run `supabase/migrations/0002_finance_schema.sql` and `supabase/migrations/0010_multi_store_finance.sql`.
 - Additional finance-control tables:

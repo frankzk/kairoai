@@ -1,4 +1,5 @@
 export type FinanceStoreCode = "mireva-cr" | "mireva-hn";
+export type LogisticsProviderCode = "moovin" | "forza";
 
 export interface FinanceStorePublic {
   id: number;
@@ -8,6 +9,7 @@ export interface FinanceStorePublic {
   countryCode: "CR" | "HN";
   currency: "CRC" | "HNL";
   locale: string;
+  logisticsProvider: LogisticsProviderCode;
 }
 
 export const DEFAULT_FINANCE_STORE_CODE: FinanceStoreCode = "mireva-cr";
@@ -22,6 +24,7 @@ export const FINANCE_STORES: FinanceStorePublic[] = [
     countryCode: "CR",
     currency: "CRC",
     locale: "es-CR",
+    logisticsProvider: "moovin",
   },
   {
     id: 2,
@@ -31,6 +34,7 @@ export const FINANCE_STORES: FinanceStorePublic[] = [
     countryCode: "HN",
     currency: "HNL",
     locale: "es-HN",
+    logisticsProvider: "forza",
   },
 ];
 
