@@ -434,6 +434,7 @@ const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
+  const [kpiRange, setKpiRange] = useState<KpiRange>("30d");
   const [imports, setImports] = useState<SettlementImport[]>([]);
   const [rows, setRows] = useState<SettlementRow[]>([]);
   const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
@@ -923,6 +924,30 @@ export default function FinancePage() {
     visibleOrderRows,
   ]);
 
+  // KPIs operativos por cohorte de fecha de creacion, con comparativo
+  // like-for-like contra el periodo inmediatamente anterior.
+  const operationalKpis = useMemo(() => {
+    const now = new Date();
+    const win = getKpiWindows(kpiRange, now);
+    const inWindow = (value: string | null, start: number, end: number) => {
+      if (!value) return false;
+      const time = new Date(value).getTime();
+      return !Number.isNaN(time) && time >= start && time < end;
+    };
+    const cur = computeOpMetrics(
+      financeControl.orders.filter((order) => inWindow(order.created_at, win.curStart, win.curEnd))
+    );
+    const prev =
+      win.prevStart != null && win.prevEnd != null
+        ? computeOpMetrics(
+            financeControl.orders.filter((order) =>
+              inWindow(order.created_at, win.prevStart as number, win.prevEnd as number)
+            )
+          )
+        : null;
+    return { win, cards: buildOperationalKpiCards(cur, prev) };
+  }, [financeControl.orders, kpiRange]);
+
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b border-border/50 bg-card/70 backdrop-blur">
@@ -974,16 +999,57 @@ export default function FinancePage() {
           </div>
         )}
 
-        <section className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
-          <MetricCard label="Entregados" value={loading ? "..." : String(orderStats.delivered)} />
-          <MetricCard label="No entregados" value={loading ? "..." : String(orderStats.notDelivered)} />
-          <MetricCard label="Anulados" value={loading ? "..." : String(orderStats.annulled)} />
-          <MetricCard label="En ruta" value={loading ? "..." : String(orderStats.enRoute)} />
-          <MetricCard label="Incidencia" value={loading ? "..." : String(orderStats.incident)} warning />
-          <MetricCard label="Pendientes" value={loading ? "..." : String(orderStats.pending)} />
-          <MetricCard label="Por reclamar" value={loading ? "..." : String(orderStats.liquidationAlerts)} warning />
-          <MetricCard label="Anomalias" value={loading ? "..." : String(financeControl.anomalies.length)} warning />
-          <MetricCard label="Utilidad neta" value={loading ? "..." : currency(summary?.net_profit ?? 0)} accent />
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1">
+              {KPI_RANGE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setKpiRange(option.value)}
+                  className={`rounded-md border px-2.5 py-1 text-xs transition ${
+                    kpiRange === option.value
+                      ? "border-primary/60 bg-primary/15 text-primary"
+                      : "border-border bg-card text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <span>
+                {operationalKpis.win.rangeLabel} · {operationalKpis.win.compareLabel}
+              </span>
+              {operationalKpis.win.maturing && (
+                <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-amber-200">
+                  tasas en maduración
+                </span>
+              )}
+            </p>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
+            {operationalKpis.cards.map(({ id, ...card }) => (
+              <OperationalKpiCard key={id} loading={loading} {...card} />
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Alertas y caja</span>
+            <AlertStat label="Incidencias" value={loading ? "..." : formatInt(orderStats.incident)} tone="bad" />
+            <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(orderStats.liquidationAlerts)} tone="warn" />
+            <AlertStat
+              label="Anomalías"
+              value={loading ? "..." : formatInt(financeControl.anomalies.length)}
+              tone="warn"
+            />
+            <AlertStat
+              label="Utilidad neta (histórico)"
+              value={loading ? "..." : currency(summary?.net_profit ?? 0)}
+              tone="muted"
+            />
+          </div>
         </section>
 
         <div className="flex gap-2 overflow-x-auto border-b border-border">
@@ -6449,34 +6515,385 @@ function BreakdownLine({ label, value }: { label: string; value: number }) {
   );
 }
 
-function MetricCard({
+type KpiRange = "today" | "7d" | "30d" | "month" | "all";
+type KpiTone = "neutral" | "good" | "warn" | "bad";
+type DeltaTone = "good" | "bad" | "muted";
+
+const KPI_RANGE_OPTIONS: { value: KpiRange; label: string }[] = [
+  { value: "today", label: "Hoy" },
+  { value: "7d", label: "7 días" },
+  { value: "30d", label: "30 días" },
+  { value: "month", label: "Mes" },
+  { value: "all", label: "Todo" },
+];
+
+interface KpiWindow {
+  curStart: number;
+  curEnd: number;
+  prevStart: number | null;
+  prevEnd: number | null;
+  rangeLabel: string;
+  compareLabel: string;
+  maturing: boolean;
+}
+
+interface OpMetrics {
+  generated: number;
+  dispatched: number;
+  delivered: number;
+  notDelivered: number;
+  annulled: number;
+  enRoute: number;
+  resolved: number;
+  deliveryRate: number;
+  returnRate: number;
+  dispatchRate: number;
+  annulRate: number;
+  leadAvg: number | null;
+  leadSamples: number;
+  units: number;
+  ticket: number;
+}
+
+interface KpiCardVM {
+  id: string;
+  label: string;
+  value: string;
+  sub?: string;
+  star?: boolean;
+  tone: KpiTone;
+  deltaLabel: string | null;
+  deltaTone: DeltaTone;
+}
+
+function startOfDayMs(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+// Ventana actual + ventana previa "like-for-like" (mismo largo, inmediatamente
+// anterior). "Mes" compara MTD contra el mismo tramo del mes anterior, no contra
+// el mes completo. `maturing` marca rangos donde la tasa de entrega aun no madura
+// por el lag logistico del COD (un pedido de hoy no se entrega hoy).
+function getKpiWindows(range: KpiRange, now: Date): KpiWindow {
+  const end = now.getTime();
+  const dayStart = startOfDayMs(now);
+  const DAY = 24 * 60 * 60 * 1000;
+  if (range === "all") {
+    return {
+      curStart: 0,
+      curEnd: end,
+      prevStart: null,
+      prevEnd: null,
+      rangeLabel: "Todo el histórico",
+      compareLabel: "sin comparativo",
+      maturing: false,
+    };
+  }
+  if (range === "today") {
+    return {
+      curStart: dayStart,
+      curEnd: end,
+      prevStart: dayStart - DAY,
+      prevEnd: dayStart,
+      rangeLabel: "Hoy",
+      compareLabel: "vs. ayer",
+      maturing: true,
+    };
+  }
+  if (range === "month") {
+    const curStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const elapsed = end - curStart;
+    const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+    return {
+      curStart,
+      curEnd: end,
+      prevStart,
+      prevEnd: prevStart + elapsed,
+      rangeLabel: "Mes actual",
+      compareLabel: "vs. mes anterior (mismo tramo)",
+      maturing: true,
+    };
+  }
+  const days = range === "7d" ? 7 : 30;
+  const curStart = dayStart - (days - 1) * DAY;
+  const span = end - curStart;
+  return {
+    curStart,
+    curEnd: end,
+    prevStart: curStart - span,
+    prevEnd: curStart,
+    rangeLabel: `Últimos ${days} días`,
+    compareLabel: `vs. ${days} días previos`,
+    maturing: range === "7d",
+  };
+}
+
+function isDispatchedStatus(status: string): boolean {
+  return (
+    status === "en_route" ||
+    status === "incident" ||
+    status === "delivered" ||
+    status === "not_delivered" ||
+    status === "returned"
+  );
+}
+
+function diffDaysMs(from: string, to: string): number {
+  const a = new Date(from).getTime();
+  const b = new Date(to).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return -1;
+  return Math.floor((b - a) / (24 * 60 * 60 * 1000));
+}
+
+// KPIs operativos de una cohorte de pedidos (agrupada por fecha de creacion).
+function computeOpMetrics(orders: OrderProfitabilityRow[]): OpMetrics {
+  let generated = 0;
+  let dispatched = 0;
+  let delivered = 0;
+  let notDelivered = 0;
+  let annulled = 0;
+  let enRoute = 0;
+  let units = 0;
+  const leadDays: number[] = [];
+  for (const order of orders) {
+    generated += 1;
+    const status = order.tracking_status;
+    if (Boolean(order.guide_number) || isDispatchedStatus(status)) dispatched += 1;
+    if (status === "delivered") delivered += 1;
+    else if (status === "not_delivered" || status === "returned") notDelivered += 1;
+    else if (status === "annulled") annulled += 1;
+    else if (status === "en_route") enRoute += 1;
+    for (const item of order.items || []) units += Number(item.quantity || 0);
+    if (status === "delivered" && order.created_at && order.delivered_on) {
+      const lead = diffDaysMs(order.created_at, order.delivered_on);
+      if (lead >= 0 && lead <= 120) leadDays.push(lead);
+    }
+  }
+  const resolved = delivered + notDelivered;
+  return {
+    generated,
+    dispatched,
+    delivered,
+    notDelivered,
+    annulled,
+    enRoute,
+    resolved,
+    deliveryRate: resolved ? (delivered / resolved) * 100 : 0,
+    returnRate: resolved ? (notDelivered / resolved) * 100 : 0,
+    dispatchRate: generated ? (dispatched / generated) * 100 : 0,
+    annulRate: generated ? (annulled / generated) * 100 : 0,
+    leadAvg: leadDays.length ? leadDays.reduce((acc, value) => acc + value, 0) / leadDays.length : null,
+    leadSamples: leadDays.length,
+    units,
+    ticket: generated ? units / generated : 0,
+  };
+}
+
+function formatInt(value: number): string {
+  return Number(value || 0).toLocaleString("es-CR");
+}
+
+function fmtPct1(value: number): string {
+  return `${Number(value || 0).toFixed(1)}%`;
+}
+
+// Variacion en puntos porcentuales (para tasas: no se compara como % relativo).
+function ppDelta(cur: number, prev: number | null): string | null {
+  if (prev == null) return null;
+  const diff = cur - prev;
+  const sign = diff >= 0 ? "+" : "−";
+  return `${sign}${Math.abs(diff).toFixed(1)} pp`;
+}
+
+// Variacion porcentual relativa (para conteos / volumen / ticket).
+function pctDelta(cur: number, prev: number | null): string | null {
+  if (prev == null || prev === 0) return null;
+  const diff = ((cur - prev) / prev) * 100;
+  const sign = diff >= 0 ? "+" : "−";
+  return `${sign}${Math.abs(diff).toFixed(0)}%`;
+}
+
+function dayDelta(cur: number | null, prev: number | null): string | null {
+  if (cur == null || prev == null) return null;
+  const diff = cur - prev;
+  const sign = diff >= 0 ? "+" : "−";
+  return `${sign}${Math.abs(diff).toFixed(1)} d`;
+}
+
+// Color del comparativo: "up" = subir es mejor; "down" = bajar es mejor.
+function deltaTone(cur: number | null, prev: number | null, better: "up" | "down"): DeltaTone {
+  if (cur == null || prev == null) return "muted";
+  const diff = cur - prev;
+  if (Math.abs(diff) < 0.05) return "muted";
+  const improving = better === "up" ? diff > 0 : diff < 0;
+  return improving ? "good" : "bad";
+}
+
+function deliveryTone(rate: number): KpiTone {
+  return rate >= 70 ? "good" : rate >= 55 ? "warn" : "bad";
+}
+
+function dispatchTone(rate: number): KpiTone {
+  return rate >= 90 ? "good" : rate >= 75 ? "warn" : "bad";
+}
+
+function annulTone(rate: number): KpiTone {
+  return rate <= 10 ? "good" : rate <= 20 ? "warn" : "bad";
+}
+
+// Fila operativa COD: embudo de izquierda a derecha (volumen -> despacho ->
+// entrega -> anulacion -> reparto -> velocidad -> cesta). Cada card lleva valor,
+// comparativo vs periodo anterior y semaforo contra meta.
+function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCardVM[] {
+  const prevLead = prev?.leadAvg ?? null;
+  return [
+    {
+      id: "generated",
+      label: "Pedidos generados",
+      value: formatInt(cur.generated),
+      tone: "neutral",
+      deltaLabel: pctDelta(cur.generated, prev?.generated ?? null),
+      deltaTone: deltaTone(cur.generated, prev?.generated ?? null, "up"),
+      sub: "pedidos creados",
+    },
+    {
+      id: "dispatch",
+      label: "Tasa de despacho",
+      value: fmtPct1(cur.dispatchRate),
+      tone: dispatchTone(cur.dispatchRate),
+      deltaLabel: ppDelta(cur.dispatchRate, prev?.dispatchRate ?? null),
+      deltaTone: deltaTone(cur.dispatchRate, prev?.dispatchRate ?? null, "up"),
+      sub: `${formatInt(cur.dispatched)}/${formatInt(cur.generated)} con guía`,
+    },
+    {
+      id: "delivery",
+      label: "Entrega efectiva",
+      value: fmtPct1(cur.deliveryRate),
+      star: true,
+      tone: deliveryTone(cur.deliveryRate),
+      deltaLabel: ppDelta(cur.deliveryRate, prev?.deliveryRate ?? null),
+      deltaTone: deltaTone(cur.deliveryRate, prev?.deliveryRate ?? null, "up"),
+      sub: `${formatInt(cur.delivered)}/${formatInt(cur.resolved)} · Devol. ${cur.returnRate.toFixed(1)}%`,
+    },
+    {
+      id: "annul",
+      label: "Tasa de anulación",
+      value: fmtPct1(cur.annulRate),
+      tone: annulTone(cur.annulRate),
+      deltaLabel: ppDelta(cur.annulRate, prev?.annulRate ?? null),
+      deltaTone: deltaTone(cur.annulRate, prev?.annulRate ?? null, "down"),
+      sub: `${formatInt(cur.annulled)}/${formatInt(cur.generated)} anulados`,
+    },
+    {
+      id: "wip",
+      label: "En reparto",
+      value: formatInt(cur.enRoute),
+      tone: "neutral",
+      deltaLabel: null,
+      deltaTone: "muted",
+      sub: "en tránsito ahora",
+    },
+    {
+      id: "lead",
+      label: "Lead time entrega",
+      value: cur.leadAvg == null ? "—" : `${cur.leadAvg.toFixed(1)} d`,
+      tone: "neutral",
+      deltaLabel: dayDelta(cur.leadAvg, prevLead),
+      deltaTone: deltaTone(cur.leadAvg, prevLead, "down"),
+      sub: cur.leadSamples ? `${formatInt(cur.leadSamples)} entregas` : "sin fecha de entrega",
+    },
+    {
+      id: "ticket",
+      label: "Ticket promedio",
+      value: cur.ticket ? cur.ticket.toFixed(1) : "—",
+      tone: "neutral",
+      deltaLabel: pctDelta(cur.ticket, prev?.ticket ?? null),
+      deltaTone: deltaTone(cur.ticket, prev?.ticket ?? null, "up"),
+      sub: "unidades/pedido",
+    },
+  ];
+}
+
+function OperationalKpiCard({
   label,
   value,
-  accent = false,
-  warning = false,
+  sub,
+  star = false,
+  tone = "neutral",
+  deltaLabel = null,
+  deltaTone: deltaToneValue = "muted",
+  loading = false,
 }: {
   label: string;
   value: string;
-  accent?: boolean;
-  warning?: boolean;
+  sub?: string;
+  star?: boolean;
+  tone?: KpiTone;
+  deltaLabel?: string | null;
+  deltaTone?: DeltaTone;
+  loading?: boolean;
 }) {
+  const borderClass =
+    tone === "good"
+      ? "border-emerald-500/40"
+      : tone === "warn"
+        ? "border-amber-500/40"
+        : tone === "bad"
+          ? "border-red-500/40"
+          : "border-border";
+  const valueClass =
+    tone === "good"
+      ? "text-emerald-300"
+      : tone === "warn"
+        ? "text-amber-300"
+        : tone === "bad"
+          ? "text-red-300"
+          : "text-foreground";
+  const deltaClass =
+    deltaToneValue === "good"
+      ? "text-emerald-400"
+      : deltaToneValue === "bad"
+        ? "text-red-400"
+        : "text-muted-foreground";
   return (
-    <Card className={accent ? "border-primary/40" : warning ? "border-amber-500/40" : ""}>
+    <Card className={borderClass}>
       <CardContent className="p-4">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p
-          className={
-            accent
-              ? "mt-2 text-2xl font-bold text-primary"
-              : warning
-                ? "mt-2 text-2xl font-bold text-amber-300"
-                : "mt-2 text-2xl font-bold"
-          }
-        >
-          {value}
-        </p>
+        <div className="flex items-center justify-between gap-1">
+          <p className="truncate text-xs text-muted-foreground">{label}</p>
+          {star && <span className="shrink-0 text-[10px] text-primary">★</span>}
+        </div>
+        <div className="mt-2 flex items-baseline justify-between gap-2">
+          <p className={`text-2xl font-bold ${valueClass}`}>{loading ? "..." : value}</p>
+          {deltaLabel && !loading && (
+            <span className={`shrink-0 text-[11px] font-medium ${deltaClass}`}>{deltaLabel}</span>
+          )}
+        </div>
+        {sub && <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{sub}</p>}
       </CardContent>
     </Card>
+  );
+}
+
+function AlertStat({
+  label,
+  value,
+  tone = "muted",
+}: {
+  label: string;
+  value: string;
+  tone?: "warn" | "bad" | "muted";
+}) {
+  const cls =
+    tone === "bad"
+      ? "border-red-500/40 text-red-200"
+      : tone === "warn"
+        ? "border-amber-500/40 text-amber-200"
+        : "border-border text-muted-foreground";
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-md border bg-card px-2.5 py-1 ${cls}`}>
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-semibold text-foreground">{value}</span>
+    </span>
   );
 }
 
