@@ -320,6 +320,17 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "not_delivered", label: "No entregados" },
 ];
 
+// Punto de color por estado de seguimiento, alineado con los KPIs de arriba.
+const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
+  all: "bg-muted-foreground/40",
+  pending: "bg-slate-400",
+  en_route: "bg-cyan-400",
+  incident: "bg-amber-400",
+  annulled: "bg-zinc-500",
+  delivered: "bg-emerald-400",
+  not_delivered: "bg-red-400",
+};
+
 const PRODUCT_ANALYSIS_FILTERS: Array<{ value: ProductAnalysisFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "no_cost", label: "Sin costo" },
@@ -1086,6 +1097,42 @@ export default function FinancePage() {
   );
 }
 
+function FilterChip({
+  label,
+  count,
+  active,
+  onClick,
+  dotClass,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+  dotClass?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+        active
+          ? "border-primary bg-primary/10 text-primary"
+          : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+      }`}
+    >
+      {dotClass && <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />}
+      {label}
+      <span
+        className={`min-w-[1.25rem] rounded-full px-1 text-center font-mono text-[10px] leading-4 ${
+          active ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+        }`}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
+
 function OrdersTab({
   logisticsImports,
   rows,
@@ -1283,14 +1330,12 @@ function OrdersTab({
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="gap-4 space-y-0 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-1.5">
+        <CardHeader className="gap-4 space-y-0 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
             <CardTitle className="text-base">Seguimiento de pedidos</CardTitle>
             <p className="text-xs text-muted-foreground">
               Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.
             </p>
-            {syncMessage && <p className="text-xs text-muted-foreground">{syncMessage}</p>}
-            {moovinMessage && <p className="text-xs text-muted-foreground">{moovinMessage}</p>}
           </div>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
             {enRouteMoovinGuides.length > 0 && (
@@ -1324,118 +1369,29 @@ function OrdersTab({
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Periodo</span>
-            <div className="inline-flex divide-x divide-border border border-border">
-              {ORDER_PERIOD_MODES.map((mode) => (
-                <button
-                  key={mode.value}
-                  type="button"
-                  onClick={() => setPeriodMode(mode.value)}
-                  className={`px-3 py-1 text-sm transition-colors ${
-                    periodMode === mode.value
-                      ? "bg-primary/10 text-primary"
-                      : "bg-card text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {mode.label}
-                </button>
-              ))}
+          {(syncMessage || moovinMessage) && (
+            <div className="space-y-1 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              {syncMessage && (
+                <p className="flex items-center gap-1.5">
+                  <Database className="h-3.5 w-3.5 shrink-0" /> {syncMessage}
+                </p>
+              )}
+              {moovinMessage && (
+                <p className="flex items-center gap-1.5">
+                  <Search className="h-3.5 w-3.5 shrink-0" /> {moovinMessage}
+                </p>
+              )}
             </div>
-            {periodMode === "month" && (
-              <select
-                value={selectedOrderMonth}
-                onChange={(event) => setSelectedOrderMonth(event.target.value)}
-                className="h-8 border border-input bg-background px-2 text-sm outline-none"
-                aria-label="Mes"
-              >
-                {orderMonthOptions.map((month) => (
-                  <option key={month} value={month}>
-                    {formatMonthLabel(month)}
-                  </option>
-                ))}
-              </select>
-            )}
-            {periodMode === "range" && (
-              <div className="flex items-center gap-1.5">
-                <Input
-                  type="date"
-                  value={rangeStart}
-                  onChange={(event) => setRangeStart(event.target.value)}
-                  className="h-8 w-[150px]"
-                  aria-label="Desde"
-                />
-                <span className="text-xs text-muted-foreground">a</span>
-                <Input
-                  type="date"
-                  value={rangeEnd}
-                  onChange={(event) => setRangeEnd(event.target.value)}
-                  className="h-8 w-[150px]"
-                  aria-label="Hasta"
-                />
-              </div>
-            )}
-            <span className="ml-auto text-xs text-muted-foreground">
-              Vista actual{" "}
-              <span className="font-mono text-sm font-semibold text-foreground">{periodFilteredRows.length}</span>
-            </span>
-          </div>
+          )}
 
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Estado</span>
-            {ORDER_TRACKING_FILTERS.map((filter) => (
-              <button
-                key={filter.value}
-                type="button"
-                onClick={() => setTrackingFilter(filter.value)}
-                className={`border px-2.5 py-1 text-sm transition-colors ${
-                  trackingFilter === filter.value
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                }`}
-              >
-                {filter.label}{" "}
-                <span className="ml-1 font-mono text-xs text-foreground">{trackingCounts[filter.value]}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Liquidacion</span>
-            {ORDER_SETTLEMENT_FILTERS.map((filter) => (
-              <button
-                key={filter.value}
-                type="button"
-                onClick={() => setSettlementFilter(filter.value)}
-                className={`border px-2.5 py-1 text-sm transition-colors ${
-                  settlementFilter === filter.value
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                }`}
-              >
-                {filter.label}{" "}
-                <span className="ml-1 font-mono text-xs text-foreground">{settlementCounts[filter.value]}</span>
-              </button>
-            ))}
-            {settlementFilter !== "all" && (
-              <button
-                type="button"
-                onClick={() => setSettlementFilter("all")}
-                className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-              >
-                Limpiar filtro
-              </button>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex w-full items-center gap-2 border border-input bg-background px-3 sm:max-w-md">
-              <Search className="h-4 w-4 text-muted-foreground" />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 sm:flex-1">
+              <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
               <input
                 value={orderSearch}
                 onChange={(event) => setOrderSearch(event.target.value)}
                 placeholder="Buscar pedido: #MCRC11566, 11566, guia o cliente"
-                className="h-8 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                className="h-9 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               />
               {orderSearch && (
                 <button
@@ -1448,54 +1404,156 @@ function OrdersTab({
                 </button>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {orderSearch
-                ? `${filteredRows.length} de ${searchedRows.length} pedidos encontrados`
-                : `Base Shopify: ${shopifyCoverage?.count ?? shopifyOrderCount} pedidos${
-                    shopifyCoverage?.oldest ? ` desde ${formatDate(shopifyCoverage.oldest.slice(0, 10))}` : ""
-                  }${
-                    latestLogisticsImport
-                      ? ` - Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match, ${latestLogisticsImport.unmatched_rows} sin match`
-                      : " - Sin Boxful importado"
-                  }`}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={() =>
-                exportXlsx(
-                  `pedidos-${new Date().toISOString().slice(0, 10)}.xlsx`,
-                  filteredRows.map((row) => {
-                    const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
-                    const status = getEffectiveTrackingStatus(row, traces);
-                    const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
-                    return {
-                      Orden: row.order_name || row.shopify_order_name,
-                      Origen: row.source,
-                      Guia: row.guide_number,
-                      Transportadora: row.courier ?? "",
-                      "Estado Moovin": moovin?.latest_status ?? "",
-                      "Incidencia Moovin": moovin?.has_incident ? "si" : "",
-                      Cliente: row.customer_name,
-                      Apellido: row.last_name ?? "",
-                      "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
-                      Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
-                      Fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
-                      "Estado liquidacion": traces.map((t) => t.settlement_status).join(" | ") || "sin liquidacion",
-                      "A liquidar": traces.length ? sum(traces.map((t) => t.amount_to_liquidate)) : "",
-                      COD: row.cod_amount,
-                      Items: (row.package_items ?? []).map((item) => item.title).join("; "),
-                    };
-                  }),
-                  "Pedidos"
-                )
-              }
-            >
-              <Download className="h-4 w-4" /> Exportar XLSX ({filteredRows.length})
-            </Button>
+            <div className="flex items-center justify-between gap-3 sm:justify-end">
+              <span className="whitespace-nowrap text-xs text-muted-foreground">
+                <span className="font-mono text-sm font-semibold text-foreground">{filteredRows.length}</span>{" "}
+                {orderSearch ? `de ${searchedRows.length}` : "pedidos"}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() =>
+                  exportXlsx(
+                    `pedidos-${new Date().toISOString().slice(0, 10)}.xlsx`,
+                    filteredRows.map((row) => {
+                      const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
+                      const status = getEffectiveTrackingStatus(row, traces);
+                      const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
+                      return {
+                        Orden: row.order_name || row.shopify_order_name,
+                        Origen: row.source,
+                        Guia: row.guide_number,
+                        Transportadora: row.courier ?? "",
+                        "Estado Moovin": moovin?.latest_status ?? "",
+                        "Incidencia Moovin": moovin?.has_incident ? "si" : "",
+                        Cliente: row.customer_name,
+                        Apellido: row.last_name ?? "",
+                        "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
+                        Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
+                        Fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
+                        "Estado liquidacion": traces.map((t) => t.settlement_status).join(" | ") || "sin liquidacion",
+                        "A liquidar": traces.length ? sum(traces.map((t) => t.amount_to_liquidate)) : "",
+                        COD: row.cod_amount,
+                        Items: (row.package_items ?? []).map((item) => item.title).join("; "),
+                      };
+                    }),
+                    "Pedidos"
+                  )
+                }
+              >
+                <Download className="h-4 w-4" /> Exportar ({filteredRows.length})
+              </Button>
+            </div>
           </div>
+
+          <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Periodo</span>
+              <div className="inline-flex overflow-hidden rounded-md border border-border">
+                {ORDER_PERIOD_MODES.map((mode, index) => (
+                  <button
+                    key={mode.value}
+                    type="button"
+                    onClick={() => setPeriodMode(mode.value)}
+                    className={`px-3 py-1 text-sm transition-colors ${index > 0 ? "border-l border-border" : ""} ${
+                      periodMode === mode.value
+                        ? "bg-primary/10 text-primary"
+                        : "bg-card text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+              {periodMode === "month" && (
+                <select
+                  value={selectedOrderMonth}
+                  onChange={(event) => setSelectedOrderMonth(event.target.value)}
+                  className="h-8 rounded-md border border-input bg-background px-2 text-sm outline-none"
+                  aria-label="Mes"
+                >
+                  {orderMonthOptions.map((month) => (
+                    <option key={month} value={month}>
+                      {formatMonthLabel(month)}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {periodMode === "range" && (
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    type="date"
+                    value={rangeStart}
+                    onChange={(event) => setRangeStart(event.target.value)}
+                    className="h-8 w-[150px]"
+                    aria-label="Desde"
+                  />
+                  <span className="text-xs text-muted-foreground">a</span>
+                  <Input
+                    type="date"
+                    value={rangeEnd}
+                    onChange={(event) => setRangeEnd(event.target.value)}
+                    className="h-8 w-[150px]"
+                    aria-label="Hasta"
+                  />
+                </div>
+              )}
+              <span className="ml-auto text-xs text-muted-foreground">
+                Vista actual{" "}
+                <span className="font-mono text-sm font-semibold text-foreground">{periodFilteredRows.length}</span>
+              </span>
+            </div>
+
+            <div className="h-px bg-border/60" />
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Estado</span>
+              {ORDER_TRACKING_FILTERS.map((filter) => (
+                <FilterChip
+                  key={filter.value}
+                  label={filter.label}
+                  count={trackingCounts[filter.value]}
+                  active={trackingFilter === filter.value}
+                  onClick={() => setTrackingFilter(filter.value)}
+                  dotClass={filter.value === "all" ? undefined : TRACKING_DOT_COLORS[filter.value]}
+                />
+              ))}
+            </div>
+
+            <div className="h-px bg-border/60" />
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Liquidacion</span>
+              {ORDER_SETTLEMENT_FILTERS.map((filter) => (
+                <FilterChip
+                  key={filter.value}
+                  label={filter.label}
+                  count={settlementCounts[filter.value]}
+                  active={settlementFilter === filter.value}
+                  onClick={() => setSettlementFilter(filter.value)}
+                />
+              ))}
+              {settlementFilter !== "all" && (
+                <button
+                  type="button"
+                  onClick={() => setSettlementFilter("all")}
+                  className="ml-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Limpiar
+                </button>
+              )}
+            </div>
+          </div>
+
+          <p className="text-[11px] text-muted-foreground">
+            Base Shopify: {shopifyCoverage?.count ?? shopifyOrderCount} pedidos
+            {shopifyCoverage?.oldest ? ` desde ${formatDate(shopifyCoverage.oldest.slice(0, 10))}` : ""}
+            {latestLogisticsImport
+              ? ` · Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match, ${latestLogisticsImport.unmatched_rows} sin match`
+              : " · Sin Boxful importado"}
+          </p>
           <OrdersTable
             rows={filteredRows}
             settlementTraceByKey={settlementTraceByKey}
