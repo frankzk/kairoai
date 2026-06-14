@@ -122,7 +122,7 @@ Multi-store rule:
 - Shopify is the authoritative order universe inside each store. A Boxful logistics/liquidation row from Honduras must never create or count as a Costa Rica order, and vice versa.
 - Boxful data is reconciliation data only. If a Boxful row does not match a Shopify order in the same `store_id`, it stays unmatched and may become an anomaly/reclaim, but it must not create a new order in another store.
 - Supabase uniqueness is store-scoped for the key tables: Shopify orders (`store_id, shopify_order_id`), SKU costs (`store_id, sku`), finance claims (`store_id, anomaly_key`), and Boxful file controls (`store_id, file_name, file_type`).
-- Until `0003_multi_store_finance.sql` is applied, Costa Rica read APIs fall back to legacy unscoped tables if Supabase does not have `store_id` yet. This preserves visibility of existing CR costs, settlements, logistics, expenses, claims, and file controls. Honduras does not use that fallback, to avoid mixing countries.
+- Until `0010_multi_store_finance.sql` is applied, Costa Rica read APIs fall back to legacy unscoped tables if Supabase does not have `store_id` yet. This preserves visibility of existing CR costs, settlements, logistics, expenses, claims, and file controls. Honduras does not use that fallback, to avoid mixing countries.
 - Webhook/call-confirmation legacy routes still use the original Shopify/Retell configuration and should be treated as Costa Rica-only until they receive explicit `store_id`, per-store webhook secret validation, and per-store call metadata. Do not connect Honduras webhooks to those legacy routes yet.
 
 Navigation:
@@ -181,10 +181,10 @@ Database schema:
 
 - New migration file: `supabase/migrations/0002_finance_schema.sql`
 - This SQL must be executed in Supabase SQL Editor before production finance APIs can persist data.
-- Multi-store migration file: `supabase/migrations/0003_multi_store_finance.sql`
+- Multi-store migration file: `supabase/migrations/0010_multi_store_finance.sql`
 - This SQL adds `stores`, backfills current finance rows to Costa Rica, and adds `store_id` to Shopify orders, logistics, liquidations, costs, cost versions, expenses, claims, and Boxful file controls.
 - The `shopify_order_syncs` table is optional in older Supabase installs. The multi-store migration checks for it before adding `store_id`, so the migration can run safely even when that sync-audit table was never created.
-- If tables/columns are missing, `/admin/finance` shows a message instructing the user to run `supabase/migrations/0002_finance_schema.sql` and `supabase/migrations/0003_multi_store_finance.sql`.
+- If tables/columns are missing, `/admin/finance` shows a message instructing the user to run `supabase/migrations/0002_finance_schema.sql` and `supabase/migrations/0010_multi_store_finance.sql`.
 - Additional finance-control tables:
   - `shopify_orders`: persisted Shopify order master, synced in batches.
   - `shopify_order_syncs`: reserved sync audit table.
@@ -602,7 +602,7 @@ Build in this order:
 - Do not commit `.env.local` or secrets.
 - `.vercel` is local metadata and should remain ignored.
 - Vercel production deploys from `main`.
-- Finance persistence requires running `supabase/migrations/0002_finance_schema.sql` and `supabase/migrations/0003_multi_store_finance.sql` in Supabase before use.
+- Finance persistence requires running `supabase/migrations/0002_finance_schema.sql` and `supabase/migrations/0010_multi_store_finance.sql` in Supabase before use.
 - After changing protected routes, verify:
   - `/login` returns 200
   - `/` redirects to `/login` when unauthenticated
@@ -628,7 +628,7 @@ Build in this order:
 - Added multi-store finance architecture for Mireva Honduras without duplicating the app:
   - New shared store config: `lib/store-config.ts`
   - Server credential resolver: `lib/stores.ts`
-  - New DB migration: `supabase/migrations/0003_multi_store_finance.sql`
+  - New DB migration: `supabase/migrations/0010_multi_store_finance.sql`
   - `/admin/finance` now has a store selector and sends `store=mireva-cr` or `store=mireva-hn` to finance and Shopify endpoints.
   - Finance reads/writes are scoped by `store_id` for Shopify orders, Boxful logistics, Boxful liquidations, product costs, cost versions, expenses, claims, and file controls.
   - Existing Costa Rica data is backfilled to `store_id = 1`; Honduras starts isolated on `store_id = 2`.

@@ -576,7 +576,7 @@ export default function FinancePage() {
         safeJson(
           fetch(
             withStore(
-              `/api/shopify/note-orders?created_at_min=${encodeURIComponent(getShopifyNotesCreatedAtMin())}&max_pages=30`,
+              `/api/shopify/note-orders?created_at_min=${encodeURIComponent(getShopifyNotesCreatedAtMin(activeStoreCode))}&max_pages=30`,
               activeStoreCode
             ),
             { cache: "no-store" }
@@ -1056,7 +1056,7 @@ export default function FinancePage() {
             {error.includes("Could not find the table") ||
             error.includes("schema cache") ||
             (error.includes("store_id") && error.toLowerCase().includes("column"))
-              ? "Faltan tablas financieras en Supabase. Ejecuta supabase/migrations/0002_finance_schema.sql y supabase/migrations/0003_multi_store_finance.sql en SQL Editor."
+              ? "Faltan tablas financieras en Supabase. Ejecuta supabase/migrations/0002_finance_schema.sql y supabase/migrations/0010_multi_store_finance.sql en SQL Editor."
               : error}
           </div>
         )}
@@ -7075,6 +7075,12 @@ function buildLiveShopifyOrdersUrl(storeCode: FinanceStoreCode): string {
 
 function getShopifyCreatedAtMin(storeCode: FinanceStoreCode): string {
   return FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE[storeCode] ?? FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE["mireva-cr"];
+}
+
+function getShopifyNotesCreatedAtMin(storeCode: FinanceStoreCode): string {
+  const storeMin = new Date(getShopifyCreatedAtMin(storeCode)).getTime();
+  const lookbackMin = Date.now() - FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  return new Date(Math.max(storeMin, lookbackMin)).toISOString();
 }
 
 async function readApiJson(res: Response) {
