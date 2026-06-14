@@ -732,6 +732,13 @@ export default function FinancePage() {
     }
   }
 
+  async function reloadCosts() {
+    const res = await fetch("/api/finance/product-costs", { cache: "no-store" });
+    const json = await readApiJson(res);
+    setCosts(json.costs ?? []);
+    setCostVersions(Array.isArray(json.versions) ? (json.versions as ProductCostVersion[]) : []);
+  }
+
   async function syncShopifyHistory() {
     setSyncingShopify(true);
     setSyncMessage("Sincronizando Shopify...");
@@ -1006,6 +1013,7 @@ export default function FinancePage() {
                 productsLoading={productsLoading}
                 productsError={productsError}
                 onSaveProductCost={saveProductCost}
+                onReloadCosts={reloadCosts}
               />
             )}
             {tab === "notes" && (
@@ -2056,6 +2064,7 @@ function ProductAnalysisTab({
   productsLoading,
   productsError,
   onSaveProductCost,
+  onReloadCosts,
 }: {
   rows: ProductAnalysisRow[];
   costs: ProductCost[];
@@ -2064,10 +2073,12 @@ function ProductAnalysisTab({
   productsLoading: boolean;
   productsError: string;
   onSaveProductCost: (input: ProductCostSaveInput) => Promise<void>;
+  onReloadCosts: () => Promise<void>;
 }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<ProductAnalysisFilter>("all");
   const [sort, setSort] = useState<{ key: ProductColumnKey; dir: "asc" | "desc" } | null>(null);
+  const [isBulkCostOpen, setIsBulkCostOpen] = useState(false);
   const [editingCostSku, setEditingCostSku] = useState("");
   const [historyCostSku, setHistoryCostSku] = useState("");
   const costBySku = useMemo(
@@ -2168,33 +2179,38 @@ function ProductAnalysisTab({
               Productos, costos y tasas en una sola vista. Despacho = con guia / pedidos Shopify.
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={() =>
-              exportCsv(
-                "analisis-productos.csv",
-                filteredRows.map((row) => ({
-                  producto: row.product_name,
-                  sku: row.sku,
-                  pedidos_ejemplo: row.sample_orders.join(", "),
-                  costo_guardado: getProductCostForAnalysisRow(row, costBySku)?.unit_cost ?? "",
-                  pedidos: row.orders,
-                  unidades: row.units,
-                  con_guia: row.dispatched,
-                  tasa_despacho: formatPercent(row.dispatch_rate),
-                  efectividad_entrega: formatPercent(row.delivery_effectiveness),
-                  entregados: row.delivered,
-                  no_entregados: row.not_delivered,
-                  anulados: row.annulled,
-                  pendientes: row.pending,
-                }))
-              )
-            }
-          >
-            <Download className="h-4 w-4" /> Exportar
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => setIsBulkCostOpen(true)}>
+              <Upload className="h-4 w-4" /> Importar costos
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() =>
+                exportCsv(
+                  "analisis-productos.csv",
+                  filteredRows.map((row) => ({
+                    producto: row.product_name,
+                    sku: row.sku,
+                    pedidos_ejemplo: row.sample_orders.join(", "),
+                    costo_guardado: getProductCostForAnalysisRow(row, costBySku)?.unit_cost ?? "",
+                    pedidos: row.orders,
+                    unidades: row.units,
+                    con_guia: row.dispatched,
+                    tasa_despacho: formatPercent(row.dispatch_rate),
+                    efectividad_entrega: formatPercent(row.delivery_effectiveness),
+                    entregados: row.delivered,
+                    no_entregados: row.not_delivered,
+                    anulados: row.annulled,
+                    pendientes: row.pending,
+                  }))
+                )
+              }
+            >
+              <Download className="h-4 w-4" /> Exportar
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -2361,6 +2377,9 @@ function ProductAnalysisTab({
           onClose={() => setHistoryCostSku("")}
         />
       )}
+      {isBulkCostOpen && (
+        <BulkCostImportModal onClose={() => setIsBulkCostOpen(false)} onReloadCosts={onReloadCosts} />
+      )}
     </Card>
   );
 }
@@ -2504,6 +2523,209 @@ function ProductCostCell({
       </div>
     </div>
   );
+}
+
+interface ParsedCostRow {
+  sku: string;
+  product_name: string;
+  unit_cost: number;
+  packaging_cost: number;
+  effective_from: string;
+}
+
+function BulkCostImportModal({
+  onClose,
+  onReloadCosts,
+}: {
+  onClose: () => void;
+  onReloadCosts: () => Promise<void>;
+}) {
+  const [parsed, setParsed] = useState<ParsedCostRow[]>([]);
+  const [fileName, setFileName] = useState("");
+  const [parsing, setParsing] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [message, setMessage] = useState("");
+  const [result, setResult] = useState<{ saved: number; failed: number } | null>(null);
+
+  async function handleFile(file: File) {
+    setParsing(true);
+    setMessage("");
+    setResult(null);
+    setFileName(file.name);
+    try {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+      const rows = raw.map(mapBulkCostRow).filter((r): r is ParsedCostRow => r !== null);
+      setParsed(rows);
+      if (!rows.length) {
+        setMessage(
+          "No se detectaron filas validas. Asegurate de tener columnas SKU y Costo (unitario)."
+        );
+      }
+    } catch {
+      setMessage("No se pudo leer el archivo. Usa un XLSX o CSV con encabezados.");
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  async function handleImport() {
+    if (!parsed.length) return;
+    setImporting(true);
+    setMessage("");
+    try {
+      const res = await fetch("/api/finance/product-costs/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: parsed }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "No se pudo importar");
+      setResult({ saved: Number(json.saved ?? 0), failed: Number(json.failed ?? 0) });
+      await onReloadCosts();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo importar");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="bulk-cost-title"
+    >
+      <div className="flex max-h-[88vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h3 id="bulk-cost-title" className="text-base font-semibold">
+              Importar costos por SKU
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Sube un Excel/CSV con columnas <strong>SKU</strong> y <strong>Costo</strong> (unitario).
+              Opcionales: <strong>Empaque</strong>, <strong>Vigente desde</strong>, <strong>Producto</strong>.
+            </p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <Input
+          type="file"
+          accept=".xlsx,.xls,.csv"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) handleFile(file);
+          }}
+        />
+
+        {parsing && (
+          <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+            <RefreshCw className="h-4 w-4 animate-spin" /> Leyendo {fileName}...
+          </p>
+        )}
+        {message && (
+          <p className="mt-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            {message}
+          </p>
+        )}
+        {result && (
+          <p className="mt-3 border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+            {result.saved} costos guardados{result.failed ? `, ${result.failed} con error` : ""}.
+          </p>
+        )}
+
+        {parsed.length > 0 && !result && (
+          <div className="mt-3 min-h-0 flex-1 overflow-auto border border-border">
+            <table className="w-full min-w-[520px] text-sm">
+              <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">SKU</th>
+                  <th className="px-3 py-2">Producto</th>
+                  <th className="px-3 py-2 text-right">Costo</th>
+                  <th className="px-3 py-2 text-right">Empaque</th>
+                  <th className="px-3 py-2">Vigente</th>
+                </tr>
+              </thead>
+              <tbody>
+                {parsed.slice(0, 200).map((row, index) => (
+                  <tr key={`${row.sku}-${index}`} className="border-t border-border/50">
+                    <td className="px-3 py-1.5 font-mono text-xs">{row.sku}</td>
+                    <td className="max-w-[180px] truncate px-3 py-1.5 text-xs" title={row.product_name}>
+                      {row.product_name || "-"}
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-xs">{currency(row.unit_cost)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-xs">{currency(row.packaging_cost)}</td>
+                    <td className="px-3 py-1.5 font-mono text-xs">{row.effective_from}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="mt-4 flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">
+            {parsed.length > 0 ? `${parsed.length} SKUs listos para importar` : ""}
+          </span>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              {result ? "Cerrar" : "Cancelar"}
+            </Button>
+            {!result && (
+              <Button type="button" disabled={importing || !parsed.length} onClick={handleImport} className="gap-2">
+                {importing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                {importing ? "Importando..." : `Importar ${parsed.length || ""}`}
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Mapea una fila del Excel a un costo, aceptando variantes de encabezado.
+function mapBulkCostRow(raw: Record<string, unknown>): ParsedCostRow | null {
+  const get = (...names: string[]): string => {
+    for (const key of Object.keys(raw)) {
+      const norm = key.trim().toLowerCase();
+      if (names.some((n) => norm === n || norm.includes(n))) {
+        return String(raw[key] ?? "").trim();
+      }
+    }
+    return "";
+  };
+  const sku = get("sku", "codigo", "código");
+  const unitCostText = get("costo unitario", "costo", "precio", "unit_cost", "unitcost");
+  const unit_cost = Number(String(unitCostText).replace(/[^0-9.,-]/g, "").replace(/,/g, "")) || 0;
+  if (!sku || unit_cost <= 0) return null;
+  const packagingText = get("empaque", "packaging", "empaque propio");
+  const packaging_cost = Number(String(packagingText).replace(/[^0-9.,-]/g, "").replace(/,/g, "")) || 0;
+  return {
+    sku,
+    product_name: get("producto", "product", "nombre", "descripcion", "descripción"),
+    unit_cost,
+    packaging_cost,
+    effective_from: normalizeBulkDate(get("vigente", "fecha", "effective", "desde")),
+  };
+}
+
+function normalizeBulkDate(value: string): string {
+  if (!value) return new Date().toISOString().slice(0, 10);
+  // dd/mm/aaaa o dd-mm-aaaa -> aaaa-mm-dd
+  const parts = value.split(/[/-]/).map((p) => p.trim());
+  if (parts.length === 3 && Number(parts[2]) > 1900) {
+    const [d, m, y] = parts;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date().toISOString().slice(0, 10) : parsed.toISOString().slice(0, 10);
 }
 
 function ProductCostQuickEditModal({
