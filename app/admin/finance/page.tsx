@@ -1720,6 +1720,30 @@ function isMoovinCourier(courier: string | undefined): boolean {
   return String(courier ?? "").toLowerCase().includes("moovin");
 }
 
+// EasySell/Shopify rotula el fulfillment con un valor generico ("Transportadora",
+// "Other", etc.) en vez del courier real. Moovin es la unica transportadora
+// activa, asi que esos valores (y los vacios) se muestran como "Moovin"; un
+// nombre real distinto se respeta tal cual.
+const GENERIC_COURIER_LABELS = new Set([
+  "",
+  "transportadora",
+  "transportista",
+  "other",
+  "otra",
+  "custom",
+  "manual",
+  "n/a",
+  "na",
+  "none",
+  "easysell",
+]);
+
+function normalizeShopifyCourier(rawCompany: string | undefined): string {
+  const company = String(rawCompany ?? "").trim();
+  if (GENERIC_COURIER_LABELS.has(company.toLowerCase())) return "Moovin";
+  return company;
+}
+
 interface MoovinTrackingEvent {
   code: string;
   group: "delivered" | "failed" | "returned" | "in_progress";
@@ -6975,7 +6999,7 @@ function buildVisibleOrderRows(
     // aunque aun no este en un Excel de Boxful. Moovin es la unica
     // transportadora activa, asi que es el courier por defecto.
     const shopifyGuide = String(order.tracking_number ?? "").trim();
-    const shopifyCourier = shopifyGuide ? (order.tracking_company?.trim() || "Moovin") : "";
+    const shopifyCourier = shopifyGuide ? normalizeShopifyCourier(order.tracking_company) : "";
     return {
       row_key: `shopify-${order.id}`,
       source: "shopify",
