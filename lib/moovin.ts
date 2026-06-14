@@ -13,6 +13,10 @@ const MOOVIN_STATUS_GROUP: Record<string, MoovinGroup> = {
   RETURNED: "returned",
   RETURN: "returned",
   RETURNTOSENDER: "returned",
+  // Cancelado (p.ej. supera numero de intentos): el paquete no se entrego.
+  CANCELED: "returned",
+  CANCELLED: "returned",
+  CANCEL: "returned",
 };
 
 export type MoovinGroup = "delivered" | "failed" | "returned" | "in_progress";
@@ -163,6 +167,15 @@ interface MoovinDetail {
   events: MoovinEvent[];
 }
 
+// Clasifica el grupo por codigo; si el codigo es desconocido, rescata las
+// cancelaciones por titulo ("Cancelado") para que cuenten como no entregado.
+function classifyMoovinGroup(code: string, title: string): MoovinGroup {
+  const mapped = MOOVIN_STATUS_GROUP[code];
+  if (mapped) return mapped;
+  if (title.toLowerCase().includes("cancelado")) return "returned";
+  return "in_progress";
+}
+
 function parseMoovinResponse(raw: string): MoovinDetail | null {
   const payload = findTrackingPayload(raw);
   if (!payload || !Array.isArray(payload.listStatus)) return null;
@@ -176,7 +189,7 @@ function parseMoovinResponse(raw: string): MoovinDetail | null {
         .join(" | ");
       return {
         code,
-        group: MOOVIN_STATUS_GROUP[code] ?? "in_progress",
+        group: classifyMoovinGroup(code, String(status.title ?? "")),
         title: String(status.title ?? ""),
         description: String(status.description ?? ""),
         date: status.date ?? null,
