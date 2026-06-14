@@ -59,7 +59,7 @@ import { Input } from "@/components/ui/input";
 
 type Tab = "orders" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
-type OrderTrackingFilter = "all" | "pending" | "en_route" | "incident" | "annulled" | "delivered" | "not_delivered";
+type OrderTrackingFilter = "all" | "pending" | "en_route" | "en_route_retry" | "incident" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
   | "all"
   | "no_cost"
@@ -137,6 +137,7 @@ interface TrackableOrderRow {
   guide_number: string;
   courier?: string;
   moovin_group?: string;
+  moovin_incidents?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -314,6 +315,7 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "all", label: "Todos" },
   { value: "pending", label: "Pendientes" },
   { value: "en_route", label: "En ruta" },
+  { value: "en_route_retry", label: "Reintento" },
   { value: "incident", label: "Incidencia" },
   { value: "annulled", label: "Anulados" },
   { value: "delivered", label: "Entregados" },
@@ -325,6 +327,7 @@ const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   all: "bg-muted-foreground/40",
   pending: "bg-slate-400",
   en_route: "bg-cyan-400",
+  en_route_retry: "bg-orange-500",
   incident: "bg-amber-400",
   annulled: "bg-zinc-500",
   delivered: "bg-emerald-400",
@@ -910,6 +913,7 @@ export default function FinancePage() {
       liquidationAlerts: liquidationAlertRows.length,
       anomalies: liquidationAlertRows.length + doubleSettlementAnomalies.length,
       enRoute: effectiveStatuses.filter((status) => status === "en_route").length,
+      enRouteRetry: effectiveStatuses.filter((status) => status === "en_route_retry").length,
       incident: effectiveStatuses.filter((status) => status === "incident").length,
       pending: effectiveStatuses.filter((status) => status === "pending" || status === "unmatched").length,
       unmatched: logisticsRows.filter((row) => row.match_status === "unmatched").length,
@@ -1037,6 +1041,7 @@ export default function FinancePage() {
 
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Alertas y caja</span>
+            <AlertStat label="Reintentos" value={loading ? "..." : formatInt(orderStats.enRouteRetry)} tone="bad" />
             <AlertStat label="Incidencias" value={loading ? "..." : formatInt(orderStats.incident)} tone="bad" />
             <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(orderStats.liquidationAlerts)} tone="warn" />
             <AlertStat
@@ -1293,6 +1298,7 @@ function OrdersTab({
       all: searchedRows.length,
       pending: 0,
       en_route: 0,
+      en_route_retry: 0,
       incident: 0,
       annulled: 0,
       delivered: 0,
@@ -1325,7 +1331,7 @@ function OrdersTab({
     for (const row of rows) {
       if (!isMoovinCourier(row.courier) || !row.guide_number) continue;
       const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      if (status !== "en_route" && status !== "incident" && status !== "pending") continue;
+      if (status !== "en_route" && status !== "en_route_retry" && status !== "incident" && status !== "pending") continue;
       if (!byGuide.has(row.guide_number)) {
         byGuide.set(row.guide_number, { idPackage: row.guide_number, lastName: row.last_name ?? "" });
       }
@@ -6544,6 +6550,7 @@ interface OpMetrics {
   notDelivered: number;
   annulled: number;
   enRoute: number;
+  enRouteRetry: number;
   resolved: number;
   deliveryRate: number;
   returnRate: number;
@@ -6631,6 +6638,7 @@ function getKpiWindows(range: KpiRange, now: Date): KpiWindow {
 function isDispatchedStatus(status: string): boolean {
   return (
     status === "en_route" ||
+    status === "en_route_retry" ||
     status === "incident" ||
     status === "delivered" ||
     status === "not_delivered" ||
@@ -6653,6 +6661,7 @@ function computeOpMetrics(orders: OrderProfitabilityRow[]): OpMetrics {
   let notDelivered = 0;
   let annulled = 0;
   let enRoute = 0;
+  let enRouteRetry = 0;
   let units = 0;
   const leadDays: number[] = [];
   for (const order of orders) {
@@ -6663,6 +6672,7 @@ function computeOpMetrics(orders: OrderProfitabilityRow[]): OpMetrics {
     else if (status === "not_delivered" || status === "returned") notDelivered += 1;
     else if (status === "annulled") annulled += 1;
     else if (status === "en_route") enRoute += 1;
+    else if (status === "en_route_retry") enRouteRetry += 1;
     for (const item of order.items || []) units += Number(item.quantity || 0);
     if (status === "delivered" && order.created_at && order.delivered_on) {
       const lead = diffDaysMs(order.created_at, order.delivered_on);
@@ -6677,6 +6687,7 @@ function computeOpMetrics(orders: OrderProfitabilityRow[]): OpMetrics {
     notDelivered,
     annulled,
     enRoute,
+    enRouteRetry,
     resolved,
     deliveryRate: resolved ? (delivered / resolved) * 100 : 0,
     returnRate: resolved ? (notDelivered / resolved) * 100 : 0,
@@ -6787,11 +6798,11 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCa
     {
       id: "wip",
       label: "En reparto",
-      value: formatInt(cur.enRoute),
-      tone: "neutral",
+      value: formatInt(cur.enRoute + cur.enRouteRetry),
+      tone: cur.enRouteRetry > 0 ? "warn" : "neutral",
       deltaLabel: null,
       deltaTone: "muted",
-      sub: "en tránsito ahora",
+      sub: cur.enRouteRetry > 0 ? `${formatInt(cur.enRouteRetry)} en reintento` : "en tránsito ahora",
     },
     {
       id: "lead",
@@ -6940,6 +6951,12 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   if (status === "annulled") return <Badge variant="warning">Anulado</Badge>;
   if (status === "unmatched") return <Badge variant="warning">Sin match</Badge>;
   if (status === "en_route") return <Badge variant="info">{label || "En ruta"}</Badge>;
+  if (status === "en_route_retry")
+    return (
+      <Badge variant="warning" className="border-orange-500/40 bg-orange-500/20 text-orange-300">
+        {label || "Reintento"}
+      </Badge>
+    );
   if (status === "incident") return <Badge variant="destructive">{label || "Incidencia"}</Badge>;
   return <Badge variant="muted">{label || "Pendiente"}</Badge>;
 }
@@ -7425,7 +7442,10 @@ function buildVisibleOrderRows(
       row_key: `boxful-${row.id}`,
       source: "boxful" as const,
       courier: row.courier,
-      moovin_group: row.guide_number ? moovinByPackage.get(row.guide_number)?.latest_group : undefined,
+      moovin_group: row.guide_number ? deriveMoovinGroup(moovinByPackage.get(row.guide_number)) : undefined,
+      moovin_incidents: row.guide_number
+        ? countMoovinIncidents(moovinByPackage.get(row.guide_number)?.events)
+        : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
       match_status: shopify ? "matched" : row.match_status,
@@ -7472,7 +7492,8 @@ function buildVisibleOrderRows(
       source: "shopify",
       guide_number: shopifyGuide,
       courier: shopifyCourier,
-      moovin_group: moovinHit?.latest_group,
+      moovin_group: deriveMoovinGroup(moovinHit),
+      moovin_incidents: moovinHit ? countMoovinIncidents(moovinHit.events) : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
@@ -8677,12 +8698,16 @@ function getOrderDateKey(row: Pick<TrackableOrderRow, "shopify_created_at">): st
 }
 
 function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "guide_number">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
   // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
   const moovinStatus = moovinGroupToStatus(row.moovin_group);
-  if (moovinStatus) return moovinStatus;
+  if (moovinStatus) {
+    // En ruta tras fallar la entrega (1+ incidencia) = reintento a presionar.
+    if (moovinStatus === "en_route" && (row.moovin_incidents ?? 0) >= 1) return "en_route_retry";
+    return moovinStatus;
+  }
 
   if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
 
@@ -8704,7 +8729,12 @@ function getEffectiveTrackingStatus(
 // "Pendiente operativo" para agregaciones: incluye en ruta (despachado pero
 // aun sin entregar) y pendiente (sin despachar).
 function isPendingLike(status: string): boolean {
-  return status === "pending" || status === "en_route" || status === "incident";
+  return (
+    status === "pending" ||
+    status === "en_route" ||
+    status === "en_route_retry" ||
+    status === "incident"
+  );
 }
 
 function inferTrackingStatusFromText(status: string): string {
@@ -8719,12 +8749,13 @@ function getTrackingFilterFromStatus(status: string): Exclude<OrderTrackingFilte
   if (status === "delivered") return "delivered";
   if (status === "not_delivered" || status === "returned") return "not_delivered";
   if (status === "en_route") return "en_route";
+  if (status === "en_route_retry") return "en_route_retry";
   if (status === "incident") return "incident";
   return "pending";
 }
 
 function getTrackingStatusLabel(
-  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status">,
+  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents">,
   traces: SettlementTrace[],
   status: string
 ): string {
@@ -8738,6 +8769,8 @@ function getTrackingStatusLabel(
   if (status === "delivered") return "Entregado";
   if (status === "not_delivered" || status === "returned") return "No entregado";
   if (status === "en_route") return row.boxful_status || "En ruta";
+  if (status === "en_route_retry")
+    return (row.moovin_incidents ?? 1) > 1 ? `Reintento (${row.moovin_incidents})` : "Reintento";
   if (status === "incident") return "Incidencia";
   return "Pendiente";
 }
@@ -8761,6 +8794,28 @@ function moovinGroupToStatus(group: string | undefined): string {
     default:
       return "";
   }
+}
+
+// Cuenta las incidencias de entrega ("Incidencia en la entrega", codigo FAILED)
+// de Moovin. Un envio en ruta con 1+ incidencia es un reintento tras fallar.
+function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): number {
+  if (!events?.length) return 0;
+  return events.filter(
+    (event) =>
+      String(event.code ?? "").toUpperCase() === "FAILED" ||
+      String(event.title ?? "").toLowerCase().includes("incidencia en la entrega")
+  ).length;
+}
+
+// Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"
+// (p.ej. supera intentos de entrega) quedaba como en ruta y debe ser No
+// entregado. Los demas estados conservan su grupo ya calculado.
+function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
+  if (!row) return "";
+  const code = String(row.latest_code ?? "").toUpperCase();
+  const title = String(row.latest_status ?? "").toLowerCase();
+  if (code.startsWith("CANCEL") || title.includes("cancelado")) return "returned";
+  return row.latest_group ?? "";
 }
 
 function isShopifyCancelled(

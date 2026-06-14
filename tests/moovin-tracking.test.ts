@@ -2,11 +2,22 @@ import { describe, expect, it } from "vitest";
 
 // Replica del parser de app/api/finance/moovin-tracking/route.ts para fijar el
 // comportamiento sobre la estructura RSC real de Moovin (linea "1:{...}").
-const MOOVIN_STATUS_GROUP: Record<string, "delivered" | "failed" | "returned" | "in_progress"> = {
+type MoovinGroup = "delivered" | "failed" | "returned" | "in_progress";
+const MOOVIN_STATUS_GROUP: Record<string, MoovinGroup> = {
   DELIVERED: "delivered",
   FAILED: "failed",
   RETURNED: "returned",
+  CANCELED: "returned",
+  CANCELLED: "returned",
+  CANCEL: "returned",
 };
+
+function classifyMoovinGroup(code: string, title: string): MoovinGroup {
+  const mapped = MOOVIN_STATUS_GROUP[code];
+  if (mapped) return mapped;
+  if (title.toLowerCase().includes("cancelado")) return "returned";
+  return "in_progress";
+}
 
 function findTrackingPayload(raw: string): any | null {
   for (const line of raw.split("\n")) {
@@ -36,7 +47,7 @@ function parseMoovinResponse(raw: string) {
         .join(" | ");
       return {
         code,
-        group: MOOVIN_STATUS_GROUP[code] ?? "in_progress",
+        group: classifyMoovinGroup(code, String(status.title ?? "")),
         title: String(status.title ?? ""),
         date: status.date ?? null,
         note,
@@ -96,5 +107,25 @@ describe("parseMoovinResponse", () => {
 
   it("devuelve null si no hay listStatus", () => {
     expect(parseMoovinResponse('0:{"a":"x"}\n')).toBeNull();
+  });
+});
+
+describe("clasificacion de cancelaciones", () => {
+  it("Cancelado (codigo CANCELED) cuenta como no entregado (returned), no en ruta", () => {
+    const raw =
+      '1:{"serialNumber":"abc","listStatus":[' +
+      '{"date":"2026-06-13T08:56:00Z","status":"INROUTE","title":"En ruta para entregar a lo largo del dia"},' +
+      '{"date":"2026-06-13T09:45:00Z","status":"CANCELED","title":"Cancelado"}' +
+      ']}\n';
+    const detail = parseMoovinResponse(raw)!;
+    expect(detail.events[0].title).toBe("Cancelado");
+    expect(detail.events[0].group).toBe("returned");
+  });
+
+  it("rescata la cancelacion por titulo aunque el codigo sea desconocido", () => {
+    const raw =
+      '1:{"serialNumber":"x","listStatus":[{"date":"2026-06-13T09:45:00Z","status":"WEIRD","title":"Cancelado"}]}\n';
+    const detail = parseMoovinResponse(raw)!;
+    expect(detail.events[0].group).toBe("returned");
   });
 });
