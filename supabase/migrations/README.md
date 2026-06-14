@@ -20,7 +20,7 @@ Estado actual:
 | `0004_payroll_staff.sql` | Catalogo de personal de planilla | Si (12/06/2026) |
 | `0005_customer_name_parts.sql` | Columnas first_name/last_name en pedidos, logistica y liquidaciones + backfill | Si (14/06/2026) |
 | `0006_moovin_tracking.sql` | Cache de estado Moovin por guia (incidencias incluidas) | Si (14/06/2026) |
-| `0007_shopify_tracking.sql` | Guia/transportadora del fulfillment de Shopify (pedidos despachados sin esperar Boxful) | **Pendiente** |
+| `0007_shopify_tracking.sql` | Guia/transportadora del fulfillment de Shopify (pedidos despachados sin esperar Boxful) | Si (14/06/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de
