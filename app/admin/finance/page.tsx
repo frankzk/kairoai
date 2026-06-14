@@ -198,6 +198,7 @@ interface OrderProfitabilityRow {
   settlement_packaging_cost: number;
   amount_to_liquidate: number;
   expected_cod: number;
+  order_value: number;
   product_cost: number;
   contribution_margin: number;
   missing_cost_skus: string[];
@@ -1040,7 +1041,7 @@ export default function FinancePage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Alertas y caja</span>
+            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Alertas</span>
             <AlertStat label="Reintentos" value={loading ? "..." : formatInt(orderStats.enRouteRetry)} tone="bad" />
             <AlertStat label="Incidencias" value={loading ? "..." : formatInt(orderStats.incident)} tone="bad" />
             <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(orderStats.liquidationAlerts)} tone="warn" />
@@ -1048,11 +1049,6 @@ export default function FinancePage() {
               label="Anomalías"
               value={loading ? "..." : formatInt(financeControl.anomalies.length)}
               tone="warn"
-            />
-            <AlertStat
-              label="Utilidad neta (histórico)"
-              value={loading ? "..." : currency(summary?.net_profit ?? 0)}
-              tone="muted"
             />
           </div>
         </section>
@@ -6558,7 +6554,6 @@ interface OpMetrics {
   annulRate: number;
   leadAvg: number | null;
   leadSamples: number;
-  units: number;
   ticket: number;
 }
 
@@ -6662,7 +6657,8 @@ function computeOpMetrics(orders: OrderProfitabilityRow[]): OpMetrics {
   let annulled = 0;
   let enRoute = 0;
   let enRouteRetry = 0;
-  let units = 0;
+  let revenue = 0;
+  let valueOrders = 0;
   const leadDays: number[] = [];
   for (const order of orders) {
     generated += 1;
@@ -6673,7 +6669,11 @@ function computeOpMetrics(orders: OrderProfitabilityRow[]): OpMetrics {
     else if (status === "annulled") annulled += 1;
     else if (status === "en_route") enRoute += 1;
     else if (status === "en_route_retry") enRouteRetry += 1;
-    for (const item of order.items || []) units += Number(item.quantity || 0);
+    const value = Number(order.order_value || 0);
+    if (value > 0) {
+      revenue += value;
+      valueOrders += 1;
+    }
     if (status === "delivered" && order.created_at && order.delivered_on) {
       const lead = diffDaysMs(order.created_at, order.delivered_on);
       if (lead >= 0 && lead <= 120) leadDays.push(lead);
@@ -6695,8 +6695,7 @@ function computeOpMetrics(orders: OrderProfitabilityRow[]): OpMetrics {
     annulRate: generated ? (annulled / generated) * 100 : 0,
     leadAvg: leadDays.length ? leadDays.reduce((acc, value) => acc + value, 0) / leadDays.length : null,
     leadSamples: leadDays.length,
-    units,
-    ticket: generated ? units / generated : 0,
+    ticket: valueOrders ? revenue / valueOrders : 0,
   };
 }
 
@@ -6816,11 +6815,11 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCa
     {
       id: "ticket",
       label: "Ticket promedio",
-      value: cur.ticket ? cur.ticket.toFixed(1) : "—",
+      value: cur.ticket ? currency(cur.ticket) : "—",
       tone: "neutral",
       deltaLabel: pctDelta(cur.ticket, prev?.ticket ?? null),
       deltaTone: deltaTone(cur.ticket, prev?.ticket ?? null, "up"),
-      sub: "unidades/pedido",
+      sub: "valor por pedido",
     },
   ];
 }
@@ -8181,6 +8180,8 @@ function buildOrderProfitabilityRow({
   const settlementCodAmount = sum(settlementRows.map((row) => row.cod_amount));
   const expectedCod = order.cod_amount || sum(settlementRows.map((row) => row.cod_amount));
   const items = getProfitabilityItems(order, settlementRows);
+  const orderValue =
+    sum(items.map((item) => Number(item.price || 0) * Number(item.quantity || 0))) || expectedCod;
   const productCostResult = calculateProductCost(items, costVersionsBySku, trackingStatus, order.shopify_created_at);
   const hasSettlement = settlementRows.length > 0;
   const shopifyCancelledWithMovement = isShopifyCancelled(order) && (order.source !== "shopify" || hasSettlement);
@@ -8215,6 +8216,7 @@ function buildOrderProfitabilityRow({
     settlement_packaging_cost: roundMoney(settlementPackagingCost),
     amount_to_liquidate: roundMoney(amountToLiquidate),
     expected_cod: roundMoney(expectedCod),
+    order_value: roundMoney(orderValue),
     product_cost: productCostResult.productCost,
     contribution_margin: roundMoney(amountToLiquidate - productCostResult.productCost),
     missing_cost_skus: productCostResult.missingCostSkus,
