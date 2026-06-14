@@ -635,3 +635,54 @@ export async function getRecentlyCheckedMoovinPackages(maxAgeMinutes: number): P
   }
   return fresh;
 }
+
+// Candidatos a sincronizar con Moovin desde el servidor (para el cron): guias
+// Moovin que aun no estan en estado terminal (entregado/devuelto) en la cache
+// y que no se consultaron dentro de la ventana fresca.
+export async function listMoovinSyncCandidates(
+  limit: number,
+  freshWindowMinutes: number
+): Promise<Array<{ idPackage: string; lastName: string }>> {
+  // 1) Guias Moovin con guia, desde logistics_rows.
+  const byGuide = new Map<string, string>();
+  const pageSize = 1000;
+  for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("logistics_rows")
+      .select("guide_number, last_name, courier")
+      .ilike("courier", "%moovin%")
+      .neq("guide_number", "")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listMoovinSyncCandidates: ${error.message}`);
+    const page = (data ?? []) as Array<{ guide_number: string; last_name: string | null }>;
+    for (const row of page) {
+      if (row.guide_number && !byGuide.has(row.guide_number)) {
+        byGuide.set(row.guide_number, row.last_name ?? "");
+      }
+    }
+    if (page.length < pageSize) break;
+  }
+
+  // 2) Excluir terminales en cache (entregado/devuelto) y los frescos.
+  const terminal = new Set<string>();
+  for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("moovin_tracking")
+      .select("id_package, latest_group, checked_at")
+      .in("latest_group", ["delivered", "returned"])
+      .range(from, from + pageSize - 1);
+    if (error) break;
+    const page = (data ?? []) as Array<{ id_package: string }>;
+    for (const row of page) terminal.add(row.id_package);
+    if (page.length < pageSize) break;
+  }
+  const fresh = await getRecentlyCheckedMoovinPackages(freshWindowMinutes);
+
+  const candidates: Array<{ idPackage: string; lastName: string }> = [];
+  for (const [guide, lastName] of Array.from(byGuide.entries())) {
+    if (terminal.has(guide) || fresh.has(guide)) continue;
+    candidates.push({ idPackage: guide, lastName });
+    if (candidates.length >= limit) break;
+  }
+  return candidates;
+}

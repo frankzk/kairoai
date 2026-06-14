@@ -11,6 +11,7 @@ const PUBLIC_PATHS = [
   "/api/retell/llm",
   "/api/retell/webhook",
   "/api/cron/retries",
+  "/api/cron/moovin",
 ];
 
 function isPublicPath(pathname: string): boolean {

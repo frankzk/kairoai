@@ -1,5 +1,11 @@
 {
   "regions": ["iad1"],
+  "crons": [
+    {
+      "path": "/api/cron/moovin",
+      "schedule": "0 */6 * * *"
+    }
+  ],
   "functions": {
     "app/api/retell/llm/route.ts": {
       "maxDuration": 25
@@ -15,6 +21,9 @@
     },
     "app/api/cron/retries/route.ts": {
       "maxDuration": 25
+    },
+    "app/api/cron/moovin/route.ts": {
+      "maxDuration": 60
     },
     "app/api/finance/settlements/route.ts": {
       "maxDuration": 60
