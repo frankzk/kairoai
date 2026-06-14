@@ -1097,6 +1097,40 @@ export default function FinancePage() {
   );
 }
 
+// Capa de fondo comun para los modales: cierra con la tecla ESC y con clic
+// fuera del contenido (clic directo sobre el fondo, no sobre los hijos).
+function ModalOverlay({
+  onClose,
+  labelledBy,
+  children,
+}: {
+  onClose: () => void;
+  labelledBy?: string;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={labelledBy}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function FilterChip({
   label,
   count,
@@ -1587,12 +1621,7 @@ function OrdersTab({
       </Card>
 
       {isLogisticsModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="logistics-import-title"
-        >
+        <ModalOverlay onClose={() => setIsLogisticsModalOpen(false)} labelledBy="logistics-import-title">
           <div className="w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-2xl">
             <div className="mb-5 flex items-start justify-between gap-4">
               <div className="space-y-1">
@@ -1648,7 +1677,7 @@ function OrdersTab({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </div>
   );
@@ -1916,12 +1945,7 @@ function MoovinTrackingModal({
   const events = data?.events ?? [];
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="moovin-tracking-title"
-    >
+    <ModalOverlay onClose={onClose} labelledBy="moovin-tracking-title">
       <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -2001,7 +2025,7 @@ function MoovinTrackingModal({
           </>
         )}
       </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -2556,12 +2580,7 @@ function BulkCostImportModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="bulk-cost-title"
-    >
+    <ModalOverlay onClose={onClose} labelledBy="bulk-cost-title">
       <div className="flex max-h-[88vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
@@ -2649,7 +2668,7 @@ function BulkCostImportModal({
           </div>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -2750,12 +2769,7 @@ function ProductCostQuickEditModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="product-cost-edit-title"
-    >
+    <ModalOverlay onClose={onClose} labelledBy="product-cost-edit-title">
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-2xl">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div className="min-w-0 space-y-1">
@@ -2820,7 +2834,7 @@ function ProductCostQuickEditModal({
           </Button>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -3690,12 +3704,7 @@ function CostHistoryModal({
   onClose: () => void;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="cost-history-title"
-    >
+    <ModalOverlay onClose={onClose} labelledBy="cost-history-title">
       <div className="w-full max-w-3xl rounded-lg border border-border bg-card p-6 shadow-2xl">
         <div className="mb-5 flex items-start justify-between gap-4">
           <div className="min-w-0 space-y-1">
@@ -3739,7 +3748,7 @@ function CostHistoryModal({
           </table>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -4279,12 +4288,7 @@ function ExpensesTab({
       </Card>
 
       {isExpenseModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="expense-modal-title"
-        >
+        <ModalOverlay onClose={() => setIsExpenseModalOpen(false)} labelledBy="expense-modal-title">
           <div className="w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-2xl">
             <div className="mb-5 flex items-start justify-between gap-4">
               <div className="space-y-1">
@@ -4529,7 +4533,7 @@ function ExpensesTab({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
       {isStaffModalOpen && (
         <PayrollStaffModal
@@ -4599,12 +4603,7 @@ function PayrollStaffModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="payroll-staff-title"
-    >
+    <ModalOverlay onClose={onClose} labelledBy="payroll-staff-title">
       <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
@@ -4671,7 +4670,7 @@ function PayrollStaffModal({
           )}
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }
 }
@@ -6088,12 +6087,7 @@ function MonthOrdersModal({
   );
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="month-orders-title"
-    >
+    <ModalOverlay onClose={onClose} labelledBy="month-orders-title">
       <div className="flex max-h-[92vh] w-full max-w-6xl flex-col rounded-lg border border-border bg-card p-4 shadow-2xl">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
@@ -6139,7 +6133,7 @@ function MonthOrdersModal({
           <MonthlyOrdersTable rows={visibleOrders} />
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -6159,12 +6153,7 @@ function MonthAnomaliesModal({
   onClose: () => void;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="month-anomalies-title"
-    >
+    <ModalOverlay onClose={onClose} labelledBy="month-anomalies-title">
       <div className="flex max-h-[92vh] w-full max-w-6xl flex-col rounded-lg border border-border bg-card p-4 shadow-2xl">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
@@ -6195,7 +6184,7 @@ function MonthAnomaliesModal({
           />
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -6219,12 +6208,7 @@ function MonthSkuCostsModal({
   );
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="month-skus-title"
-    >
+    <ModalOverlay onClose={onClose} labelledBy="month-skus-title">
       <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-card p-4 shadow-2xl">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
@@ -6278,7 +6262,7 @@ function MonthSkuCostsModal({
           onSave={onSave}
         />
       )}
-    </div>
+    </ModalOverlay>
   );
 }
 
