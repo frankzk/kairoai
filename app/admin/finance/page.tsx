@@ -7897,19 +7897,9 @@ function buildFinancialAnomalies(
   const hasSettlement = settlementRows.length > 0;
   const sourceFile = row.settlement_files[0] ?? "";
 
-  if (row.tracking_status === "delivered" && !hasSettlement) {
-    anomalies.push({
-      id: `${row.order_key}-delivered-without-settlement`,
-      severity: "high",
-      type: "Entregado sin liquidacion",
-      order_name: row.order_name,
-      guide_number: row.guide_number,
-      amount: row.expected_cod,
-      source_file: sourceFile,
-      message: "Boxful/seguimiento indica entregado pero no aparece en liquidacion.",
-      action: "Reclamar liquidacion a Boxful y revisar el corte faltante.",
-    });
-  }
+  // "Entregado sin liquidacion" NO es una anomalia: es un estado operativo
+  // normal (Boxful entrega y liquida dias despues). Se rastrea en su propia
+  // tarjeta "Entregados sin liquidacion" / "Caja por reclamar" con aging, no aqui.
 
   if (settlementRows.length > 1) {
     anomalies.push({
