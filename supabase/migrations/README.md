@@ -22,7 +22,7 @@ Estado actual:
 | `0006_moovin_tracking.sql` | Cache de estado Moovin por guia (incidencias incluidas) | Si (14/06/2026) |
 | `0007_shopify_tracking.sql` | Guia/transportadora del fulfillment de Shopify (pedidos despachados sin esperar Boxful) | Si (14/06/2026) |
 | `0008_product_costs_sku_unique.sql` | Indice unico en product_costs.sku (repara instancias sin el UNIQUE; el codigo ya hace upsert manual, esto es para integridad) | No (opcional) |
-| `0009_product_costs_store_id_nullable.sql` | Relaja NOT NULL en product_costs.store_id (columna multi-tienda divergente que bloqueaba el guardado de costos) | No (requerida para guardar costos) |
+| `0009_product_costs_store_id_nullable.sql` | Relaja NOT NULL en product_costs.store_id (columna multi-tienda divergente que bloqueaba el guardado de costos) | Si (14/06/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de
