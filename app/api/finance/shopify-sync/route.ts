@@ -165,6 +165,7 @@ function buildInitialUrl(createdAtMin: string, createdAtMax?: string): string {
     "customer",
     "billing_address",
     "shipping_address",
+    "fulfillments",
     "created_at",
     "updated_at",
   ].join(",");
@@ -195,6 +196,19 @@ function mapShopifyOrder(order: Record<string, unknown>): Omit<PersistedShopifyO
     (customer?.phone as string | null) ??
     null;
 
+  // Guia/transportadora del fulfillment mas reciente con tracking.
+  const fulfillments = ((order.fulfillments as Array<Record<string, unknown>>) ?? [])
+    .filter((f) => f.tracking_number || (Array.isArray(f.tracking_numbers) && f.tracking_numbers.length))
+    .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+  const latestFulfillment = fulfillments[0];
+  const trackingNumbers = Array.isArray(latestFulfillment?.tracking_numbers)
+    ? (latestFulfillment?.tracking_numbers as unknown[])
+    : [];
+  const trackingNumber = String(
+    latestFulfillment?.tracking_number ?? trackingNumbers[0] ?? ""
+  ).trim();
+  const trackingCompany = String(latestFulfillment?.tracking_company ?? "").trim();
+
   return {
     shopify_order_id: String(order.id ?? ""),
     order_number: order.order_number ? Number(order.order_number) : null,
@@ -216,6 +230,8 @@ function mapShopifyOrder(order: Record<string, unknown>): Omit<PersistedShopifyO
         value: String(attribute.value ?? ""),
       })
     ),
+    tracking_number: trackingNumber,
+    tracking_company: trackingCompany,
     line_items: lineItems.map((item) => ({
       sku: String(item.sku ?? ""),
       title: String(item.title ?? ""),

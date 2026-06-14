@@ -18,6 +18,8 @@ export interface ShopifyOrderSummary {
   cancelled_at: string | null;
   note: string;
   note_attributes: Array<{ name: string; value: string }>;
+  tracking_number?: string;
+  tracking_company?: string;
   created_at: string;
   line_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
 }
@@ -55,6 +57,7 @@ export async function GET(req: NextRequest) {
     "customer",
     "billing_address",
     "shipping_address",
+    "fulfillments",
     "created_at",
   ].join(",");
 
@@ -114,6 +117,13 @@ export async function GET(req: NextRequest) {
 
         const lineItems = (o.line_items as Array<Record<string, unknown>>) ?? [];
         const noteAttributes = (o.note_attributes as Array<Record<string, unknown>>) ?? [];
+        const trackedFulfillments = ((o.fulfillments as Array<Record<string, unknown>>) ?? [])
+          .filter((f) => f.tracking_number || (Array.isArray(f.tracking_numbers) && f.tracking_numbers.length))
+          .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+        const latestFulfillment = trackedFulfillments[0];
+        const trackingNums = Array.isArray(latestFulfillment?.tracking_numbers)
+          ? (latestFulfillment?.tracking_numbers as unknown[])
+          : [];
         const products = lineItems.map((li) => `${li.quantity}x ${li.title}`).join(", ");
         const normalizedLineItems = lineItems.map((li) => ({
           sku: String(li.sku ?? ""),
@@ -140,6 +150,8 @@ export async function GET(req: NextRequest) {
             name: String(attribute.name ?? ""),
             value: String(attribute.value ?? ""),
           })),
+          tracking_number: String(latestFulfillment?.tracking_number ?? trackingNums[0] ?? "").trim(),
+          tracking_company: String(latestFulfillment?.tracking_company ?? "").trim(),
           created_at: o.created_at as string,
           line_items: normalizedLineItems,
         };

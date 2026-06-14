@@ -116,6 +116,8 @@ interface ShopifyOrderSummary {
   cancelled_at: string | null;
   note?: string;
   note_attributes?: Array<{ name?: string | null; value?: string | null }>;
+  tracking_number?: string;
+  tracking_company?: string;
   created_at: string;
   line_items: ProductLineItem[];
 }
@@ -6668,6 +6670,8 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     financial_status: String(order.financial_status ?? ""),
     fulfillment_status: String(order.fulfillment_status ?? ""),
     cancelled_at: (order.cancelled_at as string | null) ?? null,
+    tracking_number: String(order.tracking_number ?? ""),
+    tracking_company: String(order.tracking_company ?? ""),
     note: String(order.note ?? rawOrder.note ?? ""),
     note_attributes: noteAttributes,
     created_at: String(order.shopify_created_at ?? ""),
@@ -6966,10 +6970,18 @@ function buildVisibleOrderRows(
 
   const shopifyOnlyRows = shopifyOrders
     .filter((order) => !getShopifyOrderMatchKeys(order).some((key) => existingKeys.has(key)))
-    .map((order): TrackableOrderRow => ({
+    .map((order): TrackableOrderRow => {
+    // Guia desde el fulfillment de Shopify: el pedido ya salio a reparto
+    // aunque aun no este en un Excel de Boxful. Moovin es la unica
+    // transportadora activa, asi que es el courier por defecto.
+    const shopifyGuide = String(order.tracking_number ?? "").trim();
+    const shopifyCourier = shopifyGuide ? (order.tracking_company?.trim() || "Moovin") : "";
+    return {
       row_key: `shopify-${order.id}`,
       source: "shopify",
-      guide_number: "",
+      guide_number: shopifyGuide,
+      courier: shopifyCourier,
+      moovin_group: shopifyGuide ? moovinByPackage.get(shopifyGuide)?.latest_group : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
@@ -6991,7 +7003,8 @@ function buildVisibleOrderRows(
         quantity: Number(item.quantity || 0),
         price: Number(item.price || 0),
       })),
-    }));
+    };
+  });
 
   return [...consolidatedLogisticsRows, ...shopifyOnlyRows].sort((a, b) =>
     String(b.shopify_created_at || "").localeCompare(String(a.shopify_created_at || ""))
@@ -8173,7 +8186,7 @@ function getOrderDateKey(row: Pick<TrackableOrderRow, "shopify_created_at">): st
 }
 
 function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
   // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
@@ -8188,7 +8201,8 @@ function getEffectiveTrackingStatus(
   const settlementStatus = traces.find((trace) => isFinalTrackingStatus(trace.internal_status));
   if (settlementStatus) return settlementStatus.internal_status;
 
-  const hasOperationalMovement = row.source !== "shopify" || traces.length > 0;
+  // Tiene guia (Boxful, liquidacion o el fulfillment de Shopify) = despachado.
+  const hasOperationalMovement = row.source !== "shopify" || traces.length > 0 || Boolean(row.guide_number);
   if (isShopifyCancelled(row) && !hasOperationalMovement) return "annulled";
   // Con guia/courier (movimiento logistico) y sin estado final = en reparto.
   if (hasOperationalMovement) return "en_route";

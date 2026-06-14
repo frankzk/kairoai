@@ -273,20 +273,26 @@ export async function listLogisticsRows(importId?: number): Promise<LogisticsRow
 // timeout de Postgres con 10k+ pedidos, asi que solo se usa como fallback
 // mientras la migracion no este aplicada.
 // Tier 0: columnas planas con nombre/apellido (requiere migraciones 0003 y 0005).
-const PERSISTED_ORDER_SUMMARY_COLUMNS_FAST =
+const PERSISTED_NAMES_BASE =
   "id, shopify_order_id, order_number, name, customer_name, first_name, last_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note, note_attributes";
 
-// Tier 1: nota plana pero sin first_name/last_name (0003 si, 0005 no). Sigue
-// siendo rapido: no toca raw_order.
+// Tier 0: todo plano, incluye tracking del fulfillment (requiere 0007).
+const PERSISTED_ORDER_SUMMARY_COLUMNS_FAST = `${PERSISTED_NAMES_BASE}, tracking_number, tracking_company`;
+
+// Tier 1: nombres pero sin tracking (0005 si, 0007 no). Sigue siendo rapido.
+const PERSISTED_ORDER_SUMMARY_COLUMNS_NAMES = PERSISTED_NAMES_BASE;
+
+// Tier 2: nota plana sin nombres ni tracking (0003 si, 0005 no).
 const PERSISTED_ORDER_SUMMARY_COLUMNS_NOTE_ONLY =
   "id, shopify_order_id, order_number, name, customer_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note, note_attributes";
 
-// Tier 2: extraccion de raw_order (pre-0003). Lento; solo como ultimo recurso.
+// Tier 3: extraccion de raw_order (pre-0003). Lento; solo como ultimo recurso.
 const PERSISTED_ORDER_SUMMARY_COLUMNS_LEGACY =
   "id, shopify_order_id, order_number, name, customer_name, first_name:raw_order->'customer'->>first_name, last_name:raw_order->'customer'->>last_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note:raw_order->>note, note_attributes:raw_order->note_attributes, raw_line_items:raw_order->line_items";
 
 const PERSISTED_TIERS = [
   PERSISTED_ORDER_SUMMARY_COLUMNS_FAST,
+  PERSISTED_ORDER_SUMMARY_COLUMNS_NAMES,
   PERSISTED_ORDER_SUMMARY_COLUMNS_NOTE_ONLY,
   PERSISTED_ORDER_SUMMARY_COLUMNS_LEGACY,
 ];
@@ -398,7 +404,15 @@ export async function upsertPersistedShopifyOrders(
     // Migraciones 0003/0005 no aplicadas aun: quita las columnas opcionales
     // (note/note_attributes/first_name/last_name) y reintenta.
     const legacyPayload = payload.map(
-      ({ note: _note, note_attributes: _attrs, first_name: _fn, last_name: _ln, ...rest }) => rest
+      ({
+        note: _note,
+        note_attributes: _attrs,
+        first_name: _fn,
+        last_name: _ln,
+        tracking_number: _tn,
+        tracking_company: _tc,
+        ...rest
+      }) => rest
     );
     ({ error } = await getDB()
       .from("shopify_orders")

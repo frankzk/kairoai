@@ -180,6 +180,8 @@ export interface PersistedShopifyOrder {
   line_items: Array<{ sku: string; title: string; quantity: number; price: number }>;
   note?: string;
   note_attributes?: Array<{ name?: string | null; value?: string | null }>;
+  tracking_number?: string;
+  tracking_company?: string;
   raw_order: Record<string, unknown>;
   shopify_created_at: string | null;
   shopify_updated_at: string | null;
