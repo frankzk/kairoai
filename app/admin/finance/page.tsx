@@ -7020,7 +7020,7 @@ function buildVisibleOrderRows(
       row_key: `boxful-${row.id}`,
       source: "boxful" as const,
       courier: row.courier,
-      moovin_group: row.guide_number ? moovinByPackage.get(row.guide_number)?.latest_group : undefined,
+      moovin_group: row.guide_number ? deriveMoovinGroup(moovinByPackage.get(row.guide_number)) : undefined,
       moovin_attempts: row.guide_number
         ? countMoovinDeliveryAttempts(moovinByPackage.get(row.guide_number)?.events)
         : undefined,
@@ -7070,7 +7070,7 @@ function buildVisibleOrderRows(
       source: "shopify",
       guide_number: shopifyGuide,
       courier: shopifyCourier,
-      moovin_group: moovinHit?.latest_group,
+      moovin_group: deriveMoovinGroup(moovinHit),
       moovin_attempts: moovinHit ? countMoovinDeliveryAttempts(moovinHit.events) : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
@@ -8380,6 +8380,17 @@ function countMoovinDeliveryAttempts(events: MoovinTrackingRow["events"] | undef
   return events.filter((event) =>
     String(event.title ?? "").toLowerCase().includes("ruta para entregar")
   ).length;
+}
+
+// Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"
+// (p.ej. supera intentos de entrega) quedaba como en ruta y debe ser No
+// entregado. Los demas estados conservan su grupo ya calculado.
+function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
+  if (!row) return "";
+  const code = String(row.latest_code ?? "").toUpperCase();
+  const title = String(row.latest_status ?? "").toLowerCase();
+  if (code.startsWith("CANCEL") || title.includes("cancelado")) return "returned";
+  return row.latest_group ?? "";
 }
 
 function isShopifyCancelled(
