@@ -55,11 +55,27 @@ export async function upsertProductCost(
     updated_at: new Date().toISOString(),
   };
 
-  const { data, error } = await getDB()
+  // Upsert manual por sku: no depende de una restriccion UNIQUE en la tabla.
+  // Algunas instancias se crearon sin ella (la tabla ya existia cuando 0002
+  // declaro el UNIQUE), lo que rompia el ON CONFLICT (sku). Buscar-y-actualizar
+  // funciona con o sin el indice unico.
+  const db = getDB();
+  const { data: existing, error: findError } = await db
     .from("product_costs")
-    .upsert(payload, { onConflict: "sku" })
-    .select()
-    .single();
+    .select("id")
+    .eq("sku", payload.sku)
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (findError) throw new Error(`upsertProductCost: ${findError.message}`);
+
+  const writer = existing
+    ? db
+        .from("product_costs")
+        .update(payload)
+        .eq("id", (existing as { id: number }).id)
+    : db.from("product_costs").insert(payload);
+  const { data, error } = await writer.select().single();
   if (error) throw new Error(`upsertProductCost: ${error.message}`);
 
   const { error: versionError } = await getDB()
