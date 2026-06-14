@@ -6999,13 +6999,21 @@ function buildVisibleOrderRows(
     // aunque aun no este en un Excel de Boxful. Moovin es la unica
     // transportadora activa, asi que es el courier por defecto.
     const shopifyGuide = String(order.tracking_number ?? "").trim();
-    const shopifyCourier = shopifyGuide ? normalizeShopifyCourier(order.tracking_company) : "";
+    // Se consulta primero el cache de Moovin: si Moovin ya reconoce la guia, el
+    // courier es Moovin sin lugar a dudas. Solo si aun no hay dato de Moovin se
+    // normaliza el rotulo generico de Shopify ("Transportadora" -> "Moovin").
+    const moovinHit = shopifyGuide ? moovinByPackage.get(shopifyGuide) : undefined;
+    const shopifyCourier = shopifyGuide
+      ? moovinHit
+        ? "Moovin"
+        : normalizeShopifyCourier(order.tracking_company)
+      : "";
     return {
       row_key: `shopify-${order.id}`,
       source: "shopify",
       guide_number: shopifyGuide,
       courier: shopifyCourier,
-      moovin_group: shopifyGuide ? moovinByPackage.get(shopifyGuide)?.latest_group : undefined,
+      moovin_group: moovinHit?.latest_group,
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
