@@ -387,6 +387,11 @@ export async function updateLogisticsImportMatchCounts(
 
 const LOGISTICS_ROW_COLUMNS_BASE =
   "id, store_id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, package_items, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
+// Variante liviana para la descarga masiva del cliente: sin package_items (el
+// array mas pesado) para que cada pagina sea chica y no se corte la carga; las
+// filas con match toman los items del pedido de Shopify igual.
+const LOGISTICS_ROW_COLUMNS_SLIM =
+  "id, store_id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
 let logisticsNameColumnsMissing = false;
 const LEGACY_LOGISTICS_ROW_COLUMNS =
   "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, package_items, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
@@ -432,17 +437,19 @@ export async function listLogisticsRowsPage(
     storeId?: number;
     limit?: number;
     offset?: number;
+    slim?: boolean;
   } = {}
 ): Promise<{ rows: LogisticsRow[]; hasMore: boolean; nextOffset: number | null }> {
   const importId = options.importId;
   const storeId = options.storeId ?? DEFAULT_FINANCE_STORE_ID;
   const limit = Math.min(Math.max(Math.floor(options.limit ?? 1000), 1), 1000);
   const offset = Math.max(Math.floor(options.offset ?? 0), 0);
+  const baseColumns = options.slim ? LOGISTICS_ROW_COLUMNS_SLIM : LOGISTICS_ROW_COLUMNS_BASE;
 
   const fetchPage = (withNames: boolean) => {
     let query = getDB()
       .from("logistics_rows")
-      .select(withNames ? `${LOGISTICS_ROW_COLUMNS_BASE}, first_name, last_name` : LOGISTICS_ROW_COLUMNS_BASE)
+      .select(withNames ? `${baseColumns}, first_name, last_name` : baseColumns)
       .eq("store_id", storeId)
       .order("created_on", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false })
