@@ -9,18 +9,17 @@ import {
 import { getRequiredStoreFromBody, getRequiredStoreFromSearchParams } from "@/lib/stores";
 
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
 export async function GET(req: NextRequest) {
   const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
   if (!store) return missingStoreResponse();
   try {
-    const costs = await listProductCosts(store.id);
-    let versions: unknown[] = [];
-    try {
-      versions = await listProductCostVersions(undefined, store.id);
-    } catch {
-      versions = [];
-    }
+    // Costos y versiones en paralelo; la falla de versiones no tumba la lectura.
+    const [costs, versions] = await Promise.all([
+      listProductCosts(store.id),
+      listProductCostVersions(undefined, store.id).catch(() => [] as unknown[]),
+    ]);
     return NextResponse.json({ costs, versions });
   } catch (err) {
     const message = toFriendlyErrorMessage(err, "Error al leer costos");

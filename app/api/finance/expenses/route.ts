@@ -10,6 +10,7 @@ import {
 import { getRequiredStoreFromBody, getRequiredStoreFromSearchParams } from "@/lib/stores";
 
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
 const TYPES = new Set(["ads", "payroll", "misc"]);
 

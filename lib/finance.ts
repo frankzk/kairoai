@@ -242,32 +242,51 @@ export async function listSettlementRows(
   storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<SettlementRow[]> {
   // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
-  // defecto); se pagina con range() para devolver todas las filas.
+  // defecto); se pagina con range(). La primera pagina va en serie (detecta
+  // columnas faltantes / fallback legacy) y el resto va en lotes concurrentes
+  // para no encadenar hasta 20 viajes a Supabase en una sola carga.
   const pageSize = 1000;
-  const all: SettlementRow[] = [];
-  for (let from = 0; from < 20000; from += pageSize) {
-    const fetchPage = (withNames: boolean) => {
-      let query = getDB()
-        .from("settlement_rows")
-        .select(withNames ? `${SETTLEMENT_ROW_COLUMNS_BASE}, first_name, last_name` : SETTLEMENT_ROW_COLUMNS_BASE)
-        .eq("store_id", storeId)
-        .order("created_on", { ascending: false, nullsFirst: false })
-        .order("id", { ascending: false })
-        .range(from, from + pageSize - 1);
-      if (importId) query = query.eq("import_id", importId);
-      return query;
-    };
-    let { data, error } = await fetchPage(!settlementNameColumnsMissing);
-    if (shouldFallbackToLegacyStore(error, storeId)) return listLegacySettlementRows(importId);
-    if (error && !settlementNameColumnsMissing && isMissingColumnError(error.message)) {
-      settlementNameColumnsMissing = true;
-      ({ data, error } = await fetchPage(false));
+  const concurrency = 5;
+  const maxRows = 20000;
+  const fetchPage = (from: number, withNames: boolean) => {
+    let query = getDB()
+      .from("settlement_rows")
+      .select(withNames ? `${SETTLEMENT_ROW_COLUMNS_BASE}, first_name, last_name` : SETTLEMENT_ROW_COLUMNS_BASE)
+      .eq("store_id", storeId)
+      .order("created_on", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (importId) query = query.eq("import_id", importId);
+    return query;
+  };
+
+  let first = await fetchPage(0, !settlementNameColumnsMissing);
+  if (shouldFallbackToLegacyStore(first.error, storeId)) return listLegacySettlementRows(importId);
+  if (first.error && !settlementNameColumnsMissing && isMissingColumnError(first.error.message)) {
+    settlementNameColumnsMissing = true;
+    first = await fetchPage(0, false);
+  }
+  if (shouldFallbackToLegacyStore(first.error, storeId)) return listLegacySettlementRows(importId);
+  if (first.error) throw new Error(`listSettlementRows: ${first.error.message}`);
+
+  const withNames = !settlementNameColumnsMissing;
+  const all: SettlementRow[] = [...((first.data ?? []) as unknown as SettlementRow[])];
+  let done = (first.data?.length ?? 0) < pageSize;
+
+  for (let base = pageSize; base < maxRows && !done; base += pageSize * concurrency) {
+    const froms: number[] = [];
+    for (let i = 0; i < concurrency; i++) {
+      const from = base + i * pageSize;
+      if (from >= maxRows) break;
+      froms.push(from);
     }
-    if (shouldFallbackToLegacyStore(error, storeId)) return listLegacySettlementRows(importId);
-    if (error) throw new Error(`listSettlementRows: ${error.message}`);
-    const page = (data ?? []) as unknown as SettlementRow[];
-    all.push(...page);
-    if (page.length < pageSize) break;
+    const results = await Promise.all(froms.map((from) => fetchPage(from, withNames)));
+    for (const { data, error } of results) {
+      if (error) throw new Error(`listSettlementRows: ${error.message}`);
+      const page = (data ?? []) as unknown as SettlementRow[];
+      all.push(...page);
+      if (page.length < pageSize) done = true;
+    }
   }
   return all;
 }
@@ -533,7 +552,7 @@ export async function getPersistedShopifyCoverage(
 ): Promise<PersistedShopifyCoverage> {
   const db = getDB();
   const [countRes, oldestRes, newestRes] = await Promise.all([
-    db.from("shopify_orders").select("id", { count: "exact", head: true }).eq("store_id", storeId),
+    db.from("shopify_orders").select("id", { count: "estimated", head: true }).eq("store_id", storeId),
     db
       .from("shopify_orders")
       .select("shopify_created_at")
@@ -915,7 +934,7 @@ async function listLegacyPersistedShopifyOrders(
 async function getLegacyPersistedShopifyCoverage(): Promise<PersistedShopifyCoverage> {
   const db = getDB();
   const [countRes, oldestRes, newestRes] = await Promise.all([
-    db.from("shopify_orders").select("id", { count: "exact", head: true }),
+    db.from("shopify_orders").select("id", { count: "estimated", head: true }),
     db
       .from("shopify_orders")
       .select("shopify_created_at")
@@ -983,17 +1002,34 @@ export async function deletePayrollStaff(id: number): Promise<void> {
 
 export async function listMoovinTracking(): Promise<MoovinTrackingRow[]> {
   const pageSize = 1000;
+  const concurrency = 5;
+  const maxRows = 50000;
   const all: MoovinTrackingRow[] = [];
-  for (let from = 0; from < 50000; from += pageSize) {
-    const { data, error } = await getDB()
-      .from("moovin_tracking")
-      .select("*")
-      .order("checked_at", { ascending: false })
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`listMoovinTracking: ${error.message}`);
-    const page = (data ?? []) as MoovinTrackingRow[];
-    all.push(...page);
-    if (page.length < pageSize) break;
+  let done = false;
+  // Lee las paginas en lotes concurrentes (en vez de una por una en serie)
+  // para no encadenar hasta 50 viajes a Supabase en una sola carga.
+  for (let base = 0; base < maxRows && !done; base += pageSize * concurrency) {
+    const ranges: Array<[number, number]> = [];
+    for (let i = 0; i < concurrency; i++) {
+      const from = base + i * pageSize;
+      if (from >= maxRows) break;
+      ranges.push([from, from + pageSize - 1]);
+    }
+    const results = await Promise.all(
+      ranges.map(([from, to]) =>
+        getDB()
+          .from("moovin_tracking")
+          .select("*")
+          .order("checked_at", { ascending: false })
+          .range(from, to)
+      )
+    );
+    for (const { data, error } of results) {
+      if (error) throw new Error(`listMoovinTracking: ${error.message}`);
+      const page = (data ?? []) as MoovinTrackingRow[];
+      all.push(...page);
+      if (page.length < pageSize) done = true;
+    }
   }
   return all;
 }

@@ -59,21 +59,27 @@ export async function GET(req: NextRequest) {
     const includeImports = req.nextUrl.searchParams.get("include_imports") !== "0";
     const limit = Number(req.nextUrl.searchParams.get("limit") ?? 1000);
     const offset = Number(req.nextUrl.searchParams.get("offset") ?? 0);
-    const imports = includeImports ? await listLogisticsImports(store.id) : [];
+    const importsPromise = includeImports
+      ? listLogisticsImports(store.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof listLogisticsImports>>);
     if (!includeRows) {
       return NextResponse.json({
-        imports,
+        imports: await importsPromise,
         rows: [],
         has_more: false,
         next_offset: null,
       });
     }
-    const page = await listLogisticsRowsPage({
-      importId,
-      storeId: store.id,
-      limit,
-      offset,
-    });
+    // imports + primera página de filas en paralelo (antes eran dos awaits en serie).
+    const [imports, page] = await Promise.all([
+      importsPromise,
+      listLogisticsRowsPage({
+        importId,
+        storeId: store.id,
+        limit,
+        offset,
+      }),
+    ]);
     return NextResponse.json({
       imports,
       rows: page.rows,

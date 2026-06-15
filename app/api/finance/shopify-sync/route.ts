@@ -33,8 +33,10 @@ export async function GET(req: NextRequest) {
     const offset = Math.max(Number(req.nextUrl.searchParams.get("offset") || 0), 0);
     const limit = Math.min(Math.max(requestedLimit, 1), MAX_GET_LIMIT);
     const includeCoverage = req.nextUrl.searchParams.get("coverage") !== "0";
-    const orders = await listPersistedShopifyOrders(limit + 1, offset, store.id);
-    const coverage = includeCoverage ? await getPersistedShopifyCoverage(store.id) : null;
+    const [orders, coverage] = await Promise.all([
+      listPersistedShopifyOrders(limit + 1, offset, store.id),
+      includeCoverage ? getPersistedShopifyCoverage(store.id) : Promise.resolve(null),
+    ]);
     const pageOrders = orders.slice(0, limit);
     const hasMore = orders.length > limit;
     return NextResponse.json({
