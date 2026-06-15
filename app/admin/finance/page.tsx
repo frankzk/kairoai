@@ -1427,7 +1427,6 @@ export default function FinancePage() {
                 selectedStore={selectedStore}
                 logisticsImports={logisticsImports}
                 rows={visibleOrderRows}
-                logisticsRowsCount={logisticsRows.length}
                 latestLogisticsImport={latestLogisticsImport}
                 settlementTraceByKey={settlementTraceByKey}
                 moovinByPackage={moovinByPackage}
@@ -1580,7 +1579,6 @@ function OrdersTab({
   selectedStore,
   logisticsImports,
   rows,
-  logisticsRowsCount,
   latestLogisticsImport,
   settlementTraceByKey,
   moovinByPackage,
@@ -1598,7 +1596,6 @@ function OrdersTab({
   selectedStore: FinanceStorePublic;
   logisticsImports: LogisticsImport[];
   rows: TrackableOrderRow[];
-  logisticsRowsCount: number;
   latestLogisticsImport?: LogisticsImport;
   settlementTraceByKey: Map<string, SettlementTrace[]>;
   moovinByPackage: Map<string, MoovinTrackingRow>;
@@ -2077,11 +2074,6 @@ function OrdersTab({
             {latestLogisticsImport
               ? ` · Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match, ${latestLogisticsImport.unmatched_rows} sin match`
               : " · Sin Boxful importado"}
-          </p>
-          <p className="text-[11px] text-amber-500/80">
-            Diag: logística cargada {logisticsRowsCount} filas · vista {rows.length} pedidos (
-            {rows.filter((row) => row.source === "boxful").length} con logística,{" "}
-            {rows.filter((row) => row.guide_number).length} con guía)
           </p>
           <OrdersTable
             selectedStore={selectedStore}
