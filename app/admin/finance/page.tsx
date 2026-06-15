@@ -1828,12 +1828,6 @@ function OrdersTab({
         setSearchedCount(Number(json.searchedCount ?? 0));
         setTrackingCounts((json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS);
         setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
-        setEnRouteGuides(
-          (json.enRouteGuides as { moovin: Array<{ idPackage: string; lastName: string }>; forza: Array<{ guide: string }> }) ?? {
-            moovin: [],
-            forza: [],
-          }
-        );
       } catch (err) {
         if (controller.signal.aborted) return;
         setServerRows([]);
@@ -1845,6 +1839,32 @@ function OrdersTab({
     })();
     return () => controller.abort();
   }, [buildOrdersQuery, page, selectedStore.code, refreshKey]);
+
+  // Guias "en ruta" para los botones Moovin/Forza: dependen de la tienda (no de
+  // pagina/filtro), asi que se traen una sola vez por tienda con ?guides=1, en
+  // vez de viajar en cada fetch de la tabla.
+  useEffect(() => {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          withStore("/api/finance/orders?period=all&pageSize=1&guides=1", selectedStore.code),
+          { cache: "no-store", signal: controller.signal }
+        );
+        const json = await readApiJson(res);
+        if (!res.ok) return;
+        setEnRouteGuides(
+          (json.enRouteGuides as {
+            moovin: Array<{ idPackage: string; lastName: string }>;
+            forza: Array<{ guide: string }>;
+          }) ?? { moovin: [], forza: [] }
+        );
+      } catch {
+        // Los botones de sync no son criticos para la carga inicial.
+      }
+    })();
+    return () => controller.abort();
+  }, [selectedStore.code, refreshKey]);
 
   const [moovinSyncing, setMoovinSyncing] = useState(false);
   const [moovinMessage, setMoovinMessage] = useState("");
