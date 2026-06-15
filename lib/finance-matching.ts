@@ -32,16 +32,22 @@ const FALLBACK_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
 // tramo posterior a la ultima sincronizacion.
 export async function loadShopifyOrdersForMatching(
   periodStart: string | null,
-  storeId = DEFAULT_FINANCE_STORE_ID
+  storeId = DEFAULT_FINANCE_STORE_ID,
+  options: { includeFreshShopify?: boolean; fallbackToShopify?: boolean } = {}
 ): Promise<MatchableShopifyOrder[]> {
+  const includeFreshShopify = options.includeFreshShopify ?? true;
+  const fallbackToShopify = options.fallbackToShopify ?? true;
   const store = getStoreConfig(String(storeId === 2 ? "mireva-hn" : "mireva-cr"));
   const { orders: persisted, latestUpdatedAt } = await listPersistedOrdersSlim(store.id);
   if (!persisted.length) {
+    if (!fallbackToShopify) return [];
     const minDate = periodStart
       ? new Date(new Date(periodStart).getTime() - 45 * 24 * 60 * 60 * 1000).toISOString()
       : FALLBACK_CREATED_AT_MIN;
     return fetchOrdersFromShopify({ createdAtMin: minDate }, FALLBACK_MAX_PAGES, store);
   }
+
+  if (!includeFreshShopify) return persisted;
 
   const latestCreatedAt = persisted.reduce(
     (max, order) => (order.created_at > max ? order.created_at : max),

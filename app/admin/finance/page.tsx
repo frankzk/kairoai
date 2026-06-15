@@ -1436,7 +1436,7 @@ function OrdersTab({
     if (selectedStore.logisticsProvider !== "moovin") return [];
     const byGuide = new Map<string, { idPackage: string; lastName: string }>();
     for (const row of rows) {
-      if (!isMoovinCourier(row.courier) || !row.guide_number) continue;
+      if (!isMoovinCourier(row.courier, selectedStore) || !row.guide_number) continue;
       const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
       if (status !== "en_route" && status !== "en_route_retry" && status !== "incident" && status !== "pending") continue;
       if (!byGuide.has(row.guide_number)) {
@@ -1444,7 +1444,7 @@ function OrdersTab({
       }
     }
     return Array.from(byGuide.values());
-  }, [rows, selectedStore.logisticsProvider, settlementTraceByKey]);
+  }, [rows, selectedStore, settlementTraceByKey]);
 
   const enRouteForzaGuides = useMemo(() => {
     if (selectedStore.logisticsProvider !== "forza") return [];
@@ -1707,7 +1707,7 @@ function OrdersTab({
                         Orden: row.order_name || row.shopify_order_name,
                         Origen: row.source,
                         Guia: row.guide_number,
-                        Transportadora: row.courier ?? "",
+                        Transportadora: normalizeOperationalCourier(row.courier, selectedStore, row.guide_number),
                         "Estado courier": moovin?.latest_status ?? forza?.latest_status ?? "",
                         "Incidencia courier": moovin?.has_incident || forza?.has_incident ? "si" : "",
                         Cliente: row.customer_name,
@@ -1986,7 +1986,7 @@ function OrdersTable({
                   {row.courier ? (
                     <div className="flex flex-col items-start gap-0.5">
                       <span>{row.courier}</span>
-                      {isMoovinCourier(row.courier) && row.guide_number && (
+                      {isMoovinCourier(row.courier, selectedStore) && row.guide_number && (
                         <MoovinTrackingButton
                           idPackage={row.guide_number}
                           lastName={row.last_name ?? ""}
@@ -2061,11 +2061,13 @@ function OrdersTable({
   );
 }
 
-function isMoovinCourier(courier: string | undefined): boolean {
+function isMoovinCourier(courier: string | undefined, store?: FinanceStorePublic): boolean {
+  if (store?.logisticsProvider === "forza") return false;
   return String(courier ?? "").toLowerCase().includes("moovin");
 }
 
-function isForzaCourier(courier: string | undefined, _store?: FinanceStorePublic): boolean {
+function isForzaCourier(courier: string | undefined, store?: FinanceStorePublic): boolean {
+  if (store?.logisticsProvider === "forza") return Boolean(String(courier ?? "").trim());
   return String(courier ?? "").toLowerCase().includes("forza");
 }
 
@@ -2094,7 +2096,9 @@ function normalizeShopifyCourier(rawCompany: string | undefined, store: FinanceS
   const company = String(rawCompany ?? "").trim();
   const lower = company.toLowerCase();
   if (GENERIC_COURIER_LABELS.has(lower)) return getDefaultCourierForStore(store);
-  if (store.logisticsProvider === "forza" && lower.includes("forza")) return "Forza";
+  if (store.logisticsProvider === "forza") {
+    if (lower.includes("forza") || lower.includes("moovin")) return "Forza";
+  }
   if (store.logisticsProvider === "moovin" && lower.includes("moovin")) return "Moovin";
   return company;
 }
@@ -7760,8 +7764,8 @@ function buildVisibleOrderRows(
     const shopify = findShopifyOrderForRow(row, shopifyByMatchKey);
     const guideNumber = normalizeGuideForStore(row.guide_number, selectedStore);
     const courier = normalizeOperationalCourier(row.courier, selectedStore, guideNumber);
-    const moovinHit = isMoovinCourier(courier) && guideNumber ? moovinByPackage.get(guideNumber) : undefined;
-    const forzaHit = isForzaCourier(courier) && guideNumber ? getForzaTrackingFromMap(forzaByGuide, guideNumber) : undefined;
+    const moovinHit = isMoovinCourier(courier, selectedStore) && guideNumber ? moovinByPackage.get(guideNumber) : undefined;
+    const forzaHit = isForzaCourier(courier, selectedStore) && guideNumber ? getForzaTrackingFromMap(forzaByGuide, guideNumber) : undefined;
     const shopifyItems = shopify
       ? shopify.line_items.map((item) => ({
           sku: item.sku,
@@ -7814,8 +7818,8 @@ function buildVisibleOrderRows(
     // se decide por tienda para evitar cruces Costa Rica/Honduras.
     const shopifyGuide = normalizeGuideForStore(order.tracking_number ?? "", selectedStore);
     const baseCourier = shopifyGuide ? normalizeShopifyCourier(order.tracking_company, selectedStore) : "";
-    const moovinHit = isMoovinCourier(baseCourier) && shopifyGuide ? moovinByPackage.get(shopifyGuide) : undefined;
-    const forzaHit = isForzaCourier(baseCourier) && shopifyGuide
+    const moovinHit = isMoovinCourier(baseCourier, selectedStore) && shopifyGuide ? moovinByPackage.get(shopifyGuide) : undefined;
+    const forzaHit = isForzaCourier(baseCourier, selectedStore) && shopifyGuide
       ? getForzaTrackingFromMap(forzaByGuide, shopifyGuide)
       : undefined;
     const shopifyCourier = shopifyGuide

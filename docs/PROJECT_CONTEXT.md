@@ -728,6 +728,14 @@ Build in this order:
 
 ## Session 2026-06-13 additions
 
+### Session 2026-06-14 hotfixes
+
+- The Boxful logistics upload route was hardened for large Honduras files. `/api/finance/logistics` now parses and inserts the Excel using persisted Shopify orders only; it no longer calls Shopify during the upload request. Shopify remains the only order source of truth, and `Sync Shopify` is responsible for refreshing the order base before imports.
+- Boxful logistics rows still never become standalone pedidos. They can update status/guide/courier only when they match a Shopify order for the same `store_id`; unmatched rows stay as reconciliation records.
+- Honduras courier display/sync is store-aware. `mireva-hn` uses Forza even if a Shopify fulfillment has a stale or generic carrier label such as `Moovin`, `Transportadora`, or `Other`; Costa Rica continues to use Moovin.
+- Forza tracking uses the Honduras endpoint `https://portal.portal.forzadelivery.com/fdHN/Home.aspx/API` first and falls back to the public tracking endpoint if the first endpoint is unavailable. The UI should label Honduras tracking as Forza, not Moovin.
+- Local validation of `C:\Users\Pc\Downloads\01-12-2025 hasta 31-12-2025 (1).xlsx`: direct `xlsx.sheet_to_json` fails with `unrecognized type f`, but the app sanitization path parses it successfully. Parsed logistics rows: `847` (`Entregado = 426`, `No entregado = 413`, `Guia cancelada = 8`). This file size should not require async import after removing the Shopify network fetch from the upload path.
+
 ### Architecture / robustness
 - **Shared order matching** in `lib/order-matching.ts` (pure, tested) consumed by
   the finance page and both import routes; no more divergent copies. Numeric

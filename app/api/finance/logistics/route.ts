@@ -22,8 +22,8 @@ import { getRequiredStoreConfig, getRequiredStoreFromSearchParams } from "@/lib/
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const INSERT_BATCH_SIZE = 250;
-const INSERT_CONCURRENCY = 4;
+const INSERT_BATCH_SIZE = 500;
+const INSERT_CONCURRENCY = 3;
 
 interface ParsedLogisticsRow {
   raw: Record<string, unknown>;
@@ -86,7 +86,14 @@ export async function POST(req: NextRequest) {
 
     const shopifyOrders = await loadShopifyOrdersForMatching(
       periodStart ?? inferEarliestDate(boxfulRows),
-      store.id
+      store.id,
+      {
+        // La carga de Excel debe ser deterministica y rapida. El boton Sync
+        // Shopify mantiene la base de pedidos; durante el import no llamamos a
+        // Shopify porque un archivo grande puede pasar el timeout de Vercel.
+        includeFreshShopify: false,
+        fallbackToShopify: false,
+      }
     );
     const matchIndex = buildShopifyMatchIndex(shopifyOrders);
     const statusSummary: Record<string, { count: number }> = {};

@@ -1,4 +1,5 @@
-const FORZA_API_URL = "https://rastreo.forzadelivery.com/fd2/Home.aspx/API";
+const FORZA_HN_API_URL = "https://portal.portal.forzadelivery.com/fdHN/Home.aspx/API";
+const FORZA_PUBLIC_API_URL = "https://rastreo.forzadelivery.com/fd2/Home.aspx/API";
 const FORZA_TRACKING_BASE = "https://rastreo.forzadelivery.com";
 
 export type ForzaGroup = "delivered" | "failed" | "returned" | "in_progress";
@@ -111,65 +112,72 @@ export async function fetchForzaTracking(
     },
   };
 
-  try {
-    const res = await fetch(FORZA_API_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-        accept: "application/json, text/plain, */*",
-        origin: FORZA_TRACKING_BASE,
-        referer: buildForzaTrackingUrl(normalizedGuide),
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      },
-      body: JSON.stringify({
-        path: "Tracking/GetTrackingPublic",
-        data: JSON.stringify(data),
-      }),
-      cache: "no-store",
-    });
+  const endpoints = [FORZA_HN_API_URL, FORZA_PUBLIC_API_URL];
+  let lastError = "";
 
-    const text = await res.text();
-    const detail = parseForzaResponse(text);
-    if (!detail) {
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          accept: "application/json, text/plain, */*",
+          origin: FORZA_TRACKING_BASE,
+          referer: buildForzaTrackingUrl(normalizedGuide),
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        },
+        body: JSON.stringify({
+          path: "Tracking/GetTrackingPublic",
+          data: JSON.stringify(data),
+        }),
+        cache: "no-store",
+      });
+
+      const text = await res.text();
+      const detail = parseForzaResponse(text);
+      if (!detail) {
+        lastError = `No se pudo interpretar la respuesta de Forza (${new URL(endpoint).hostname})`;
+        if (options.includeRaw) lastError += `: ${text.slice(0, 500)}`;
+        continue;
+      }
+
+      if (detail.error) {
+        return {
+          ...base,
+          ok: false,
+          http_status: res.status,
+          error: detail.error,
+          ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
+        };
+      }
+
+      const latest = detail.events[0] ?? null;
+      const incident = computeForzaIncident(detail.events);
       return {
         ...base,
+        ok: res.ok,
         http_status: res.status,
-        error: "No se pudo interpretar la respuesta de Forza",
+        latest_status: latest?.title ?? detail.latestStatus ?? null,
+        latest_status_code: latest?.code ?? null,
+        latest_group: latest?.group ?? classifyForzaGroup(detail.latestStatus ?? ""),
+        latest_at: latest?.date ?? detail.deliveryEta,
+        delivery_address: detail.deliveryAddress,
+        receiver_name: detail.receiverName,
+        has_incident: incident.active,
+        incident_reason: incident.reason,
+        events: detail.events,
         ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
       };
+    } catch (err) {
+      lastError = `${new URL(endpoint).hostname}: ${
+        err instanceof Error ? err.message : "Error consultando Forza"
+      }`;
+      continue;
     }
-
-    if (detail.error) {
-      return {
-        ...base,
-        ok: false,
-        http_status: res.status,
-        error: detail.error,
-        ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
-      };
-    }
-
-    const latest = detail.events[0] ?? null;
-    const incident = computeForzaIncident(detail.events);
-    return {
-      ...base,
-      ok: res.ok,
-      http_status: res.status,
-      latest_status: latest?.title ?? detail.latestStatus ?? null,
-      latest_status_code: latest?.code ?? null,
-      latest_group: latest?.group ?? classifyForzaGroup(detail.latestStatus ?? ""),
-      latest_at: latest?.date ?? detail.deliveryEta,
-      delivery_address: detail.deliveryAddress,
-      receiver_name: detail.receiverName,
-      has_incident: incident.active,
-      incident_reason: incident.reason,
-      events: detail.events,
-      ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
-    };
-  } catch (err) {
-    return { ...base, error: err instanceof Error ? err.message : "Error consultando Forza" };
   }
+
+  return { ...base, error: lastError || "No se pudo interpretar la respuesta de Forza" };
 }
 
 function parseForzaResponse(raw: string): {
