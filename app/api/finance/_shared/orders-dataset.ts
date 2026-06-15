@@ -20,13 +20,22 @@ import {
   enrichSettlementRowsWithShopify,
   persistedOrderToSummary,
   type SettlementTrace,
+  type ShopifyOrderSummary,
   type TrackableOrderRow,
 } from "@/lib/finance-orders";
+import type { SettlementImport, SettlementRow } from "@/lib/finance-types";
 import type { FinanceStorePublic } from "@/lib/store-config";
 
 export interface OrdersDataset {
   rows: TrackableOrderRow[];
   settlementTraceByKey: Map<string, SettlementTrace[]>;
+  // Expuestos para las rutas product-analysis/, monthly-close/ y notes/ (Carril 2
+  // inc.2): buildFinanceControlCenter necesita las liquidaciones enriquecidas y
+  // los imports; notes/ usa los pedidos Shopify. Ya se calculan en buildDataset,
+  // asi que no hay carga extra.
+  shopifyOrders: ShopifyOrderSummary[];
+  matchedSettlementRows: SettlementRow[];
+  imports: SettlementImport[];
 }
 
 interface CacheEntry {
@@ -63,7 +72,13 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
 
   const rows = buildVisibleOrderRows(logisticsRows, shopifyOrders, store, moovinByPackage, forzaByGuide);
 
-  return { rows, settlementTraceByKey };
+  return {
+    rows,
+    settlementTraceByKey,
+    shopifyOrders,
+    matchedSettlementRows: enrichedSettlementRows,
+    imports,
+  };
 }
 
 // Devuelve el dataset ensamblado de una tienda, sirviendo desde cache si esta
