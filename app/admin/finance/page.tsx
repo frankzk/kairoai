@@ -2096,6 +2096,11 @@ function OrdersTab({
               )}
             </div>
             <div className="flex items-center justify-between gap-3 sm:justify-end">
+              {tableLoading && (
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Actualizando...
+                </span>
+              )}
               <span className="whitespace-nowrap text-xs text-muted-foreground">
                 <span className="font-mono text-sm font-semibold text-foreground">{total}</span>{" "}
                 {orderSearch ? `de ${searchedCount}` : "pedidos"}
@@ -2224,6 +2229,10 @@ function OrdersTab({
               {tableError}
             </div>
           )}
+          <div
+            className={`transition-opacity ${tableLoading && serverRows.length > 0 ? "opacity-50" : ""}`}
+            aria-busy={tableLoading}
+          >
           <OrdersTable
             selectedStore={selectedStore}
             rows={serverRows}
@@ -2242,6 +2251,7 @@ function OrdersTab({
                   : `No hay pedidos en ${activeTrackingLabel.toLowerCase()} con ${activeSettlementLabel.toLowerCase()}.`
             }
           />
+          </div>
           {total > ORDERS_PAGE_SIZE && (
             <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
               <span>
