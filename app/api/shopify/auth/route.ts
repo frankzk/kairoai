@@ -34,6 +34,13 @@ export async function GET(req: NextRequest) {
     "write_draft_orders",
     "read_customers",
     "read_checkouts",
+    // Fulfillments/tracking: sin estos scopes, order.fulfillments vuelve vacio
+    // para pedidos despachados por apps/3PL (bot, Boxful) y NO se captura la guia
+    // aunque Shopify marque el pedido como "fulfilled".
+    "read_fulfillments",
+    "read_merchant_managed_fulfillment_orders",
+    "read_assigned_fulfillment_orders",
+    "read_third_party_fulfillment_orders",
   ].join(",");
 
   const redirectUri = `https://kairoai-pearl.vercel.app/api/shopify/auth/callback`;
