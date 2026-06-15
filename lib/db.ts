@@ -12,10 +12,50 @@ export function getDB(): SupabaseClient {
     _db = createClient(
       process.env.SUPABASE_URL,
       process.env.SUPABASE_SERVICE_ROLE_KEY,
-      { auth: { persistSession: false } }
+      {
+        auth: { persistSession: false },
+        global: { fetch: supabaseFetchWithReadRetry },
+      }
     );
   }
   return _db;
+}
+
+const RETRYABLE_SUPABASE_STATUSES = new Set([408, 429, 500, 502, 503, 504, 522, 524]);
+
+async function supabaseFetchWithReadRetry(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  const method =
+    (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+  const canRetry = method === "GET" || method === "HEAD";
+  const attempts = canRetry ? 3 : 1;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const response = await fetch(input, init);
+      if (
+        !canRetry ||
+        !RETRYABLE_SUPABASE_STATUSES.has(response.status) ||
+        attempt === attempts - 1
+      ) {
+        return response;
+      }
+    } catch (error) {
+      lastError = error;
+      if (!canRetry || attempt === attempts - 1) throw error;
+    }
+
+    await sleep(250 * (attempt + 1));
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Supabase no respondio");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────

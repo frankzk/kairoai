@@ -54,10 +54,8 @@ export async function GET(req: NextRequest) {
   if (!store) return missingStoreResponse();
   try {
     const importId = Number(req.nextUrl.searchParams.get("import_id"));
-    const [imports, rows] = await Promise.all([
-      listLogisticsImports(store.id),
-      listLogisticsRows(importId || undefined, store.id),
-    ]);
+    const imports = await listLogisticsImports(store.id);
+    const rows = await listLogisticsRows(importId || undefined, store.id);
     return NextResponse.json({ imports, rows });
   } catch (err) {
     const message = toFriendlyErrorMessage(err, "Error al leer logistica");

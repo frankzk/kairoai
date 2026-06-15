@@ -541,17 +541,17 @@ export default function FinancePage() {
     setShopifyHistoryLoading(false);
     setShopifyHistoryProgress({ loaded: 0, total: null });
     try {
-      const [settlementsRes, logisticsRes, costsRes, expensesRes, summaryRes] =
-        await Promise.all([
-          fetch(withStore("/api/finance/settlements", activeStoreCode), { cache: "no-store" }),
-          fetch(withStore("/api/finance/logistics", activeStoreCode), { cache: "no-store" }),
-          fetch(withStore("/api/finance/product-costs", activeStoreCode), { cache: "no-store" }),
-          fetch(withStore("/api/finance/expenses", activeStoreCode), { cache: "no-store" }),
-          fetch(withStore("/api/finance/summary", activeStoreCode), { cache: "no-store" }),
-        ]);
-
-      const settlementsJson = await readApiJson(settlementsRes);
-      const logisticsJson = await readApiJson(logisticsRes);
+      const settlementsJson = await readApiJson(
+        await fetch(withStore("/api/finance/settlements", activeStoreCode), { cache: "no-store" })
+      );
+      const logisticsJson = await readApiJson(
+        await fetch(withStore("/api/finance/logistics", activeStoreCode), { cache: "no-store" })
+      );
+      const [costsRes, expensesRes, summaryRes] = await Promise.all([
+        fetch(withStore("/api/finance/product-costs", activeStoreCode), { cache: "no-store" }),
+        fetch(withStore("/api/finance/expenses", activeStoreCode), { cache: "no-store" }),
+        fetch(withStore("/api/finance/summary", activeStoreCode), { cache: "no-store" }),
+      ]);
       const costsJson = await readApiJson(costsRes);
       const expensesJson = await readApiJson(expensesRes);
       const summaryJson = await readApiJson(summaryRes);
