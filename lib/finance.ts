@@ -398,35 +398,55 @@ const LEGACY_LOGISTICS_ROW_COLUMNS =
 
 export async function listLogisticsRows(
   importId?: number,
-  storeId = DEFAULT_FINANCE_STORE_ID
+  storeId = DEFAULT_FINANCE_STORE_ID,
+  options: { slim?: boolean } = {}
 ): Promise<LogisticsRow[]> {
-  // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
-  // defecto); se pagina con range() para devolver todas las filas.
+  // PostgREST recorta cada respuesta a max-rows (1000); se pagina con range().
+  // La primera pagina va en serie (detecta columnas faltantes / fallback legacy)
+  // y el resto en lotes concurrentes para no encadenar viajes a Supabase.
   const pageSize = 1000;
-  const all: LogisticsRow[] = [];
-  for (let from = 0; from < 20000; from += pageSize) {
-    const fetchPage = (withNames: boolean) => {
-      let query = getDB()
-        .from("logistics_rows")
-        .select(withNames ? `${LOGISTICS_ROW_COLUMNS_BASE}, first_name, last_name` : LOGISTICS_ROW_COLUMNS_BASE)
-        .eq("store_id", storeId)
-        .order("created_on", { ascending: false, nullsFirst: false })
-        .order("id", { ascending: false })
-        .range(from, from + pageSize - 1);
-      if (importId) query = query.eq("import_id", importId);
-      return query;
-    };
-    let { data, error } = await fetchPage(!logisticsNameColumnsMissing);
-    if (shouldFallbackToLegacyStore(error, storeId)) return listLegacyLogisticsRows(importId);
-    if (error && !logisticsNameColumnsMissing && isMissingColumnError(error.message)) {
-      logisticsNameColumnsMissing = true;
-      ({ data, error } = await fetchPage(false));
+  const concurrency = 5;
+  const maxRows = 20000;
+  const baseColumns = options.slim ? LOGISTICS_ROW_COLUMNS_SLIM : LOGISTICS_ROW_COLUMNS_BASE;
+  const fetchPage = (from: number, withNames: boolean) => {
+    let query = getDB()
+      .from("logistics_rows")
+      .select(withNames ? `${baseColumns}, first_name, last_name` : baseColumns)
+      .eq("store_id", storeId)
+      .order("created_on", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (importId) query = query.eq("import_id", importId);
+    return query;
+  };
+
+  let first = await fetchPage(0, !logisticsNameColumnsMissing);
+  if (shouldFallbackToLegacyStore(first.error, storeId)) return listLegacyLogisticsRows(importId);
+  if (first.error && !logisticsNameColumnsMissing && isMissingColumnError(first.error.message)) {
+    logisticsNameColumnsMissing = true;
+    first = await fetchPage(0, false);
+  }
+  if (shouldFallbackToLegacyStore(first.error, storeId)) return listLegacyLogisticsRows(importId);
+  if (first.error) throw new Error(`listLogisticsRows: ${first.error.message}`);
+
+  const withNames = !logisticsNameColumnsMissing;
+  const all: LogisticsRow[] = [...((first.data ?? []) as unknown as LogisticsRow[])];
+  let done = (first.data?.length ?? 0) < pageSize;
+
+  for (let base = pageSize; base < maxRows && !done; base += pageSize * concurrency) {
+    const froms: number[] = [];
+    for (let i = 0; i < concurrency; i++) {
+      const from = base + i * pageSize;
+      if (from >= maxRows) break;
+      froms.push(from);
     }
-    if (shouldFallbackToLegacyStore(error, storeId)) return listLegacyLogisticsRows(importId);
-    if (error) throw new Error(`listLogisticsRows: ${error.message}`);
-    const page = (data ?? []) as unknown as LogisticsRow[];
-    all.push(...page);
-    if (page.length < pageSize) break;
+    const results = await Promise.all(froms.map((from) => fetchPage(from, withNames)));
+    for (const { data, error } of results) {
+      if (error) throw new Error(`listLogisticsRows: ${error.message}`);
+      const page = (data ?? []) as unknown as LogisticsRow[];
+      all.push(...page);
+      if (page.length < pageSize) done = true;
+    }
   }
   return all;
 }

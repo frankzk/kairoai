@@ -11,6 +11,7 @@ import {
   deleteLogisticsImport,
   insertLogisticsRows,
   listLogisticsImports,
+  listLogisticsRows,
   listLogisticsRowsPage,
   upsertBoxfulFileControl,
   type InternalOrderStatus,
@@ -60,6 +61,10 @@ export async function GET(req: NextRequest) {
     const limit = Number(req.nextUrl.searchParams.get("limit") ?? 1000);
     const offset = Number(req.nextUrl.searchParams.get("offset") ?? 0);
     const slim = req.nextUrl.searchParams.get("slim") === "1";
+    // all=1: trae TODAS las filas en una sola respuesta (el servidor pagina
+    // internamente). Evita que el navegador encadene lotes que se cortan por
+    // timeout y dejan fuera los pedidos viejos.
+    const all = req.nextUrl.searchParams.get("all") === "1";
     const importsPromise = includeImports
       ? listLogisticsImports(store.id)
       : Promise.resolve([] as Awaited<ReturnType<typeof listLogisticsImports>>);
@@ -70,6 +75,13 @@ export async function GET(req: NextRequest) {
         has_more: false,
         next_offset: null,
       });
+    }
+    if (all) {
+      const [imports, rows] = await Promise.all([
+        importsPromise,
+        listLogisticsRows(importId, store.id, { slim }),
+      ]);
+      return NextResponse.json({ imports, rows, has_more: false, next_offset: null });
     }
     // imports + primera página de filas en paralelo (antes eran dos awaits en serie).
     const [imports, page] = await Promise.all([
