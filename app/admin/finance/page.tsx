@@ -7901,16 +7901,30 @@ async function fetchLogisticsRowsSnapshot(
   let hasMore = true;
 
   while (hasMore && rows.length < FINANCE_LOGISTICS_MAX_ROWS) {
-    const res = await fetchWithTimeout(
-      withStore(
-        `/api/finance/logistics?limit=${FINANCE_LOGISTICS_PAGE_SIZE}&offset=${nextOffset}&include_imports=0`,
-        storeCode
-      ),
-      { cache: "no-store" },
-      FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
-    );
-    const json = await readApiJson(res);
-    if (!res.ok) throw new Error(json.error ?? "No se pudo leer logistica");
+    // slim=1: paginas livianas (sin package_items). Reintentamos cada pagina
+    // para que un lote lento puntual no aborte la descarga y deje fuera los
+    // pedidos mas viejos (cargan al final).
+    let json: { rows?: unknown; next_offset?: unknown; has_more?: unknown } | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetchWithTimeout(
+          withStore(
+            `/api/finance/logistics?limit=${FINANCE_LOGISTICS_PAGE_SIZE}&offset=${nextOffset}&include_imports=0&slim=1`,
+            storeCode
+          ),
+          { cache: "no-store" },
+          FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
+        );
+        const parsed = await readApiJson(res);
+        if (!res.ok) throw new Error(parsed.error ?? "No se pudo leer logistica");
+        json = parsed;
+        break;
+      } catch (err) {
+        if (attempt === 2) throw err;
+        await delay(600 * (attempt + 1));
+      }
+    }
+    if (!json) break;
 
     const pageRows = Array.isArray(json.rows) ? json.rows as LogisticsRow[] : [];
     rows.push(...pageRows);

@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
     const includeImports = req.nextUrl.searchParams.get("include_imports") !== "0";
     const limit = Number(req.nextUrl.searchParams.get("limit") ?? 1000);
     const offset = Number(req.nextUrl.searchParams.get("offset") ?? 0);
+    const slim = req.nextUrl.searchParams.get("slim") === "1";
     const importsPromise = includeImports
       ? listLogisticsImports(store.id)
       : Promise.resolve([] as Awaited<ReturnType<typeof listLogisticsImports>>);
@@ -78,6 +79,7 @@ export async function GET(req: NextRequest) {
         storeId: store.id,
         limit,
         offset,
+        slim,
       }),
     ]);
     return NextResponse.json({
