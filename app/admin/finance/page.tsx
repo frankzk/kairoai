@@ -506,6 +506,7 @@ export default function FinancePage() {
   });
   const [syncMessage, setSyncMessage] = useState("");
   const [rematching, setRematching] = useState(false);
+  const [rematchMessage, setRematchMessage] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
@@ -1144,7 +1145,7 @@ export default function FinancePage() {
   // se importo el Excel antes de terminar el Sync Shopify (match quedo en 0).
   async function rematchImports() {
     setRematching(true);
-    setSyncMessage("Re-emparejando imports con la base de Shopify...");
+    setRematchMessage("Re-emparejando con la base de Shopify...");
     setError("");
     try {
       const res = await fetch(withStore("/api/finance/rematch", selectedStore.code), {
@@ -1156,7 +1157,7 @@ export default function FinancePage() {
       if (!res.ok) throw new Error(json.error ?? "No se pudo re-emparejar");
       const logistics = json.logistics ?? { matched: 0, total: 0 };
       const settlements = json.settlements ?? { matched: 0, total: 0 };
-      setSyncMessage(
+      setRematchMessage(
         `Re-emparejado listo: Boxful ${logistics.matched}/${logistics.total} con match` +
           (settlements.total
             ? `, liquidaciones ${settlements.matched}/${settlements.total} con match`
@@ -1167,7 +1168,7 @@ export default function FinancePage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "No se pudo re-emparejar";
       setError(message);
-      setSyncMessage(message);
+      setRematchMessage(message);
     } finally {
       setRematching(false);
     }
@@ -1442,8 +1443,6 @@ export default function FinancePage() {
                 syncingShopify={syncingShopify}
                 syncMessage={syncMessage}
                 onSyncShopify={syncShopifyHistory}
-                rematching={rematching}
-                onRematch={rematchImports}
                 importingLogistics={importingLogistics}
                 onLogisticsImport={handleLogisticsImport}
               />
@@ -1500,6 +1499,9 @@ export default function FinancePage() {
               <BoxfulFilesTab
                 files={boxfulFiles}
                 logisticsImports={logisticsImports}
+                rematching={rematching}
+                rematchMessage={rematchMessage}
+                onRematch={rematchImports}
               />
             )}
         </>
@@ -1593,8 +1595,6 @@ function OrdersTab({
   syncingShopify,
   syncMessage,
   onSyncShopify,
-  rematching,
-  onRematch,
   importingLogistics,
   onLogisticsImport,
 }: {
@@ -1612,8 +1612,6 @@ function OrdersTab({
   syncingShopify: boolean;
   syncMessage: string;
   onSyncShopify: () => void;
-  rematching: boolean;
-  onRematch: () => void;
   importingLogistics: boolean;
   onLogisticsImport: (event: FormEvent<HTMLFormElement>) => Promise<ImportResult>;
 }) {
@@ -1876,19 +1874,6 @@ function OrdersTab({
               <Database className="h-4 w-4" />
               {syncingShopify ? "Sincronizando..." : "Sync Shopify"}
             </Button>
-            {logisticsImports.length > 0 && (
-              <Button
-                type="button"
-                variant="outline"
-                disabled={rematching}
-                onClick={onRematch}
-                className="gap-2"
-                title="Vuelve a cruzar los Boxful/liquidaciones ya cargados con la base de Shopify"
-              >
-                <RefreshCw className={`h-4 w-4 ${rematching ? "animate-spin" : ""}`} />
-                {rematching ? "Re-emparejando..." : "Re-emparejar"}
-              </Button>
-            )}
             <Button
               type="button"
               disabled={importingLogistics}
@@ -6986,13 +6971,23 @@ function MonthlyOrdersTable({ rows }: { rows: OrderProfitabilityRow[] }) {
 function BoxfulFilesTab({
   files,
   logisticsImports,
+  rematching,
+  rematchMessage,
+  onRematch,
 }: {
   files: BoxfulFileControl[];
   logisticsImports: LogisticsImport[];
+  rematching: boolean;
+  rematchMessage: string;
+  onRematch: () => void;
 }) {
   const mergedFiles = useMemo(
     () => mergeLogisticsBoxfulFiles(files, logisticsImports),
     [files, logisticsImports]
+  );
+  const importById = useMemo(
+    () => new Map(logisticsImports.map((imp): [number, LogisticsImport] => [imp.id, imp])),
+    [logisticsImports]
   );
   const importedCount = mergedFiles.filter((file) => file.status === "importado").length;
   const expectedCount = mergedFiles.filter((file) => file.status === "esperado").length;
@@ -7031,37 +7026,79 @@ function BoxfulFilesTab({
                 Consolida los archivos logisticos que ya entraron por el flujo operativo de Pedidos.
               </p>
             </div>
+            {logisticsImports.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={rematching}
+                onClick={onRematch}
+                className="gap-2"
+                title="Vuelve a cruzar los Boxful/liquidaciones ya cargados con la base actual de Shopify"
+              >
+                <RefreshCw className={`h-4 w-4 ${rematching ? "animate-spin" : ""}`} />
+                {rematching ? "Re-emparejando..." : "Re-emparejar"}
+              </Button>
+            )}
           </div>
+          {rematchMessage && (
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <RefreshCw className="h-3.5 w-3.5 shrink-0" /> {rematchMessage}
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           <div className="max-h-[620px] overflow-auto border border-border">
-            <table className="w-full min-w-[920px] text-sm">
+            <table className="w-full min-w-[1040px] text-sm">
               <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2">Archivo</th>
                   <th className="px-3 py-2">Corte</th>
                   <th className="px-3 py-2">Estado</th>
                   <th className="px-3 py-2">Import ID</th>
+                  <th className="px-3 py-2">Filas</th>
+                  <th className="px-3 py-2">Match</th>
                   <th className="px-3 py-2">Notas</th>
                 </tr>
               </thead>
               <tbody>
-                {mergedFiles.map((file) => (
-                  <tr key={file.file_name} className="border-t border-border/50">
-                    <td className="max-w-[360px] truncate px-3 py-2" title={file.file_name}>{file.file_name}</td>
-                    <td className="px-3 py-2 font-mono text-xs">{file.cutoff_date ? formatDate(file.cutoff_date) : "-"}</td>
-                    <td className="px-3 py-2">
-                      <Badge variant={file.status === "faltante" ? "destructive" : file.status === "esperado" ? "warning" : "success"}>
-                        {file.status}
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs">{file.import_id ?? "-"}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{file.notes || "-"}</td>
-                  </tr>
-                ))}
+                {mergedFiles.map((file) => {
+                  const imp = file.import_id ? importById.get(file.import_id) : undefined;
+                  return (
+                    <tr key={file.file_name} className="border-t border-border/50">
+                      <td className="max-w-[360px] truncate px-3 py-2" title={file.file_name}>{file.file_name}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{file.cutoff_date ? formatDate(file.cutoff_date) : "-"}</td>
+                      <td className="px-3 py-2">
+                        <Badge variant={file.status === "faltante" ? "destructive" : file.status === "esperado" ? "warning" : "success"}>
+                          {file.status}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs">{file.import_id ?? "-"}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{imp ? imp.total_rows : "-"}</td>
+                      <td className="px-3 py-2">
+                        {imp ? (
+                          <Badge
+                            variant={
+                              imp.matched_rows === 0
+                                ? "destructive"
+                                : imp.matched_rows < imp.total_rows
+                                  ? "warning"
+                                  : "success"
+                            }
+                          >
+                            {imp.matched_rows}/{imp.total_rows} match
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">{file.notes || "-"}</td>
+                    </tr>
+                  );
+                })}
                 {!mergedFiles.length && (
                   <tr>
-                    <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
                       No hay archivos logisticos importados todavia.
                     </td>
                   </tr>
