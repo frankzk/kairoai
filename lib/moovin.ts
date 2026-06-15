@@ -84,9 +84,14 @@ export async function fetchMoovinTracking(
     true,
   ]);
 
+  // Corte duro: Moovin scrapea su web pública y puede colgarse; sin timeout el
+  // modal gira hasta que muere la función serverless (~30s).
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), 12000);
   try {
     const res = await fetch(pageUrl, {
       method: "POST",
+      signal: controller.signal,
       headers: {
         accept: "text/x-component",
         "content-type": "text/plain;charset=UTF-8",
@@ -132,7 +137,12 @@ export async function fetchMoovinTracking(
       ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
     };
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      return { ...base, error: "Moovin no respondio a tiempo (timeout)." };
+    }
     return { ...base, error: err instanceof Error ? err.message : "Error consultando Moovin" };
+  } finally {
+    clearTimeout(abortTimer);
   }
 }
 

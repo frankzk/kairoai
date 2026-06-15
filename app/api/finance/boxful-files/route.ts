@@ -3,6 +3,7 @@ import { listBoxfulFileControls } from "@/lib/finance";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
 export async function GET(req: NextRequest) {
   const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);

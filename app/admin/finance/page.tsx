@@ -456,7 +456,7 @@ const FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE: Record<FinanceStoreCode, string> 
 };
 const FINANCE_SHOPIFY_SYNC_INITIAL_PAGE_SIZE = 250;
 const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 500;
-const FINANCE_SHOPIFY_SYNC_READ_CONCURRENCY = 1;
+const FINANCE_SHOPIFY_SYNC_READ_CONCURRENCY = 5;
 // Ventana de "pedidos actualizados recientemente" leida en vivo de Shopify.
 const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
 const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
@@ -464,7 +464,7 @@ const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
 const FINANCE_LOGISTICS_INITIAL_PAGE_SIZE = 500;
 const FINANCE_LOGISTICS_PAGE_SIZE = 1000;
 const FINANCE_LOGISTICS_MAX_ROWS = 30000;
-const FINANCE_FAST_FETCH_TIMEOUT_MS = 8000;
+const FINANCE_FAST_FETCH_TIMEOUT_MS = 20000;
 const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 
 export default function FinancePage() {
@@ -685,7 +685,7 @@ export default function FinancePage() {
           setCosts(json.costs ?? []);
           setCostVersions(Array.isArray(json.versions) ? json.versions as ProductCostVersion[] : []);
         },
-        { delayMs: 8000 }
+        { delayMs: 150 }
       );
       loadJson(
         "gastos",
@@ -696,7 +696,7 @@ export default function FinancePage() {
             FINANCE_FAST_FETCH_TIMEOUT_MS
         ),
         (json) => setExpenses(json.expenses ?? []),
-        { delayMs: 16000 }
+        { delayMs: 300 }
       );
       loadJson(
         "resumen financiero",
@@ -707,7 +707,7 @@ export default function FinancePage() {
             FINANCE_FAST_FETCH_TIMEOUT_MS
         ),
         (json) => setSummary(json.summary ?? null),
-        { delayMs: 18000 }
+        { delayMs: 600 }
       );
       loadJson(
         "pedidos recientes Shopify",
@@ -726,7 +726,7 @@ export default function FinancePage() {
             setShopifyOrders((current) => mergeShopifyOrderSummaries(current, recentShopifyOrders));
           }
         },
-        { delayMs: 12000 }
+        { delayMs: 400 }
       );
       loadJson(
         "notas Shopify",
@@ -745,7 +745,7 @@ export default function FinancePage() {
             setShopifyOrders((current) => mergeShopifyOrderSummaries(current, noteShopifyOrders));
           }
         },
-        { delayMs: 24000 }
+        { delayMs: 800 }
       );
       loadJson(
         "reclamos",
@@ -756,7 +756,7 @@ export default function FinancePage() {
             FINANCE_FAST_FETCH_TIMEOUT_MS
         ),
         (json) => setClaims(Array.isArray(json.claims) ? json.claims as FinanceClaim[] : []),
-        { delayMs: 12000 }
+        { delayMs: 200 }
       );
       loadJson(
         "archivos Boxful",
@@ -767,7 +767,7 @@ export default function FinancePage() {
             FINANCE_FAST_FETCH_TIMEOUT_MS
         ),
         (json) => setBoxfulFiles(Array.isArray(json.files) ? json.files as BoxfulFileControl[] : []),
-        { delayMs: 12000 }
+        { delayMs: 250 }
       );
 
       void Promise.race([
@@ -778,7 +778,7 @@ export default function FinancePage() {
       });
 
       void (async () => {
-        await delay(20000);
+        await delay(1200);
         if (!isCurrentRun()) return;
         const settlementsJson = await safeJson(
           fetchWithTimeout(
@@ -794,7 +794,7 @@ export default function FinancePage() {
       })();
 
       void (async () => {
-        await delay(10000);
+        await delay(900);
         if (!isCurrentRun()) return;
         if (firstLogisticsPageLoaded && !firstLogisticsPageHasMore) return;
         try {
@@ -820,7 +820,7 @@ export default function FinancePage() {
       })();
 
       void (async () => {
-        await delay(12000);
+        await delay(1000);
         if (!isCurrentRun()) return;
         setShopifyHistoryLoading(true);
         try {

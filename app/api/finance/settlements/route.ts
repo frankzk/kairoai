@@ -54,8 +54,10 @@ export async function GET(req: NextRequest) {
   if (!store) return missingStoreResponse();
   try {
     const importId = Number(req.nextUrl.searchParams.get("import_id"));
-    const imports = await listSettlementImports(store.id);
-    const rows = await listSettlementRows(importId || undefined, store.id);
+    const [imports, rows] = await Promise.all([
+      listSettlementImports(store.id),
+      listSettlementRows(importId || undefined, store.id),
+    ]);
     return NextResponse.json({ imports, rows });
   } catch (err) {
     const message = toFriendlyErrorMessage(err, "Error al leer liquidaciones");
