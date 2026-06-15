@@ -21,7 +21,7 @@ const DEFAULT_CREATED_AT_MIN_BY_STORE: Record<string, string> = {
 };
 const DEFAULT_SYNC_PAGES_PER_REQUEST = 8;
 const MAX_SYNC_PAGES_PER_REQUEST = 12;
-const MAX_GET_LIMIT = 4000;
+const MAX_GET_LIMIT = 1000;
 // Shopify REST permite ~2 req/s; un respiro entre paginas evita 429 en rafaga.
 const PAGE_DELAY_MS = 350;
 
@@ -32,10 +32,9 @@ export async function GET(req: NextRequest) {
     const requestedLimit = Number(req.nextUrl.searchParams.get("limit") || 1000);
     const offset = Math.max(Number(req.nextUrl.searchParams.get("offset") || 0), 0);
     const limit = Math.min(Math.max(requestedLimit, 1), MAX_GET_LIMIT);
-    const [orders, coverage] = await Promise.all([
-      listPersistedShopifyOrders(limit + 1, offset, store.id),
-      getPersistedShopifyCoverage(store.id),
-    ]);
+    const includeCoverage = req.nextUrl.searchParams.get("coverage") !== "0";
+    const orders = await listPersistedShopifyOrders(limit + 1, offset, store.id);
+    const coverage = includeCoverage ? await getPersistedShopifyCoverage(store.id) : null;
     const pageOrders = orders.slice(0, limit);
     const hasMore = orders.length > limit;
     return NextResponse.json({
