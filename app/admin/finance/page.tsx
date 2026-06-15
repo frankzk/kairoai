@@ -505,6 +505,7 @@ export default function FinancePage() {
     total: null,
   });
   const [syncMessage, setSyncMessage] = useState("");
+  const [rematching, setRematching] = useState(false);
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
@@ -1138,6 +1139,40 @@ export default function FinancePage() {
     }
   }
 
+  // Re-corre el matching de los imports ya cargados (Boxful + liquidaciones)
+  // contra la base actual de shopify_orders, sin re-subir archivos. Util cuando
+  // se importo el Excel antes de terminar el Sync Shopify (match quedo en 0).
+  async function rematchImports() {
+    setRematching(true);
+    setSyncMessage("Re-emparejando imports con la base de Shopify...");
+    setError("");
+    try {
+      const res = await fetch(withStore("/api/finance/rematch", selectedStore.code), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store: selectedStore.code }),
+      });
+      const json = await readApiJson(res);
+      if (!res.ok) throw new Error(json.error ?? "No se pudo re-emparejar");
+      const logistics = json.logistics ?? { matched: 0, total: 0 };
+      const settlements = json.settlements ?? { matched: 0, total: 0 };
+      setSyncMessage(
+        `Re-emparejado listo: Boxful ${logistics.matched}/${logistics.total} con match` +
+          (settlements.total
+            ? `, liquidaciones ${settlements.matched}/${settlements.total} con match`
+            : "") +
+          "."
+      );
+      await refresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "No se pudo re-emparejar";
+      setError(message);
+      setSyncMessage(message);
+    } finally {
+      setRematching(false);
+    }
+  }
+
   async function saveClaim(anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes = "") {
     const res = await fetch(withStore("/api/finance/claims", selectedStore.code), {
       method: "POST",
@@ -1407,6 +1442,8 @@ export default function FinancePage() {
                 syncingShopify={syncingShopify}
                 syncMessage={syncMessage}
                 onSyncShopify={syncShopifyHistory}
+                rematching={rematching}
+                onRematch={rematchImports}
                 importingLogistics={importingLogistics}
                 onLogisticsImport={handleLogisticsImport}
               />
@@ -1556,6 +1593,8 @@ function OrdersTab({
   syncingShopify,
   syncMessage,
   onSyncShopify,
+  rematching,
+  onRematch,
   importingLogistics,
   onLogisticsImport,
 }: {
@@ -1573,6 +1612,8 @@ function OrdersTab({
   syncingShopify: boolean;
   syncMessage: string;
   onSyncShopify: () => void;
+  rematching: boolean;
+  onRematch: () => void;
   importingLogistics: boolean;
   onLogisticsImport: (event: FormEvent<HTMLFormElement>) => Promise<ImportResult>;
 }) {
@@ -1835,6 +1876,19 @@ function OrdersTab({
               <Database className="h-4 w-4" />
               {syncingShopify ? "Sincronizando..." : "Sync Shopify"}
             </Button>
+            {logisticsImports.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={rematching}
+                onClick={onRematch}
+                className="gap-2"
+                title="Vuelve a cruzar los Boxful/liquidaciones ya cargados con la base de Shopify"
+              >
+                <RefreshCw className={`h-4 w-4 ${rematching ? "animate-spin" : ""}`} />
+                {rematching ? "Re-emparejando..." : "Re-emparejar"}
+              </Button>
+            )}
             <Button
               type="button"
               disabled={importingLogistics}

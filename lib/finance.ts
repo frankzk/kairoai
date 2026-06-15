@@ -229,6 +229,31 @@ export async function insertSettlementRows(
   if (error) throw new Error(`insertSettlementRows: ${error.message}`);
 }
 
+// Re-emparejado: actualiza filas existentes por id. Se omite raw_row del payload
+// a proposito (columna con DEFAULT '{}') para no pisar el original guardado al
+// importar; el upsert solo toca las columnas presentes en cada fila.
+export async function upsertSettlementRows(rows: SettlementRow[]): Promise<void> {
+  if (!rows.length) return;
+  const { error } = await getDB()
+    .from("settlement_rows")
+    .upsert(rows, { onConflict: "id" });
+  if (error) throw new Error(`upsertSettlementRows: ${error.message}`);
+}
+
+export async function updateSettlementImportMatchCounts(
+  id: number,
+  storeId: number,
+  matchedRows: number,
+  unmatchedRows: number
+): Promise<void> {
+  const { error } = await getDB()
+    .from("settlement_imports")
+    .update({ matched_rows: matchedRows, unmatched_rows: unmatchedRows })
+    .eq("id", id)
+    .eq("store_id", storeId);
+  if (error) throw new Error(`updateSettlementImportMatchCounts: ${error.message}`);
+}
+
 const SETTLEMENT_ROW_COLUMNS_BASE =
   "id, store_id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, service_type, cod_amount, cod_commission, card_commission, delivery_cost, pick_pack_cost, packaging_cost, amount_to_liquidate, settlement_status, internal_status, match_status, shopify_order_id, shopify_order_name, shopify_financial_status, shopify_fulfillment_status, shopify_total, shopify_created_at, order_items, created_at";
 // first_name/last_name requieren la migracion 0005; si falta, se reintenta
@@ -335,6 +360,29 @@ export async function insertLogisticsRows(
   if (!rows.length) return;
   const { error } = await getDB().from("logistics_rows").insert(rows);
   if (error) throw new Error(`insertLogisticsRows: ${error.message}`);
+}
+
+// Re-emparejado: ver nota en upsertSettlementRows. raw_row se omite a proposito.
+export async function upsertLogisticsRows(rows: LogisticsRow[]): Promise<void> {
+  if (!rows.length) return;
+  const { error } = await getDB()
+    .from("logistics_rows")
+    .upsert(rows, { onConflict: "id" });
+  if (error) throw new Error(`upsertLogisticsRows: ${error.message}`);
+}
+
+export async function updateLogisticsImportMatchCounts(
+  id: number,
+  storeId: number,
+  matchedRows: number,
+  unmatchedRows: number
+): Promise<void> {
+  const { error } = await getDB()
+    .from("logistics_imports")
+    .update({ matched_rows: matchedRows, unmatched_rows: unmatchedRows })
+    .eq("id", id)
+    .eq("store_id", storeId);
+  if (error) throw new Error(`updateLogisticsImportMatchCounts: ${error.message}`);
 }
 
 const LOGISTICS_ROW_COLUMNS_BASE =
