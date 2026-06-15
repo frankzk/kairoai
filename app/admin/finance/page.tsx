@@ -259,6 +259,15 @@ interface FinanceControlCenter {
   missing_cost_count: number;
 }
 
+const EMPTY_FINANCE_CONTROL_CENTER: FinanceControlCenter = {
+  orders: [],
+  anomalies: [],
+  cash_received: 0,
+  cash_pending: 0,
+  contribution_margin: 0,
+  missing_cost_count: 0,
+};
+
 interface MonthlyCloseRow {
   month: string;
   orders: number;
@@ -446,12 +455,13 @@ const FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE: Record<FinanceStoreCode, string> 
   "mireva-hn": "2025-12-09T00:00:00-06:00",
 };
 const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 1000;
+const FINANCE_SHOPIFY_SYNC_READ_CONCURRENCY = 2;
 // Ventana de "pedidos actualizados recientemente" leida en vivo de Shopify.
 const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
 const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
 const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
 const FINANCE_FAST_FETCH_TIMEOUT_MS = 8000;
-const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 25000;
+const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
@@ -516,21 +526,25 @@ export default function FinancePage() {
     () => getDoubleSettlementAnomalies(settlementTraceByKey),
     [settlementTraceByKey]
   );
+  const needsFinanceControl = tab === "products" || tab === "monthly";
   const financeControl = useMemo(
-    () => buildFinanceControlCenter(visibleOrderRows, matchedSettlementRows, imports, costs, costVersions, settlementTraceByKey),
-    [visibleOrderRows, matchedSettlementRows, imports, costs, costVersions, settlementTraceByKey]
+    () =>
+      needsFinanceControl
+        ? buildFinanceControlCenter(visibleOrderRows, matchedSettlementRows, imports, costs, costVersions, settlementTraceByKey)
+        : EMPTY_FINANCE_CONTROL_CENTER,
+    [visibleOrderRows, matchedSettlementRows, imports, costs, costVersions, settlementTraceByKey, needsFinanceControl]
   );
   const productAnalysisRows = useMemo(
-    () => buildProductAnalysisRows(financeControl.orders),
-    [financeControl.orders]
+    () => (tab === "products" ? buildProductAnalysisRows(financeControl.orders) : []),
+    [tab, financeControl.orders]
   );
   const claimByAnomalyKey = useMemo(
     () => new Map(claims.map((claim) => [claim.anomaly_key, claim])),
     [claims]
   );
   const monthlyCloseRows = useMemo(
-    () => buildMonthlyCloseRows(financeControl.orders, expenses),
-    [financeControl.orders, expenses]
+    () => (tab === "monthly" ? buildMonthlyCloseRows(financeControl.orders, expenses) : []),
+    [tab, financeControl.orders, expenses]
   );
 
   async function refresh() {
@@ -566,13 +580,14 @@ export default function FinancePage() {
         apply: (json: Record<string, any>) => void,
         options: { critical?: boolean; delayMs?: number } = {}
       ) => {
-        void (async () => {
+        const task = (async () => {
           if (options.delayMs) await delay(options.delayMs);
           const json = await safeJson(request(), label);
           if (!isCurrentRun()) return;
           apply(json);
           if (options.critical) reportCriticalError(json.error);
         })();
+        return task;
       };
 
       // Cada fuente carga de forma independiente: una llamada lenta no puede
@@ -580,6 +595,58 @@ export default function FinancePage() {
       const recentUpdatesMin = new Date(
         Date.now() - FINANCE_SHOPIFY_RECENT_UPDATES_DAYS * 24 * 60 * 60 * 1000
       ).toISOString();
+      let firstShopifyPageLoaded = false;
+      let firstShopifyPageTotal: number | null = null;
+
+      const firstShopifyPageTask = loadJson(
+        "pedidos Shopify base",
+        () =>
+          fetchWithTimeout(
+            withStore(
+              `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_PAGE_SIZE}&offset=0&coverage=1`,
+              activeStoreCode
+            ),
+            { cache: "no-store" },
+            FINANCE_FAST_FETCH_TIMEOUT_MS
+          ),
+        (json) => {
+          const persistedShopifyOrders = Array.isArray(json.orders)
+            ? (json.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
+            : [];
+          if (persistedShopifyOrders.length) {
+            firstShopifyPageLoaded = true;
+            setShopifyOrders((current) => mergeShopifyOrderSummaries(current, persistedShopifyOrders));
+          }
+          const coverage =
+            (json.coverage as { count: number; oldest: string | null; newest: string | null } | null) ?? null;
+          if (coverage) {
+            firstShopifyPageTotal = coverage.count;
+            setShopifyCoverage(coverage);
+          }
+          setShopifyHistoryProgress({
+            loaded: persistedShopifyOrders.length,
+            total: coverage?.count ?? null,
+          });
+        },
+        { critical: true, delayMs: 0 }
+      );
+
+      const logisticsTask = (async () => {
+        await delay(250);
+        if (!isCurrentRun()) return;
+        const logisticsJson = await safeJson(
+          fetchWithTimeout(
+            withStore("/api/finance/logistics", activeStoreCode),
+            { cache: "no-store" },
+            FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
+          ),
+          "logistica Boxful"
+        );
+        if (!isCurrentRun()) return;
+        setLogisticsImports(logisticsJson.imports ?? []);
+        setLogisticsRows(logisticsJson.rows ?? []);
+        reportCriticalError(logisticsJson.error);
+      })();
 
       loadJson(
         "costos SKU",
@@ -593,7 +660,7 @@ export default function FinancePage() {
           setCosts(json.costs ?? []);
           setCostVersions(Array.isArray(json.versions) ? json.versions as ProductCostVersion[] : []);
         },
-        { critical: true, delayMs: 0 }
+        { delayMs: 8000 }
       );
       loadJson(
         "gastos",
@@ -602,9 +669,9 @@ export default function FinancePage() {
             withStore("/api/finance/expenses", activeStoreCode),
             { cache: "no-store" },
             FINANCE_FAST_FETCH_TIMEOUT_MS
-          ),
+        ),
         (json) => setExpenses(json.expenses ?? []),
-        { critical: true, delayMs: 150 }
+        { delayMs: 16000 }
       );
       loadJson(
         "resumen financiero",
@@ -613,9 +680,9 @@ export default function FinancePage() {
             withStore("/api/finance/summary", activeStoreCode),
             { cache: "no-store" },
             FINANCE_FAST_FETCH_TIMEOUT_MS
-          ),
+        ),
         (json) => setSummary(json.summary ?? null),
-        { critical: true, delayMs: 300 }
+        { delayMs: 18000 }
       );
       loadJson(
         "pedidos recientes Shopify",
@@ -634,7 +701,7 @@ export default function FinancePage() {
             setShopifyOrders((current) => mergeShopifyOrderSummaries(current, recentShopifyOrders));
           }
         },
-        { delayMs: 650 }
+        { delayMs: 12000 }
       );
       loadJson(
         "notas Shopify",
@@ -653,7 +720,7 @@ export default function FinancePage() {
             setShopifyOrders((current) => mergeShopifyOrderSummaries(current, noteShopifyOrders));
           }
         },
-        { delayMs: 950 }
+        { delayMs: 24000 }
       );
       loadJson(
         "reclamos",
@@ -662,9 +729,9 @@ export default function FinancePage() {
             withStore("/api/finance/claims", activeStoreCode),
             { cache: "no-store" },
             FINANCE_FAST_FETCH_TIMEOUT_MS
-          ),
+        ),
         (json) => setClaims(Array.isArray(json.claims) ? json.claims as FinanceClaim[] : []),
-        { critical: true, delayMs: 450 }
+        { delayMs: 12000 }
       );
       loadJson(
         "archivos Boxful",
@@ -673,15 +740,20 @@ export default function FinancePage() {
             withStore("/api/finance/boxful-files", activeStoreCode),
             { cache: "no-store" },
             FINANCE_FAST_FETCH_TIMEOUT_MS
-          ),
+        ),
         (json) => setBoxfulFiles(Array.isArray(json.files) ? json.files as BoxfulFileControl[] : []),
-        { delayMs: 600 }
+        { delayMs: 12000 }
       );
 
-      setLoading(false);
+      void Promise.race([
+        Promise.allSettled([firstShopifyPageTask, logisticsTask]),
+        delay(12000),
+      ]).finally(() => {
+        if (isCurrentRun()) setLoading(false);
+      });
 
       void (async () => {
-        await delay(1400);
+        await delay(20000);
         if (!isCurrentRun()) return;
         const settlementsJson = await safeJson(
           fetchWithTimeout(
@@ -694,28 +766,17 @@ export default function FinancePage() {
         if (!isCurrentRun()) return;
         setImports(settlementsJson.imports ?? []);
         setRows(settlementsJson.rows ?? []);
-
-        await delay(500);
-        if (!isCurrentRun()) return;
-        const logisticsJson = await safeJson(
-          fetchWithTimeout(
-            withStore("/api/finance/logistics", activeStoreCode),
-            { cache: "no-store" },
-            FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
-          ),
-          "logistica Boxful"
-        );
-        if (!isCurrentRun()) return;
-        setLogisticsImports(logisticsJson.imports ?? []);
-        setLogisticsRows(logisticsJson.rows ?? []);
       })();
 
       void (async () => {
-        await delay(2600);
+        await delay(12000);
         if (!isCurrentRun()) return;
         setShopifyHistoryLoading(true);
         try {
-          const persistedShopifyJson = await fetchPersistedShopifySnapshot(activeStoreCode, (partial) => {
+          const startOffset = firstShopifyPageLoaded ? FINANCE_SHOPIFY_SYNC_PAGE_SIZE : 0;
+          const persistedShopifyJson = await fetchPersistedShopifySnapshot(
+            activeStoreCode,
+            (partial) => {
             if (!isCurrentRun()) return;
             const persistedShopifyOrders = Array.isArray(partial.orders)
               ? (partial.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
@@ -725,13 +786,16 @@ export default function FinancePage() {
               null;
             startTransition(() => {
               setShopifyOrders((current) => mergeShopifyOrderSummaries(current, persistedShopifyOrders));
-              setShopifyCoverage(coverage);
+              if (coverage) setShopifyCoverage(coverage);
               setShopifyHistoryProgress({
-                loaded: persistedShopifyOrders.length,
-                total: coverage?.count ?? null,
+                loaded: startOffset + persistedShopifyOrders.length,
+                total: coverage?.count ?? firstShopifyPageTotal,
               });
             });
-          });
+            },
+            startOffset,
+            firstShopifyPageTotal
+          );
 
           if (!isCurrentRun()) return;
           const persistedShopifyOrders = Array.isArray(persistedShopifyJson.orders)
@@ -742,10 +806,10 @@ export default function FinancePage() {
             null;
           startTransition(() => {
             setShopifyOrders((current) => mergeShopifyOrderSummaries(current, persistedShopifyOrders));
-            setShopifyCoverage(coverage);
+            if (coverage) setShopifyCoverage(coverage);
             setShopifyHistoryProgress({
-              loaded: persistedShopifyOrders.length,
-              total: coverage?.count ?? null,
+              loaded: startOffset + persistedShopifyOrders.length,
+              total: coverage?.count ?? firstShopifyPageTotal,
             });
           });
         } catch {
@@ -764,10 +828,15 @@ export default function FinancePage() {
 
   useEffect(() => {
     refresh();
-    loadShopifyProducts();
     reloadCarrierTracking();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStoreCode]);
+
+  useEffect(() => {
+    if (tab !== "products" || shopifyProducts.length || productsLoading) return;
+    loadShopifyProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selectedStoreCode]);
 
   async function loadShopifyProducts() {
     const activeStoreCode = selectedStore.code;
@@ -1112,19 +1181,21 @@ export default function FinancePage() {
       const time = new Date(value).getTime();
       return !Number.isNaN(time) && time >= start && time < end;
     };
-    const cur = computeOpMetrics(
-      financeControl.orders.filter((order) => inWindow(order.created_at, win.curStart, win.curEnd))
+    const cur = computeOpMetricsFromTrackableRows(
+      visibleOrderRows.filter((order) => inWindow(order.shopify_created_at, win.curStart, win.curEnd)),
+      settlementTraceByKey
     );
     const prev =
       win.prevStart != null && win.prevEnd != null
-        ? computeOpMetrics(
-            financeControl.orders.filter((order) =>
-              inWindow(order.created_at, win.prevStart as number, win.prevEnd as number)
-            )
+        ? computeOpMetricsFromTrackableRows(
+            visibleOrderRows.filter((order) =>
+              inWindow(order.shopify_created_at, win.prevStart as number, win.prevEnd as number)
+            ),
+            settlementTraceByKey
           )
         : null;
     return { win, cards: buildOperationalKpiCards(cur, prev) };
-  }, [financeControl.orders, kpiRange]);
+  }, [visibleOrderRows, settlementTraceByKey, kpiRange]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -1160,7 +1231,7 @@ export default function FinancePage() {
             size="sm"
             onClick={() => {
               refresh();
-              loadShopifyProducts();
+              if (tab === "products") loadShopifyProducts();
             }}
             className="gap-2"
           >
@@ -1232,7 +1303,7 @@ export default function FinancePage() {
             <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(orderStats.liquidationAlerts)} tone="warn" />
             <AlertStat
               label="Anomalías"
-              value={loading ? "..." : formatInt(financeControl.anomalies.length)}
+              value={loading ? "..." : formatInt(orderStats.anomalies)}
               tone="warn"
             />
           </div>
@@ -1262,15 +1333,13 @@ export default function FinancePage() {
           </TabButton>
         </div>
 
-        {loading ? (
-          <div className="flex h-80 items-center justify-center border border-border bg-card text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-2">
+        <>
+          {loading && (
+            <div className="flex items-center gap-2 border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
               <RefreshCw className="h-4 w-4 animate-spin" />
-              Cargando datos base...
-            </span>
-          </div>
-        ) : (
-          <>
+              Cargando vista operativa por bloques...
+            </div>
+          )}
             {tab === "orders" && (
               <OrdersTab
                 selectedStore={selectedStore}
@@ -1345,8 +1414,7 @@ export default function FinancePage() {
                 logisticsImports={logisticsImports}
               />
             )}
-          </>
-        )}
+        </>
       </main>
     </div>
   );
@@ -7092,6 +7160,66 @@ function computeOpMetrics(orders: OrderProfitabilityRow[]): OpMetrics {
   };
 }
 
+function computeOpMetricsFromTrackableRows(
+  rows: TrackableOrderRow[],
+  settlementTraceByKey: Map<string, SettlementTrace[]>
+): OpMetrics {
+  let generated = 0;
+  let dispatched = 0;
+  let delivered = 0;
+  let notDelivered = 0;
+  let annulled = 0;
+  let enRoute = 0;
+  let enRouteRetry = 0;
+  let revenue = 0;
+  let valueOrders = 0;
+  const leadDays: number[] = [];
+
+  for (const row of rows) {
+    generated += 1;
+    const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
+    const status = getEffectiveTrackingStatus(row, traces);
+    if (Boolean(row.guide_number) || isDispatchedStatus(status)) dispatched += 1;
+    if (status === "delivered") delivered += 1;
+    else if (status === "not_delivered" || status === "returned") notDelivered += 1;
+    else if (status === "annulled") annulled += 1;
+    else if (status === "en_route") enRoute += 1;
+    else if (status === "en_route_retry") enRouteRetry += 1;
+
+    const itemValue = sum((row.package_items ?? []).map((item) => Number(item.price || 0) * Number(item.quantity || 0)));
+    const value = Number(itemValue || row.cod_amount || 0);
+    if (value > 0) {
+      revenue += value;
+      valueOrders += 1;
+    }
+
+    const deliveredOn = row.finalized_on ?? null;
+    if (status === "delivered" && row.shopify_created_at && deliveredOn) {
+      const lead = diffDaysMs(row.shopify_created_at, deliveredOn);
+      if (lead >= 0 && lead <= 120) leadDays.push(lead);
+    }
+  }
+
+  const resolved = delivered + notDelivered;
+  return {
+    generated,
+    dispatched,
+    delivered,
+    notDelivered,
+    annulled,
+    enRoute,
+    enRouteRetry,
+    resolved,
+    deliveryRate: dispatched ? (delivered / dispatched) * 100 : 0,
+    returnRate: dispatched ? (notDelivered / dispatched) * 100 : 0,
+    dispatchRate: generated ? (dispatched / generated) * 100 : 0,
+    annulRate: generated ? (annulled / generated) * 100 : 0,
+    leadAvg: leadDays.length ? leadDays.reduce((acc, value) => acc + value, 0) / leadDays.length : null,
+    leadSamples: leadDays.length,
+    ticket: valueOrders ? revenue / valueOrders : 0,
+  };
+}
+
 function formatInt(value: number): string {
   return Number(value || 0).toLocaleString("es-CR");
 }
@@ -7176,7 +7304,7 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCa
       tone: deliveryTone(cur.deliveryRate),
       deltaLabel: ppDelta(cur.deliveryRate, prev?.deliveryRate ?? null),
       deltaTone: deltaTone(cur.deliveryRate, prev?.deliveryRate ?? null, "up"),
-      sub: `${formatInt(cur.delivered)}/${formatInt(cur.resolved)} · Devol. ${cur.returnRate.toFixed(1)}%`,
+      sub: `${formatInt(cur.delivered)}/${formatInt(cur.dispatched)} despachados - No entr. ${cur.returnRate.toFixed(1)}%`,
     },
     {
       id: "annul",
@@ -7562,13 +7690,21 @@ function toCsv(rows: unknown[]): string {
 
 async function fetchPersistedShopifySnapshot(
   storeCode: FinanceStoreCode,
-  onProgress?: (snapshot: Record<string, unknown>) => void
+  onProgress?: (snapshot: Record<string, unknown>) => void,
+  startOffset = 0,
+  expectedTotal: number | null = null
 ): Promise<Record<string, unknown>> {
   const orders: Array<Record<string, unknown>> = [];
   let coverage: { count: number; oldest: string | null; newest: string | null } | null = null;
-  let offset = 0;
+  let nextOffset = Math.max(Math.floor(startOffset), 0);
+  let hasMore = true;
 
-  while (orders.length < FINANCE_SHOPIFY_SYNC_MAX_ROWS) {
+  async function fetchPage(offset: number): Promise<{
+    offset: number;
+    orders: Array<Record<string, unknown>>;
+    hasMore: boolean;
+    coverage: { count: number; oldest: string | null; newest: string | null } | null;
+  }> {
     const res = await fetchWithTimeout(
       withStore(
         `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_PAGE_SIZE}&offset=${offset}&coverage=${offset === 0 ? "1" : "0"}`,
@@ -7579,20 +7715,35 @@ async function fetchPersistedShopifySnapshot(
     );
     const json = await readApiJson(res);
     if (!res.ok) throw new Error(json.error ?? "No se pudo leer el historico Shopify");
+    return {
+      offset,
+      orders: Array.isArray(json.orders) ? json.orders as Array<Record<string, unknown>> : [],
+      hasMore: Boolean(json.has_more),
+      coverage:
+        json.coverage && typeof json.coverage === "object"
+          ? json.coverage as { count: number; oldest: string | null; newest: string | null }
+          : null,
+    };
+  }
 
-    if (!coverage && json.coverage && typeof json.coverage === "object") {
-      coverage = json.coverage as { count: number; oldest: string | null; newest: string | null };
+  while (hasMore && orders.length < FINANCE_SHOPIFY_SYNC_MAX_ROWS) {
+    const offsets: number[] = [];
+    for (let i = 0; i < FINANCE_SHOPIFY_SYNC_READ_CONCURRENCY; i++) {
+      if (expectedTotal != null && nextOffset >= expectedTotal) break;
+      offsets.push(nextOffset);
+      nextOffset += FINANCE_SHOPIFY_SYNC_PAGE_SIZE;
+    }
+    if (!offsets.length) break;
+
+    const pages = (await Promise.all(offsets.map(fetchPage))).sort((a, b) => a.offset - b.offset);
+    for (const page of pages) {
+      if (!coverage && page.coverage) coverage = page.coverage;
+      orders.push(...page.orders);
+      if (!page.orders.length || !page.hasMore) hasMore = false;
     }
 
-    const pageOrders = Array.isArray(json.orders) ? json.orders as Array<Record<string, unknown>> : [];
-    orders.push(...pageOrders);
     onProgress?.({ orders: [...orders], total: orders.length, coverage });
-
-    if (!json.has_more || !pageOrders.length) break;
-    const nextOffset = Number(json.next_offset ?? offset + pageOrders.length);
-    if (!Number.isFinite(nextOffset) || nextOffset <= offset) break;
-    offset = nextOffset;
-    await delay(150);
+    await delay(50);
   }
 
   return { orders, total: orders.length, coverage };
