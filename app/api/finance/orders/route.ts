@@ -141,6 +141,10 @@ export async function GET(req: NextRequest) {
   const startDate = (params.get("start") || "").trim();
   const endDate = (params.get("end") || "").trim();
   const exportAll = params.get("all") === "1";
+  // enRouteGuides (lista grande, ~cientos) solo se calcula/envia cuando se pide
+  // con ?guides=1. El fetch paginado de la tabla NO la pide, asi que cada cambio
+  // de pagina/filtro viaja liviano; el cliente la trae una sola vez por tienda.
+  const includeGuides = params.get("guides") === "1";
 
   try {
     const { rows, settlementTraceByKey }: OrdersDataset = await getOrdersDataset(store);
@@ -220,8 +224,11 @@ export async function GET(req: NextRequest) {
     const pageRows = finalFiltered.slice(startIdx, startIdx + pageSize).map(attachTraces);
 
     // Guias no terminales para los botones "Actualizar Moovin/Forza": sobre el
-    // dataset completo (no dependen de la paginacion ni de los filtros).
-    const enRouteGuides = buildEnRouteGuides(rows, settlementTraceByKey, store);
+    // dataset completo (no dependen de la paginacion ni de los filtros). Solo se
+    // calculan/envian con ?guides=1 para no inflar cada fetch de pagina.
+    const enRouteGuides = includeGuides
+      ? buildEnRouteGuides(rows, settlementTraceByKey, store)
+      : undefined;
 
     return NextResponse.json({
       rows: pageRows,
@@ -232,7 +239,7 @@ export async function GET(req: NextRequest) {
       searchedCount: searchedRows.length,
       trackingCounts,
       settlementCounts,
-      enRouteGuides,
+      ...(enRouteGuides ? { enRouteGuides } : {}),
     });
   } catch (err) {
     const message = toFriendlyErrorMessage(err, "Error al cargar pedidos");
