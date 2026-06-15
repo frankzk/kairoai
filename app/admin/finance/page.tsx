@@ -1973,6 +1973,7 @@ function OrdersTable({
             const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
             const trackingStatus = getEffectiveTrackingStatus(row, traces);
             const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
+            const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
             return (
               <tr key={row.row_key} className="border-b border-border/50">
                 <td className="px-2 py-1.5 font-mono text-xs">{row.order_name}</td>
@@ -1983,17 +1984,17 @@ function OrdersTable({
                 </td>
                 <td className="px-2 py-1.5 font-mono text-xs">{row.guide_number || "-"}</td>
                 <td className="px-2 py-1.5 text-xs">
-                  {row.courier ? (
+                  {displayCourier ? (
                     <div className="flex flex-col items-start gap-0.5">
-                      <span>{row.courier}</span>
-                      {isMoovinCourier(row.courier, selectedStore) && row.guide_number && (
+                      <span>{displayCourier}</span>
+                      {isMoovinCourier(displayCourier, selectedStore) && row.guide_number && (
                         <MoovinTrackingButton
                           idPackage={row.guide_number}
                           lastName={row.last_name ?? ""}
                           cached={moovinByPackage.get(row.guide_number)}
                         />
                       )}
-                      {isForzaCourier(row.courier, selectedStore) && row.guide_number && (
+                      {isForzaCourier(displayCourier, selectedStore) && row.guide_number && (
                         <ForzaTrackingButton guide={row.guide_number} cached={forza} />
                       )}
                     </div>

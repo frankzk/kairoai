@@ -31,40 +31,13 @@ export interface ForzaTracking {
   raw?: string;
 }
 
-interface ForzaEnvelope {
-  d?: string;
-}
-
-interface ForzaInnerResponse {
-  Data?: string | null;
-}
-
-interface ForzaPayload {
-  StatusCode?: number;
-  Description?: string;
-  ObjectValue?: RawForzaObjectValue;
-}
-
-interface RawForzaObjectValue {
-  IdResult?: number;
-  Message?: string;
-  statusList?: RawForzaStatus[];
-  ReceiverName?: string;
-  Poblado?: string;
-  Municipio?: string;
-  Departamento?: string;
-  Description?: string;
-  Country?: string;
-  StatusTracking?: number;
-  StatusTrackingTitle?: string;
-  StatusTrackingDescription?: string;
-  DeliveryETA?: string;
-}
-
-interface RawForzaStatus {
-  label?: string;
-  Description?: string;
-  DateCreate?: string;
+interface ForzaRequestVariant {
+  label: string;
+  path: string;
+  data: {
+    Method: string;
+    Params: Record<string, string | number>;
+  };
 }
 
 export function buildForzaTrackingUrl(guide: string): string {
@@ -104,80 +77,116 @@ export async function fetchForzaTracking(
     return { ...base, error: "guide requerido" };
   }
 
-  const data = {
-    Method: "GetTrackingPublic",
-    Params: {
-      GuideSerie: "FD",
-      GuideNumber: guideNumber,
-    },
-  };
-
-  const endpoints = [FORZA_HN_API_URL, FORZA_PUBLIC_API_URL];
+  const requests = buildForzaRequestVariants(guideNumber);
+  const endpoints = [FORZA_PUBLIC_API_URL, FORZA_HN_API_URL];
   let lastError = "";
 
   for (const endpoint of endpoints) {
-    try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json; charset=utf-8",
-          accept: "application/json, text/plain, */*",
-          origin: FORZA_TRACKING_BASE,
-          referer: buildForzaTrackingUrl(normalizedGuide),
-          "user-agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        },
-        body: JSON.stringify({
-          path: "Tracking/GetTrackingPublic",
-          data: JSON.stringify(data),
-        }),
-        cache: "no-store",
-      });
+    for (const request of requests) {
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json; charset=UTF-8",
+            accept: "application/json, text/plain, */*",
+            origin: FORZA_TRACKING_BASE,
+            referer: buildForzaTrackingUrl(normalizedGuide),
+            "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
+            "sec-ch-ua-mobile": "?1",
+            "sec-ch-ua-platform": '"Android"',
+            "user-agent":
+              "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36",
+          },
+          body: JSON.stringify({
+            path: request.path,
+            data: JSON.stringify(request.data),
+          }),
+          cache: "no-store",
+        });
 
-      const text = await res.text();
-      const detail = parseForzaResponse(text);
-      if (!detail) {
-        lastError = `No se pudo interpretar la respuesta de Forza (${new URL(endpoint).hostname})`;
-        if (options.includeRaw) lastError += `: ${text.slice(0, 500)}`;
-        continue;
-      }
+        const text = await res.text();
+        const endpointHost = new URL(endpoint).hostname;
+        if (isCaptchaResponse(text)) {
+          lastError = `Forza devolvio CAPTCHA (${endpointHost}). Necesitamos API oficial, archivo de estados o webhook; no se debe automatizar contra el captcha.`;
+          if (options.includeRaw) lastError += `: ${text.slice(0, 500)}`;
+          continue;
+        }
 
-      if (detail.error) {
+        const detail = parseForzaResponse(text);
+        if (!detail) {
+          lastError = `No se pudo interpretar la respuesta de Forza (${endpointHost}, ${request.label})`;
+          if (options.includeRaw) lastError += `: ${text.slice(0, 500)}`;
+          continue;
+        }
+
+        if (detail.error) {
+          lastError = detail.error;
+          continue;
+        }
+
+        const latest = detail.events[0] ?? null;
+        const latestStatus = latest?.title ?? detail.latestStatus ?? null;
+        if (!latestStatus && !detail.events.length) {
+          lastError = `Forza no devolvio estado para esta guia (${endpointHost}, ${request.label})`;
+          continue;
+        }
+
+        const incident = computeForzaIncident(detail.events);
         return {
           ...base,
-          ok: false,
+          ok: res.ok,
           http_status: res.status,
-          error: detail.error,
+          latest_status: latestStatus,
+          latest_status_code: latest?.code ?? null,
+          latest_group: latest?.group ?? classifyForzaGroup(detail.latestStatus ?? ""),
+          latest_at: latest?.date ?? detail.deliveryEta,
+          delivery_address: detail.deliveryAddress,
+          receiver_name: detail.receiverName,
+          has_incident: incident.active,
+          incident_reason: incident.reason,
+          events: detail.events,
           ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
         };
+      } catch (err) {
+        lastError = `${new URL(endpoint).hostname} (${request.label}): ${
+          err instanceof Error ? err.message : "Error consultando Forza"
+        }`;
+        continue;
       }
-
-      const latest = detail.events[0] ?? null;
-      const incident = computeForzaIncident(detail.events);
-      return {
-        ...base,
-        ok: res.ok,
-        http_status: res.status,
-        latest_status: latest?.title ?? detail.latestStatus ?? null,
-        latest_status_code: latest?.code ?? null,
-        latest_group: latest?.group ?? classifyForzaGroup(detail.latestStatus ?? ""),
-        latest_at: latest?.date ?? detail.deliveryEta,
-        delivery_address: detail.deliveryAddress,
-        receiver_name: detail.receiverName,
-        has_incident: incident.active,
-        incident_reason: incident.reason,
-        events: detail.events,
-        ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
-      };
-    } catch (err) {
-      lastError = `${new URL(endpoint).hostname}: ${
-        err instanceof Error ? err.message : "Error consultando Forza"
-      }`;
-      continue;
     }
   }
 
   return { ...base, error: lastError || "No se pudo interpretar la respuesta de Forza" };
+}
+
+function buildForzaRequestVariants(guideNumber: string): ForzaRequestVariant[] {
+  return [
+    {
+      label: "GetNewDeliveryTracking",
+      path: "Tracking/GetNewDeliveryTracking",
+      data: {
+        Method: "GetNewDeliveryTracking",
+        Params: {
+          GuideSerie: "FD",
+          GuideNumber: guideNumber,
+          TicketNumber: "",
+          NirPhone: 0,
+          Phone: 0,
+        },
+      },
+    },
+    {
+      label: "GetTrackingPublic",
+      path: "Tracking/GetTrackingPublic",
+      data: {
+        Method: "GetTrackingPublic",
+        Params: {
+          GuideSerie: "FD",
+          GuideNumber: guideNumber,
+        },
+      },
+    },
+  ];
 }
 
 function parseForzaResponse(raw: string): {
@@ -188,58 +197,230 @@ function parseForzaResponse(raw: string): {
   events: ForzaEvent[];
   error?: string;
 } | null {
-  try {
-    const envelope = JSON.parse(raw) as ForzaEnvelope;
-    const inner = JSON.parse(String(envelope.d ?? "{}")) as ForzaInnerResponse;
-    const data = inner.Data ? (JSON.parse(inner.Data) as { PayLoad?: string }) : null;
-    const payload = data?.PayLoad ? (JSON.parse(data.PayLoad) as ForzaPayload) : null;
-    const objectValue = payload?.ObjectValue;
-    if (!objectValue) return null;
-    if (objectValue.IdResult !== 200) {
-      return {
-        latestStatus: "",
-        deliveryEta: null,
-        deliveryAddress: "",
-        receiverName: "",
-        events: [],
-        error: objectValue.Message || "Forza no devolvio datos para esta guia.",
-      };
-    }
+  const parsed = safeJsonParse(raw);
+  if (!parsed) return null;
 
-    const events = (objectValue.statusList ?? [])
-      .map((status) => {
-        const title = String(status.label ?? "").trim();
-        const description = String(status.Description ?? "").trim();
-        const date = normalizeForzaDate(status.DateCreate);
-        return {
-          code: title.toUpperCase().replace(/\s+/g, "_"),
-          group: classifyForzaGroup(title),
-          title,
-          description,
-          date,
-          note: "",
-        };
-      })
-      .sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
+  const objectValue = extractForzaObjectValue(parsed);
+  const objectRecord = asRecord(objectValue);
+  if (!objectRecord) return null;
 
+  const resultCode = readNumber(objectRecord, ["IdResult", "idResult", "StatusCode", "statusCode", "Code", "code"]);
+  const message = readString(objectRecord, ["Message", "message", "Description", "description"]);
+  const statusRows = readArrayDeep(objectRecord, [
+    "statusList",
+    "StatusList",
+    "trackingList",
+    "TrackingList",
+    "events",
+    "Events",
+    "history",
+    "History",
+    "TrackingEvents",
+  ]);
+
+  if (resultCode && resultCode !== 200 && !statusRows.length) {
     return {
-      latestStatus: String(objectValue.StatusTrackingTitle ?? "").trim(),
-      deliveryEta: normalizeForzaDate(objectValue.DeliveryETA),
-      deliveryAddress: [objectValue.Poblado, objectValue.Municipio, objectValue.Departamento]
+      latestStatus: "",
+      deliveryEta: null,
+      deliveryAddress: "",
+      receiverName: "",
+      events: [],
+      error: message || "Forza no devolvio datos para esta guia.",
+    };
+  }
+
+  const events = statusRows
+    .map(normalizeRawForzaStatus)
+    .filter((event): event is ForzaEvent => Boolean(event))
+    .sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
+
+  const latestStatus =
+    readString(objectRecord, [
+      "StatusTrackingTitle",
+      "statusTrackingTitle",
+      "StatusTitle",
+      "statusTitle",
+      "LatestStatus",
+      "latestStatus",
+      "CurrentStatus",
+      "currentStatus",
+    ]) || events[0]?.title || "";
+
+  return {
+    latestStatus,
+    deliveryEta: normalizeForzaDate(
+      readString(objectRecord, ["DeliveryETA", "deliveryETA", "deliveryEta", "EstimatedDelivery", "estimatedDelivery"])
+    ),
+    deliveryAddress:
+      readString(objectRecord, ["DeliveryAddress", "deliveryAddress", "Address", "address", "Direccion", "direccion"]) ||
+      readStringPath(objectRecord, ["order", "destiny", "address"]) ||
+      readStringPath(objectRecord, ["order", "destiny", "place"]) ||
+      [objectRecord.Poblado, objectRecord.Municipio, objectRecord.Departamento]
         .map((value) => String(value ?? "").trim())
         .filter(Boolean)
         .join(", "),
-      receiverName: String(objectValue.ReceiverName ?? "").trim(),
-      events,
-    };
+    receiverName:
+      readString(objectRecord, ["ReceiverName", "receiverName", "Receiver", "receiver", "Consignee", "consignee"]) ||
+      readStringPath(objectRecord, ["order", "customer", "fullname"]) ||
+      readStringPath(objectRecord, ["order", "destiny", "receiver"]),
+    events,
+  };
+}
+
+function safeJsonParse(value: string): unknown | null {
+  try {
+    return JSON.parse(value);
   } catch {
     return null;
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function extractForzaObjectValue(value: unknown): unknown {
+  let current: unknown = value;
+  for (let i = 0; i < 12; i += 1) {
+    if (typeof current === "string") {
+      const parsed = safeJsonParse(current);
+      if (!parsed) return current;
+      current = parsed;
+      continue;
+    }
+
+    const record = asRecord(current);
+    if (!record) return current;
+
+    if (record.ObjectValue !== undefined) {
+      current = record.ObjectValue;
+      continue;
+    }
+
+    const nextKey = ["d", "Data", "data", "PayLoad", "payload", "Result", "result"].find(
+      (key) => record[key] !== undefined && record[key] !== null
+    );
+    if (!nextKey) return current;
+    current = record[nextKey];
+  }
+  return current;
+}
+
+function readString(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function readNumber(record: Record<string, unknown>, keys: string[]): number | null {
+  const text = readString(record, keys);
+  if (!text) return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
+
+function readArrayDeep(value: unknown, keys: string[], depth = 0): unknown[] {
+  if (depth > 4) return [];
+  const record = asRecord(value);
+  if (!record) return [];
+
+  for (const key of keys) {
+    const direct = record[key];
+    if (Array.isArray(direct)) return direct;
+  }
+
+  for (const child of Object.values(record)) {
+    if (!child || typeof child !== "object") continue;
+    const nested = readArrayDeep(child, keys, depth + 1);
+    if (nested.length) return nested;
+  }
+
+  return [];
+}
+
+function readStringPath(record: Record<string, unknown>, path: string[]): string {
+  let current: unknown = record;
+  for (const key of path) {
+    const currentRecord = asRecord(current);
+    if (!currentRecord) return "";
+    current = currentRecord[key];
+  }
+  return current === undefined || current === null ? "" : String(current).trim();
+}
+
+function normalizeRawForzaStatus(status: unknown): ForzaEvent | null {
+  const record = asRecord(status);
+  if (!record) return null;
+  const title =
+    readString(record, [
+      "label",
+      "Label",
+      "Status",
+      "status",
+      "StatusTitle",
+      "StatusName",
+      "Title",
+      "title",
+      "Name",
+      "name",
+      "Estado",
+      "estado",
+      "Event",
+      "event",
+    ]) || "Movimiento Forza";
+  const description = readString(record, [
+    "Description",
+    "description",
+    "Descripcion",
+    "descripcion",
+    "StatusDescription",
+    "EventDescription",
+    "Observation",
+    "Observacion",
+    "Comment",
+    "comment",
+    "Message",
+    "message",
+  ]);
+  const date = normalizeForzaDate(
+    readString(record, [
+      "DateCreate",
+      "dateCreate",
+      "Date",
+      "date",
+      "CreatedAt",
+      "createdAt",
+      "EventDate",
+      "eventDate",
+      "Fecha",
+      "fecha",
+    ])
+  );
+  if (!title && !description && !date) return null;
+
+  return {
+    code: title.toUpperCase().replace(/\s+/g, "_"),
+    group: classifyForzaGroup(`${title} ${description}`),
+    title,
+    description,
+    date,
+    note: readString(record, ["Note", "note", "Notes", "notes"]),
+  };
+}
+
+function isCaptchaResponse(raw: string): boolean {
+  const lower = raw.toLowerCase();
+  return lower.includes("recaptcha") || lower.includes("captcha") || lower.includes("no soy un robot");
+}
+
 function classifyForzaGroup(status: string): ForzaGroup {
   const lower = status.toLowerCase();
   if (lower.includes("entregado")) return "delivered";
+  if (lower.includes("reproceso")) return "in_progress";
   if (lower.includes("devuelto") || lower.includes("retorno") || lower.includes("retornado")) return "returned";
   if (lower.includes("fall") || lower.includes("incid") || lower.includes("no entreg")) return "failed";
   return "in_progress";
