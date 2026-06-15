@@ -540,36 +540,41 @@ export default function FinancePage() {
     setError("");
     setShopifyHistoryLoading(false);
     setShopifyHistoryProgress({ loaded: 0, total: null });
+    setImports([]);
+    setRows([]);
+    setLogisticsImports([]);
+    setLogisticsRows([]);
+    setShopifyOrders([]);
+    setShopifyCoverage(null);
     try {
-      const settlementsJson = await readApiJson(
-        await fetch(withStore("/api/finance/settlements", activeStoreCode), { cache: "no-store" })
-      );
-      const logisticsJson = await readApiJson(
-        await fetch(withStore("/api/finance/logistics", activeStoreCode), { cache: "no-store" })
-      );
-      const [costsRes, expensesRes, summaryRes] = await Promise.all([
-        fetch(withStore("/api/finance/product-costs", activeStoreCode), { cache: "no-store" }),
-        fetch(withStore("/api/finance/expenses", activeStoreCode), { cache: "no-store" }),
-        fetch(withStore("/api/finance/summary", activeStoreCode), { cache: "no-store" }),
-      ]);
-      const costsJson = await readApiJson(costsRes);
-      const expensesJson = await readApiJson(expensesRes);
-      const summaryJson = await readApiJson(summaryRes);
-
-      // Un solo fetch en vivo: pedidos ACTUALIZADOS recientemente (capta notas
-      // editadas y cambios de estado en pedidos de cualquier antiguedad); el
-      // resto viene de la base sincronizada. Las llamadas son en paralelo.
-      const safeJson = async (input: Promise<Response>): Promise<Record<string, unknown>> => {
+      const safeJson = async (input: Promise<Response>): Promise<Record<string, any>> => {
         try {
           return await readApiJson(await input);
-        } catch {
-          return {};
+        } catch (err) {
+          return { error: err instanceof Error ? err.message : "No se pudo leer la respuesta del servidor" };
         }
       };
+      const reportBackgroundError = (maybeError: unknown) => {
+        if (maybeError && isCurrentRun()) setError((current) => current || String(maybeError));
+      };
+
+      // Carga lo minimo para pintar la pantalla. Liquidaciones/logistica e
+      // historico completo siguen en segundo plano para no bloquear la UI.
       const recentUpdatesMin = new Date(
         Date.now() - FINANCE_SHOPIFY_RECENT_UPDATES_DAYS * 24 * 60 * 60 * 1000
       ).toISOString();
-      const [shopifyOrdersJson, shopifyNoteOrdersJson, claimsJson, boxfulFilesJson] = await Promise.all([
+      const [
+        costsJson,
+        expensesJson,
+        summaryJson,
+        shopifyOrdersJson,
+        shopifyNoteOrdersJson,
+        claimsJson,
+        boxfulFilesJson,
+      ] = await Promise.all([
+        safeJson(fetch(withStore("/api/finance/product-costs", activeStoreCode), { cache: "no-store" })),
+        safeJson(fetch(withStore("/api/finance/expenses", activeStoreCode), { cache: "no-store" })),
+        safeJson(fetch(withStore("/api/finance/summary", activeStoreCode), { cache: "no-store" })),
         safeJson(
           fetch(
             withStore(
@@ -594,10 +599,6 @@ export default function FinancePage() {
 
       if (!isCurrentRun()) return;
 
-      setImports(settlementsJson.imports ?? []);
-      setRows(settlementsJson.rows ?? []);
-      setLogisticsImports(logisticsJson.imports ?? []);
-      setLogisticsRows(logisticsJson.rows ?? []);
       const recentShopifyOrders = Array.isArray(shopifyOrdersJson.orders)
         ? (shopifyOrdersJson.orders as ShopifyOrderSummary[])
         : [];
@@ -614,14 +615,27 @@ export default function FinancePage() {
       setBoxfulFiles(Array.isArray(boxfulFilesJson.files) ? boxfulFilesJson.files as BoxfulFileControl[] : []);
       setSummary(summaryJson.summary ?? null);
 
-      const firstError =
-        settlementsJson.error ??
-        logisticsJson.error ??
-        costsJson.error ??
-        expensesJson.error ??
-        summaryJson.error;
-      if (firstError) setError(firstError);
+      const firstError = costsJson.error ?? expensesJson.error ?? summaryJson.error;
+      if (firstError) setError(String(firstError));
       setLoading(false);
+
+      void (async () => {
+        const settlementsJson = await safeJson(
+          fetch(withStore("/api/finance/settlements", activeStoreCode), { cache: "no-store" })
+        );
+        if (!isCurrentRun()) return;
+        setImports(settlementsJson.imports ?? []);
+        setRows(settlementsJson.rows ?? []);
+        reportBackgroundError(settlementsJson.error);
+
+        const logisticsJson = await safeJson(
+          fetch(withStore("/api/finance/logistics", activeStoreCode), { cache: "no-store" })
+        );
+        if (!isCurrentRun()) return;
+        setLogisticsImports(logisticsJson.imports ?? []);
+        setLogisticsRows(logisticsJson.rows ?? []);
+        reportBackgroundError(logisticsJson.error);
+      })();
 
       setShopifyHistoryLoading(true);
       try {

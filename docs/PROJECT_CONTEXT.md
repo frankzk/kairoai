@@ -742,6 +742,7 @@ Build in this order:
 - Finance API routes now sanitize external HTML errors before returning them to the UI. A Supabase/Cloudflare `522 Connection timed out` page must be shown as a short actionable message, not as raw `<!DOCTYPE html>`.
 - `/admin/finance` also sanitizes malformed or HTML API responses client-side via `sanitizeExternalError`, so a future provider timeout cannot fill the error banner with a full HTML page.
 - Supabase reads now retry transient read-only failures (`522`, `503`, `504`, etc.) at the shared DB client level. The finance page also staggers heavy base loads instead of firing settlements, logistics, costs, expenses, and summary all at once; settlement/logistics API reads fetch imports and rows sequentially to reduce Supabase pressure.
+- `/admin/finance` now paints in phases: product costs, expenses, summary, claims/files, and recent Shopify orders load first; settlements, logistics, and the full Shopify snapshot continue in the background. This prevents the whole dashboard from being blocked by heavy historical reads.
 
 ### Architecture / robustness
 - **Shared order matching** in `lib/order-matching.ts` (pure, tested) consumed by
