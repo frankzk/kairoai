@@ -17,6 +17,7 @@ import {
   buildForzaTrackingMap,
   buildSettlementTraceMap,
   buildVisibleOrderRows,
+  enrichSettlementRowsWithShopify,
   persistedOrderToSummary,
   type SettlementTrace,
   type TrackableOrderRow,
@@ -54,7 +55,11 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   );
   const moovinByPackage = new Map(moovin.map((row) => [row.id_package, row]));
   const forzaByGuide = buildForzaTrackingMap(forza);
-  const settlementTraceByKey = buildSettlementTraceMap(settlementRows, imports);
+  // El trace map se arma sobre filas de liquidacion ENRIQUECIDAS con Shopify
+  // (igual que page.tsx: settlementTraceByKey usa matchedSettlementRows), para
+  // que las llaves (shopify_order_name resuelto) coincidan con la UI.
+  const enrichedSettlementRows = enrichSettlementRowsWithShopify(settlementRows, shopifyOrders);
+  const settlementTraceByKey = buildSettlementTraceMap(enrichedSettlementRows, imports);
 
   const rows = buildVisibleOrderRows(logisticsRows, shopifyOrders, store, moovinByPackage, forzaByGuide);
 

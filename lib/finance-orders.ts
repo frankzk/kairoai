@@ -9,6 +9,7 @@ import type {
   ForzaTrackingRow,
   LogisticsRow,
   MoovinTrackingRow,
+  SettlementOrderItem,
   SettlementRow,
 } from "@/lib/finance-types";
 import {
@@ -229,6 +230,82 @@ function getForzaTrackingFromMap(
 // ---------------------------------------------------------------------------
 // KPIs (page.tsx ~7145-7272, util sum ~7562)
 // ---------------------------------------------------------------------------
+
+// Rango y ventana de KPIs. Copiados VERBATIM de page.tsx (~7032-7143) para que
+// la ruta kpis/ calcule current+previous con la misma logica que la UI.
+export type KpiRange = "today" | "7d" | "30d" | "month" | "all";
+
+export interface KpiWindow {
+  curStart: number;
+  curEnd: number;
+  prevStart: number | null;
+  prevEnd: number | null;
+  rangeLabel: string;
+  compareLabel: string;
+  maturing: boolean;
+}
+
+function startOfDayMs(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+// Ventana actual + ventana previa "like-for-like" (mismo largo, inmediatamente
+// anterior). "Mes" compara MTD contra el mismo tramo del mes anterior, no contra
+// el mes completo. `maturing` marca rangos donde la tasa de entrega aun no madura
+// por el lag logistico del COD (un pedido de hoy no se entrega hoy).
+export function getKpiWindows(range: KpiRange, now: Date): KpiWindow {
+  const end = now.getTime();
+  const dayStart = startOfDayMs(now);
+  const DAY = 24 * 60 * 60 * 1000;
+  if (range === "all") {
+    return {
+      curStart: 0,
+      curEnd: end,
+      prevStart: null,
+      prevEnd: null,
+      rangeLabel: "Todo el histórico",
+      compareLabel: "sin comparativo",
+      maturing: false,
+    };
+  }
+  if (range === "today") {
+    return {
+      curStart: dayStart,
+      curEnd: end,
+      prevStart: dayStart - DAY,
+      prevEnd: dayStart,
+      rangeLabel: "Hoy",
+      compareLabel: "vs. ayer",
+      maturing: true,
+    };
+  }
+  if (range === "month") {
+    const curStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const elapsed = end - curStart;
+    const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+    return {
+      curStart,
+      curEnd: end,
+      prevStart,
+      prevEnd: prevStart + elapsed,
+      rangeLabel: "Mes actual",
+      compareLabel: "vs. mes anterior (mismo tramo)",
+      maturing: true,
+    };
+  }
+  const days = range === "7d" ? 7 : 30;
+  const curStart = dayStart - (days - 1) * DAY;
+  const span = end - curStart;
+  return {
+    curStart,
+    curEnd: end,
+    prevStart: curStart - span,
+    prevEnd: curStart,
+    rangeLabel: `Últimos ${days} días`,
+    compareLabel: `vs. ${days} días previos`,
+    maturing: range === "7d",
+  };
+}
 
 function isDispatchedStatus(status: string): boolean {
   return (
@@ -713,6 +790,50 @@ export function matchesOrderSearch(row: TrackableOrderRow, query: string): boole
 // Helpers nuevos para uso server-side
 // ---------------------------------------------------------------------------
 
+export interface EnRouteGuides {
+  moovin: Array<{ idPackage: string; lastName: string }>;
+  forza: Array<{ guide: string }>;
+}
+
+// Guias no terminales (en ruta / incidencia / pendiente) que vale la pena
+// refrescar contra el courier. Replica enRouteMoovinGuides / enRouteForzaGuides
+// de OrdersTab (page.tsx ~1640-1667). Como `forza_group` ya viene de
+// deriveForzaGroup(cached), no hace falta el mapa de Forza aqui. Se calcula sobre
+// el dataset COMPLETO (los botones de sync no dependen de la paginacion).
+export function buildEnRouteGuides(
+  rows: TrackableOrderRow[],
+  settlementTraceByKey: Map<string, SettlementTrace[]>,
+  store: FinanceStorePublic
+): EnRouteGuides {
+  const isOpenStatus = (status: string) =>
+    status === "en_route" || status === "en_route_retry" || status === "incident" || status === "pending";
+
+  if (store.logisticsProvider === "moovin") {
+    const byGuide = new Map<string, { idPackage: string; lastName: string }>();
+    for (const row of rows) {
+      if (!isMoovinCourier(row.courier, store) || !row.guide_number) continue;
+      const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
+      if (!isOpenStatus(status)) continue;
+      if (!byGuide.has(row.guide_number)) {
+        byGuide.set(row.guide_number, { idPackage: row.guide_number, lastName: row.last_name ?? "" });
+      }
+    }
+    return { moovin: Array.from(byGuide.values()), forza: [] };
+  }
+
+  const byGuide = new Map<string, { guide: string }>();
+  for (const row of rows) {
+    const guide = normalizeGuideForStore(row.guide_number, store);
+    if (!guide || !isForzaCourier(row.courier, store)) continue;
+    const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
+    if (!isOpenStatus(status)) continue;
+    if (row.forza_group === "delivered" || row.forza_group === "returned") continue;
+    if (!byGuide.has(guide)) byGuide.set(guide, { guide });
+  }
+  return { moovin: [], forza: Array.from(byGuide.values()) };
+}
+
+
 // Mapea un pedido persistido (forma de listPersistedShopifyOrders / del endpoint)
 // a ShopifyOrderSummary. Copiado VERBATIM de persistedOrderToSummary (page.tsx
 // ~7840); el unico cambio es exportarlo desde el modulo compartido.
@@ -753,6 +874,49 @@ export function persistedOrderToSummary(order: Record<string, unknown>): Shopify
     created_at: String(order.shopify_created_at ?? ""),
     line_items: lineItems,
   };
+}
+
+// Enriquece las filas de liquidacion con el match de Shopify. Copiado VERBATIM
+// de enrichSettlementRowsWithShopify (page.tsx ~8313). En la UI las llaves del
+// trace map se construyen sobre las filas YA enriquecidas (shopify_order_name
+// resuelto), por lo que las rutas server-side deben aplicar esta funcion antes
+// de buildSettlementTraceMap para que las llaves coincidan exactamente.
+export function enrichSettlementRowsWithShopify(
+  rows: SettlementRow[],
+  shopifyOrders: ShopifyOrderSummary[]
+): SettlementRow[] {
+  if (!rows.length || !shopifyOrders.length) return rows;
+
+  const shopifyByMatchKey = buildShopifyMatchIndex(shopifyOrders);
+  return rows.map((row) => {
+    const shopify = findShopifyOrderForRow(
+      {
+        order_name: row.order_name,
+        shopify_order_name: row.shopify_order_name,
+      },
+      shopifyByMatchKey
+    );
+    if (!shopify) return row;
+
+    return {
+      ...row,
+      match_status: "matched",
+      shopify_order_id: shopify.id,
+      shopify_order_name: shopify.name,
+      shopify_financial_status: shopify.financial_status,
+      shopify_fulfillment_status: shopify.fulfillment_status ?? "",
+      shopify_total: Number(shopify.total_price || parseMoneyText(shopify.total)),
+      shopify_created_at: shopify.created_at,
+      order_items: row.order_items?.length
+        ? row.order_items
+        : shopify.line_items.map((item): SettlementOrderItem => ({
+            sku: String(item.sku ?? "").toLowerCase(),
+            title: String(item.title ?? ""),
+            quantity: Number(item.quantity || 0),
+            price: Number(item.price || 0),
+          })),
+    };
+  });
 }
 
 // Construye el indice clave -> trazas de liquidacion. Replica VERBATIM

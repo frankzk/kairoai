@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import Link from "next/link";
 import {
@@ -67,6 +67,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 type Tab = "orders" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
+
+// Tabs que todavia ensamblan el dataset completo en memoria (financeControl,
+// notas, liquidaciones). El tab Pedidos ya no entra aqui: carga server-side. Por
+// eso el snapshot pesado (historico Shopify ~11k + logistica) solo se dispara
+// para estos tabs (Carril 2 inc.2).
+function needsFullClientDataset(tab: Tab): boolean {
+  return tab === "products" || tab === "notes" || tab === "settlements" || tab === "monthly";
+}
+
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 type OrderTrackingFilter = "all" | "pending" | "en_route" | "en_route_retry" | "incident" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
@@ -381,6 +390,61 @@ const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
   { value: "range", label: "Rango" },
 ];
 
+// --- Tabla de pedidos server-side (Carril 2 inc.2) -------------------------
+// Las filas que devuelve /api/finance/orders ya traen las trazas de liquidacion
+// resueltas server-side, asi la tabla no necesita el settlementTraceByKey en
+// memoria.
+type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[] };
+
+const ORDERS_PAGE_SIZE = 100;
+
+const EMPTY_TRACKING_COUNTS: Record<OrderTrackingFilter, number> = {
+  all: 0,
+  pending: 0,
+  en_route: 0,
+  en_route_retry: 0,
+  incident: 0,
+  annulled: 0,
+  delivered: 0,
+  not_delivered: 0,
+};
+
+const EMPTY_SETTLEMENT_COUNTS: Record<OrderSettlementFilter, number> = {
+  all: 0,
+  settled: 0,
+  unsettled: 0,
+  to_claim: 0,
+  duplicate: 0,
+};
+
+// Meses disponibles para el selector, derivados del rango de cobertura Shopify
+// (oldest..newest) en vez de recorrer el snapshot completo. Devuelve YYYY-MM
+// desc.
+function buildMonthOptionsFromCoverage(
+  coverage: { oldest: string | null; newest: string | null } | null
+): string[] {
+  const oldest = coverage?.oldest ? coverage.oldest.slice(0, 7) : "";
+  const newest = coverage?.newest ? coverage.newest.slice(0, 7) : "";
+  const end = newest || new Date().toISOString().slice(0, 7);
+  const start = oldest || end;
+  if (!/^\d{4}-\d{2}$/.test(start) || !/^\d{4}-\d{2}$/.test(end)) return [];
+  const months: string[] = [];
+  let [year, month] = start.split("-").map(Number);
+  const [endYear, endMonth] = end.split("-").map(Number);
+  // Tope de seguridad por si las fechas vienen invertidas/corruptas.
+  let guard = 0;
+  while ((year < endYear || (year === endYear && month <= endMonth)) && guard < 600) {
+    months.push(`${year}-${String(month).padStart(2, "0")}`);
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+    guard += 1;
+  }
+  return months.reverse();
+}
+
 const MONTHLY_ORDER_FILTERS: Array<{ value: MonthlyOrderFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "pending", label: "Pendientes" },
@@ -470,6 +534,10 @@ const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
   const [kpiRange, setKpiRange] = useState<KpiRange>("30d");
+  // KPIs operativos: ahora se calculan server-side (Carril 2 inc.2) en
+  // /api/finance/kpis para no depender de cargar las ~11k filas en el navegador.
+  const [kpiCards, setKpiCards] = useState<KpiCardVM[]>([]);
+  const [kpiLoading, setKpiLoading] = useState(true);
   const [selectedStoreCode, setSelectedStoreCode] = useState<FinanceStoreCode>(
     DEFAULT_FINANCE_STORE_CODE
   );
@@ -507,6 +575,10 @@ export default function FinancePage() {
   const [syncMessage, setSyncMessage] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
+  // Carril 2 inc.2: el snapshot pesado (historico Shopify ~11k + logistica) solo
+  // se carga para los tabs que aun dependen del dataset en memoria. Guardamos por
+  // que tienda ya se cargo para no repetirlo al alternar tabs.
+  const fullDatasetStoreRef = useRef<string | null>(null);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
 
   const latestLogisticsImport = logisticsImports[0];
@@ -610,8 +682,11 @@ export default function FinancePage() {
         "pedidos Shopify base",
         () =>
           fetchWithTimeout(
+            // coverage=1 (agregado barato: total + rango de fechas) para que el
+            // tab Pedidos tenga el total real y los meses del selector sin cargar
+            // las ~11k filas (Carril 2 inc.2).
             withStore(
-              `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_INITIAL_PAGE_SIZE}&offset=0&coverage=0`,
+              `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_INITIAL_PAGE_SIZE}&offset=0&coverage=1`,
               activeStoreCode
             ),
             { cache: "no-store" },
@@ -793,47 +868,73 @@ export default function FinancePage() {
         setRows(settlementsJson.rows ?? []);
       })();
 
-      void (async () => {
-        await delay(900);
-        if (!isCurrentRun()) return;
-        if (firstLogisticsPageLoaded && !firstLogisticsPageHasMore) return;
-        try {
-          const startOffset = firstLogisticsPageLoaded ? firstLogisticsPageNextOffset : 0;
-          const logisticsSnapshot = await fetchLogisticsRowsSnapshot(
-            activeStoreCode,
-            (partialRows) => {
-              if (!isCurrentRun()) return;
-              startTransition(() => {
-                setLogisticsRows((current) => mergeLogisticsRows(current, partialRows));
-              });
-            },
-            startOffset
-          );
-          if (!isCurrentRun()) return;
-          startTransition(() => {
-            setLogisticsRows((current) => mergeLogisticsRows(current, logisticsSnapshot.rows));
-          });
-        } catch {
-          // La logistica historica es importante para conciliacion, pero no
-          // debe bloquear el seguimiento operativo inicial.
-        }
-      })();
+      // Snapshots pesados (logistica completa + historico Shopify ~11k): solo
+      // para los tabs que ensamblan el dataset en memoria. El tab Pedidos carga
+      // server-side, asi que en el primer render (tab=orders) NO se disparan.
+      if (needsFullClientDataset(tab)) {
+        fullDatasetStoreRef.current = activeStoreCode;
 
-      void (async () => {
-        await delay(1000);
-        if (!isCurrentRun()) return;
-        setShopifyHistoryLoading(true);
-        try {
-          const startOffset = firstShopifyPageLoaded ? firstShopifyPageNextOffset : 0;
-          const persistedShopifyJson = await fetchPersistedShopifySnapshot(
-            activeStoreCode,
-            (partial) => {
+        void (async () => {
+          await delay(900);
+          if (!isCurrentRun()) return;
+          if (firstLogisticsPageLoaded && !firstLogisticsPageHasMore) return;
+          try {
+            const startOffset = firstLogisticsPageLoaded ? firstLogisticsPageNextOffset : 0;
+            const logisticsSnapshot = await fetchLogisticsRowsSnapshot(
+              activeStoreCode,
+              (partialRows) => {
+                if (!isCurrentRun()) return;
+                startTransition(() => {
+                  setLogisticsRows((current) => mergeLogisticsRows(current, partialRows));
+                });
+              },
+              startOffset
+            );
             if (!isCurrentRun()) return;
-            const persistedShopifyOrders = Array.isArray(partial.orders)
-              ? (partial.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
+            startTransition(() => {
+              setLogisticsRows((current) => mergeLogisticsRows(current, logisticsSnapshot.rows));
+            });
+          } catch {
+            // La logistica historica es importante para conciliacion, pero no
+            // debe bloquear el seguimiento operativo inicial.
+          }
+        })();
+
+        void (async () => {
+          await delay(1000);
+          if (!isCurrentRun()) return;
+          setShopifyHistoryLoading(true);
+          try {
+            const startOffset = firstShopifyPageLoaded ? firstShopifyPageNextOffset : 0;
+            const persistedShopifyJson = await fetchPersistedShopifySnapshot(
+              activeStoreCode,
+              (partial) => {
+              if (!isCurrentRun()) return;
+              const persistedShopifyOrders = Array.isArray(partial.orders)
+                ? (partial.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
+                : [];
+              const coverage =
+                (partial.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
+                null;
+              startTransition(() => {
+                setShopifyOrders((current) => mergeShopifyOrderSummaries(current, persistedShopifyOrders));
+                if (coverage) setShopifyCoverage(coverage);
+                setShopifyHistoryProgress({
+                  loaded: startOffset + persistedShopifyOrders.length,
+                  total: coverage?.count ?? firstShopifyPageTotal,
+                });
+              });
+              },
+              startOffset,
+              firstShopifyPageTotal
+            );
+
+            if (!isCurrentRun()) return;
+            const persistedShopifyOrders = Array.isArray(persistedShopifyJson.orders)
+              ? (persistedShopifyJson.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
               : [];
             const coverage =
-              (partial.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
+              (persistedShopifyJson.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
               null;
             startTransition(() => {
               setShopifyOrders((current) => mergeShopifyOrderSummaries(current, persistedShopifyOrders));
@@ -843,33 +944,14 @@ export default function FinancePage() {
                 total: coverage?.count ?? firstShopifyPageTotal,
               });
             });
-            },
-            startOffset,
-            firstShopifyPageTotal
-          );
-
-          if (!isCurrentRun()) return;
-          const persistedShopifyOrders = Array.isArray(persistedShopifyJson.orders)
-            ? (persistedShopifyJson.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
-            : [];
-          const coverage =
-            (persistedShopifyJson.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
-            null;
-          startTransition(() => {
-            setShopifyOrders((current) => mergeShopifyOrderSummaries(current, persistedShopifyOrders));
-            if (coverage) setShopifyCoverage(coverage);
-            setShopifyHistoryProgress({
-              loaded: startOffset + persistedShopifyOrders.length,
-              total: coverage?.count ?? firstShopifyPageTotal,
-            });
-          });
-        } catch {
-          // El historico completo es enriquecimiento de la vista. Si Supabase
-          // tarda, la pantalla debe seguir usable con la pagina reciente.
-        } finally {
-          if (isCurrentRun()) setShopifyHistoryLoading(false);
-        }
-      })();
+          } catch {
+            // El historico completo es enriquecimiento de la vista. Si Supabase
+            // tarda, la pantalla debe seguir usable con la pagina reciente.
+          } finally {
+            if (isCurrentRun()) setShopifyHistoryLoading(false);
+          }
+        })();
+      }
     } catch (err) {
       if (isCurrentRun()) setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
     } finally {
@@ -882,6 +964,17 @@ export default function FinancePage() {
     reloadCarrierTracking();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStoreCode]);
+
+  // Carga diferida del dataset completo: si el usuario entra a un tab que lo
+  // necesita (Productos/Notas/Liquidaciones/Cierre) y aun no se cargo para esta
+  // tienda, dispara refresh() (que ahora SI corre los snapshots pesados). En el
+  // tab Pedidos esto nunca se ejecuta -> no se cargan las ~11k filas.
+  useEffect(() => {
+    if (!needsFullClientDataset(tab)) return;
+    if (fullDatasetStoreRef.current === selectedStoreCode) return;
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selectedStoreCode]);
 
   useEffect(() => {
     if (tab !== "products" || shopifyProducts.length || productsLoading) return;
@@ -1194,6 +1287,11 @@ export default function FinancePage() {
     await refresh();
   }
 
+  // TODO carril2: la barra de Alertas (orderStats) sigue calculandose en cliente
+  // sobre visibleOrderRows. En el tab Pedidos el snapshot completo ya no se carga,
+  // asi que aqui los conteos son parciales (primera pagina + recientes + notas +
+  // logistica/liquidaciones cargadas). Mover a un endpoint dedicado en un proximo
+  // incremento; por ahora se prefiere parcial-pero-rapido a recargar las 11k filas.
   const orderStats = useMemo(() => {
     const effectiveStatuses = visibleOrderRows.map((row) =>
       getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey))
@@ -1222,31 +1320,45 @@ export default function FinancePage() {
     visibleOrderRows,
   ]);
 
-  // KPIs operativos por cohorte de fecha de creacion, con comparativo
-  // like-for-like contra el periodo inmediatamente anterior.
-  const operationalKpis = useMemo(() => {
-    const now = new Date();
-    const win = getKpiWindows(kpiRange, now);
-    const inWindow = (value: string | null, start: number, end: number) => {
-      if (!value) return false;
-      const time = new Date(value).getTime();
-      return !Number.isNaN(time) && time >= start && time < end;
-    };
-    const cur = computeOpMetricsFromTrackableRows(
-      visibleOrderRows.filter((order) => inWindow(order.shopify_created_at, win.curStart, win.curEnd)),
-      settlementTraceByKey
-    );
-    const prev =
-      win.prevStart != null && win.prevEnd != null
-        ? computeOpMetricsFromTrackableRows(
-            visibleOrderRows.filter((order) =>
-              inWindow(order.shopify_created_at, win.prevStart as number, win.prevEnd as number)
-            ),
-            settlementTraceByKey
-          )
-        : null;
-    return { win, cards: buildOperationalKpiCards(cur, prev) };
-  }, [visibleOrderRows, settlementTraceByKey, kpiRange]);
+  // La ventana (etiqueta de rango / comparativo / "tasas en maduracion") es
+  // pura y barata: se calcula en cliente. Las tarjetas de KPIs vienen del
+  // endpoint server-side (efecto de abajo). Mientras no hay datos, mostramos las
+  // 7 tarjetas en cero para conservar el layout (OperationalKpiCard pinta "...").
+  const operationalKpis = useMemo(
+    () => ({
+      win: getKpiWindows(kpiRange, new Date()),
+      cards: kpiCards.length ? kpiCards : buildOperationalKpiCards(EMPTY_OP_METRICS, null),
+    }),
+    [kpiRange, kpiCards]
+  );
+
+  // Fetch de KPIs server-side: current + previous por tienda y periodo. Reemplaza
+  // el calculo en memoria sobre visibleOrderRows (Carril 2 inc.2).
+  useEffect(() => {
+    const controller = new AbortController();
+    setKpiLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(
+          withStore(`/api/finance/kpis?period=${kpiRange}`, selectedStoreCode),
+          { cache: "no-store", signal: controller.signal }
+        );
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudieron calcular los KPIs");
+        const current = json.current as OpMetrics | undefined;
+        const previous = (json.previous as OpMetrics | null | undefined) ?? null;
+        if (!current) throw new Error("Respuesta de KPIs invalida");
+        setKpiCards(buildOperationalKpiCards(current, previous));
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        // No bloqueamos la pantalla por los KPIs; quedan vacios y la tabla sigue.
+        setKpiCards([]);
+      } finally {
+        if (!controller.signal.aborted) setKpiLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [selectedStoreCode, kpiRange]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -1343,7 +1455,7 @@ export default function FinancePage() {
 
           <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
             {operationalKpis.cards.map(({ id, ...card }) => (
-              <OperationalKpiCard key={id} loading={loading} {...card} />
+              <OperationalKpiCard key={id} loading={kpiLoading} {...card} />
             ))}
           </div>
 
@@ -1385,7 +1497,10 @@ export default function FinancePage() {
         </div>
 
         <>
-          {loading && (
+          {/* El tab Pedidos ya carga server-side (tiene su propio loader); el
+              loader por bloques solo aplica a los tabs que dependen del dataset
+              en memoria. */}
+          {loading && tab !== "orders" && (
             <div className="flex items-center gap-2 border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
               <RefreshCw className="h-4 w-4 animate-spin" />
               Cargando vista operativa por bloques...
@@ -1395,9 +1510,7 @@ export default function FinancePage() {
               <OrdersTab
                 selectedStore={selectedStore}
                 logisticsImports={logisticsImports}
-                rows={visibleOrderRows}
                 latestLogisticsImport={latestLogisticsImport}
-                settlementTraceByKey={settlementTraceByKey}
                 moovinByPackage={moovinByPackage}
                 forzaByGuide={forzaByGuide}
                 onReloadMoovin={reloadMoovin}
@@ -1544,9 +1657,7 @@ function FilterChip({
 function OrdersTab({
   selectedStore,
   logisticsImports,
-  rows,
   latestLogisticsImport,
-  settlementTraceByKey,
   moovinByPackage,
   forzaByGuide,
   onReloadMoovin,
@@ -1561,9 +1672,10 @@ function OrdersTab({
 }: {
   selectedStore: FinanceStorePublic;
   logisticsImports: LogisticsImport[];
-  rows: TrackableOrderRow[];
   latestLogisticsImport?: LogisticsImport;
-  settlementTraceByKey: Map<string, SettlementTrace[]>;
+  // moovinByPackage/forzaByGuide siguen en cliente: alimentan los botones de
+  // tracking en vivo y el estado de courier del export (cargas acotadas, NO las
+  // ~11k filas de Shopify).
   moovinByPackage: Map<string, MoovinTrackingRow>;
   forzaByGuide: Map<string, ForzaTrackingRow>;
   onReloadMoovin: () => Promise<void>;
@@ -1585,86 +1697,114 @@ function OrdersTab({
   const [rangeEnd, setRangeEnd] = useState("");
   const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>("all");
   const [settlementFilter, setSettlementFilter] = useState<OrderSettlementFilter>("all");
+  // --- Datos server-side (Carril 2 inc.2) ---------------------------------
+  // La tabla de pedidos ya no consume el snapshot completo en memoria: pagina y
+  // filtra contra /api/finance/orders. Los conteos de los chips, el total y las
+  // guias para los botones de sync vienen en la misma respuesta.
+  const [page, setPage] = useState(1);
+  // Se incrementa tras un sync de courier para refrescar la tabla (el cache del
+  // dataset server-side tiene TTL corto; esto fuerza la relectura).
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [serverRows, setServerRows] = useState<OrderRowWithTraces[]>([]);
+  const [total, setTotal] = useState(0);
+  const [periodCount, setPeriodCount] = useState(0);
+  const [searchedCount, setSearchedCount] = useState(0);
+  const [trackingCounts, setTrackingCounts] = useState<Record<OrderTrackingFilter, number>>(EMPTY_TRACKING_COUNTS);
+  const [settlementCounts, setSettlementCounts] = useState<Record<OrderSettlementFilter, number>>(
+    EMPTY_SETTLEMENT_COUNTS
+  );
+  const [enRouteGuides, setEnRouteGuides] = useState<{
+    moovin: Array<{ idPackage: string; lastName: string }>;
+    forza: Array<{ guide: string }>;
+  }>({ moovin: [], forza: [] });
+  const [tableLoading, setTableLoading] = useState(true);
+  const [tableError, setTableError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  // Busqueda con debounce (~300ms) para no disparar un fetch por tecla.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  // Meses disponibles: derivados del rango de cobertura Shopify (oldest..newest)
+  // en vez de recorrer las ~11k filas en el navegador.
   const orderMonthOptions = useMemo(
-    () =>
-      uniqueKeys(rows.map((row) => getMonthKey(row.shopify_created_at)).filter(Boolean))
-        .sort((a, b) => b.localeCompare(a)),
-    [rows]
+    () => buildMonthOptionsFromCoverage(shopifyCoverage),
+    [shopifyCoverage]
   );
-  const periodFilteredRows = useMemo(
-    () =>
-      rows.filter((row) =>
-        matchesOrderPeriod(row, periodMode, selectedOrderMonth, rangeStart, rangeEnd)
-      ),
-    [periodMode, rangeEnd, rangeStart, rows, selectedOrderMonth]
-  );
-  const searchedRows = useMemo(
-    () => periodFilteredRows.filter((row) => matchesOrderSearch(row, orderSearch)),
-    [periodFilteredRows, orderSearch]
-  );
-  const trackingCounts = useMemo(() => {
-    const counts: Record<OrderTrackingFilter, number> = {
-      all: searchedRows.length,
-      pending: 0,
-      en_route: 0,
-      en_route_retry: 0,
-      incident: 0,
-      annulled: 0,
-      delivered: 0,
-      not_delivered: 0,
-    };
 
-    for (const row of searchedRows) {
-      const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      counts[getTrackingFilterFromStatus(status)] += 1;
-    }
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedSearch(orderSearch.trim()), 300);
+    return () => clearTimeout(handle);
+  }, [orderSearch]);
 
-    return counts;
-  }, [searchedRows, settlementTraceByKey]);
-  const trackingFilteredRows = useMemo(
-    () =>
-      searchedRows.filter((row) => {
-        if (trackingFilter === "all") return true;
-        const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-        return getTrackingFilterFromStatus(status) === trackingFilter;
-      }),
-    [searchedRows, settlementTraceByKey, trackingFilter]
+  // Cualquier cambio de filtro vuelve a la primera pagina.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, trackingFilter, settlementFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code]);
+
+  // Query params compartidos por el fetch de la tabla y por el export.
+  const buildOrdersQuery = useCallback(
+    (extra: Record<string, string> = {}) => {
+      const params = new URLSearchParams();
+      params.set("period", periodMode);
+      if (periodMode === "month" && selectedOrderMonth) params.set("month", selectedOrderMonth);
+      if (periodMode === "range") {
+        if (rangeStart) params.set("start", rangeStart);
+        if (rangeEnd) params.set("end", rangeEnd);
+      }
+      if (debouncedSearch) params.set("q", debouncedSearch);
+      if (trackingFilter !== "all") params.set("status", trackingFilter);
+      if (settlementFilter !== "all") params.set("settlement", settlementFilter);
+      for (const [key, value] of Object.entries(extra)) params.set(key, value);
+      return params.toString();
+    },
+    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter]
   );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setTableLoading(true);
+    setTableError("");
+    (async () => {
+      try {
+        const query = buildOrdersQuery({ page: String(page), pageSize: String(ORDERS_PAGE_SIZE) });
+        const res = await fetch(withStore(`/api/finance/orders?${query}`, selectedStore.code), {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar los pedidos");
+        setServerRows(Array.isArray(json.rows) ? (json.rows as OrderRowWithTraces[]) : []);
+        setTotal(Number(json.total ?? 0));
+        setPeriodCount(Number(json.periodCount ?? 0));
+        setSearchedCount(Number(json.searchedCount ?? 0));
+        setTrackingCounts((json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS);
+        setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
+        setEnRouteGuides(
+          (json.enRouteGuides as { moovin: Array<{ idPackage: string; lastName: string }>; forza: Array<{ guide: string }> }) ?? {
+            moovin: [],
+            forza: [],
+          }
+        );
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setServerRows([]);
+        setTotal(0);
+        setTableError(err instanceof Error ? err.message : "No se pudieron cargar los pedidos");
+      } finally {
+        if (!controller.signal.aborted) setTableLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [buildOrdersQuery, page, selectedStore.code, refreshKey]);
+
   const [moovinSyncing, setMoovinSyncing] = useState(false);
   const [moovinMessage, setMoovinMessage] = useState("");
   const [forzaSyncing, setForzaSyncing] = useState(false);
   const [forzaMessage, setForzaMessage] = useState("");
 
-  // Pedidos Moovin no terminales (en ruta o incidencia) que vale la pena
-  // refrescar contra Moovin.
-  const enRouteMoovinGuides = useMemo(() => {
-    if (selectedStore.logisticsProvider !== "moovin") return [];
-    const byGuide = new Map<string, { idPackage: string; lastName: string }>();
-    for (const row of rows) {
-      if (!isMoovinCourier(row.courier, selectedStore) || !row.guide_number) continue;
-      const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      if (status !== "en_route" && status !== "en_route_retry" && status !== "incident" && status !== "pending") continue;
-      if (!byGuide.has(row.guide_number)) {
-        byGuide.set(row.guide_number, { idPackage: row.guide_number, lastName: row.last_name ?? "" });
-      }
-    }
-    return Array.from(byGuide.values());
-  }, [rows, selectedStore, settlementTraceByKey]);
-
-  const enRouteForzaGuides = useMemo(() => {
-    if (selectedStore.logisticsProvider !== "forza") return [];
-    const byGuide = new Map<string, { guide: string }>();
-    for (const row of rows) {
-      const guide = normalizeGuideForStore(row.guide_number, selectedStore);
-      if (!guide || !isForzaCourier(row.courier, selectedStore)) continue;
-      const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      if (status !== "en_route" && status !== "en_route_retry" && status !== "incident" && status !== "pending") continue;
-      const cached = getForzaTrackingFromMap(forzaByGuide, guide);
-      if (cached?.latest_group === "delivered" || cached?.latest_group === "returned") continue;
-      if (!byGuide.has(guide)) byGuide.set(guide, { guide });
-    }
-    return Array.from(byGuide.values());
-  }, [forzaByGuide, rows, selectedStore, settlementTraceByKey]);
+  // Guias no terminales para los botones de sync: vienen del endpoint (calculadas
+  // sobre el dataset completo server-side), no del snapshot en memoria.
+  const enRouteMoovinGuides = enRouteGuides.moovin;
+  const enRouteForzaGuides = enRouteGuides.forza;
 
   async function updateMoovinStatuses() {
     if (!enRouteMoovinGuides.length) return;
@@ -1692,6 +1832,7 @@ function OrdersTab({
         );
       }
       await onReloadMoovin();
+      setRefreshKey((key) => key + 1);
       setMoovinMessage(
         `Moovin actualizado: ${checked} consultados, ${delivered} entregados, ${incidents} con incidencia.`
       );
@@ -1728,6 +1869,7 @@ function OrdersTab({
         );
       }
       await onReloadForza();
+      setRefreshKey((key) => key + 1);
       setForzaMessage(
         `Forza actualizado: ${checked} consultados, ${delivered} entregados, ${incidents} con incidencia.`
       );
@@ -1738,39 +1880,8 @@ function OrdersTab({
     }
   }
 
-  const settlementCounts = useMemo(() => {
-    const counts: Record<OrderSettlementFilter, number> = {
-      all: trackingFilteredRows.length,
-      settled: 0,
-      unsettled: 0,
-      to_claim: 0,
-      duplicate: 0,
-    };
-
-    for (const row of trackingFilteredRows) {
-      const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
-      const trackingStatus = getEffectiveTrackingStatus(row, traces);
-      if (traces.length === 1) counts.settled += 1;
-      if (traces.length === 0) counts.unsettled += 1;
-      if (traces.length === 0 && trackingStatus === "delivered") counts.to_claim += 1;
-      if (traces.length > 1) counts.duplicate += 1;
-    }
-
-    return counts;
-  }, [settlementTraceByKey, trackingFilteredRows]);
-  const filteredRows = useMemo(
-    () =>
-      trackingFilteredRows.filter((row) => {
-        if (settlementFilter === "all") return true;
-        const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
-        const trackingStatus = getEffectiveTrackingStatus(row, traces);
-        if (settlementFilter === "settled") return traces.length === 1;
-        if (settlementFilter === "unsettled") return traces.length === 0;
-        if (settlementFilter === "to_claim") return traces.length === 0 && trackingStatus === "delivered";
-        return traces.length > 1;
-      }),
-    [settlementFilter, settlementTraceByKey, trackingFilteredRows]
-  );
+  // total = filas que pasan TODOS los filtros (lo que antes era filteredRows.length).
+  const totalPages = Math.max(1, Math.ceil(total / ORDERS_PAGE_SIZE));
   const activeTrackingLabel =
     ORDER_TRACKING_FILTERS.find((filter) => filter.value === trackingFilter)?.label ?? "pedidos";
   const activeSettlementLabel =
@@ -1785,6 +1896,50 @@ function OrdersTab({
       setSelectedOrderMonth(orderMonthOptions[0]);
     }
   }, [orderMonthOptions, selectedOrderMonth]);
+
+  // Export: trae TODAS las filas filtradas (all=1, fuera de la vista paginada) y
+  // arma el XLSX con el mismo formato de columnas que antes. Las trazas vienen
+  // en cada fila; el estado de courier sigue saliendo de los mapas en cliente.
+  async function handleExport() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const query = buildOrdersQuery({ all: "1" });
+      const res = await fetch(withStore(`/api/finance/orders?${query}`, selectedStore.code), {
+        cache: "no-store",
+      });
+      const json = await readApiJson(res);
+      if (!res.ok) throw new Error(json.error ?? "No se pudo exportar");
+      const exportRows = (Array.isArray(json.rows) ? (json.rows as OrderRowWithTraces[]) : []).map((row) => {
+        const traces = row.traces ?? [];
+        const status = getEffectiveTrackingStatus(row, traces);
+        const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
+        const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
+        return {
+          Orden: row.order_name || row.shopify_order_name,
+          Origen: row.source,
+          Guia: row.guide_number,
+          Transportadora: normalizeOperationalCourier(row.courier, selectedStore, row.guide_number),
+          "Estado courier": moovin?.latest_status ?? forza?.latest_status ?? "",
+          "Incidencia courier": moovin?.has_incident || forza?.has_incident ? "si" : "",
+          Cliente: row.customer_name,
+          Apellido: row.last_name ?? "",
+          "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
+          Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
+          Fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
+          "Estado liquidacion": traces.map((t) => t.settlement_status).join(" | ") || "sin liquidacion",
+          "A liquidar": traces.length ? sum(traces.map((t) => t.amount_to_liquidate)) : "",
+          COD: row.cod_amount,
+          Items: (row.package_items ?? []).map((item) => item.title).join("; "),
+        };
+      });
+      await exportXlsx(`pedidos-${new Date().toISOString().slice(0, 10)}.xlsx`, exportRows, "Pedidos");
+    } catch (err) {
+      setTableError(err instanceof Error ? err.message : "No se pudo exportar");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function handleModalLogisticsImport(event: FormEvent<HTMLFormElement>) {
     setLogisticsModalError("");
@@ -1892,45 +2047,18 @@ function OrdersTab({
             </div>
             <div className="flex items-center justify-between gap-3 sm:justify-end">
               <span className="whitespace-nowrap text-xs text-muted-foreground">
-                <span className="font-mono text-sm font-semibold text-foreground">{filteredRows.length}</span>{" "}
-                {orderSearch ? `de ${searchedRows.length}` : "pedidos"}
+                <span className="font-mono text-sm font-semibold text-foreground">{total}</span>{" "}
+                {orderSearch ? `de ${searchedCount}` : "pedidos"}
               </span>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 className="gap-2"
-                onClick={() =>
-                  exportXlsx(
-                    `pedidos-${new Date().toISOString().slice(0, 10)}.xlsx`,
-                    filteredRows.map((row) => {
-                      const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
-                      const status = getEffectiveTrackingStatus(row, traces);
-                      const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
-                      const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
-                      return {
-                        Orden: row.order_name || row.shopify_order_name,
-                        Origen: row.source,
-                        Guia: row.guide_number,
-                        Transportadora: normalizeOperationalCourier(row.courier, selectedStore, row.guide_number),
-                        "Estado courier": moovin?.latest_status ?? forza?.latest_status ?? "",
-                        "Incidencia courier": moovin?.has_incident || forza?.has_incident ? "si" : "",
-                        Cliente: row.customer_name,
-                        Apellido: row.last_name ?? "",
-                        "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
-                        Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
-                        Fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
-                        "Estado liquidacion": traces.map((t) => t.settlement_status).join(" | ") || "sin liquidacion",
-                        "A liquidar": traces.length ? sum(traces.map((t) => t.amount_to_liquidate)) : "",
-                        COD: row.cod_amount,
-                        Items: (row.package_items ?? []).map((item) => item.title).join("; "),
-                      };
-                    }),
-                    "Pedidos"
-                  )
-                }
+                disabled={exporting || !total}
+                onClick={handleExport}
               >
-                <Download className="h-4 w-4" /> Exportar ({filteredRows.length})
+                <Download className="h-4 w-4" /> {exporting ? "Exportando..." : `Exportar (${total})`}
               </Button>
             </div>
           </div>
@@ -1989,7 +2117,7 @@ function OrdersTab({
               )}
               <span className="ml-auto text-xs text-muted-foreground">
                 Vista actual{" "}
-                <span className="font-mono text-sm font-semibold text-foreground">{periodFilteredRows.length}</span>
+                <span className="font-mono text-sm font-semibold text-foreground">{periodCount}</span>
               </span>
             </div>
 
@@ -2041,12 +2169,17 @@ function OrdersTab({
               ? ` · Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match, ${latestLogisticsImport.unmatched_rows} sin match`
               : " · Sin Boxful importado"}
           </p>
+          {tableError && (
+            <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-red-200">
+              {tableError}
+            </div>
+          )}
           <OrdersTable
             selectedStore={selectedStore}
-            rows={filteredRows}
-            settlementTraceByKey={settlementTraceByKey}
+            rows={serverRows}
             moovinByPackage={moovinByPackage}
             forzaByGuide={forzaByGuide}
+            loading={tableLoading}
             emptyLabel={
               orderSearch
                 ? "No encontramos pedidos con ese codigo y estado."
@@ -2059,6 +2192,34 @@ function OrdersTab({
                   : `No hay pedidos en ${activeTrackingLabel.toLowerCase()} con ${activeSettlementLabel.toLowerCase()}.`
             }
           />
+          {total > ORDERS_PAGE_SIZE && (
+            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>
+                Pagina <span className="font-semibold text-foreground">{page}</span> de {totalPages} ·{" "}
+                <span className="font-mono">{total}</span> pedidos
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1 || tableLoading}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= totalPages || tableLoading}
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                >
+                  Siguiente
+                </Button>
+              </div>
+            </div>
+          )}
           {logisticsImports.length > 1 && (
             <div className="border-t border-border pt-3">
               <p className="mb-2 text-xs font-medium text-muted-foreground">Historial de Boxful</p>
@@ -2141,16 +2302,18 @@ function OrdersTab({
 function OrdersTable({
   selectedStore,
   rows,
-  settlementTraceByKey,
   moovinByPackage,
   forzaByGuide,
+  loading = false,
   emptyLabel = "No hay pedidos para mostrar.",
 }: {
   selectedStore: FinanceStorePublic;
-  rows: TrackableOrderRow[];
-  settlementTraceByKey: Map<string, SettlementTrace[]>;
+  // Filas server-side: ya traen las trazas de liquidacion resueltas (Carril 2
+  // inc.2), por eso no hace falta el settlementTraceByKey en cliente.
+  rows: OrderRowWithTraces[];
   moovinByPackage: Map<string, MoovinTrackingRow>;
   forzaByGuide: Map<string, ForzaTrackingRow>;
+  loading?: boolean;
   emptyLabel?: string;
 }) {
   return (
@@ -2174,8 +2337,8 @@ function OrdersTable({
           </tr>
         </thead>
         <tbody>
-          {rows.slice(0, 500).map((row) => {
-            const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
+          {rows.map((row) => {
+            const traces = row.traces ?? [];
             const trackingStatus = getEffectiveTrackingStatus(row, traces);
             const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
             const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
@@ -2257,7 +2420,13 @@ function OrdersTable({
           {!rows.length && (
             <tr>
               <td colSpan={13} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                {emptyLabel}
+                {loading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <RefreshCw className="h-4 w-4 animate-spin" /> Cargando pedidos...
+                  </span>
+                ) : (
+                  emptyLabel
+                )}
               </td>
             </tr>
           )}
@@ -7069,6 +7238,25 @@ interface OpMetrics {
   ticket: number;
 }
 
+// Metrica vacia para pintar las tarjetas en cero mientras el endpoint responde.
+const EMPTY_OP_METRICS: OpMetrics = {
+  generated: 0,
+  dispatched: 0,
+  delivered: 0,
+  notDelivered: 0,
+  annulled: 0,
+  enRoute: 0,
+  enRouteRetry: 0,
+  resolved: 0,
+  deliveryRate: 0,
+  returnRate: 0,
+  dispatchRate: 0,
+  annulRate: 0,
+  leadAvg: null,
+  leadSamples: 0,
+  ticket: 0,
+};
+
 interface KpiCardVM {
   id: string;
   label: string;
@@ -7211,65 +7399,9 @@ function computeOpMetrics(orders: OrderProfitabilityRow[]): OpMetrics {
   };
 }
 
-function computeOpMetricsFromTrackableRows(
-  rows: TrackableOrderRow[],
-  settlementTraceByKey: Map<string, SettlementTrace[]>
-): OpMetrics {
-  let generated = 0;
-  let dispatched = 0;
-  let delivered = 0;
-  let notDelivered = 0;
-  let annulled = 0;
-  let enRoute = 0;
-  let enRouteRetry = 0;
-  let revenue = 0;
-  let valueOrders = 0;
-  const leadDays: number[] = [];
-
-  for (const row of rows) {
-    generated += 1;
-    const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
-    const status = getEffectiveTrackingStatus(row, traces);
-    if (Boolean(row.guide_number) || isDispatchedStatus(status)) dispatched += 1;
-    if (status === "delivered") delivered += 1;
-    else if (status === "not_delivered" || status === "returned") notDelivered += 1;
-    else if (status === "annulled") annulled += 1;
-    else if (status === "en_route") enRoute += 1;
-    else if (status === "en_route_retry") enRouteRetry += 1;
-
-    const itemValue = sum((row.package_items ?? []).map((item) => Number(item.price || 0) * Number(item.quantity || 0)));
-    const value = Number(itemValue || row.cod_amount || 0);
-    if (value > 0) {
-      revenue += value;
-      valueOrders += 1;
-    }
-
-    const deliveredOn = row.finalized_on ?? null;
-    if (status === "delivered" && row.shopify_created_at && deliveredOn) {
-      const lead = diffDaysMs(row.shopify_created_at, deliveredOn);
-      if (lead >= 0 && lead <= 120) leadDays.push(lead);
-    }
-  }
-
-  const resolved = delivered + notDelivered;
-  return {
-    generated,
-    dispatched,
-    delivered,
-    notDelivered,
-    annulled,
-    enRoute,
-    enRouteRetry,
-    resolved,
-    deliveryRate: dispatched ? (delivered / dispatched) * 100 : 0,
-    returnRate: dispatched ? (notDelivered / dispatched) * 100 : 0,
-    dispatchRate: generated ? (dispatched / generated) * 100 : 0,
-    annulRate: generated ? (annulled / generated) * 100 : 0,
-    leadAvg: leadDays.length ? leadDays.reduce((acc, value) => acc + value, 0) / leadDays.length : null,
-    leadSamples: leadDays.length,
-    ticket: valueOrders ? revenue / valueOrders : 0,
-  };
-}
+// Nota (Carril 2 inc.2): computeOpMetricsFromTrackableRows se movio a
+// lib/finance-orders.ts y ahora lo usa /api/finance/kpis. La UI ya no calcula los
+// KPIs operativos en memoria.
 
 function formatInt(value: number): string {
   return Number(value || 0).toLocaleString("es-CR");
@@ -9403,30 +9535,8 @@ function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {
   });
 }
 
-function matchesOrderPeriod(
-  row: TrackableOrderRow,
-  mode: OrderPeriodMode,
-  month: string,
-  startDate: string,
-  endDate: string
-): boolean {
-  if (mode === "all") return true;
-  const orderDate = getOrderDateKey(row);
-  if (!orderDate) return false;
-
-  if (mode === "month") {
-    if (!month) return true;
-    return getMonthKey(orderDate) === month;
-  }
-
-  if (startDate && orderDate < startDate) return false;
-  if (endDate && orderDate > endDate) return false;
-  return true;
-}
-
-function getOrderDateKey(row: Pick<TrackableOrderRow, "shopify_created_at">): string {
-  return row.shopify_created_at ? row.shopify_created_at.slice(0, 10) : "";
-}
+// Nota (Carril 2 inc.2): el filtro de periodo del tab Pedidos (matchesOrderPeriod)
+// ahora vive en /api/finance/orders; la tabla pagina server-side.
 
 function getEffectiveTrackingStatus(
   row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "guide_number">,
