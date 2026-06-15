@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import {
   createExpense,
   deleteExpense,
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
     const expenses = await listExpenses(type, store.id);
     return NextResponse.json({ expenses });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al leer gastos";
+    const message = toFriendlyErrorMessage(err, "Error al leer gastos");
     return NextResponse.json({ expenses: [], error: message }, { status: 500 });
   }
 }
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest) {
     );
     return NextResponse.json({ expense }, { status: 201 });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al guardar gasto";
+    const message = toFriendlyErrorMessage(err, "Error al guardar gasto");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -68,7 +69,7 @@ export async function PATCH(req: NextRequest) {
     await updateExpense(Number(id), updates, store.id);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al actualizar gasto";
+    const message = toFriendlyErrorMessage(err, "Error al actualizar gasto");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -83,7 +84,7 @@ export async function DELETE(req: NextRequest) {
     await deleteExpense(id, store.id);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al eliminar gasto";
+    const message = toFriendlyErrorMessage(err, "Error al eliminar gasto");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

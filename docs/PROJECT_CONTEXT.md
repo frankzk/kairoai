@@ -737,6 +737,11 @@ Build in this order:
 - The orders table derives the displayed courier from the selected store before rendering actions. Honduras rows with a stale `Moovin` fulfillment label are displayed and acted on as Forza; Costa Rica remains Moovin.
 - Local validation of `C:\Users\Pc\Downloads\01-12-2025 hasta 31-12-2025 (1).xlsx`: direct `xlsx.sheet_to_json` fails with `unrecognized type f`, but the app sanitization path parses it successfully. Parsed logistics rows: `847` (`Entregado = 426`, `No entregado = 413`, `Guia cancelada = 8`). This file size should not require async import after removing the Shopify network fetch from the upload path.
 
+### Session 2026-06-15 hotfixes
+
+- Finance API routes now sanitize external HTML errors before returning them to the UI. A Supabase/Cloudflare `522 Connection timed out` page must be shown as a short actionable message, not as raw `<!DOCTYPE html>`.
+- `/admin/finance` also sanitizes malformed or HTML API responses client-side via `sanitizeExternalError`, so a future provider timeout cannot fill the error banner with a full HTML page.
+
 ### Architecture / robustness
 - **Shared order matching** in `lib/order-matching.ts` (pure, tested) consumed by
   the finance page and both import routes; no more divergent copies. Numeric

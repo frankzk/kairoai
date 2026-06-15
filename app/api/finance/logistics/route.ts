@@ -17,6 +17,7 @@ import {
   type LogisticsPackageItem,
   type LogisticsRow,
 } from "@/lib/finance";
+import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import { getRequiredStoreConfig, getRequiredStoreFromSearchParams } from "@/lib/stores";
 
 export const runtime = "nodejs";
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest) {
     ]);
     return NextResponse.json({ imports, rows });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al leer logistica";
+    const message = toFriendlyErrorMessage(err, "Error al leer logistica");
     return NextResponse.json({ imports: [], rows: [], error: message }, { status: 500 });
   }
 }
@@ -166,7 +167,7 @@ export async function POST(req: NextRequest) {
       status_summary: statusSummary,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al importar logistica";
+    const message = toFriendlyErrorMessage(err, "Error al importar logistica");
     console.error("[finance/logistics POST]", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -182,7 +183,7 @@ export async function DELETE(req: NextRequest) {
     await deleteLogisticsImport(id, store.id);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al eliminar logistica";
+    const message = toFriendlyErrorMessage(err, "Error al eliminar logistica");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

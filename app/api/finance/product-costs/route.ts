@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import {
   deleteProductCost,
   listProductCosts,
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
     }
     return NextResponse.json({ costs, versions });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al leer costos";
+    const message = toFriendlyErrorMessage(err, "Error al leer costos");
     return NextResponse.json({ costs: [], error: message }, { status: 500 });
   }
 }
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
     const cost = await upsertProductCost(body, store.id);
     return NextResponse.json({ cost });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al guardar costo";
+    const message = toFriendlyErrorMessage(err, "Error al guardar costo");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -54,7 +55,7 @@ export async function DELETE(req: NextRequest) {
     await deleteProductCost(id, store.id);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al eliminar costo";
+    const message = toFriendlyErrorMessage(err, "Error al eliminar costo");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

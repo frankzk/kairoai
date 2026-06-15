@@ -17,6 +17,7 @@ import {
   type SettlementOrderItem,
   type SettlementRow,
 } from "@/lib/finance";
+import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import { getRequiredStoreConfig, getRequiredStoreFromSearchParams } from "@/lib/stores";
 
 export const runtime = "nodejs";
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest) {
     ]);
     return NextResponse.json({ imports, rows });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al leer liquidaciones";
+    const message = toFriendlyErrorMessage(err, "Error al leer liquidaciones");
     return NextResponse.json({ imports: [], rows: [], error: message }, { status: 500 });
   }
 }
@@ -169,7 +170,7 @@ export async function POST(req: NextRequest) {
       status_summary: statusSummary,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al importar liquidacion";
+    const message = toFriendlyErrorMessage(err, "Error al importar liquidacion");
     console.error("[finance/settlements POST]", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -185,7 +186,7 @@ export async function DELETE(req: NextRequest) {
     await deleteSettlementImport(id, store.id);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al eliminar liquidacion";
+    const message = toFriendlyErrorMessage(err, "Error al eliminar liquidacion");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

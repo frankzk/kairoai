@@ -60,6 +60,7 @@ import {
   type FinanceStoreCode,
   type FinanceStorePublic,
 } from "@/lib/store-config";
+import { sanitizeExternalError } from "@/lib/api-errors";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1082,11 +1083,7 @@ export default function FinancePage() {
       <main className="container mx-auto space-y-6 px-4 py-6">
         {error && (
           <div className="border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-red-200">
-            {error.includes("Could not find the table") ||
-            error.includes("schema cache") ||
-            (error.includes("store_id") && error.toLowerCase().includes("column"))
-              ? "Faltan tablas financieras en Supabase. Ejecuta supabase/migrations/0002_finance_schema.sql y supabase/migrations/0010_multi_store_finance.sql en SQL Editor."
-              : error}
+            {formatFinancePageError(error)}
           </div>
         )}
 
@@ -7326,9 +7323,24 @@ async function readApiJson(res: Response) {
   try {
     return JSON.parse(text);
   } catch {
-    const preview = text.replace(/\s+/g, " ").trim().slice(0, 180);
-    throw new Error(`El servidor devolvio una respuesta invalida (${res.status}). ${preview}`);
+    throw new Error(
+      sanitizeExternalError(
+        text,
+        `El servidor devolvio una respuesta invalida (${res.status}).`
+      )
+    );
   }
+}
+
+function formatFinancePageError(error: string): string {
+  if (
+    error.includes("Could not find the table") ||
+    error.includes("schema cache") ||
+    (error.includes("store_id") && error.toLowerCase().includes("column"))
+  ) {
+    return "Faltan tablas financieras en Supabase. Ejecuta supabase/migrations/0002_finance_schema.sql y supabase/migrations/0010_multi_store_finance.sql en SQL Editor.";
+  }
+  return sanitizeExternalError(error, "Error al cargar finanzas.");
 }
 
 function buildExpensePayload(

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import { getProfitabilitySummary } from "@/lib/finance";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
     const summary = await getProfitabilitySummary(store.id);
     return NextResponse.json({ summary });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al calcular rentabilidad";
+    const message = toFriendlyErrorMessage(err, "Error al calcular rentabilidad");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
