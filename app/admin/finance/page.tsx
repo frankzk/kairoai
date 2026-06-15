@@ -9435,13 +9435,21 @@ function getEffectiveTrackingStatus(
   // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
   const moovinStatus = moovinGroupToStatus(row.moovin_group);
   if (moovinStatus) {
-    if ((row.moovin_incidents ?? 0) >= 1 && !isFinalTrackingStatus(moovinStatus)) return "incident";
+    if ((row.moovin_incidents ?? 0) >= 1 && !isFinalTrackingStatus(moovinStatus)) {
+      // Hubo "Incidencia en la entrega": si el ultimo evento volvio a "En ruta
+      // para entregar" (in_progress -> en_route) es un reintento; si el ultimo
+      // evento sigue siendo la incidencia (FAILED -> incident) queda como
+      // incidencia activa.
+      return moovinStatus === "en_route" ? "en_route_retry" : "incident";
+    }
     return moovinStatus;
   }
 
   const forzaStatus = forzaGroupToStatus(row.forza_group);
   if (forzaStatus) {
-    if ((row.forza_incidents ?? 0) >= 1 && !isFinalTrackingStatus(forzaStatus)) return "incident";
+    if ((row.forza_incidents ?? 0) >= 1 && !isFinalTrackingStatus(forzaStatus)) {
+      return forzaStatus === "en_route" ? "en_route_retry" : "incident";
+    }
     return forzaStatus;
   }
 
@@ -9550,8 +9558,9 @@ function forzaGroupToStatus(group: string | undefined): string {
 }
 
 // Cuenta las incidencias de entrega ("Incidencia en la entrega", codigo FAILED)
-// de Moovin. Si existe una incidencia y no hay cierre final, el envio queda
-// como Incidencia aunque el ultimo evento vuelva a sede/ruta.
+// de Moovin. Con >=1 incidencia sin cierre final: queda como "Incidencia" si el
+// ultimo evento sigue siendo la incidencia, o como "Reintento" si el ultimo
+// evento volvio a "En ruta para entregar" (ver getEffectiveTrackingStatus).
 function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): number {
   if (!events?.length) return 0;
   return events.filter(
