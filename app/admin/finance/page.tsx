@@ -454,8 +454,9 @@ const FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE: Record<FinanceStoreCode, string> 
   "mireva-cr": "2026-01-01T00:00:00-06:00",
   "mireva-hn": "2025-12-09T00:00:00-06:00",
 };
-const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 1000;
-const FINANCE_SHOPIFY_SYNC_READ_CONCURRENCY = 2;
+const FINANCE_SHOPIFY_SYNC_INITIAL_PAGE_SIZE = 250;
+const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 500;
+const FINANCE_SHOPIFY_SYNC_READ_CONCURRENCY = 1;
 // Ventana de "pedidos actualizados recientemente" leida en vivo de Shopify.
 const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
 const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
@@ -596,6 +597,7 @@ export default function FinancePage() {
         Date.now() - FINANCE_SHOPIFY_RECENT_UPDATES_DAYS * 24 * 60 * 60 * 1000
       ).toISOString();
       let firstShopifyPageLoaded = false;
+      let firstShopifyPageNextOffset = 0;
       let firstShopifyPageTotal: number | null = null;
 
       const firstShopifyPageTask = loadJson(
@@ -603,7 +605,7 @@ export default function FinancePage() {
         () =>
           fetchWithTimeout(
             withStore(
-              `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_PAGE_SIZE}&offset=0&coverage=1`,
+              `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_INITIAL_PAGE_SIZE}&offset=0&coverage=0`,
               activeStoreCode
             ),
             { cache: "no-store" },
@@ -615,6 +617,10 @@ export default function FinancePage() {
             : [];
           if (persistedShopifyOrders.length) {
             firstShopifyPageLoaded = true;
+            const nextOffset = Number(json.next_offset);
+            firstShopifyPageNextOffset = Number.isFinite(nextOffset)
+              ? nextOffset
+              : persistedShopifyOrders.length;
             setShopifyOrders((current) => mergeShopifyOrderSummaries(current, persistedShopifyOrders));
           }
           const coverage =
@@ -628,7 +634,7 @@ export default function FinancePage() {
             total: coverage?.count ?? null,
           });
         },
-        { critical: true, delayMs: 0 }
+        { delayMs: 0 }
       );
 
       const logisticsTask = (async () => {
@@ -773,7 +779,7 @@ export default function FinancePage() {
         if (!isCurrentRun()) return;
         setShopifyHistoryLoading(true);
         try {
-          const startOffset = firstShopifyPageLoaded ? FINANCE_SHOPIFY_SYNC_PAGE_SIZE : 0;
+          const startOffset = firstShopifyPageLoaded ? firstShopifyPageNextOffset : 0;
           const persistedShopifyJson = await fetchPersistedShopifySnapshot(
             activeStoreCode,
             (partial) => {
@@ -7707,7 +7713,7 @@ async function fetchPersistedShopifySnapshot(
   }> {
     const res = await fetchWithTimeout(
       withStore(
-        `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_PAGE_SIZE}&offset=${offset}&coverage=${offset === 0 ? "1" : "0"}`,
+        `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_PAGE_SIZE}&offset=${offset}&coverage=0`,
         storeCode
       ),
       { cache: "no-store" },

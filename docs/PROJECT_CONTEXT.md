@@ -1,6 +1,6 @@
 # Kairo AI Webapp Context
 
-Last updated: 2026-06-13
+Last updated: 2026-06-15
 
 > See "Session 2026-06-13 additions" near the end for the latest architecture
 > and finance/logistics features, plus the list of pending Supabase migrations.
@@ -744,7 +744,7 @@ Build in this order:
 - Supabase reads now retry transient read-only failures (`522`, `503`, `504`, etc.) at the shared DB client level. The finance page also staggers heavy base loads instead of firing settlements, logistics, costs, expenses, and summary all at once; settlement/logistics API reads fetch imports and rows sequentially to reduce Supabase pressure.
 - `/admin/finance` now paints in phases: product costs, expenses, summary, claims/files, and recent Shopify orders load first; settlements, logistics, and the full Shopify snapshot continue in the background. This prevents the whole dashboard from being blocked by heavy historical reads.
 - Performance debug for the slow `/admin/finance` load found three pressure points: the first render waited for multiple independent Supabase reads, the persisted Shopify snapshot requested oversized pages, and every paginated Shopify history request recalculated coverage. The hotfix makes each base source load independently with an 8s fast timeout, moves settlements/logistics/full Shopify history to delayed background work with a 25s timeout, and prevents background failures from freezing the UI.
-- Persisted Shopify history now loads in 1,000-row pages instead of 4,000-row pages, requests coverage only on the first page (`coverage=1` then `coverage=0`), and pauses briefly between pages. Counts can appear quickly from the recent/live slice and then update as the persisted history catches up.
+- Persisted Shopify history now loads as a non-blocking enrichment: the first operational paint asks for only 250 persisted Shopify orders with `coverage=0`; background history continues in 500-row pages, one request at a time, also with `coverage=0`. Exact Supabase coverage/count queries are too expensive to gate the order-tracking UI and should move to a server-side summary/materialized endpoint before being reintroduced.
 - Operational-first rule for `/admin/finance`: the `Pedidos` tab must not build the full financial control center, product analysis, or monthly close on initial load. Operational KPIs now calculate directly from normalized Shopify/logistics rows; product profitability and monthly close build only when their tabs are opened. Background Shopify history uses lower concurrency and starts after the first operational paint to reduce Supabase pressure.
 - Target UX for finance performance: order tracking/logistics should become usable within ~20 seconds even if Supabase, settlements, or Shopify history are slow. Product costs, expenses, claims, settlements, notes, and monthly close are enrichment layers and should load after the operational view.
 - Next architecture step: replace client-side full-history aggregation with server-side summary/pagination endpoints or materialized views for KPIs, order lists, product analysis, and monthly close. Large Excel imports and historical syncs should use an async job table/queue instead of long-running Vercel requests.
