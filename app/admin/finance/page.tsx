@@ -461,6 +461,9 @@ const FINANCE_SHOPIFY_SYNC_READ_CONCURRENCY = 1;
 const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
 const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
 const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
+const FINANCE_LOGISTICS_INITIAL_PAGE_SIZE = 500;
+const FINANCE_LOGISTICS_PAGE_SIZE = 1000;
+const FINANCE_LOGISTICS_MAX_ROWS = 30000;
 const FINANCE_FAST_FETCH_TIMEOUT_MS = 8000;
 const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 
@@ -599,6 +602,9 @@ export default function FinancePage() {
       let firstShopifyPageLoaded = false;
       let firstShopifyPageNextOffset = 0;
       let firstShopifyPageTotal: number | null = null;
+      let firstLogisticsPageLoaded = false;
+      let firstLogisticsPageHasMore = false;
+      let firstLogisticsPageNextOffset = 0;
 
       const firstShopifyPageTask = loadJson(
         "pedidos Shopify base",
@@ -642,16 +648,29 @@ export default function FinancePage() {
         if (!isCurrentRun()) return;
         const logisticsJson = await safeJson(
           fetchWithTimeout(
-            withStore("/api/finance/logistics", activeStoreCode),
+            withStore(
+              `/api/finance/logistics?limit=${FINANCE_LOGISTICS_INITIAL_PAGE_SIZE}&offset=0`,
+              activeStoreCode
+            ),
             { cache: "no-store" },
-            FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
+            FINANCE_FAST_FETCH_TIMEOUT_MS
           ),
           "logistica Boxful"
         );
         if (!isCurrentRun()) return;
         setLogisticsImports(logisticsJson.imports ?? []);
-        setLogisticsRows(logisticsJson.rows ?? []);
-        reportCriticalError(logisticsJson.error);
+        const pageRows = Array.isArray(logisticsJson.rows)
+          ? logisticsJson.rows as LogisticsRow[]
+          : [];
+        if (pageRows.length || !logisticsJson.error) {
+          firstLogisticsPageLoaded = true;
+          firstLogisticsPageHasMore = Boolean(logisticsJson.has_more);
+          const nextOffset = Number(logisticsJson.next_offset);
+          firstLogisticsPageNextOffset = Number.isFinite(nextOffset)
+            ? nextOffset
+            : pageRows.length;
+          setLogisticsRows(pageRows);
+        }
       })();
 
       loadJson(
@@ -772,6 +791,32 @@ export default function FinancePage() {
         if (!isCurrentRun()) return;
         setImports(settlementsJson.imports ?? []);
         setRows(settlementsJson.rows ?? []);
+      })();
+
+      void (async () => {
+        await delay(10000);
+        if (!isCurrentRun()) return;
+        if (firstLogisticsPageLoaded && !firstLogisticsPageHasMore) return;
+        try {
+          const startOffset = firstLogisticsPageLoaded ? firstLogisticsPageNextOffset : 0;
+          const logisticsSnapshot = await fetchLogisticsRowsSnapshot(
+            activeStoreCode,
+            (partialRows) => {
+              if (!isCurrentRun()) return;
+              startTransition(() => {
+                setLogisticsRows((current) => mergeLogisticsRows(current, partialRows));
+              });
+            },
+            startOffset
+          );
+          if (!isCurrentRun()) return;
+          startTransition(() => {
+            setLogisticsRows((current) => mergeLogisticsRows(current, logisticsSnapshot.rows));
+          });
+        } catch {
+          // La logistica historica es importante para conciliacion, pero no
+          // debe bloquear el seguimiento operativo inicial.
+        }
       })();
 
       void (async () => {
@@ -7755,6 +7800,43 @@ async function fetchPersistedShopifySnapshot(
   return { orders, total: orders.length, coverage };
 }
 
+async function fetchLogisticsRowsSnapshot(
+  storeCode: FinanceStoreCode,
+  onProgress?: (rows: LogisticsRow[]) => void,
+  startOffset = 0
+): Promise<{ rows: LogisticsRow[] }> {
+  const rows: LogisticsRow[] = [];
+  let nextOffset = Math.max(Math.floor(startOffset), 0);
+  let hasMore = true;
+
+  while (hasMore && rows.length < FINANCE_LOGISTICS_MAX_ROWS) {
+    const res = await fetchWithTimeout(
+      withStore(
+        `/api/finance/logistics?limit=${FINANCE_LOGISTICS_PAGE_SIZE}&offset=${nextOffset}&include_imports=0`,
+        storeCode
+      ),
+      { cache: "no-store" },
+      FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
+    );
+    const json = await readApiJson(res);
+    if (!res.ok) throw new Error(json.error ?? "No se pudo leer logistica");
+
+    const pageRows = Array.isArray(json.rows) ? json.rows as LogisticsRow[] : [];
+    rows.push(...pageRows);
+
+    const serverNextOffset = Number(json.next_offset);
+    hasMore = Boolean(json.has_more) && pageRows.length > 0;
+    nextOffset = Number.isFinite(serverNextOffset)
+      ? serverNextOffset
+      : nextOffset + pageRows.length;
+
+    onProgress?.([...rows]);
+    await delay(75);
+  }
+
+  return { rows };
+}
+
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
   // El endpoint ya resuelve lineas y notas; raw_order queda solo como
   // respaldo por si llega una respuesta vieja cacheada.
@@ -7804,6 +7886,23 @@ function mergeShopifyOrderSummaries(...orderGroups: ShopifyOrderSummary[][]): Sh
     }
   }
   return Array.from(byKey.values()).sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+function mergeLogisticsRows(...rowGroups: LogisticsRow[][]): LogisticsRow[] {
+  const byKey = new Map<string, LogisticsRow>();
+  for (const rows of rowGroups) {
+    for (const row of rows) {
+      const key = row.id
+        ? String(row.id)
+        : `${row.import_id}:${row.guide_number}:${row.order_name}:${row.created_on ?? ""}`;
+      byKey.set(key, row);
+    }
+  }
+  return Array.from(byKey.values()).sort((a, b) => {
+    const aDate = a.created_on || a.shopify_created_at || a.created_at || "";
+    const bDate = b.created_on || b.shopify_created_at || b.created_at || "";
+    return bDate.localeCompare(aDate) || (b.id ?? 0) - (a.id ?? 0);
+  });
 }
 
 function mergeShopifyOrderSummary(
@@ -9336,14 +9435,13 @@ function getEffectiveTrackingStatus(
   // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
   const moovinStatus = moovinGroupToStatus(row.moovin_group);
   if (moovinStatus) {
-    // En ruta tras fallar la entrega (1+ incidencia) = reintento a presionar.
-    if (moovinStatus === "en_route" && (row.moovin_incidents ?? 0) >= 1) return "en_route_retry";
+    if ((row.moovin_incidents ?? 0) >= 1 && !isFinalTrackingStatus(moovinStatus)) return "incident";
     return moovinStatus;
   }
 
   const forzaStatus = forzaGroupToStatus(row.forza_group);
   if (forzaStatus) {
-    if (forzaStatus === "en_route" && (row.forza_incidents ?? 0) >= 1) return "en_route_retry";
+    if ((row.forza_incidents ?? 0) >= 1 && !isFinalTrackingStatus(forzaStatus)) return "incident";
     return forzaStatus;
   }
 
@@ -9452,7 +9550,8 @@ function forzaGroupToStatus(group: string | undefined): string {
 }
 
 // Cuenta las incidencias de entrega ("Incidencia en la entrega", codigo FAILED)
-// de Moovin. Un envio en ruta con 1+ incidencia es un reintento tras fallar.
+// de Moovin. Si existe una incidencia y no hay cierre final, el envio queda
+// como Incidencia aunque el ultimo evento vuelva a sede/ruta.
 function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): number {
   if (!events?.length) return 0;
   return events.filter(

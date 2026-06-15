@@ -359,6 +359,64 @@ export async function listLogisticsRows(
   return all;
 }
 
+export async function listLogisticsRowsPage(
+  options: {
+    importId?: number;
+    storeId?: number;
+    limit?: number;
+    offset?: number;
+  } = {}
+): Promise<{ rows: LogisticsRow[]; hasMore: boolean; nextOffset: number | null }> {
+  const importId = options.importId;
+  const storeId = options.storeId ?? DEFAULT_FINANCE_STORE_ID;
+  const limit = Math.min(Math.max(Math.floor(options.limit ?? 1000), 1), 1000);
+  const offset = Math.max(Math.floor(options.offset ?? 0), 0);
+
+  const fetchPage = (withNames: boolean) => {
+    let query = getDB()
+      .from("logistics_rows")
+      .select(withNames ? `${LOGISTICS_ROW_COLUMNS_BASE}, first_name, last_name` : LOGISTICS_ROW_COLUMNS_BASE)
+      .eq("store_id", storeId)
+      .order("created_on", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + limit);
+    if (importId) query = query.eq("import_id", importId);
+    return query;
+  };
+
+  let { data, error } = await fetchPage(!logisticsNameColumnsMissing);
+  if (shouldFallbackToLegacyStore(error, storeId)) {
+    const rows = (await listLegacyLogisticsRows(importId)).slice(offset, offset + limit);
+    return {
+      rows,
+      hasMore: rows.length === limit,
+      nextOffset: rows.length === limit ? offset + limit : null,
+    };
+  }
+  if (error && !logisticsNameColumnsMissing && isMissingColumnError(error.message)) {
+    logisticsNameColumnsMissing = true;
+    ({ data, error } = await fetchPage(false));
+  }
+  if (shouldFallbackToLegacyStore(error, storeId)) {
+    const rows = (await listLegacyLogisticsRows(importId)).slice(offset, offset + limit);
+    return {
+      rows,
+      hasMore: rows.length === limit,
+      nextOffset: rows.length === limit ? offset + limit : null,
+    };
+  }
+  if (error) throw new Error(`listLogisticsRowsPage: ${error.message}`);
+
+  const page = (data ?? []) as unknown as LogisticsRow[];
+  const rows = page.slice(0, limit);
+  const hasMore = page.length > limit;
+  return {
+    rows,
+    hasMore,
+    nextOffset: hasMore ? offset + limit : null,
+  };
+}
+
 // Sin raw_order completo: las lineas y notas se resuelven aca para que la
 // respuesta con miles de pedidos no se dispare de tamano.
 // Camino rapido: columnas planas (requiere la migracion 0003). Extraer campos

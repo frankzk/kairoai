@@ -11,7 +11,7 @@ import {
   deleteLogisticsImport,
   insertLogisticsRows,
   listLogisticsImports,
-  listLogisticsRows,
+  listLogisticsRowsPage,
   upsertBoxfulFileControl,
   type InternalOrderStatus,
   type LogisticsPackageItem,
@@ -53,10 +53,35 @@ export async function GET(req: NextRequest) {
   const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
   if (!store) return missingStoreResponse();
   try {
-    const importId = Number(req.nextUrl.searchParams.get("import_id"));
-    const imports = await listLogisticsImports(store.id);
-    const rows = await listLogisticsRows(importId || undefined, store.id);
-    return NextResponse.json({ imports, rows });
+    const rawImportId = Number(req.nextUrl.searchParams.get("import_id"));
+    const importId = Number.isFinite(rawImportId) && rawImportId > 0 ? rawImportId : undefined;
+    const includeRows = req.nextUrl.searchParams.get("include_rows") !== "0";
+    const includeImports = req.nextUrl.searchParams.get("include_imports") !== "0";
+    const limit = Number(req.nextUrl.searchParams.get("limit") ?? 1000);
+    const offset = Number(req.nextUrl.searchParams.get("offset") ?? 0);
+    const imports = includeImports ? await listLogisticsImports(store.id) : [];
+    if (!includeRows) {
+      return NextResponse.json({
+        imports,
+        rows: [],
+        has_more: false,
+        next_offset: null,
+      });
+    }
+    const page = await listLogisticsRowsPage({
+      importId,
+      storeId: store.id,
+      limit,
+      offset,
+    });
+    return NextResponse.json({
+      imports,
+      rows: page.rows,
+      has_more: page.hasMore,
+      next_offset: page.nextOffset,
+      limit,
+      offset,
+    });
   } catch (err) {
     const message = toFriendlyErrorMessage(err, "Error al leer logistica");
     return NextResponse.json({ imports: [], rows: [], error: message }, { status: 500 });
