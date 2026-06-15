@@ -462,8 +462,10 @@ const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
 const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
 const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
 const FINANCE_LOGISTICS_INITIAL_PAGE_SIZE = 500;
-const FINANCE_LOGISTICS_PAGE_SIZE = 1000;
-const FINANCE_LOGISTICS_MAX_ROWS = 30000;
+// Timeout amplio para la descarga "traé todo" de logística: el servidor pagina
+// internamente (hasta ~60s), así que el cliente espera en una sola request en
+// vez de encadenar lotes que se cortan.
+const FINANCE_LOGISTICS_ALL_TIMEOUT_MS = 45000;
 const FINANCE_FAST_FETCH_TIMEOUT_MS = 20000;
 const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 
@@ -606,7 +608,6 @@ export default function FinancePage() {
       let firstShopifyPageTotal: number | null = null;
       let firstLogisticsPageLoaded = false;
       let firstLogisticsPageHasMore = false;
-      let firstLogisticsPageNextOffset = 0;
 
       const firstShopifyPageTask = loadJson(
         "pedidos Shopify base",
@@ -667,10 +668,6 @@ export default function FinancePage() {
         if (pageRows.length || !logisticsJson.error) {
           firstLogisticsPageLoaded = true;
           firstLogisticsPageHasMore = Boolean(logisticsJson.has_more);
-          const nextOffset = Number(logisticsJson.next_offset);
-          firstLogisticsPageNextOffset = Number.isFinite(nextOffset)
-            ? nextOffset
-            : pageRows.length;
           setLogisticsRows(pageRows);
         }
       })();
@@ -800,7 +797,6 @@ export default function FinancePage() {
         if (!isCurrentRun()) return;
         if (firstLogisticsPageLoaded && !firstLogisticsPageHasMore) return;
         try {
-          const startOffset = firstLogisticsPageLoaded ? firstLogisticsPageNextOffset : 0;
           const logisticsSnapshot = await fetchLogisticsRowsSnapshot(
             activeStoreCode,
             (partialRows) => {
@@ -808,8 +804,7 @@ export default function FinancePage() {
               startTransition(() => {
                 setLogisticsRows((current) => mergeLogisticsRows(current, partialRows));
               });
-            },
-            startOffset
+            }
           );
           if (!isCurrentRun()) return;
           startTransition(() => {
@@ -7901,53 +7896,30 @@ async function fetchPersistedShopifySnapshot(
 
 async function fetchLogisticsRowsSnapshot(
   storeCode: FinanceStoreCode,
-  onProgress?: (rows: LogisticsRow[]) => void,
-  startOffset = 0
+  onProgress?: (rows: LogisticsRow[]) => void
 ): Promise<{ rows: LogisticsRow[] }> {
-  const rows: LogisticsRow[] = [];
-  let nextOffset = Math.max(Math.floor(startOffset), 0);
-  let hasMore = true;
-
-  while (hasMore && rows.length < FINANCE_LOGISTICS_MAX_ROWS) {
-    // slim=1: paginas livianas (sin package_items). Reintentamos cada pagina
-    // para que un lote lento puntual no aborte la descarga y deje fuera los
-    // pedidos mas viejos (cargan al final).
-    let json: { rows?: unknown; next_offset?: unknown; has_more?: unknown } | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const res = await fetchWithTimeout(
-          withStore(
-            `/api/finance/logistics?limit=${FINANCE_LOGISTICS_PAGE_SIZE}&offset=${nextOffset}&include_imports=0&slim=1`,
-            storeCode
-          ),
-          { cache: "no-store" },
-          FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
-        );
-        const parsed = await readApiJson(res);
-        if (!res.ok) throw new Error(parsed.error ?? "No se pudo leer logistica");
-        json = parsed;
-        break;
-      } catch (err) {
-        if (attempt === 2) throw err;
-        await delay(600 * (attempt + 1));
-      }
+  // Una sola request "traé todo" (slim): el servidor pagina internamente con su
+  // presupuesto de ~60s. Reemplaza la descarga por lotes del navegador, que se
+  // cortaba a ~1500 filas y dejaba fuera los pedidos más viejos (sin guía).
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetchWithTimeout(
+        withStore("/api/finance/logistics?all=1&slim=1&include_imports=0", storeCode),
+        { cache: "no-store" },
+        FINANCE_LOGISTICS_ALL_TIMEOUT_MS
+      );
+      const json = await readApiJson(res);
+      if (!res.ok) throw new Error(json.error ?? "No se pudo leer logistica");
+      const rows = Array.isArray(json.rows) ? (json.rows as LogisticsRow[]) : [];
+      onProgress?.(rows);
+      return { rows };
+    } catch (err) {
+      lastError = err;
+      await delay(800 * (attempt + 1));
     }
-    if (!json) break;
-
-    const pageRows = Array.isArray(json.rows) ? json.rows as LogisticsRow[] : [];
-    rows.push(...pageRows);
-
-    const serverNextOffset = Number(json.next_offset);
-    hasMore = Boolean(json.has_more) && pageRows.length > 0;
-    nextOffset = Number.isFinite(serverNextOffset)
-      ? serverNextOffset
-      : nextOffset + pageRows.length;
-
-    onProgress?.([...rows]);
-    await delay(75);
   }
-
-  return { rows };
+  throw lastError ?? new Error("No se pudo leer logistica");
 }
 
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
