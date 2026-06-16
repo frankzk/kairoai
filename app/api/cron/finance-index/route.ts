@@ -1,9 +1,12 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { FINANCE_STORES, getStoreConfig } from "@/lib/stores";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Armar el dataset de una tienda en frio (Micro) puede tardar; con varias tiendas
+// seguidas se pasaba de 60s. 300s (max de Vercel Pro) da margen. Para precalentar
+// a mano sin timeout, se puede pasar ?store=mireva-cr y hacer una tienda por vez.
+export const maxDuration = 300;
 // El handler no usa la request ni APIs dinamicas, asi que Next lo prerenderizaria
 // como estatico y el cron serviria una respuesta cacheada sin reconstruir nada.
 // force-dynamic garantiza que cada invocacion ejecute refreshFinanceDatasetCache.
@@ -13,10 +16,13 @@ export const dynamic = "force-dynamic";
 // tienda (tabla finance_dataset_cache) en background, para que el "cold build"
 // no caiga en el path del request del dashboard. Se ejecuta cada ~10 min (ver
 // vercel.json) y las mutaciones tambien refrescan tras cada cambio.
-async function run() {
+async function run(storeFilter: string | null) {
+  const targets = storeFilter
+    ? FINANCE_STORES.filter((publicStore) => publicStore.code === storeFilter)
+    : FINANCE_STORES;
   const results: Array<{ store: string; row_count: number; error?: string }> = [];
 
-  for (const publicStore of FINANCE_STORES) {
+  for (const publicStore of targets) {
     const store = getStoreConfig(publicStore.code);
     try {
       const rowCount = await refreshFinanceDatasetCache(store);
@@ -30,6 +36,6 @@ async function run() {
   return NextResponse.json({ ok: true, results });
 }
 
-export async function GET() {
-  return run();
+export async function GET(req: NextRequest) {
+  return run(req.nextUrl.searchParams.get("store"));
 }
