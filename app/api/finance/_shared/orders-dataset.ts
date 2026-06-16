@@ -18,12 +18,15 @@ import {
   buildSettlementTraceMap,
   buildVisibleOrderRows,
   enrichSettlementRowsWithShopify,
+  getDeliveredWithoutSettlement,
+  getDoubleSettlementAnomalies,
   persistedOrderToSummary,
+  type DoubleSettlementAnomaly,
   type SettlementTrace,
   type ShopifyOrderSummary,
   type TrackableOrderRow,
 } from "@/lib/finance-orders";
-import type { SettlementImport, SettlementRow } from "@/lib/finance-types";
+import type { LogisticsRow, SettlementImport, SettlementRow } from "@/lib/finance-types";
 import type { FinanceStorePublic } from "@/lib/store-config";
 
 export interface OrdersDataset {
@@ -36,6 +39,19 @@ export interface OrdersDataset {
   shopifyOrders: ShopifyOrderSummary[];
   matchedSettlementRows: SettlementRow[];
   imports: SettlementImport[];
+  // Expuesto para settlements-view/ (Carril 2 — tab Liquidaciones):
+  // getDeliveredWithoutSettlement necesita las filas crudas de logistica. Ya se
+  // cargan en buildDataset (listLogisticsRows), asi que no hay carga extra.
+  logisticsRows: LogisticsRow[];
+  // Pre-calculados para settlements-view/ con la MISMA semantica que page.tsx
+  // (Carril 2 — tab Liquidaciones), para que los numeros sean identicos a prod:
+  //  - liquidationAlertRows: getDeliveredWithoutSettlement(logisticsRows, RAW
+  //    settlementRows) — usa las filas de liquidacion crudas, igual que el useMemo
+  //    del cliente (que opera sobre el estado `rows`, no las enriquecidas).
+  //  - doubleSettlementAnomalies: getDoubleSettlementAnomalies(settlementTraceByKey)
+  //    donde el trace map ya se arma sobre las filas ENRIQUECIDAS + imports.
+  liquidationAlertRows: LogisticsRow[];
+  doubleSettlementAnomalies: DoubleSettlementAnomaly[];
 }
 
 interface CacheEntry {
@@ -72,12 +88,22 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
 
   const rows = buildVisibleOrderRows(logisticsRows, shopifyOrders, store, moovinByPackage, forzaByGuide);
 
+  // Alertas del tab Liquidaciones (mismas operaciones que los useMemo de page.tsx):
+  //  - "por reclamar": entregados sin liquidar, sobre las filas de liquidacion
+  //    CRUDAS (settlementRows), igual que el cliente.
+  //  - doble liquidacion: claves con >=2 trazas, sobre el trace map ya enriquecido.
+  const liquidationAlertRows = getDeliveredWithoutSettlement(logisticsRows, settlementRows);
+  const doubleSettlementAnomalies = getDoubleSettlementAnomalies(settlementTraceByKey);
+
   return {
     rows,
     settlementTraceByKey,
     shopifyOrders,
     matchedSettlementRows: enrichedSettlementRows,
     imports,
+    logisticsRows,
+    liquidationAlertRows,
+    doubleSettlementAnomalies,
   };
 }
 
