@@ -5207,7 +5207,16 @@ function ExpensesTab({
                   <Input
                     type="date"
                     value={form.expense_date}
-                    onChange={(e) => setForm({ ...form, expense_date: e.target.value, type: activeType })}
+                    onChange={(e) => {
+                      const expenseDate = e.target.value;
+                      const expenseMonth = monthFromDateInput(expenseDate);
+                      setForm({
+                        ...form,
+                        expense_date: expenseDate,
+                        ...(expenseMonth ? { month: expenseMonth } : {}),
+                        type: activeType,
+                      });
+                    }}
                   />
                 </LabeledField>
                 <LabeledField label="Mes contable">
@@ -7948,6 +7957,10 @@ function formatDate(value: string): string {
   const [year, month, day] = value.slice(0, 10).split("-");
   if (!year || !month || !day) return value;
   return `${day}/${month}/${year}`;
+}
+
+function monthFromDateInput(value: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value.slice(0, 7) : "";
 }
 
 function money(value: number): number {
