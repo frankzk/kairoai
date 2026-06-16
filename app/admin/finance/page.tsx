@@ -1566,6 +1566,8 @@ function OrdersTab({
   // En mobile los filtros (periodo/estado/liquidacion) se colapsan detras de un
   // boton para no saturar la vista; en desktop siempre se muestran.
   const [showFilters, setShowFilters] = useState(false);
+  // Idem para los botones de accion (Sync/Importar/Actualizar): menu en mobile.
+  const [showActions, setShowActions] = useState(false);
   // --- Datos server-side (Carril 2 inc.2) ---------------------------------
   // La tabla de pedidos ya no consume el snapshot completo en memoria: pagina y
   // filtra contra /api/finance/orders. Los conteos de los chips, el total y las
@@ -1850,7 +1852,18 @@ function OrdersTab({
               Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2 sm:justify-end">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full justify-center gap-2 sm:hidden"
+              onClick={() => setShowActions((value) => !value)}
+              aria-expanded={showActions}
+            >
+              Acciones {showActions ? "▴" : "▾"}
+            </Button>
+            <div className={`flex-col gap-2 [&>button]:w-full ${showActions ? "flex" : "hidden"} sm:flex sm:flex-row sm:flex-wrap sm:gap-2 sm:[&>button]:w-auto`}>
             {selectedStore.logisticsProvider === "moovin" && enRouteMoovinGuides.length > 0 && (
               <Button
                 type="button"
@@ -1894,6 +1907,7 @@ function OrdersTab({
               {importingLogistics ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {importingLogistics ? "Importando..." : "Importar Boxful"}
             </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
