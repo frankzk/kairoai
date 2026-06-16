@@ -52,3 +52,23 @@
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(263 70% 50%);
 }
+
+input[type="date"],
+input[type="month"] {
+  color-scheme: dark;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.85;
+  padding: 6px;
+  border-radius: 6px;
+  filter: invert(1) brightness(1.35) saturate(0.4);
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="month"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+  background: hsl(216 34% 17%);
+}
