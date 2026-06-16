@@ -7615,18 +7615,22 @@ function OperationalKpiCard({
         : "text-muted-foreground";
   return (
     <Card className={borderClass}>
-      <CardContent className="p-2.5 sm:p-4">
-        <div className="flex items-center justify-between gap-1">
-          <p className="truncate text-[10px] text-muted-foreground sm:text-xs">{label}</p>
-          {star && <span className="shrink-0 text-[10px] text-primary">★</span>}
+      <CardContent className="p-2.5 sm:p-3">
+        <div className="flex items-baseline justify-between gap-1.5">
+          <p className="truncate text-[11px] text-muted-foreground">{label}</p>
+          <span className="flex shrink-0 items-baseline gap-1">
+            {star && <span className="text-[9px] text-primary">★</span>}
+            <span className={`text-base font-bold leading-none sm:text-xl ${valueClass}`}>{loading ? "..." : value}</span>
+          </span>
         </div>
-        <div className="mt-0.5 flex items-baseline justify-between gap-1.5 sm:mt-2">
-          <p className={`text-lg font-bold leading-none sm:text-2xl ${valueClass}`}>{loading ? "..." : value}</p>
-          {deltaLabel && !loading && (
-            <span className={`shrink-0 text-[10px] font-medium sm:text-[11px] ${deltaClass}`}>{deltaLabel}</span>
-          )}
-        </div>
-        {sub && <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground sm:mt-1 sm:text-[11px]">{sub}</p>}
+        {(sub || deltaLabel) && (
+          <div className="mt-0.5 flex items-baseline justify-between gap-1.5">
+            <p className="truncate text-[10px] leading-tight text-muted-foreground">{sub ?? ""}</p>
+            {deltaLabel && !loading && (
+              <span className={`shrink-0 text-[10px] font-medium ${deltaClass}`}>{deltaLabel}</span>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
