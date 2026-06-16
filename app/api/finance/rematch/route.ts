@@ -16,6 +16,7 @@ import {
 } from "@/lib/finance";
 import { getRequiredStoreFromBody } from "@/lib/stores";
 import { toFriendlyErrorMessage } from "@/lib/api-errors";
+import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -76,6 +77,12 @@ export async function POST(req: NextRequest) {
         updateSettlementImportMatchCounts(importId, store.id, t.matched, t.total - t.matched)
       ),
     ]);
+
+    // El re-match muto logistics_rows + settlement_rows: refresca la cache
+    // durable del dataset. Defensivo: nunca rompe el re-match si la cache falla.
+    await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+      console.warn("[finance/rematch POST cache]", cacheErr)
+    );
 
     return NextResponse.json({
       ok: true,

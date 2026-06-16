@@ -19,6 +19,7 @@ import {
   mapShopifyOrder,
   sleep,
 } from "@/lib/shopify-sync";
+import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -121,6 +122,14 @@ export async function POST(req: NextRequest) {
 
     const orders = rawOrders.map(mapShopifyOrder);
     await upsertPersistedShopifyOrders(orders, store.id);
+
+    // El sync muto shopify_orders: refresca la cache durable del dataset (solo si
+    // entraron pedidos). Defensivo: nunca rompe el sync si la cache falla.
+    if (orders.length > 0) {
+      await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+        console.warn(`[finance/shopify-sync cache] ${store.code}:`, cacheErr)
+      );
+    }
 
     const oldestFetched = orders.reduce<string | null>((min, order) => {
       const created = order.shopify_created_at;

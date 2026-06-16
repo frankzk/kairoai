@@ -5,9 +5,24 @@ import {
   listMoovinTracking,
   upsertMoovinTracking,
 } from "@/lib/finance";
+import { FINANCE_STORES, getStoreConfig } from "@/lib/stores";
+import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+// Moovin tracking es global (no por tienda); refresca el dataset de las tiendas
+// que usan Moovin como transportadora. Defensivo: nunca rompe el sync.
+async function refreshMoovinStores(): Promise<void> {
+  const moovinStores = FINANCE_STORES.filter((store) => store.logisticsProvider === "moovin");
+  await Promise.all(
+    moovinStores.map((store) =>
+      refreshFinanceDatasetCache(getStoreConfig(store.code)).catch((cacheErr) =>
+        console.warn(`[moovin-sync cache] ${store.code}:`, cacheErr)
+      )
+    )
+  );
+}
 
 // ~2 req/s a Moovin para no saturar; el cliente envia lotes y reintenta.
 const PER_REQUEST_DELAY_MS = 400;
@@ -92,6 +107,9 @@ export async function POST(req: NextRequest) {
         console.warn("[moovin-sync cache]", err);
       }
     }
+
+    // Solo si hubo cambios reales en moovin_tracking vale la pena reconstruir.
+    if (checked > 0) await refreshMoovinStores();
 
     return NextResponse.json({
       requested: valid.length,

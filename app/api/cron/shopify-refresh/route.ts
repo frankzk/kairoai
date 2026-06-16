@@ -8,6 +8,7 @@ import {
   mapShopifyOrder,
   sleep,
 } from "@/lib/shopify-sync";
+import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -62,6 +63,15 @@ export async function GET(req: NextRequest) {
         const link = res.headers.get("link") ?? "";
         const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
         url = nextMatch?.[1] ?? "";
+      }
+
+      // El refresh muto shopify_orders de esta tienda: reconstruye su cache
+      // durable del dataset una sola vez por corrida (solo si entraron pedidos).
+      // Defensivo: nunca rompe el cron si la cache falla.
+      if (synced > 0) {
+        await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+          console.warn(`[cron/shopify-refresh cache] ${store.code}:`, cacheErr)
+        );
       }
 
       // Si quedo url, se freno por tiempo/tope: devolvemos el cursor para reanudar
