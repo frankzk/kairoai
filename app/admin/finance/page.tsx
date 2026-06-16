@@ -1223,43 +1223,47 @@ export default function FinancePage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b border-border/50 bg-card/70 backdrop-blur">
-        <div className="container mx-auto flex items-center gap-4 px-4 py-4">
-          <Link href="/">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="mr-2 h-4 w-4" /> Dashboard
-            </Button>
-          </Link>
-          <div>
-            <h1 className="text-lg font-bold">Gestion de pedidos y rentabilidad</h1>
-            <p className="text-xs text-muted-foreground">
-              Liquidaciones, costos por SKU, gastos y utilidad neta
-            </p>
+        <div className="container mx-auto flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-4 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2 sm:flex-1">
+            <Link href="/">
+              <Button variant="ghost" size="sm" className="shrink-0 px-2">
+                <ArrowLeft className="mr-1.5 h-4 w-4" /> Dashboard
+              </Button>
+            </Link>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-base font-bold sm:text-lg">Gestion de pedidos y rentabilidad</h1>
+              <p className="hidden truncate text-xs text-muted-foreground sm:block">
+                Liquidaciones, costos por SKU, gastos y utilidad neta
+              </p>
+            </div>
           </div>
-          <label className="ml-auto flex min-w-[190px] flex-col gap-1 text-[11px] text-muted-foreground">
-            Tienda
-            <select
-              value={selectedStore.code}
-              onChange={(event) => setSelectedStoreCode(event.target.value as FinanceStoreCode)}
-              className="h-9 rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground outline-none focus:border-primary"
+          <div className="flex items-end gap-2 sm:ml-auto">
+            <label className="flex flex-1 flex-col gap-1 text-[11px] text-muted-foreground sm:flex-none sm:min-w-[190px]">
+              Tienda
+              <select
+                value={selectedStore.code}
+                onChange={(event) => setSelectedStoreCode(event.target.value as FinanceStoreCode)}
+                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground outline-none focus:border-primary"
+              >
+                {FINANCE_STORES.map((store) => (
+                  <option key={store.code} value={store.code}>
+                    {store.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                refresh();
+                if (tab === "products") loadShopifyProducts();
+              }}
+              className="h-9 shrink-0 gap-2"
             >
-              {FINANCE_STORES.map((store) => (
-                <option key={store.code} value={store.code}>
-                  {store.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              refresh();
-              if (tab === "products") loadShopifyProducts();
-            }}
-            className="gap-2"
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Actualizar
-          </Button>
+              <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Actualizar</span>
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -1300,7 +1304,7 @@ export default function FinancePage() {
             </p>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
+          <div className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-4 xl:grid-cols-7">
             {operationalKpis.cards.map(({ id, ...card }) => (
               <OperationalKpiCard key={id} loading={kpiLoading} {...card} />
             ))}
