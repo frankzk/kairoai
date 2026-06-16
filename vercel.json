@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/cron/moovin",
-      "schedule": "0 8 * * *"
+      "schedule": "0 8,12,16,20 * * *"
     },
     {
       "path": "/api/cron/shopify-refresh",
