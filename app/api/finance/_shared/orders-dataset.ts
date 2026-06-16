@@ -5,6 +5,7 @@
 //
 // Las carpetas con prefijo "_" son privadas en el App Router (no generan ruta).
 
+import { gzipSync, gunzipSync } from "node:zlib";
 import { getDB } from "@/lib/db";
 import {
   listForzaTracking,
@@ -102,9 +103,19 @@ function deserializeDataset(payload: SerializedDataset): OrdersDataset {
 }
 
 interface DatasetCacheRow {
-  payload: SerializedDataset;
+  payload: { gz?: string } | SerializedDataset;
   row_count: number;
   refreshed_at: string;
+}
+
+// El payload se guarda comprimido como { gz: base64(gzip(json)) }. Se descomprime
+// aca; tolera tambien un payload plano por compatibilidad.
+function decodeCachePayload(payload: { gz?: string } | SerializedDataset): SerializedDataset {
+  const gz = (payload as { gz?: string } | null)?.gz;
+  if (typeof gz === "string") {
+    return JSON.parse(gunzipSync(Buffer.from(gz, "base64")).toString("utf8")) as SerializedDataset;
+  }
+  return payload as SerializedDataset;
 }
 
 // Lee la fila de cache L2 de una tienda. Devuelve null si no existe, si la
@@ -127,23 +138,26 @@ async function readDatasetCache(store: FinanceStorePublic): Promise<OrdersDatase
     if (!Number.isFinite(refreshedAt) || Date.now() - refreshedAt >= DATASET_CACHE_TTL_MS) {
       return null;
     }
-    return deserializeDataset(row.payload);
+    return deserializeDataset(decodeCachePayload(row.payload));
   } catch (err) {
     console.warn(`[orders-dataset L2 read] ${store.code}:`, err);
     return null;
   }
 }
 
-// Escribe (upsert) el dataset en la cache L2. No fatal: si falla (migracion no
-// aplicada, etc.) solo loguea — el dataset ya se devolvio/usara desde memoria.
-async function writeDatasetCache(store: FinanceStorePublic, data: OrdersDataset): Promise<void> {
+// Escribe (upsert) el dataset en la cache L2. El payload ensamblado es enorme
+// (decenas de MB: rows + shopifyOrders + logistica), asi que se comprime con gzip
+// y se guarda como { gz: base64 } dentro del JSONB (sin migracion). Devuelve el
+// mensaje de error si la escritura falla, o null si fue ok (el cron lo reporta).
+async function writeDatasetCache(store: FinanceStorePublic, data: OrdersDataset): Promise<string | null> {
   try {
+    const gz = gzipSync(Buffer.from(JSON.stringify(serializeDataset(data)))).toString("base64");
     const { error } = await getDB()
       .from(DATASET_CACHE_TABLE)
       .upsert(
         {
           store_id: store.id,
-          payload: serializeDataset(data),
+          payload: { gz },
           row_count: data.rows.length,
           refreshed_at: new Date().toISOString(),
         },
@@ -151,9 +165,13 @@ async function writeDatasetCache(store: FinanceStorePublic, data: OrdersDataset)
       );
     if (error) {
       console.warn(`[orders-dataset L2 write] ${store.code}: ${error.message}`);
+      return error.message;
     }
+    return null;
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     console.warn(`[orders-dataset L2 write] ${store.code}:`, err);
+    return message;
   }
 }
 
@@ -236,6 +254,11 @@ export async function getOrdersDataset(store: FinanceStorePublic): Promise<Order
 export async function refreshFinanceDatasetCache(store: FinanceStorePublic): Promise<number> {
   const data = await buildDataset(store);
   datasetCache.set(store.code, { at: Date.now(), data });
-  await writeDatasetCache(store, data);
+  const writeError = await writeDatasetCache(store, data);
+  if (writeError) {
+    // El cron (y el precalentado manual) reportan este error en vez de fallar en
+    // silencio; las mutaciones que llaman a esto lo hacen con .catch (defensivas).
+    throw new Error(`cache L2 write: ${writeError}`);
+  }
   return data.rows.length;
 }
