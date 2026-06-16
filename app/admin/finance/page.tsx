@@ -1223,24 +1223,26 @@ export default function FinancePage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b border-border/50 bg-card/70 backdrop-blur">
-        <div className="container mx-auto flex items-center gap-4 px-4 py-4">
-          <Link href="/">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="mr-2 h-4 w-4" /> Dashboard
-            </Button>
-          </Link>
-          <div>
-            <h1 className="text-lg font-bold">Gestion de pedidos y rentabilidad</h1>
-            <p className="text-xs text-muted-foreground">
-              Liquidaciones, costos por SKU, gastos y utilidad neta
-            </p>
+        <div className="container mx-auto flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:gap-4 sm:px-4 sm:py-4">
+          <div className="flex min-w-0 items-center gap-1.5 sm:flex-1">
+            <Link href="/">
+              <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs sm:h-9 sm:text-sm">
+                <ArrowLeft className="h-4 w-4" /> Dashboard
+              </Button>
+            </Link>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-sm font-bold sm:text-lg">Gestion de pedidos y rentabilidad</h1>
+              <p className="hidden truncate text-xs text-muted-foreground sm:block">
+                Liquidaciones, costos por SKU, gastos y utilidad neta
+              </p>
+            </div>
           </div>
-          <label className="ml-auto flex min-w-[190px] flex-col gap-1 text-[11px] text-muted-foreground">
-            Tienda
+          <div className="flex items-center gap-1.5 sm:ml-auto sm:gap-2">
             <select
               value={selectedStore.code}
               onChange={(event) => setSelectedStoreCode(event.target.value as FinanceStoreCode)}
-              className="h-9 rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground outline-none focus:border-primary"
+              aria-label="Tienda"
+              className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs font-semibold text-foreground outline-none focus:border-primary sm:h-9 sm:min-w-[190px] sm:flex-none sm:px-3 sm:text-sm"
             >
               {FINANCE_STORES.map((store) => (
                 <option key={store.code} value={store.code}>
@@ -1248,22 +1250,22 @@ export default function FinancePage() {
                 </option>
               ))}
             </select>
-          </label>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              refresh();
-              if (tab === "products") loadShopifyProducts();
-            }}
-            className="gap-2"
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Actualizar
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                refresh();
+                if (tab === "products") loadShopifyProducts();
+              }}
+              className="h-8 shrink-0 gap-1.5 px-2.5 sm:h-9"
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Actualizar</span>
+            </Button>
+          </div>
         </div>
       </header>
 
-      <main className="container mx-auto space-y-6 px-4 py-6">
+      <main className="container mx-auto space-y-4 px-4 py-4 sm:space-y-6 sm:py-6">
         {error && (
           <div className="border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-red-200">
             {formatFinancePageError(error)}
@@ -1300,28 +1302,30 @@ export default function FinancePage() {
             </p>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
+          <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4 xl:grid-cols-7">
             {operationalKpis.cards.map(({ id, ...card }) => (
               <OperationalKpiCard key={id} loading={kpiLoading} {...card} />
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Alertas</span>
+          <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Alertas</span>
             {/* Carril 2 inc.2: alimentado de conteos server-side (period=all) en
                 lugar del snapshot en memoria. Reintentos/Incidencias vienen de
                 trackingCounts; Por reclamar de settlementCounts.to_claim. */}
-            <AlertStat label="Reintentos" value={loading ? "..." : formatInt(alertCounts.trackingCounts.en_route_retry)} tone="bad" />
-            <AlertStat label="Incidencias" value={loading ? "..." : formatInt(alertCounts.trackingCounts.incident)} tone="bad" />
-            <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim)} tone="warn" />
-            <AlertStat
-              label="Anomalías"
-              // Equivale al calculo previo en cliente (liquidationAlertRows +
-              // doubleSettlementAnomalies): entregados sin liquidar (to_claim) +
-              // liquidaciones duplicadas (duplicate).
-              value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim + alertCounts.settlementCounts.duplicate)}
-              tone="warn"
-            />
+            <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
+              <AlertStat label="Reintentos" value={loading ? "..." : formatInt(alertCounts.trackingCounts.en_route_retry)} tone="bad" />
+              <AlertStat label="Incidencias" value={loading ? "..." : formatInt(alertCounts.trackingCounts.incident)} tone="bad" />
+              <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim)} tone="warn" />
+              <AlertStat
+                label="Anomalías"
+                // Equivale al calculo previo en cliente (liquidationAlertRows +
+                // doubleSettlementAnomalies): entregados sin liquidar (to_claim) +
+                // liquidaciones duplicadas (duplicate).
+                value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim + alertCounts.settlementCounts.duplicate)}
+                tone="warn"
+              />
+            </div>
           </div>
         </section>
 
@@ -1559,6 +1563,11 @@ function OrdersTab({
   const [rangeEnd, setRangeEnd] = useState("");
   const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>("all");
   const [settlementFilter, setSettlementFilter] = useState<OrderSettlementFilter>("all");
+  // En mobile los filtros (periodo/estado/liquidacion) se colapsan detras de un
+  // boton para no saturar la vista; en desktop siempre se muestran.
+  const [showFilters, setShowFilters] = useState(false);
+  // Idem para los botones de accion (Sync/Importar/Actualizar): menu en mobile.
+  const [showActions, setShowActions] = useState(false);
   // --- Datos server-side (Carril 2 inc.2) ---------------------------------
   // La tabla de pedidos ya no consume el snapshot completo en memoria: pagina y
   // filtra contra /api/finance/orders. Los conteos de los chips, el total y las
@@ -1836,44 +1845,58 @@ function OrdersTab({
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="gap-4 space-y-0 sm:flex-row sm:items-center sm:justify-between">
+        <CardHeader className="gap-2 space-y-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="space-y-1">
             <CardTitle className="text-base">Seguimiento de pedidos</CardTitle>
-            <p className="text-xs text-muted-foreground">
+            <p className="hidden text-xs text-muted-foreground sm:block">
               Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.
             </p>
           </div>
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full justify-center gap-2 sm:hidden"
+              onClick={() => setShowActions((value) => !value)}
+              aria-expanded={showActions}
+            >
+              Acciones {showActions ? "▴" : "▾"}
+            </Button>
+            <div className={`flex-col gap-2 [&>button]:w-full ${showActions ? "flex" : "hidden"} sm:flex sm:flex-row sm:flex-wrap sm:gap-2 sm:[&>button]:w-auto`}>
             {selectedStore.logisticsProvider === "moovin" && enRouteMoovinGuides.length > 0 && (
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 disabled={moovinSyncing}
                 onClick={updateMoovinStatuses}
                 className="gap-2"
               >
                 {moovinSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                {moovinSyncing ? "Actualizando..." : `Actualizar Moovin (${enRouteMoovinGuides.length})`}
+                {moovinSyncing ? "Actualizando..." : `Moovin (${enRouteMoovinGuides.length})`}
               </Button>
             )}
             {selectedStore.logisticsProvider === "forza" && enRouteForzaGuides.length > 0 && (
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 disabled={forzaSyncing}
                 onClick={updateForzaStatuses}
                 className="gap-2"
               >
                 {forzaSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                {forzaSyncing ? "Actualizando..." : `Actualizar Forza (${enRouteForzaGuides.length})`}
+                {forzaSyncing ? "Actualizando..." : `Forza (${enRouteForzaGuides.length})`}
               </Button>
             )}
-            <Button type="button" variant="outline" disabled={syncingShopify} onClick={onSyncShopify} className="gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={syncingShopify} onClick={onSyncShopify} className="gap-2">
               <Database className="h-4 w-4" />
               {syncingShopify ? "Sincronizando..." : "Sync Shopify"}
             </Button>
             <Button
               type="button"
+              size="sm"
               disabled={importingLogistics}
               onClick={() => {
                 setLogisticsModalError("");
@@ -1884,6 +1907,7 @@ function OrdersTab({
               {importingLogistics ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {importingLogistics ? "Importando..." : "Importar Boxful"}
             </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -1941,16 +1965,29 @@ function OrdersTab({
                 type="button"
                 variant="outline"
                 size="sm"
+                className="gap-1.5 sm:hidden"
+                onClick={() => setShowFilters((value) => !value)}
+                aria-expanded={showFilters}
+              >
+                Filtros {showFilters ? "▴" : "▾"}
+                {(periodMode !== "all" || trackingFilter !== "all" || settlementFilter !== "all") && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
                 className="gap-2"
                 disabled={exporting || !total}
                 onClick={handleExport}
               >
-                <Download className="h-4 w-4" /> {exporting ? "Exportando..." : `Exportar (${total})`}
+                <Download className="h-4 w-4" /> <span className="hidden sm:inline">{exporting ? "Exportando..." : `Exportar (${total})`}</span><span className="sm:hidden">{exporting ? "..." : total}</span>
               </Button>
             </div>
           </div>
 
-          <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+          <div className={`space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3 ${showFilters ? "" : "hidden"} sm:block`}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Periodo</span>
               <div className="inline-flex overflow-hidden rounded-md border border-border">
@@ -2010,42 +2047,46 @@ function OrdersTab({
 
             <div className="h-px bg-border/60" />
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Estado</span>
-              {ORDER_TRACKING_FILTERS.map((filter) => (
-                <FilterChip
-                  key={filter.value}
-                  label={filter.label}
-                  count={trackingCounts[filter.value]}
-                  active={trackingFilter === filter.value}
-                  onClick={() => setTrackingFilter(filter.value)}
-                  dotClass={filter.value === "all" ? undefined : TRACKING_DOT_COLORS[filter.value]}
-                />
-              ))}
+            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground sm:w-[4.5rem] sm:shrink-0">Estado</span>
+              <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [&>button]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+                {ORDER_TRACKING_FILTERS.map((filter) => (
+                  <FilterChip
+                    key={filter.value}
+                    label={filter.label}
+                    count={trackingCounts[filter.value]}
+                    active={trackingFilter === filter.value}
+                    onClick={() => setTrackingFilter(filter.value)}
+                    dotClass={filter.value === "all" ? undefined : TRACKING_DOT_COLORS[filter.value]}
+                  />
+                ))}
+              </div>
             </div>
 
             <div className="h-px bg-border/60" />
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Liquidacion</span>
-              {ORDER_SETTLEMENT_FILTERS.map((filter) => (
-                <FilterChip
-                  key={filter.value}
-                  label={filter.label}
-                  count={settlementCounts[filter.value]}
-                  active={settlementFilter === filter.value}
-                  onClick={() => setSettlementFilter(filter.value)}
-                />
-              ))}
-              {settlementFilter !== "all" && (
-                <button
-                  type="button"
-                  onClick={() => setSettlementFilter("all")}
-                  className="ml-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  Limpiar
-                </button>
-              )}
+            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground sm:w-[4.5rem] sm:shrink-0">Liquidacion</span>
+              <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1 [&>button]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+                {ORDER_SETTLEMENT_FILTERS.map((filter) => (
+                  <FilterChip
+                    key={filter.value}
+                    label={filter.label}
+                    count={settlementCounts[filter.value]}
+                    active={settlementFilter === filter.value}
+                    onClick={() => setSettlementFilter(filter.value)}
+                  />
+                ))}
+                {settlementFilter !== "all" && (
+                  <button
+                    type="button"
+                    onClick={() => setSettlementFilter("all")}
+                    className="ml-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -2209,8 +2250,85 @@ function OrdersTable({
   emptyLabel?: string;
 }) {
   return (
-    <div className="max-h-[620px] overflow-auto border border-border">
-      <table className="w-full min-w-[1180px] text-sm">
+    <>
+      {/* Mobile: una tarjeta por pedido (la tabla de 13 columnas no entra en el cel). */}
+      <div className="space-y-2 md:hidden">
+        {rows.map((row) => {
+          const traces = row.traces ?? [];
+          const trackingStatus = getEffectiveTrackingStatus(row, traces);
+          const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
+          const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
+          const itemsText = (row.package_items ?? []).map((item) => item.title).join(", ");
+          return (
+            <div key={row.row_key} className="rounded-lg border border-border bg-card p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-mono text-sm font-semibold">{row.order_name || row.shopify_order_name}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {row.customer_name || "Sin nombre"}
+                    {row.shopify_created_at ? ` · ${formatDate(row.shopify_created_at)}` : ""}
+                  </p>
+                </div>
+                <StatusBadge status={trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                {row.guide_number ? (
+                  <>
+                    <span className="font-mono">{row.guide_number}</span>
+                    {displayCourier && <span className="text-muted-foreground">· {displayCourier}</span>}
+                    {isMoovinCourier(displayCourier, selectedStore) && (
+                      <MoovinTrackingButton
+                        idPackage={row.guide_number}
+                        lastName={row.last_name ?? ""}
+                        cached={moovinByPackage.get(row.guide_number)}
+                      />
+                    )}
+                    {isForzaCourier(displayCourier, selectedStore) && (
+                      <ForzaTrackingButton guide={row.guide_number} cached={forza} />
+                    )}
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">Sin guía</span>
+                )}
+              </div>
+              {itemsText && (
+                <p className="mt-1 truncate text-[11px] text-muted-foreground" title={itemsText}>
+                  {itemsText}
+                </p>
+              )}
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="font-mono text-sm font-semibold">{currency(row.cod_amount)}</span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge variant={row.source === "boxful" ? "success" : row.source === "liquidacion" ? "warning" : "muted"}>
+                    {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
+                  </Badge>
+                  <SettlementStatusBadge traces={traces} />
+                  {traces.length > 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      A liquidar {currency(sum(traces.map((trace) => trace.amount_to_liquidate)))}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {!rows.length && (
+          <div className="rounded-lg border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                <RefreshCw className="h-4 w-4 animate-spin" /> Cargando pedidos...
+              </span>
+            ) : (
+              emptyLabel
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop: tabla completa */}
+      <div className="hidden max-h-[620px] overflow-auto border border-border md:block">
+        <table className="w-full min-w-[1180px] text-sm">
         <thead className="sticky top-0 bg-card">
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
             <th className="px-2 py-1.5">Orden</th>
@@ -2324,7 +2442,8 @@ function OrdersTable({
           )}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -7609,18 +7728,22 @@ function OperationalKpiCard({
         : "text-muted-foreground";
   return (
     <Card className={borderClass}>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-1">
-          <p className="truncate text-xs text-muted-foreground">{label}</p>
-          {star && <span className="shrink-0 text-[10px] text-primary">★</span>}
+      <CardContent className="p-2.5 sm:p-3">
+        <div className="flex items-baseline justify-between gap-1.5">
+          <p className="truncate text-[11px] text-muted-foreground">{label}</p>
+          <span className="flex shrink-0 items-baseline gap-1">
+            {star && <span className="text-[9px] text-primary">★</span>}
+            <span className={`text-base font-bold leading-none sm:text-xl ${valueClass}`}>{loading ? "..." : value}</span>
+          </span>
         </div>
-        <div className="mt-2 flex items-baseline justify-between gap-2">
-          <p className={`text-2xl font-bold ${valueClass}`}>{loading ? "..." : value}</p>
-          {deltaLabel && !loading && (
-            <span className={`shrink-0 text-[11px] font-medium ${deltaClass}`}>{deltaLabel}</span>
-          )}
-        </div>
-        {sub && <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{sub}</p>}
+        {(sub || deltaLabel) && (
+          <div className="mt-0.5 flex items-baseline justify-between gap-1.5">
+            <p className="truncate text-[10px] leading-tight text-muted-foreground">{sub ?? ""}</p>
+            {deltaLabel && !loading && (
+              <span className={`shrink-0 text-[10px] font-medium ${deltaClass}`}>{deltaLabel}</span>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -7642,7 +7765,7 @@ function AlertStat({
         ? "border-amber-500/40 text-amber-200"
         : "border-border text-muted-foreground";
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-md border bg-card px-2.5 py-1 ${cls}`}>
+    <span className={`inline-flex items-center justify-between gap-1.5 rounded-md border bg-card px-2 py-1 text-[11px] ${cls}`}>
       <span className="text-muted-foreground">{label}</span>
       <span className="font-semibold text-foreground">{value}</span>
     </span>
