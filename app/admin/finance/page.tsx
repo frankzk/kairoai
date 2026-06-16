@@ -2213,8 +2213,85 @@ function OrdersTable({
   emptyLabel?: string;
 }) {
   return (
-    <div className="max-h-[620px] overflow-auto border border-border">
-      <table className="w-full min-w-[1180px] text-sm">
+    <>
+      {/* Mobile: una tarjeta por pedido (la tabla de 13 columnas no entra en el cel). */}
+      <div className="space-y-2 md:hidden">
+        {rows.map((row) => {
+          const traces = row.traces ?? [];
+          const trackingStatus = getEffectiveTrackingStatus(row, traces);
+          const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
+          const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
+          const itemsText = (row.package_items ?? []).map((item) => item.title).join(", ");
+          return (
+            <div key={row.row_key} className="rounded-lg border border-border bg-card p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-mono text-sm font-semibold">{row.order_name || row.shopify_order_name}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {row.customer_name || "Sin nombre"}
+                    {row.shopify_created_at ? ` · ${formatDate(row.shopify_created_at)}` : ""}
+                  </p>
+                </div>
+                <StatusBadge status={trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                {row.guide_number ? (
+                  <>
+                    <span className="font-mono">{row.guide_number}</span>
+                    {displayCourier && <span className="text-muted-foreground">· {displayCourier}</span>}
+                    {isMoovinCourier(displayCourier, selectedStore) && (
+                      <MoovinTrackingButton
+                        idPackage={row.guide_number}
+                        lastName={row.last_name ?? ""}
+                        cached={moovinByPackage.get(row.guide_number)}
+                      />
+                    )}
+                    {isForzaCourier(displayCourier, selectedStore) && (
+                      <ForzaTrackingButton guide={row.guide_number} cached={forza} />
+                    )}
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">Sin guía</span>
+                )}
+              </div>
+              {itemsText && (
+                <p className="mt-1 truncate text-[11px] text-muted-foreground" title={itemsText}>
+                  {itemsText}
+                </p>
+              )}
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="font-mono text-sm font-semibold">{currency(row.cod_amount)}</span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge variant={row.source === "boxful" ? "success" : row.source === "liquidacion" ? "warning" : "muted"}>
+                    {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
+                  </Badge>
+                  <SettlementStatusBadge traces={traces} />
+                  {traces.length > 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      A liquidar {currency(sum(traces.map((trace) => trace.amount_to_liquidate)))}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {!rows.length && (
+          <div className="rounded-lg border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                <RefreshCw className="h-4 w-4 animate-spin" /> Cargando pedidos...
+              </span>
+            ) : (
+              emptyLabel
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop: tabla completa */}
+      <div className="hidden max-h-[620px] overflow-auto border border-border md:block">
+        <table className="w-full min-w-[1180px] text-sm">
         <thead className="sticky top-0 bg-card">
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
             <th className="px-2 py-1.5">Orden</th>
@@ -2328,7 +2405,8 @@ function OrdersTable({
           )}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   );
 }
 
