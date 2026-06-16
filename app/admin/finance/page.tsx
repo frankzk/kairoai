@@ -192,6 +192,7 @@ const EMPTY_FINANCE_CONTROL_CENTER: FinanceControlCenter = {
 };
 
 const emptyExpense = {
+  id: null as number | null,
   type: "ads" as ExpenseType,
   expense_date: new Date().toISOString().slice(0, 10),
   month: new Date().toISOString().slice(0, 7),
@@ -1052,14 +1053,19 @@ export default function FinancePage() {
       return false;
     }
 
+    const isEditingExpense = Boolean(expenseForm.id);
     const res = await fetch(withStore("/api/finance/expenses", selectedStore.code), {
-      method: "POST",
+      method: isEditingExpense ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...expensePayload.expense, store: selectedStore.code }),
+      body: JSON.stringify({
+        ...expensePayload.expense,
+        ...(isEditingExpense ? { id: expenseForm.id } : {}),
+        store: selectedStore.code,
+      }),
     });
     const json = await readApiJson(res);
     if (!res.ok) {
-      setError(json.error ?? "No se pudo guardar gasto");
+      setError(json.error ?? (isEditingExpense ? "No se pudo actualizar gasto" : "No se pudo guardar gasto"));
       return false;
     }
     setExpenseForm({ ...emptyExpense, type: expenseForm.type });
@@ -4798,6 +4804,7 @@ function ExpensesTab({
 }) {
   const [activeType, setActiveType] = useState<ExpenseType>("ads");
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null);
   const [staff, setStaff] = useState<PayrollStaff[]>([]);
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
 
@@ -4933,19 +4940,37 @@ function ExpensesTab({
 
   function selectExpenseType(type: ExpenseType) {
     setActiveType(type);
+    setEditingExpenseId(null);
     setForm(prepareExpenseFormForType(form, type));
     clearExpenseFilters();
   }
 
   function openExpenseModal(type: ExpenseType) {
     setActiveType(type);
+    setEditingExpenseId(null);
     setForm(prepareExpenseFormForType(form, type));
     setIsExpenseModalOpen(true);
   }
 
+  function openEditExpenseModal(expense: BusinessExpense) {
+    setActiveType(expense.type);
+    setEditingExpenseId(expense.id);
+    setForm(buildExpenseFormFromRecord(expense));
+    setIsExpenseModalOpen(true);
+  }
+
+  function closeExpenseModal() {
+    setIsExpenseModalOpen(false);
+    setEditingExpenseId(null);
+    setForm({ ...emptyExpense, type: activeType });
+  }
+
   async function handleExpenseSubmit(event: FormEvent<HTMLFormElement>) {
     const didSave = await onSave(event);
-    if (didSave) setIsExpenseModalOpen(false);
+    if (didSave) {
+      setIsExpenseModalOpen(false);
+      setEditingExpenseId(null);
+    }
   }
 
   return (
@@ -5116,14 +5141,26 @@ function ExpensesTab({
                       )}
                     </td>
                     <td className="px-3 py-2 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          aria-label="Editar gasto"
+                          onClick={() => openEditExpenseModal(expense)}
+                          className="text-muted-foreground transition-colors hover:text-primary"
+                          title="Editar gasto"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
                       <button
                         type="button"
                         aria-label="Eliminar gasto"
                         onClick={() => onDelete(expense.id)}
-                        className="text-muted-foreground hover:text-red-400"
+                          className="text-muted-foreground transition-colors hover:text-red-400"
+                          title="Eliminar gasto"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -5141,15 +5178,17 @@ function ExpensesTab({
       </Card>
 
       {isExpenseModalOpen && (
-        <ModalOverlay onClose={() => setIsExpenseModalOpen(false)} labelledBy="expense-modal-title">
+        <ModalOverlay onClose={closeExpenseModal} labelledBy="expense-modal-title">
           <div className="w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-2xl">
             <div className="mb-5 flex items-start justify-between gap-4">
               <div className="space-y-1">
                 <h3 id="expense-modal-title" className="text-base font-semibold">
-                  {activeView.modalTitle}
+                  {editingExpenseId ? `Editar ${activeView.label}` : activeView.modalTitle}
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  El gasto queda clasificado automaticamente en {activeView.label}.
+                  {editingExpenseId
+                    ? "Actualiza los datos del gasto registrado."
+                    : `El gasto queda clasificado automaticamente en ${activeView.label}.`}
                 </p>
               </div>
               <Button
@@ -5157,7 +5196,7 @@ function ExpensesTab({
                 variant="ghost"
                 size="icon"
                 aria-label="Cerrar registro de gasto"
-                onClick={() => setIsExpenseModalOpen(false)}
+                onClick={closeExpenseModal}
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -5390,12 +5429,12 @@ function ExpensesTab({
               )}
 
               <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
-                <Button type="button" variant="outline" onClick={() => setIsExpenseModalOpen(false)}>
+                <Button type="button" variant="outline" onClick={closeExpenseModal}>
                   Cancelar
                 </Button>
                 <Button type="submit" className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  Guardar
+                  {editingExpenseId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                  {editingExpenseId ? "Guardar cambios" : "Guardar"}
                 </Button>
               </div>
             </form>
@@ -5572,6 +5611,24 @@ function prepareExpenseFormForType(form: typeof emptyExpense, type: ExpenseType)
   };
 }
 
+function buildExpenseFormFromRecord(expense: BusinessExpense): typeof emptyExpense {
+  const originalPayment = parseExpenseOriginalPayment(expense);
+  return {
+    ...emptyExpense,
+    id: expense.id,
+    type: expense.type,
+    expense_date: expense.expense_date || new Date().toISOString().slice(0, 10),
+    month: expense.month || new Date().toISOString().slice(0, 7),
+    platform: expense.platform || "",
+    category: expense.category || "",
+    description: expense.description || "",
+    amount: String(originalPayment?.amount ?? expense.amount ?? ""),
+    currency: originalPayment?.currency ?? normalizeExpenseOriginalCurrency(expense.currency),
+    exchange_rate: originalPayment?.exchangeRate ? String(originalPayment.exchangeRate) : "",
+    notes: originalPayment?.cleanNotes ?? expense.notes ?? "",
+  };
+}
+
 function normalizeExpenseOriginalCurrency(value: string): ExpenseOriginalCurrency {
   return isExpenseOriginalCurrency(value) ? value : "CRC";
 }
@@ -5603,17 +5660,39 @@ function getExchangeRateLabel(currencyCode: ExpenseOriginalCurrency): string {
 }
 
 function getExpenseOriginalPaymentLabel(expense: BusinessExpense): string {
-  const originalMatch = expense.notes.match(/Monto original:\s*([A-Z]{3})\s*([0-9.,]+)/i);
-  const originalCurrency = originalMatch?.[1]?.toUpperCase() ?? "";
-  const originalAmount = originalMatch?.[2];
-  const exchangeRate = expense.notes.match(/Tipo de cambio [A-Z]{3}->CRC:\s*([0-9.,]+)/i)?.[1];
-  if (!originalAmount && !exchangeRate) return "";
+  const originalPayment = parseExpenseOriginalPayment(expense);
+  if (!originalPayment) return "";
+  const amountLabel = formatOriginalCurrencyAmount(originalPayment.currency, originalPayment.amount);
+  return originalPayment.exchangeRate ? `${amountLabel} @ ${originalPayment.exchangeRate}` : amountLabel;
+}
 
-  const amount = Number(String(originalAmount ?? "").replace(",", "."));
-  const amountLabel = Number.isFinite(amount) && amount > 0
-    ? formatOriginalCurrencyAmount(originalCurrency, amount)
-    : originalCurrency || "Origen";
-  return exchangeRate ? `${amountLabel} @ ${exchangeRate}` : amountLabel;
+function parseExpenseOriginalPayment(expense: Pick<BusinessExpense, "notes">): {
+  currency: ExpenseOriginalCurrency;
+  amount: number;
+  exchangeRate: number;
+  cleanNotes: string;
+} | null {
+  const notes = expense.notes || "";
+  const originalMatch = notes.match(/Monto original:\s*([A-Z]{3})\s*([0-9.,]+)/i);
+  if (!originalMatch) return null;
+  const originalCurrency = normalizeExpenseOriginalCurrency(originalMatch[1].toUpperCase());
+  const amount = parseLocaleNumber(originalMatch[2]);
+  const exchangeRateMatch = notes.match(/Tipo de cambio [A-Z]{3}->CRC:\s*([0-9.,]+)/i);
+  const exchangeRate = exchangeRateMatch ? parseLocaleNumber(exchangeRateMatch[1]) : 0;
+  const cleanNotes =
+    notes
+      .split("\n")
+      .find((line) => line.startsWith("Nota:"))
+      ?.replace(/^Nota:\s*/i, "")
+      .trim() ?? "";
+
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return { currency: originalCurrency, amount, exchangeRate, cleanNotes };
+}
+
+function parseLocaleNumber(value: string): number {
+  const parsed = Number(String(value || "").replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function formatOriginalCurrencyAmount(currencyCode: string, amount: number): string {
