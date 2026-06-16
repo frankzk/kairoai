@@ -4,18 +4,24 @@
 // server-side la usen sin que el navegador tenga que cargar todos los pedidos.
 // El de-duplicado contra page.tsx es un paso posterior.
 
-import type { FinanceStorePublic } from "@/lib/store-config";
+import { FINANCE_STORES, type FinanceStorePublic } from "@/lib/store-config";
 import type {
+  BusinessExpense,
   ForzaTrackingRow,
   LogisticsRow,
   MoovinTrackingRow,
+  ProductCost,
+  ProductCostVersion,
+  SettlementImport,
   SettlementOrderItem,
   SettlementRow,
 } from "@/lib/finance-types";
 import {
   buildShopifyMatchIndex,
+  extractExternalOrderCodesFromText,
   findShopifyOrderForRow,
   getOrderMatchKeys,
+  getShopifyNoteText,
   getShopifyOrderMatchKeys,
   normalizeMatchKey,
   normalizeSearchText,
@@ -963,4 +969,902 @@ function addSettlementTrace(
     return;
   }
   traceByKey.set(key, [...existing, trace]);
+}
+
+// ---------------------------------------------------------------------------
+// Centro de control / Rentabilidad / Cierre mensual / Notas (Carril 2 inc.2)
+// Movido VERBATIM desde app/admin/finance/page.tsx para que las rutas
+// product-analysis/, monthly-close/ y notes/ lo usen sin que el navegador
+// cargue el snapshot completo (~11k pedidos). Las funciones-hoja compartidas
+// (currency, money, roundMoney, daysSince, getMonthKey, cleanProductTitle,
+// getProductTitleCostKey, getProductItemCostKey, getTrackingStatusLabel,
+// UNKNOWN_PRODUCT_LABEL) se mantienen tambien en page.tsx para la UI; el
+// de-duplicado es un paso posterior.
+// ---------------------------------------------------------------------------
+
+export type FinancialAnomalySeverity = "high" | "medium" | "low";
+
+export interface OrderProfitabilityRow {
+  order_key: string;
+  order_name: string;
+  guide_number: string;
+  customer_name: string;
+  source: "shopify" | "boxful" | "liquidacion";
+  shopify_cancelled_at: string | null;
+  shopify_financial_status: string;
+  tracking_status: string;
+  tracking_label: string;
+  settlement_status: string;
+  settlement_files: string[];
+  settlement_count: number;
+  settlement_charged_costs: number;
+  settlement_cod_commission: number;
+  settlement_card_commission: number;
+  settlement_delivery_cost: number;
+  settlement_pick_pack_cost: number;
+  settlement_packaging_cost: number;
+  amount_to_liquidate: number;
+  expected_cod: number;
+  order_value: number;
+  product_cost: number;
+  contribution_margin: number;
+  missing_cost_skus: string[];
+  items: ProductLineItem[];
+  items_summary: string;
+  cash_status: "cobrado" | "por_cobrar" | "sin_caja";
+  issue_count: number;
+  created_at: string | null;
+  days_since_order: number | null;
+  delivered_on: string | null;
+}
+
+export interface ProductAnalysisRow {
+  key: string;
+  product_name: string;
+  sku: string;
+  sample_orders: string[];
+  orders: number;
+  units: number;
+  dispatched: number;
+  dispatch_rate: number;
+  delivery_effectiveness: number;
+  delivered: number;
+  not_delivered: number;
+  annulled: number;
+  pending: number;
+}
+
+export interface FinancialAnomaly {
+  id: string;
+  severity: FinancialAnomalySeverity;
+  type: string;
+  order_name: string;
+  guide_number: string;
+  amount: number;
+  source_file: string;
+  message: string;
+  action: string;
+}
+
+export interface FinanceControlCenter {
+  orders: OrderProfitabilityRow[];
+  anomalies: FinancialAnomaly[];
+  cash_received: number;
+  cash_pending: number;
+  contribution_margin: number;
+  missing_cost_count: number;
+}
+
+export interface MonthlyCloseRow {
+  month: string;
+  orders: number;
+  delivered: number;
+  not_delivered: number;
+  annulled: number;
+  pending: number;
+  settled: number;
+  unsettled: number;
+  to_claim: number;
+  to_claim_fresh: number;
+  to_claim_overdue: number;
+  duplicate_settlements: number;
+  boxful_costs: number;
+  boxful_cod_commission: number;
+  boxful_card_commission: number;
+  boxful_delivery_cost: number;
+  boxful_pick_pack_cost: number;
+  boxful_packaging_cost: number;
+  cash_received: number;
+  cash_pending: number;
+  product_costs: number;
+  ads: number;
+  payroll: number;
+  misc: number;
+  contribution_margin: number;
+  net_profit: number;
+  misc_software: number;
+  misc_other: number;
+}
+
+export interface ShopifyNoteAliasRow {
+  row_key: string;
+  shopify_order_name: string;
+  note_order_number: string;
+  note: string;
+  created_at: string;
+}
+
+const UNKNOWN_PRODUCT_LABEL = "Producto sin registrar";
+
+function currency(value: number, store = FINANCE_STORES[0]): string {
+  return new Intl.NumberFormat(store.locale, {
+    style: "currency",
+    currency: store.currency,
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+}
+
+function money(value: number): number {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function roundMoney(value: number): number {
+  return money(value);
+}
+
+function daysSince(value: string): number {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 0;
+  const diff = Date.now() - parsed.getTime();
+  return Math.max(0, Math.floor(diff / (24 * 60 * 60 * 1000)));
+}
+
+function getMonthKey(value: string | null): string {
+  if (!value) return "";
+  return value.slice(0, 7);
+}
+
+function cleanProductTitle(title: string): string {
+  return String(title || UNKNOWN_PRODUCT_LABEL)
+    .replace(/^\s*\d+\s*x\s*/i, "")
+    .trim() || UNKNOWN_PRODUCT_LABEL;
+}
+
+function looksLikeSkuOnly(value: string): boolean {
+  const text = value.trim();
+  return Boolean(text && !/\s/.test(text) && /^[a-z0-9._-]{3,}$/i.test(text));
+}
+
+function getProductTitleCostKey(title: string): string {
+  const cleanTitle = cleanProductTitle(title);
+  if (!cleanTitle || cleanTitle === UNKNOWN_PRODUCT_LABEL) return "";
+  const slug = cleanTitle
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return slug ? `producto:${slug}` : "";
+}
+
+function getProductItemCostKey(item: Pick<ProductLineItem, "sku" | "title">): string {
+  const sku = String(item.sku || "").trim().toLowerCase();
+  if (sku) return sku;
+  return getProductTitleCostKey(item.title);
+}
+
+function parseItemsSummary(summary: string): ProductLineItem[] {
+  return String(summary || "")
+    .split(/\s*,\s*/)
+    .map((part): ProductLineItem | null => {
+      const trimmed = part.trim();
+      if (!trimmed) return null;
+
+      const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*x\s+(.+)$/i);
+      const quantity = match ? Math.max(1, Number(match[1] || 1)) : 1;
+      const title = cleanProductTitle(match?.[2] ?? trimmed);
+      if (!title || title === UNKNOWN_PRODUCT_LABEL) return null;
+
+      return {
+        sku: looksLikeSkuOnly(title) ? title.toLowerCase() : "",
+        title,
+        quantity,
+        price: 0,
+      };
+    })
+    .filter((item): item is ProductLineItem => Boolean(item));
+}
+
+function getProductAnalysisItems(order: OrderProfitabilityRow): ProductLineItem[] {
+  if (order.items.length) return order.items;
+  const parsedSummaryItems = parseItemsSummary(order.items_summary);
+  if (parsedSummaryItems.length) return parsedSummaryItems;
+  return [{ title: UNKNOWN_PRODUCT_LABEL, quantity: 1, price: 0 }];
+}
+
+function normalizeProductLineItem(item: ProductLineItem): { key: string; sku: string; title: string; quantity: number } {
+  const sku = String(item.sku ?? "").trim();
+  const title = cleanProductTitle(item.title || sku || UNKNOWN_PRODUCT_LABEL);
+  const titleKey = getProductTitleCostKey(title);
+  const key = titleKey || (sku ? `sku:${sku.toLowerCase()}` : `title:${title.toLowerCase()}`);
+  return {
+    key,
+    sku,
+    title,
+    quantity: Math.max(1, Number(item.quantity || 1)),
+  };
+}
+
+function hasBoxfulGuide(order: Pick<OrderProfitabilityRow, "guide_number">): boolean {
+  const guide = String(order.guide_number || "").trim();
+  return Boolean(guide && guide !== "-" && guide !== "0");
+}
+
+function isShopifyProductAnalysisOrder(
+  order: Pick<
+    OrderProfitabilityRow,
+    "source" | "order_name" | "shopify_financial_status" | "shopify_cancelled_at" | "created_at"
+  >
+): boolean {
+  if (order.source === "shopify") return true;
+  if (order.shopify_financial_status || order.shopify_cancelled_at || order.created_at) return true;
+  return /^#?MCRC/i.test(order.order_name);
+}
+
+function getProductOrderAnalysisStatus(
+  row: Pick<OrderProfitabilityRow, "tracking_status" | "shopify_cancelled_at" | "shopify_financial_status">
+): "pending" | "annulled" | "delivered" | "not_delivered" {
+  if (isShopifyCancelled(row)) return "annulled";
+  if (row.tracking_status === "delivered") return "delivered";
+  if (row.tracking_status === "not_delivered" || row.tracking_status === "returned") return "not_delivered";
+  return "pending";
+}
+
+function buildSettlementRowsByKey(settlementRows: SettlementRow[]): Map<string, SettlementRow[]> {
+  const rowsByKey = new Map<string, SettlementRow[]>();
+  for (const row of settlementRows) {
+    for (const key of uniqueKeys([
+      normalizeMatchKey(row.order_name),
+      normalizeMatchKey(row.shopify_order_name),
+      normalizeMatchKey(row.guide_number),
+    ])) {
+      rowsByKey.set(key, [...(rowsByKey.get(key) ?? []), row]);
+    }
+  }
+  return rowsByKey;
+}
+
+function getMatchedSettlementRowsForOrder(
+  order: TrackableOrderRow,
+  rowsByKey: Map<string, SettlementRow[]>
+): SettlementRow[] {
+  const seen = new Set<number>();
+  const matches: SettlementRow[] = [];
+  const keys = uniqueKeys([
+    ...getOrderMatchKeys(order),
+    normalizeMatchKey(order.guide_number),
+  ]);
+
+  for (const key of keys) {
+    for (const row of rowsByKey.get(key) ?? []) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      matches.push(row);
+    }
+  }
+
+  return matches;
+}
+
+function getProfitabilityItems(
+  order: TrackableOrderRow,
+  settlementRows: SettlementRow[]
+): Array<{ sku?: string; title: string; quantity: number; price: number }> {
+  const settlementItems = settlementRows.flatMap((row) => row.order_items ?? []);
+  if (settlementItems.length) return settlementItems;
+  return order.package_items ?? [];
+}
+
+function buildCostVersionsBySku(
+  costs: ProductCost[],
+  versions: ProductCostVersion[]
+): Map<string, ProductCostVersion[]> {
+  const bySku = new Map<string, ProductCostVersion[]>();
+  const allVersions: ProductCostVersion[] = [
+    ...versions,
+    ...costs
+      .filter((cost) => cost.active)
+      .map((cost) => ({
+        id: -cost.id,
+        store_id: cost.store_id,
+        sku: cost.sku,
+        product_name: cost.product_name,
+        unit_cost: cost.unit_cost,
+        packaging_cost: cost.packaging_cost,
+        currency: cost.currency,
+        effective_from: cost.effective_from || "1900-01-01",
+        created_at: "",
+      })),
+  ];
+
+  for (const version of allVersions) {
+    const key = version.sku.toLowerCase();
+    bySku.set(key, [...(bySku.get(key) ?? []), version]);
+
+    const titleKey = getProductTitleCostKey(version.product_name);
+    if (titleKey && titleKey !== key) bySku.set(titleKey, [...(bySku.get(titleKey) ?? []), version]);
+  }
+
+  for (const [sku, skuVersions] of Array.from(bySku.entries())) {
+    bySku.set(
+      sku,
+      skuVersions.sort((a, b) =>
+        b.effective_from.localeCompare(a.effective_from) || b.created_at.localeCompare(a.created_at)
+      )
+    );
+  }
+  return bySku;
+}
+
+function pickCostVersion(versions: ProductCostVersion[], orderDate: string | null): ProductCostVersion | undefined {
+  if (!versions.length) return undefined;
+  const date = (orderDate || new Date().toISOString()).slice(0, 10);
+  return versions.find((version) => version.effective_from <= date) ?? versions[versions.length - 1];
+}
+
+function calculateProductCost(
+  items: Array<{ sku?: string; title: string; quantity: number; price: number }>,
+  costVersionsBySku: Map<string, ProductCostVersion[]>,
+  trackingStatus: string,
+  orderDate: string | null
+): { productCost: number; missingCostSkus: string[] } {
+  if (trackingStatus !== "delivered") return { productCost: 0, missingCostSkus: [] };
+
+  const missingCostSkus = new Set<string>();
+  let productCost = 0;
+
+  for (const item of items) {
+    const costKey = getProductItemCostKey(item);
+    if (!costKey) continue;
+    const cost = pickCostVersion(costVersionsBySku.get(costKey) ?? [], orderDate);
+    if (!cost) {
+      missingCostSkus.add(costKey);
+      continue;
+    }
+    productCost += (Number(cost.unit_cost || 0) + Number(cost.packaging_cost || 0)) * Number(item.quantity || 0);
+  }
+
+  return {
+    productCost: roundMoney(productCost),
+    missingCostSkus: Array.from(missingCostSkus),
+  };
+}
+
+function shouldFlagNegativeMargin(contributionMargin: number, settlementCodAmount: number): boolean {
+  if (contributionMargin >= 0) return false;
+  return settlementCodAmount > 0;
+}
+
+function summarizeItems(items: Array<{ sku?: string; title: string; quantity: number }>): string {
+  return items
+    .slice(0, 2)
+    .map((item) => `${item.quantity || 1}x ${item.sku || item.title}`)
+    .join(", ");
+}
+
+function getTrackingStatusLabel(
+  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents" | "forza_incidents">,
+  traces: SettlementTrace[],
+  status: string
+): string {
+  if (status === "annulled") return "Anulado";
+  if (isFinalTrackingStatus(row.internal_status)) {
+    return status === "not_delivered" || status === "returned" ? "No entregado" : row.boxful_status || "Entregado";
+  }
+
+  const settlementTrace = traces.find((trace) => trace.internal_status === status);
+  if (settlementTrace?.settlement_status) return settlementTrace.settlement_status;
+  if (status === "delivered") return "Entregado";
+  if (status === "not_delivered" || status === "returned") return "No entregado";
+  if (status === "en_route") return row.boxful_status || "En ruta";
+  if (status === "en_route_retry") {
+    const retries = Math.max(row.moovin_incidents ?? 0, row.forza_incidents ?? 0, 1);
+    return retries > 1 ? `Reintento (${retries})` : "Reintento";
+  }
+  if (status === "incident") return "Incidencia";
+  return "Pendiente";
+}
+
+function buildOrderProfitabilityRow({
+  order,
+  settlementRows,
+  fileByImportId,
+  costVersionsBySku,
+  trackingStatus,
+  trackingLabel,
+}: {
+  order: TrackableOrderRow;
+  settlementRows: SettlementRow[];
+  fileByImportId: Map<number, string>;
+  costVersionsBySku: Map<string, ProductCostVersion[]>;
+  trackingStatus: string;
+  trackingLabel: string;
+}): OrderProfitabilityRow {
+  const settlementFiles = uniqueKeys(
+    settlementRows.map((row) => fileByImportId.get(row.import_id) || `Import #${row.import_id}`)
+  );
+  const settlementStatuses = uniqueKeys(settlementRows.map((row) => row.settlement_status || row.internal_status));
+  const amountToLiquidate = sum(settlementRows.map((row) => row.amount_to_liquidate));
+  const settlementCodCommission = sum(settlementRows.map((row) => Number(row.cod_commission || 0)));
+  const settlementCardCommission = sum(settlementRows.map((row) => Number(row.card_commission || 0)));
+  const settlementDeliveryCost = sum(settlementRows.map((row) => Number(row.delivery_cost || 0)));
+  const settlementPickPackCost = sum(settlementRows.map((row) => Number(row.pick_pack_cost || 0)));
+  const settlementPackagingCost = sum(settlementRows.map((row) => Number(row.packaging_cost || 0)));
+  const settlementChargedCosts =
+    settlementCodCommission +
+    settlementCardCommission +
+    settlementDeliveryCost +
+    settlementPickPackCost +
+    settlementPackagingCost;
+  const settlementCodAmount = sum(settlementRows.map((row) => row.cod_amount));
+  const expectedCod = order.cod_amount || sum(settlementRows.map((row) => row.cod_amount));
+  const items = getProfitabilityItems(order, settlementRows);
+  const orderValue =
+    sum(items.map((item) => Number(item.price || 0) * Number(item.quantity || 0))) || expectedCod;
+  const productCostResult = calculateProductCost(items, costVersionsBySku, trackingStatus, order.shopify_created_at);
+  const hasSettlement = settlementRows.length > 0;
+  const shopifyCancelledWithMovement = isShopifyCancelled(order) && (order.source !== "shopify" || hasSettlement);
+  const cashStatus =
+    hasSettlement ? "cobrado" : trackingStatus === "delivered" ? "por_cobrar" : "sin_caja";
+
+  const issueCount =
+    (trackingStatus === "delivered" && !hasSettlement ? 1 : 0) +
+    (settlementRows.length > 1 ? 1 : 0) +
+    (shopifyCancelledWithMovement ? 1 : 0) +
+    (productCostResult.missingCostSkus.length ? 1 : 0) +
+    (shouldFlagNegativeMargin(amountToLiquidate - productCostResult.productCost, settlementCodAmount) ? 1 : 0);
+
+  return {
+    order_key: order.row_key,
+    order_name: order.order_name || order.shopify_order_name,
+    guide_number: order.guide_number,
+    customer_name: order.customer_name,
+    source: order.source,
+    shopify_cancelled_at: order.shopify_cancelled_at,
+    shopify_financial_status: order.shopify_financial_status,
+    tracking_status: trackingStatus,
+    tracking_label: trackingLabel,
+    settlement_status: settlementStatuses.join(", ") || "Sin liquidacion",
+    settlement_files: settlementFiles,
+    settlement_count: settlementRows.length,
+    settlement_charged_costs: roundMoney(settlementChargedCosts),
+    settlement_cod_commission: roundMoney(settlementCodCommission),
+    settlement_card_commission: roundMoney(settlementCardCommission),
+    settlement_delivery_cost: roundMoney(settlementDeliveryCost),
+    settlement_pick_pack_cost: roundMoney(settlementPickPackCost),
+    settlement_packaging_cost: roundMoney(settlementPackagingCost),
+    amount_to_liquidate: roundMoney(amountToLiquidate),
+    expected_cod: roundMoney(expectedCod),
+    order_value: roundMoney(orderValue),
+    product_cost: productCostResult.productCost,
+    contribution_margin: roundMoney(amountToLiquidate - productCostResult.productCost),
+    missing_cost_skus: productCostResult.missingCostSkus,
+    items,
+    items_summary: summarizeItems(items),
+    cash_status: cashStatus,
+    issue_count: issueCount,
+    created_at: order.shopify_created_at,
+    days_since_order: order.shopify_created_at ? daysSince(order.shopify_created_at) : null,
+    delivered_on: order.finalized_on ?? null,
+  };
+}
+
+function buildFinancialAnomalies(
+  row: OrderProfitabilityRow,
+  settlementRows: SettlementRow[]
+): FinancialAnomaly[] {
+  const anomalies: FinancialAnomaly[] = [];
+  const hasSettlement = settlementRows.length > 0;
+  const sourceFile = row.settlement_files[0] ?? "";
+
+  if (row.tracking_status === "delivered" && !hasSettlement) {
+    anomalies.push({
+      id: `${row.order_key}-delivered-without-settlement`,
+      severity: "high",
+      type: "Entregado sin liquidacion",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      amount: row.expected_cod,
+      source_file: sourceFile,
+      message: "Boxful/seguimiento indica entregado pero no aparece en liquidacion.",
+      action: "Reclamar liquidacion a Boxful y revisar el corte faltante.",
+    });
+  }
+
+  if (settlementRows.length > 1) {
+    anomalies.push({
+      id: `${row.order_key}-duplicate-settlement`,
+      severity: "high",
+      type: "Doble liquidacion",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      amount: row.amount_to_liquidate,
+      source_file: sourceFile,
+      message: `El pedido aparece ${settlementRows.length} veces en liquidaciones.`,
+      action: "Validar que no exista cobro duplicado o archivo repetido.",
+    });
+  }
+
+  if (hasSettlement && row.tracking_status !== "delivered" && settlementRows.some((item) => item.internal_status === "delivered")) {
+    anomalies.push({
+      id: `${row.order_key}-settlement-without-delivery`,
+      severity: "medium",
+      type: "Liquidado sin entrega confirmada",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      amount: row.amount_to_liquidate,
+      source_file: sourceFile,
+      message: "Liquidacion reporta entregado pero seguimiento no esta entregado.",
+      action: "Comparar Boxful logistico contra liquidacion y corregir estado.",
+    });
+  }
+
+  const shopifyCancelledWithMovement = isShopifyCancelled(row) && (row.source !== "shopify" || hasSettlement);
+  if (shopifyCancelledWithMovement) {
+    anomalies.push({
+      id: `${row.order_key}-cancelled-with-movement`,
+      severity: row.tracking_status === "delivered" ? "high" : "medium",
+      type: "Anulado Shopify con movimiento",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      amount: row.amount_to_liquidate,
+      source_file: sourceFile,
+      message: "Shopify indica anulado/cancelado, pero Boxful o liquidacion muestran movimiento operativo.",
+      action: "No tratar como anulado puro; seguir estado Boxful. Si se entrego, contabilizar caja/margen; si no se entrego, reconocer costos logisticos.",
+    });
+  }
+
+  if (row.missing_cost_skus.length) {
+    anomalies.push({
+      id: `${row.order_key}-missing-cost`,
+      severity: "medium",
+      type: "SKU sin costo",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      amount: row.amount_to_liquidate,
+      source_file: sourceFile,
+      message: `Falta costo para ${row.missing_cost_skus.join(", ")}.`,
+      action: "Completar costo unitario/empaque en Costos SKU para cerrar margen.",
+    });
+  }
+
+  const settlementCodAmount = sum(settlementRows.map((item) => item.cod_amount));
+
+  if (hasSettlement && shouldFlagNegativeMargin(row.contribution_margin, settlementCodAmount)) {
+    anomalies.push({
+      id: `${row.order_key}-negative-margin`,
+      severity: "medium",
+      type: "Margen negativo",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      amount: row.contribution_margin,
+      source_file: sourceFile,
+      message: `El pedido queda con margen ${currency(row.contribution_margin)} antes de ads/planilla.`,
+      action: "Revisar precio, costo SKU, cobros logisticos y promociones.",
+    });
+  }
+
+  if (row.source === "shopify" && row.tracking_status === "pending" && Number(row.days_since_order ?? 0) >= 2) {
+    anomalies.push({
+      id: `${row.order_key}-shopify-without-boxful`,
+      severity: "low",
+      type: "Shopify sin Boxful",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      amount: row.expected_cod,
+      source_file: sourceFile,
+      message: "Pedido Shopify sigue sin guia Boxful despues de 2 dias.",
+      action: "Confirmar si se despacho, si falta importar el archivo logistico o si fue anulado manualmente.",
+    });
+  }
+
+  return anomalies;
+}
+
+function buildOrphanSettlementAnomaly(
+  row: SettlementRow,
+  fileByImportId: Map<number, string>
+): FinancialAnomaly {
+  const sourceFile = fileByImportId.get(row.import_id) || `Import #${row.import_id}`;
+  const orderName = row.shopify_order_name || row.order_name || "-";
+
+  return {
+    id: `settlement-${row.id}-without-shopify-order`,
+    severity: "high",
+    type: "Liquidacion sin pedido Shopify",
+    order_name: orderName,
+    guide_number: row.guide_number || "-",
+    amount: row.amount_to_liquidate,
+    source_file: sourceFile,
+    message: "Esta fila de liquidacion no se asigno a ningun pedido base Shopify visible.",
+    action: "Corregir el match por nota, guia, telefono o cliente. No se contabiliza como pedido hasta que apunte a Shopify.",
+  };
+}
+
+function uniqueFinancialAnomalies(anomalies: FinancialAnomaly[]): FinancialAnomaly[] {
+  const seen = new Set<string>();
+  const unique: FinancialAnomaly[] = [];
+  for (const anomaly of anomalies) {
+    if (seen.has(anomaly.id)) continue;
+    seen.add(anomaly.id);
+    unique.push(anomaly);
+  }
+  return unique;
+}
+
+function sortAnomalies(a: FinancialAnomaly, b: FinancialAnomaly): number {
+  const severityRank = { high: 3, medium: 2, low: 1 };
+  return severityRank[b.severity] - severityRank[a.severity] || a.type.localeCompare(b.type);
+}
+
+export function buildFinanceControlCenter(
+  visibleOrders: TrackableOrderRow[],
+  settlementRows: SettlementRow[],
+  imports: SettlementImport[],
+  costs: ProductCost[],
+  costVersions: ProductCostVersion[],
+  settlementTraceByKey: Map<string, SettlementTrace[]>
+): FinanceControlCenter {
+  const fileByImportId = new Map(imports.map((item) => [item.id, item.file_name]));
+  const settlementRowsByKey = buildSettlementRowsByKey(settlementRows);
+  const costVersionsBySku = buildCostVersionsBySku(costs, costVersions);
+  const consumedSettlementIds = new Set<number>();
+  const orders: OrderProfitabilityRow[] = [];
+  const anomalies: FinancialAnomaly[] = [];
+
+  for (const order of visibleOrders) {
+    const matchedSettlementRows = getMatchedSettlementRowsForOrder(order, settlementRowsByKey);
+    matchedSettlementRows.forEach((row) => consumedSettlementIds.add(row.id));
+
+    const traces = getSettlementTracesForLogisticsRow(order, settlementTraceByKey);
+    const trackingStatus = getEffectiveTrackingStatus(order, traces);
+    const trackingLabel = getTrackingStatusLabel(order, traces, trackingStatus);
+    const financialRow = buildOrderProfitabilityRow({
+      order,
+      settlementRows: matchedSettlementRows,
+      fileByImportId,
+      costVersionsBySku,
+      trackingStatus,
+      trackingLabel,
+    });
+
+    orders.push(financialRow);
+    anomalies.push(...buildFinancialAnomalies(financialRow, matchedSettlementRows));
+  }
+
+  for (const settlementRow of settlementRows.filter((row) => !consumedSettlementIds.has(row.id))) {
+    anomalies.push(buildOrphanSettlementAnomaly(settlementRow, fileByImportId));
+  }
+
+  const uniqueAnomalies = uniqueFinancialAnomalies(anomalies).sort(sortAnomalies);
+  const sortedOrders = orders.sort((a, b) => {
+    if (b.issue_count !== a.issue_count) return b.issue_count - a.issue_count;
+    return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+  });
+
+  return {
+    orders: sortedOrders,
+    anomalies: uniqueAnomalies,
+    cash_received: roundMoney(sum(orders.filter((row) => row.cash_status === "cobrado").map((row) => row.amount_to_liquidate))),
+    cash_pending: roundMoney(sum(orders.filter((row) => row.cash_status === "por_cobrar").map((row) => row.expected_cod))),
+    contribution_margin: roundMoney(sum(orders.map((row) => row.contribution_margin))),
+    missing_cost_count: orders.filter((row) => row.missing_cost_skus.length > 0).length,
+  };
+}
+
+export function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnalysisRow[] {
+  const byProduct = new Map<string, ProductAnalysisRow>();
+
+  for (const order of orders) {
+    if (!isShopifyProductAnalysisOrder(order)) continue;
+
+    const itemsByProduct = new Map<string, { sku: string; title: string; quantity: number }>();
+    const items = getProductAnalysisItems(order);
+
+    for (const item of items) {
+      const normalized = normalizeProductLineItem(item);
+      const existing = itemsByProduct.get(normalized.key);
+      if (existing) {
+        existing.quantity += normalized.quantity;
+        if (!existing.sku && normalized.sku) existing.sku = normalized.sku;
+        continue;
+      }
+      itemsByProduct.set(normalized.key, {
+        sku: normalized.sku,
+        title: normalized.title,
+        quantity: normalized.quantity,
+      });
+    }
+
+    const status = getProductOrderAnalysisStatus(order);
+    for (const [key, item] of Array.from(itemsByProduct.entries())) {
+      const existing = byProduct.get(key) ?? {
+        key,
+        product_name: item.title,
+        sku: item.sku,
+        sample_orders: [],
+        orders: 0,
+        units: 0,
+        dispatched: 0,
+        dispatch_rate: 0,
+        delivery_effectiveness: 0,
+        delivered: 0,
+        not_delivered: 0,
+        annulled: 0,
+        pending: 0,
+      };
+
+      existing.orders += 1;
+      existing.units += item.quantity;
+      if (!existing.sku && item.sku) existing.sku = item.sku;
+      const sampleOrder = order.order_name || order.guide_number || order.customer_name;
+      if (sampleOrder && existing.sample_orders.length < 5 && !existing.sample_orders.includes(sampleOrder)) {
+        existing.sample_orders.push(sampleOrder);
+      }
+      existing[status] += 1;
+      if (hasBoxfulGuide(order)) existing.dispatched += 1;
+      existing.dispatch_rate = existing.orders ? (existing.dispatched / existing.orders) * 100 : 0;
+      existing.delivery_effectiveness = existing.dispatched
+        ? (existing.delivered / existing.dispatched) * 100
+        : 0;
+      byProduct.set(key, existing);
+    }
+  }
+
+  return Array.from(byProduct.values()).sort(
+    (a, b) =>
+      b.orders - a.orders ||
+      a.delivery_effectiveness - b.delivery_effectiveness ||
+      a.product_name.localeCompare(b.product_name)
+  );
+}
+
+export function buildMonthlyCloseRows(
+  orders: OrderProfitabilityRow[],
+  expenses: BusinessExpense[]
+): MonthlyCloseRow[] {
+  const byMonth = new Map<string, MonthlyCloseRow>();
+  const ensureMonth = (month: string) => {
+    const existing = byMonth.get(month);
+    if (existing) return existing;
+    const row: MonthlyCloseRow = {
+      month,
+      orders: 0,
+      delivered: 0,
+      not_delivered: 0,
+      annulled: 0,
+      pending: 0,
+      settled: 0,
+      unsettled: 0,
+      to_claim: 0,
+      to_claim_fresh: 0,
+      to_claim_overdue: 0,
+      duplicate_settlements: 0,
+      boxful_costs: 0,
+      boxful_cod_commission: 0,
+      boxful_card_commission: 0,
+      boxful_delivery_cost: 0,
+      boxful_pick_pack_cost: 0,
+      boxful_packaging_cost: 0,
+      cash_received: 0,
+      cash_pending: 0,
+      product_costs: 0,
+      ads: 0,
+      payroll: 0,
+      misc: 0,
+      contribution_margin: 0,
+      net_profit: 0,
+      misc_software: 0,
+      misc_other: 0,
+    };
+    byMonth.set(month, row);
+    return row;
+  };
+
+  for (const order of orders) {
+    const month = getMonthKey(order.created_at) || "sin-fecha";
+    const row = ensureMonth(month);
+    row.orders += 1;
+    if (order.tracking_status === "delivered") row.delivered += 1;
+    if (order.tracking_status === "not_delivered" || order.tracking_status === "returned") row.not_delivered += 1;
+    if (order.tracking_status === "annulled") row.annulled += 1;
+    if (isPendingLike(order.tracking_status)) row.pending += 1;
+    if (order.settlement_count === 1) row.settled += 1;
+    if (!order.settlement_count) row.unsettled += 1;
+    if (order.tracking_status === "delivered" && !order.settlement_count) {
+      row.to_claim += 1;
+      // <=7 dias desde la entrega: pendiente normal del proximo corte de
+      // Boxful; mas alla de eso ya es cobro por reclamar.
+      const daysWaiting = daysSince(order.delivered_on ?? order.created_at ?? "");
+      if (daysWaiting <= 7) row.to_claim_fresh += 1;
+      else row.to_claim_overdue += 1;
+    }
+    if (order.settlement_count > 1) row.duplicate_settlements += 1;
+    if (order.cash_status === "cobrado") row.cash_received += order.amount_to_liquidate;
+    if (order.cash_status === "por_cobrar") row.cash_pending += order.expected_cod;
+    row.boxful_costs += order.settlement_charged_costs;
+    row.boxful_cod_commission += order.settlement_cod_commission;
+    row.boxful_card_commission += order.settlement_card_commission;
+    row.boxful_delivery_cost += order.settlement_delivery_cost;
+    row.boxful_pick_pack_cost += order.settlement_pick_pack_cost;
+    row.boxful_packaging_cost += order.settlement_packaging_cost;
+    row.product_costs += order.product_cost;
+    row.contribution_margin += order.contribution_margin;
+  }
+
+  for (const expense of expenses) {
+    const month = expense.month || getMonthKey(expense.expense_date) || "sin-fecha";
+    const row = ensureMonth(month);
+    const amount = Number(expense.amount || 0);
+    if (expense.type === "ads") row.ads += amount;
+    if (expense.type === "payroll") row.payroll += amount;
+    if (expense.type === "misc") {
+      row.misc += amount;
+      // El desglose Software vs Otros sale de la categoria/descripcion del gasto.
+      const descriptor = `${expense.category} ${expense.description} ${expense.platform}`.toLowerCase();
+      if (/software|saas|suscrip|app|herramienta/.test(descriptor)) row.misc_software += amount;
+      else row.misc_other += amount;
+    }
+  }
+
+  return Array.from(byMonth.values())
+    .map((row) => ({
+      ...row,
+      cash_received: roundMoney(row.cash_received),
+      cash_pending: roundMoney(row.cash_pending),
+      boxful_costs: roundMoney(row.boxful_costs),
+      boxful_cod_commission: roundMoney(row.boxful_cod_commission),
+      boxful_card_commission: roundMoney(row.boxful_card_commission),
+      boxful_delivery_cost: roundMoney(row.boxful_delivery_cost),
+      boxful_pick_pack_cost: roundMoney(row.boxful_pick_pack_cost),
+      boxful_packaging_cost: roundMoney(row.boxful_packaging_cost),
+      product_costs: roundMoney(row.product_costs),
+      ads: roundMoney(row.ads),
+      payroll: roundMoney(row.payroll),
+      misc: roundMoney(row.misc),
+      contribution_margin: roundMoney(row.contribution_margin),
+      net_profit: roundMoney(row.contribution_margin - row.ads - row.payroll - row.misc),
+      misc_software: roundMoney(row.misc_software),
+      misc_other: roundMoney(row.misc_other),
+    }))
+    .sort((a, b) => b.month.localeCompare(a.month));
+}
+
+export function buildShopifyNoteAliasRows(orders: ShopifyOrderSummary[]): ShopifyNoteAliasRow[] {
+  return orders
+    .flatMap((order) => {
+      const note = getShopifyNoteText(order).trim();
+      if (!note) return [];
+
+      const externalCodes = extractExternalOrderCodesFromText(note);
+      if (!externalCodes.length) {
+        return [{
+          row_key: `${order.id}-note`,
+          shopify_order_name: order.name,
+          note_order_number: "",
+          note,
+          created_at: order.created_at,
+        }];
+      }
+
+      return externalCodes.map((code, index) => ({
+        row_key: `${order.id}-${code}-${index}`,
+        shopify_order_name: order.name,
+        note_order_number: code,
+        note,
+        created_at: order.created_at,
+      }));
+    })
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
 }
