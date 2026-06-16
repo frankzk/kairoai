@@ -66,7 +66,7 @@ export async function PATCH(req: NextRequest) {
   if (!body?.id) return NextResponse.json({ error: "id requerido" }, { status: 400 });
 
   try {
-    const { id, ...updates } = body;
+    const { id, store: _store, ...updates } = body;
     await updateExpense(Number(id), updates, store.id);
     return NextResponse.json({ ok: true });
   } catch (err) {
