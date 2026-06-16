@@ -1304,28 +1304,30 @@ export default function FinancePage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-4 xl:grid-cols-7">
+          <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4 xl:grid-cols-7">
             {operationalKpis.cards.map(({ id, ...card }) => (
               <OperationalKpiCard key={id} loading={kpiLoading} {...card} />
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Alertas</span>
+          <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Alertas</span>
             {/* Carril 2 inc.2: alimentado de conteos server-side (period=all) en
                 lugar del snapshot en memoria. Reintentos/Incidencias vienen de
                 trackingCounts; Por reclamar de settlementCounts.to_claim. */}
-            <AlertStat label="Reintentos" value={loading ? "..." : formatInt(alertCounts.trackingCounts.en_route_retry)} tone="bad" />
-            <AlertStat label="Incidencias" value={loading ? "..." : formatInt(alertCounts.trackingCounts.incident)} tone="bad" />
-            <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim)} tone="warn" />
-            <AlertStat
-              label="Anomalías"
-              // Equivale al calculo previo en cliente (liquidationAlertRows +
-              // doubleSettlementAnomalies): entregados sin liquidar (to_claim) +
-              // liquidaciones duplicadas (duplicate).
-              value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim + alertCounts.settlementCounts.duplicate)}
-              tone="warn"
-            />
+            <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
+              <AlertStat label="Reintentos" value={loading ? "..." : formatInt(alertCounts.trackingCounts.en_route_retry)} tone="bad" />
+              <AlertStat label="Incidencias" value={loading ? "..." : formatInt(alertCounts.trackingCounts.incident)} tone="bad" />
+              <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim)} tone="warn" />
+              <AlertStat
+                label="Anomalías"
+                // Equivale al calculo previo en cliente (liquidationAlertRows +
+                // doubleSettlementAnomalies): entregados sin liquidar (to_claim) +
+                // liquidaciones duplicadas (duplicate).
+                value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim + alertCounts.settlementCounts.duplicate)}
+                tone="warn"
+              />
+            </div>
           </div>
         </section>
 
@@ -7613,18 +7615,18 @@ function OperationalKpiCard({
         : "text-muted-foreground";
   return (
     <Card className={borderClass}>
-      <CardContent className="p-3 sm:p-4">
+      <CardContent className="p-2.5 sm:p-4">
         <div className="flex items-center justify-between gap-1">
-          <p className="truncate text-[11px] text-muted-foreground sm:text-xs">{label}</p>
+          <p className="truncate text-[10px] text-muted-foreground sm:text-xs">{label}</p>
           {star && <span className="shrink-0 text-[10px] text-primary">★</span>}
         </div>
-        <div className="mt-1 flex items-baseline justify-between gap-2 sm:mt-2">
-          <p className={`text-xl font-bold sm:text-2xl ${valueClass}`}>{loading ? "..." : value}</p>
+        <div className="mt-0.5 flex items-baseline justify-between gap-1.5 sm:mt-2">
+          <p className={`text-lg font-bold leading-none sm:text-2xl ${valueClass}`}>{loading ? "..." : value}</p>
           {deltaLabel && !loading && (
-            <span className={`shrink-0 text-[11px] font-medium ${deltaClass}`}>{deltaLabel}</span>
+            <span className={`shrink-0 text-[10px] font-medium sm:text-[11px] ${deltaClass}`}>{deltaLabel}</span>
           )}
         </div>
-        {sub && <p className="mt-0.5 text-[11px] leading-tight text-muted-foreground sm:mt-1">{sub}</p>}
+        {sub && <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground sm:mt-1 sm:text-[11px]">{sub}</p>}
       </CardContent>
     </Card>
   );
@@ -7646,7 +7648,7 @@ function AlertStat({
         ? "border-amber-500/40 text-amber-200"
         : "border-border text-muted-foreground";
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-md border bg-card px-2.5 py-1 ${cls}`}>
+    <span className={`inline-flex items-center justify-between gap-1.5 rounded-md border bg-card px-2 py-1 text-[11px] ${cls}`}>
       <span className="text-muted-foreground">{label}</span>
       <span className="font-semibold text-foreground">{value}</span>
     </span>
