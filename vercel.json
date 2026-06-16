@@ -37,7 +37,7 @@
       "maxDuration": 60
     },
     "app/api/cron/finance-index/route.ts": {
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "app/api/finance/settlements/route.ts": {
       "maxDuration": 60
