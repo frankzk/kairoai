@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import Link from "next/link";
 import {
@@ -25,17 +25,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import {
-  buildShopifyMatchIndex,
-  extractExternalOrderCodesFromText,
-  findShopifyOrderForRow,
-  getOrderMatchKeys,
-  getShopifyNoteText,
-  getShopifyOrderMatchKeys,
-  normalizeMatchKey,
-  normalizeSearchText,
-  type OrderMatchKeySource,
-} from "@/lib/order-matching";
+import { normalizeSearchText } from "@/lib/order-matching";
 import {
   type FinanceControlCenter,
   type FinancialAnomaly,
@@ -76,13 +66,10 @@ import { Input } from "@/components/ui/input";
 
 type Tab = "orders" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 
-// Unico tab que todavia ensambla el dataset completo en memoria: Liquidaciones
-// (matching + anomalias de doble liquidacion). Pedidos, Productos, Notas y Cierre
-// ya cargan server-side, asi que el snapshot pesado (historico Shopify ~11k +
-// logistica) solo se dispara para Liquidaciones (Carril 2 inc.2 — tabs restantes).
-function needsFullClientDataset(tab: Tab): boolean {
-  return tab === "settlements";
-}
+// Carril 2 (ultimo tab): TODOS los tabs cargan server-side. Pedidos/KPIs, Productos,
+// Notas, Cierre y ahora Liquidaciones traen sus datos ya calculados desde sus
+// endpoints, asi que el navegador ya NO ensambla el snapshot pesado (historico
+// Shopify ~11k + logistica completa) para ningun tab.
 
 type OrderTrackingFilter = "all" | "pending" | "en_route" | "en_route_retry" | "incident" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
@@ -106,7 +93,6 @@ type MonthlyOrderFilter =
   | "unsettled"
   | "to_claim"
   | "duplicate";
-type ShopifyHistoryProgress = { loaded: number; total: number | null };
 type SettlementImportSort = "recent" | "oldest";
 type SettlementShopifyFilter = "all" | "matched" | "unmatched";
 type ProductLineItem = { sku?: string; title: string; quantity: number; price: number };
@@ -415,16 +401,13 @@ const FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE: Record<FinanceStoreCode, string> 
   "mireva-cr": "2026-01-01T00:00:00-06:00",
   "mireva-hn": "2025-12-09T00:00:00-06:00",
 };
+// Solo la primera pagina (Shopify base + logistica): el resto de tabs cargan
+// server-side, asi que ya NO se pagina hacia el snapshot completo en el navegador.
 const FINANCE_SHOPIFY_SYNC_INITIAL_PAGE_SIZE = 250;
-const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 500;
-const FINANCE_SHOPIFY_SYNC_READ_CONCURRENCY = 5;
 // Ventana de "pedidos actualizados recientemente" leida en vivo de Shopify.
 const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
 const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
-const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
 const FINANCE_LOGISTICS_INITIAL_PAGE_SIZE = 500;
-const FINANCE_LOGISTICS_PAGE_SIZE = 1000;
-const FINANCE_LOGISTICS_MAX_ROWS = 30000;
 const FINANCE_FAST_FETCH_TIMEOUT_MS = 20000;
 const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 
@@ -461,9 +444,10 @@ export default function FinancePage() {
     DEFAULT_FINANCE_STORE_CODE
   );
   const [imports, setImports] = useState<SettlementImport[]>([]);
-  const [rows, setRows] = useState<SettlementRow[]>([]);
   const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
-  const [logisticsRows, setLogisticsRows] = useState<LogisticsRow[]>([]);
+  // shopifyOrders se mantiene SOLO como contador base para el tab Pedidos
+  // (shopifyOrderCount) y se alimenta de la primera pagina + pedidos recientes;
+  // ya NO se carga el historico completo (~11k) en el navegador.
   const [shopifyOrders, setShopifyOrders] = useState<ShopifyOrderSummary[]>([]);
   const [shopifyCoverage, setShopifyCoverage] = useState<{
     count: number;
@@ -486,39 +470,14 @@ export default function FinancePage() {
   const [importing, setImporting] = useState(false);
   const [importingLogistics, setImportingLogistics] = useState(false);
   const [syncingShopify, setSyncingShopify] = useState(false);
-  const [shopifyHistoryLoading, setShopifyHistoryLoading] = useState(false);
-  const [shopifyHistoryProgress, setShopifyHistoryProgress] = useState<ShopifyHistoryProgress>({
-    loaded: 0,
-    total: null,
-  });
   const [syncMessage, setSyncMessage] = useState("");
   const [rematching, setRematching] = useState(false);
   const [rematchMessage, setRematchMessage] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
-  // Carril 2 inc.2: el snapshot pesado (historico Shopify ~11k + logistica) solo
-  // se carga para los tabs que aun dependen del dataset en memoria. Guardamos por
-  // que tienda ya se cargo para no repetirlo al alternar tabs.
-  const fullDatasetStoreRef = useRef<string | null>(null);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
 
   const latestLogisticsImport = logisticsImports[0];
-  const liquidationAlertRows = useMemo(
-    () => getDeliveredWithoutSettlement(logisticsRows, rows),
-    [logisticsRows, rows]
-  );
-  const matchedSettlementRows = useMemo(
-    () => enrichSettlementRowsWithShopify(rows, shopifyOrders),
-    [rows, shopifyOrders]
-  );
-  const settlementTraceByKey = useMemo(
-    () => buildSettlementTraceByKey(matchedSettlementRows, imports),
-    [matchedSettlementRows, imports]
-  );
-  const doubleSettlementAnomalies = useMemo(
-    () => getDoubleSettlementAnomalies(settlementTraceByKey),
-    [settlementTraceByKey]
-  );
   const claimByAnomalyKey = useMemo(
     () => new Map(claims.map((claim) => [claim.anomaly_key, claim])),
     [claims]
@@ -531,12 +490,8 @@ export default function FinancePage() {
     const activeStoreCode = selectedStore.code;
     setLoading(true);
     setError("");
-    setShopifyHistoryLoading(false);
-    setShopifyHistoryProgress({ loaded: 0, total: null });
     setImports([]);
-    setRows([]);
     setLogisticsImports([]);
-    setLogisticsRows([]);
     setShopifyOrders([]);
     setShopifyCoverage(null);
     try {
@@ -572,13 +527,10 @@ export default function FinancePage() {
       const recentUpdatesMin = new Date(
         Date.now() - FINANCE_SHOPIFY_RECENT_UPDATES_DAYS * 24 * 60 * 60 * 1000
       ).toISOString();
-      let firstShopifyPageLoaded = false;
-      let firstShopifyPageNextOffset = 0;
-      let firstShopifyPageTotal: number | null = null;
-      let firstLogisticsPageLoaded = false;
-      let firstLogisticsPageHasMore = false;
-      let firstLogisticsPageNextOffset = 0;
 
+      // Solo la primera pagina Shopify + coverage (agregado barato): el total real
+      // y el rango de fechas para el tab Pedidos. Carril 2 (ultimo tab): ya NO se
+      // continua hacia el historico completo (~11k filas) en el navegador.
       const firstShopifyPageTask = loadJson(
         "pedidos Shopify base",
         () =>
@@ -598,27 +550,21 @@ export default function FinancePage() {
             ? (json.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
             : [];
           if (persistedShopifyOrders.length) {
-            firstShopifyPageLoaded = true;
-            const nextOffset = Number(json.next_offset);
-            firstShopifyPageNextOffset = Number.isFinite(nextOffset)
-              ? nextOffset
-              : persistedShopifyOrders.length;
             setShopifyOrders((current) => mergeShopifyOrderSummaries(current, persistedShopifyOrders));
           }
           const coverage =
             (json.coverage as { count: number; oldest: string | null; newest: string | null } | null) ?? null;
           if (coverage) {
-            firstShopifyPageTotal = coverage.count;
             setShopifyCoverage(coverage);
           }
-          setShopifyHistoryProgress({
-            loaded: persistedShopifyOrders.length,
-            total: coverage?.count ?? null,
-          });
         },
         { delayMs: 0 }
       );
 
+      // Solo la primera pagina de logistica: alimenta los imports de logistica
+      // (badge del tab Pedidos). Carril 2 (ultimo tab): ya NO se descarga la
+      // logistica completa en el navegador (las alertas de cobro las calcula
+      // /api/finance/settlements-view).
       const logisticsTask = (async () => {
         await delay(250);
         if (!isCurrentRun()) return;
@@ -635,18 +581,6 @@ export default function FinancePage() {
         );
         if (!isCurrentRun()) return;
         setLogisticsImports(logisticsJson.imports ?? []);
-        const pageRows = Array.isArray(logisticsJson.rows)
-          ? logisticsJson.rows as LogisticsRow[]
-          : [];
-        if (pageRows.length || !logisticsJson.error) {
-          firstLogisticsPageLoaded = true;
-          firstLogisticsPageHasMore = Boolean(logisticsJson.has_more);
-          const nextOffset = Number(logisticsJson.next_offset);
-          firstLogisticsPageNextOffset = Number.isFinite(nextOffset)
-            ? nextOffset
-            : pageRows.length;
-          setLogisticsRows(pageRows);
-        }
       })();
 
       loadJson(
@@ -753,6 +687,10 @@ export default function FinancePage() {
         if (isCurrentRun()) setLoading(false);
       });
 
+      // Solo los imports de liquidaciones (lista pequena): alimentan el selector de
+      // archivos y los badges del tab Liquidaciones. Las filas enriquecidas, las
+      // alertas de cobro y las anomalias las trae /api/finance/settlements-view
+      // (Carril 2 — tab Liquidaciones), asi que aqui ya NO se guardan las filas.
       void (async () => {
         await delay(1200);
         if (!isCurrentRun()) return;
@@ -766,93 +704,7 @@ export default function FinancePage() {
         );
         if (!isCurrentRun()) return;
         setImports(settlementsJson.imports ?? []);
-        setRows(settlementsJson.rows ?? []);
       })();
-
-      // Snapshots pesados (logistica completa + historico Shopify ~11k): solo
-      // para los tabs que ensamblan el dataset en memoria. El tab Pedidos carga
-      // server-side, asi que en el primer render (tab=orders) NO se disparan.
-      if (needsFullClientDataset(tab)) {
-        fullDatasetStoreRef.current = activeStoreCode;
-
-        void (async () => {
-          await delay(900);
-          if (!isCurrentRun()) return;
-          if (firstLogisticsPageLoaded && !firstLogisticsPageHasMore) return;
-          try {
-            const startOffset = firstLogisticsPageLoaded ? firstLogisticsPageNextOffset : 0;
-            const logisticsSnapshot = await fetchLogisticsRowsSnapshot(
-              activeStoreCode,
-              (partialRows) => {
-                if (!isCurrentRun()) return;
-                startTransition(() => {
-                  setLogisticsRows((current) => mergeLogisticsRows(current, partialRows));
-                });
-              },
-              startOffset
-            );
-            if (!isCurrentRun()) return;
-            startTransition(() => {
-              setLogisticsRows((current) => mergeLogisticsRows(current, logisticsSnapshot.rows));
-            });
-          } catch {
-            // La logistica historica es importante para conciliacion, pero no
-            // debe bloquear el seguimiento operativo inicial.
-          }
-        })();
-
-        void (async () => {
-          await delay(1000);
-          if (!isCurrentRun()) return;
-          setShopifyHistoryLoading(true);
-          try {
-            const startOffset = firstShopifyPageLoaded ? firstShopifyPageNextOffset : 0;
-            const persistedShopifyJson = await fetchPersistedShopifySnapshot(
-              activeStoreCode,
-              (partial) => {
-              if (!isCurrentRun()) return;
-              const persistedShopifyOrders = Array.isArray(partial.orders)
-                ? (partial.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
-                : [];
-              const coverage =
-                (partial.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
-                null;
-              startTransition(() => {
-                setShopifyOrders((current) => mergeShopifyOrderSummaries(current, persistedShopifyOrders));
-                if (coverage) setShopifyCoverage(coverage);
-                setShopifyHistoryProgress({
-                  loaded: startOffset + persistedShopifyOrders.length,
-                  total: coverage?.count ?? firstShopifyPageTotal,
-                });
-              });
-              },
-              startOffset,
-              firstShopifyPageTotal
-            );
-
-            if (!isCurrentRun()) return;
-            const persistedShopifyOrders = Array.isArray(persistedShopifyJson.orders)
-              ? (persistedShopifyJson.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
-              : [];
-            const coverage =
-              (persistedShopifyJson.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
-              null;
-            startTransition(() => {
-              setShopifyOrders((current) => mergeShopifyOrderSummaries(current, persistedShopifyOrders));
-              if (coverage) setShopifyCoverage(coverage);
-              setShopifyHistoryProgress({
-                loaded: startOffset + persistedShopifyOrders.length,
-                total: coverage?.count ?? firstShopifyPageTotal,
-              });
-            });
-          } catch {
-            // El historico completo es enriquecimiento de la vista. Si Supabase
-            // tarda, la pantalla debe seguir usable con la pagina reciente.
-          } finally {
-            if (isCurrentRun()) setShopifyHistoryLoading(false);
-          }
-        })();
-      }
     } catch (err) {
       if (isCurrentRun()) setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
     } finally {
@@ -865,17 +717,6 @@ export default function FinancePage() {
     reloadCarrierTracking();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStoreCode]);
-
-  // Carga diferida del dataset completo: si el usuario entra a un tab que lo
-  // necesita (Productos/Notas/Liquidaciones/Cierre) y aun no se cargo para esta
-  // tienda, dispara refresh() (que ahora SI corre los snapshots pesados). En el
-  // tab Pedidos esto nunca se ejecuta -> no se cargan las ~11k filas.
-  useEffect(() => {
-    if (!needsFullClientDataset(tab)) return;
-    if (fullDatasetStoreRef.current === selectedStoreCode) return;
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, selectedStoreCode]);
 
   useEffect(() => {
     if (tab !== "products" || shopifyProducts.length || productsLoading) return;
@@ -1429,19 +1270,6 @@ export default function FinancePage() {
           </div>
         )}
 
-        {shopifyHistoryLoading && (
-          <div className="flex flex-wrap items-center gap-2 border border-primary/30 bg-primary/10 px-4 py-2 text-sm text-primary">
-            <RefreshCw className="h-4 w-4 animate-spin" />
-            <span>
-              Cargando historico Shopify por lotes:{" "}
-              <span className="font-mono text-foreground">
-                {shopifyHistoryProgress.loaded}
-                {shopifyHistoryProgress.total ? `/${shopifyHistoryProgress.total}` : ""}
-              </span>
-            </span>
-          </div>
-        )}
-
         <section className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-1">
@@ -1573,12 +1401,9 @@ export default function FinancePage() {
             )}
             {tab === "settlements" && (
               <SettlementsTab
+                storeCode={selectedStoreCode}
                 imports={imports}
                 shopifyCoverage={shopifyCoverage}
-                rows={matchedSettlementRows}
-                shopifyOrders={shopifyOrders}
-                liquidationAlertRows={liquidationAlertRows}
-                doubleSettlementAnomalies={doubleSettlementAnomalies}
                 importing={importing}
                 onImport={handleImport}
                 onDeleteImport={deleteSettlementImport}
@@ -3855,22 +3680,16 @@ function ShopifyNotesTab({
 }
 
 function SettlementsTab({
+  storeCode,
   imports,
   shopifyCoverage,
-  rows,
-  shopifyOrders,
-  liquidationAlertRows,
-  doubleSettlementAnomalies,
   importing,
   onImport,
   onDeleteImport,
 }: {
+  storeCode: FinanceStoreCode;
   imports: SettlementImport[];
-  rows: SettlementRow[];
-  shopifyOrders: ShopifyOrderSummary[];
   shopifyCoverage: { count: number; oldest: string | null; newest: string | null } | null;
-  liquidationAlertRows: LogisticsRow[];
-  doubleSettlementAnomalies: DoubleSettlementAnomaly[];
   importing: boolean;
   onImport: (event: FormEvent<HTMLFormElement>) => void;
   onDeleteImport: (id: number) => Promise<void>;
@@ -3881,14 +3700,56 @@ function SettlementsTab({
   const [deletingImportId, setDeletingImportId] = useState<number | null>(null);
   const [showClaimList, setShowClaimList] = useState(false);
   const [showDoubleList, setShowDoubleList] = useState(false);
+  // Vista server-side (Carril 2 — ultimo tab): /api/finance/settlements-view trae
+  // las filas de liquidacion ya enriquecidas con Shopify, las alertas "entregados
+  // sin liquidar" y las anomalias de doble liquidacion ya calculadas. Asi el
+  // navegador ya NO carga el snapshot (~11k pedidos + logistica completa). Se
+  // refresca al cambiar de tienda y cada vez que cambian los imports (tras
+  // importar/eliminar una liquidacion).
+  const [rows, setRows] = useState<SettlementRow[]>([]);
+  const [liquidationAlertRows, setLiquidationAlertRows] = useState<LogisticsRow[]>([]);
+  const [doubleSettlementAnomalies, setDoubleSettlementAnomalies] = useState<DoubleSettlementAnomaly[]>([]);
+  const [viewLoading, setViewLoading] = useState(true);
+  const [viewError, setViewError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setViewLoading(true);
+    setViewError("");
+    (async () => {
+      try {
+        const res = await fetch(
+          withStore("/api/finance/settlements-view", storeCode),
+          { cache: "no-store", signal: controller.signal }
+        );
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudo cargar la vista de liquidaciones");
+        setRows(Array.isArray(json.rows) ? (json.rows as SettlementRow[]) : []);
+        setLiquidationAlertRows(Array.isArray(json.liquidationAlertRows) ? (json.liquidationAlertRows as LogisticsRow[]) : []);
+        setDoubleSettlementAnomalies(
+          Array.isArray(json.doubleSettlementAnomalies)
+            ? (json.doubleSettlementAnomalies as DoubleSettlementAnomaly[])
+            : []
+        );
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setRows([]);
+        setLiquidationAlertRows([]);
+        setDoubleSettlementAnomalies([]);
+        setViewError(err instanceof Error ? err.message : "No se pudo cargar la vista de liquidaciones");
+      } finally {
+        if (!controller.signal.aborted) setViewLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [storeCode, imports]);
+
   const fileByImportId = useMemo(
     () => new Map(imports.map((item) => [item.id, item.file_name])),
     [imports]
   );
-  const enrichedRows = useMemo(
-    () => enrichSettlementRowsWithShopify(rows, shopifyOrders),
-    [rows, shopifyOrders]
-  );
+  // Las filas ya vienen enriquecidas con Shopify desde el endpoint.
+  const enrichedRows = rows;
   const unmatchedByImport = useMemo(() => {
     const counts = new Map<number, number>();
     for (const row of rows) {
@@ -3958,6 +3819,17 @@ function SettlementsTab({
 
   return (
     <div className="space-y-4">
+      {viewError && (
+        <div className="border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-red-200">
+          {viewError}
+        </div>
+      )}
+      {viewLoading && (
+        <div className="flex items-center gap-2 border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          Cargando liquidaciones...
+        </div>
+      )}
       {(liquidationAlertRows.length > 0 || doubleSettlementAnomalies.length > 0) && (
         <Card className="border-amber-500/30">
           <CardHeader>
@@ -8037,104 +7909,6 @@ function toCsv(rows: unknown[]): string {
   return [headers.join(","), ...records.map((row) => headers.map((header) => escape(row[header])).join(","))].join("\n");
 }
 
-async function fetchPersistedShopifySnapshot(
-  storeCode: FinanceStoreCode,
-  onProgress?: (snapshot: Record<string, unknown>) => void,
-  startOffset = 0,
-  expectedTotal: number | null = null
-): Promise<Record<string, unknown>> {
-  const orders: Array<Record<string, unknown>> = [];
-  let coverage: { count: number; oldest: string | null; newest: string | null } | null = null;
-  let nextOffset = Math.max(Math.floor(startOffset), 0);
-  let hasMore = true;
-
-  async function fetchPage(offset: number): Promise<{
-    offset: number;
-    orders: Array<Record<string, unknown>>;
-    hasMore: boolean;
-    coverage: { count: number; oldest: string | null; newest: string | null } | null;
-  }> {
-    const res = await fetchWithTimeout(
-      withStore(
-        `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_PAGE_SIZE}&offset=${offset}&coverage=0`,
-        storeCode
-      ),
-      { cache: "no-store" },
-      FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
-    );
-    const json = await readApiJson(res);
-    if (!res.ok) throw new Error(json.error ?? "No se pudo leer el historico Shopify");
-    return {
-      offset,
-      orders: Array.isArray(json.orders) ? json.orders as Array<Record<string, unknown>> : [],
-      hasMore: Boolean(json.has_more),
-      coverage:
-        json.coverage && typeof json.coverage === "object"
-          ? json.coverage as { count: number; oldest: string | null; newest: string | null }
-          : null,
-    };
-  }
-
-  while (hasMore && orders.length < FINANCE_SHOPIFY_SYNC_MAX_ROWS) {
-    const offsets: number[] = [];
-    for (let i = 0; i < FINANCE_SHOPIFY_SYNC_READ_CONCURRENCY; i++) {
-      if (expectedTotal != null && nextOffset >= expectedTotal) break;
-      offsets.push(nextOffset);
-      nextOffset += FINANCE_SHOPIFY_SYNC_PAGE_SIZE;
-    }
-    if (!offsets.length) break;
-
-    const pages = (await Promise.all(offsets.map(fetchPage))).sort((a, b) => a.offset - b.offset);
-    for (const page of pages) {
-      if (!coverage && page.coverage) coverage = page.coverage;
-      orders.push(...page.orders);
-      if (!page.orders.length || !page.hasMore) hasMore = false;
-    }
-
-    onProgress?.({ orders: [...orders], total: orders.length, coverage });
-    await delay(50);
-  }
-
-  return { orders, total: orders.length, coverage };
-}
-
-async function fetchLogisticsRowsSnapshot(
-  storeCode: FinanceStoreCode,
-  onProgress?: (rows: LogisticsRow[]) => void,
-  startOffset = 0
-): Promise<{ rows: LogisticsRow[] }> {
-  const rows: LogisticsRow[] = [];
-  let nextOffset = Math.max(Math.floor(startOffset), 0);
-  let hasMore = true;
-
-  while (hasMore && rows.length < FINANCE_LOGISTICS_MAX_ROWS) {
-    const res = await fetchWithTimeout(
-      withStore(
-        `/api/finance/logistics?limit=${FINANCE_LOGISTICS_PAGE_SIZE}&offset=${nextOffset}&include_imports=0`,
-        storeCode
-      ),
-      { cache: "no-store" },
-      FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
-    );
-    const json = await readApiJson(res);
-    if (!res.ok) throw new Error(json.error ?? "No se pudo leer logistica");
-
-    const pageRows = Array.isArray(json.rows) ? json.rows as LogisticsRow[] : [];
-    rows.push(...pageRows);
-
-    const serverNextOffset = Number(json.next_offset);
-    hasMore = Boolean(json.has_more) && pageRows.length > 0;
-    nextOffset = Number.isFinite(serverNextOffset)
-      ? serverNextOffset
-      : nextOffset + pageRows.length;
-
-    onProgress?.([...rows]);
-    await delay(75);
-  }
-
-  return { rows };
-}
-
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
   // El endpoint ya resuelve lineas y notas; raw_order queda solo como
   // respaldo por si llega una respuesta vieja cacheada.
@@ -8184,23 +7958,6 @@ function mergeShopifyOrderSummaries(...orderGroups: ShopifyOrderSummary[][]): Sh
     }
   }
   return Array.from(byKey.values()).sort((a, b) => b.created_at.localeCompare(a.created_at));
-}
-
-function mergeLogisticsRows(...rowGroups: LogisticsRow[][]): LogisticsRow[] {
-  const byKey = new Map<string, LogisticsRow>();
-  for (const rows of rowGroups) {
-    for (const row of rows) {
-      const key = row.id
-        ? String(row.id)
-        : `${row.import_id}:${row.guide_number}:${row.order_name}:${row.created_on ?? ""}`;
-      byKey.set(key, row);
-    }
-  }
-  return Array.from(byKey.values()).sort((a, b) => {
-    const aDate = a.created_on || a.shopify_created_at || a.created_at || "";
-    const bDate = b.created_on || b.shopify_created_at || b.created_at || "";
-    return bDate.localeCompare(aDate) || (b.id ?? 0) - (a.id ?? 0);
-  });
 }
 
 function mergeShopifyOrderSummary(
@@ -8322,50 +8079,8 @@ function mergeLogisticsBoxfulFiles(
   );
 }
 
-function enrichSettlementRowsWithShopify(
-  rows: SettlementRow[],
-  shopifyOrders: ShopifyOrderSummary[]
-): SettlementRow[] {
-  if (!rows.length || !shopifyOrders.length) return rows;
-
-  const shopifyByMatchKey = buildShopifyMatchIndex(shopifyOrders);
-  return rows.map((row) => {
-    const shopify = findShopifyOrderForRow(
-      {
-        order_name: row.order_name,
-        shopify_order_name: row.shopify_order_name,
-      },
-      shopifyByMatchKey
-    );
-    if (!shopify) return row;
-
-    return {
-      ...row,
-      match_status: "matched",
-      shopify_order_id: shopify.id,
-      shopify_order_name: shopify.name,
-      shopify_financial_status: shopify.financial_status,
-      shopify_fulfillment_status: shopify.fulfillment_status ?? "",
-      shopify_total: Number(shopify.total_price || parseMoneyText(shopify.total)),
-      shopify_created_at: shopify.created_at,
-      order_items: row.order_items?.length
-        ? row.order_items
-        : shopify.line_items.map((item) => ({
-            sku: String(item.sku ?? "").toLowerCase(),
-            title: String(item.title ?? ""),
-            quantity: Number(item.quantity || 0),
-            price: Number(item.price || 0),
-          })),
-    };
-  });
-}
-
 function uniqueKeys(keys: string[]): string[] {
   return Array.from(new Set(keys.filter(Boolean)));
-}
-
-function parseMoneyText(value: string): number {
-  return Number(String(value || "").replace(/,/g, "").replace(/[^0-9.-]/g, "")) || 0;
 }
 
 function mergeProductAnalysisWithCatalog(
@@ -8661,125 +8376,6 @@ function daysSince(value: string): number {
   if (Number.isNaN(parsed.getTime())) return 0;
   const diff = Date.now() - parsed.getTime();
   return Math.max(0, Math.floor(diff / (24 * 60 * 60 * 1000)));
-}
-
-function getDeliveredWithoutSettlement(
-  logisticsRows: LogisticsRow[],
-  settlementRows: SettlementRow[]
-): LogisticsRow[] {
-  const settledOrderKeys = new Set<string>();
-  const settledGuideKeys = new Set<string>();
-
-  for (const row of settlementRows) {
-    const orderKey = normalizeMatchKey(row.order_name || row.shopify_order_name);
-    const guideKey = normalizeMatchKey(row.guide_number);
-    if (orderKey) settledOrderKeys.add(orderKey);
-    if (guideKey) settledGuideKeys.add(guideKey);
-  }
-
-  return logisticsRows.filter((row) => {
-    if (row.internal_status !== "delivered") return false;
-    const orderKey = normalizeMatchKey(row.order_name || row.shopify_order_name);
-    const guideKey = normalizeMatchKey(row.guide_number);
-    return !((orderKey && settledOrderKeys.has(orderKey)) || (guideKey && settledGuideKeys.has(guideKey)));
-  });
-}
-
-function buildSettlementTraceByKey(
-  settlementRows: SettlementRow[],
-  imports: SettlementImport[]
-): Map<string, SettlementTrace[]> {
-  const fileByImportId = new Map(imports.map((item) => [item.id, item.file_name]));
-  const traceByKey = new Map<string, SettlementTrace[]>();
-
-  for (const row of settlementRows) {
-    const trace: SettlementTrace = {
-      file_name: fileByImportId.get(row.import_id) || `Import #${row.import_id}`,
-      amount_to_liquidate: row.amount_to_liquidate,
-      settlement_status: row.settlement_status,
-      internal_status: row.internal_status,
-    };
-    addSettlementTrace(traceByKey, normalizeMatchKey(row.order_name || row.shopify_order_name), trace);
-    addSettlementTrace(traceByKey, normalizeMatchKey(row.guide_number), trace);
-  }
-
-  return traceByKey;
-}
-
-function addSettlementTrace(
-  traceByKey: Map<string, SettlementTrace[]>,
-  key: string,
-  trace: SettlementTrace
-) {
-  if (!key) return;
-  const existing = traceByKey.get(key) ?? [];
-  if (
-    existing.some(
-      (item) =>
-        item.file_name === trace.file_name &&
-        item.amount_to_liquidate === trace.amount_to_liquidate &&
-        item.settlement_status === trace.settlement_status
-    )
-  ) {
-    return;
-  }
-  traceByKey.set(key, [...existing, trace]);
-}
-
-function getSettlementTracesForLogisticsRow(
-  row: OrderMatchKeySource & Pick<TrackableOrderRow, "guide_number">,
-  settlementTraceByKey: Map<string, SettlementTrace[]>
-): SettlementTrace[] {
-  const seen = new Set<string>();
-  const traces: SettlementTrace[] = [];
-  const keys = [
-    ...getOrderMatchKeys(row),
-    normalizeMatchKey(row.guide_number),
-  ];
-
-  for (const key of uniqueKeys(keys)) {
-    for (const trace of settlementTraceByKey.get(key) ?? []) {
-      const traceKey = `${trace.file_name}|${trace.amount_to_liquidate}|${trace.settlement_status}`;
-      if (seen.has(traceKey)) continue;
-      seen.add(traceKey);
-      traces.push(trace);
-    }
-  }
-
-  return traces;
-}
-
-function getDoubleSettlementAnomalies(
-  settlementTraceByKey: Map<string, SettlementTrace[]>
-): DoubleSettlementAnomaly[] {
-  const anomalies: DoubleSettlementAnomaly[] = [];
-
-  for (const [key, traces] of Array.from(settlementTraceByKey.entries())) {
-    const uniqueTraces = uniqueSettlementTraces(traces);
-    if (uniqueTraces.length < 2) continue;
-
-    anomalies.push({
-      key,
-      kind: /^\d{6,}$/.test(key) ? "guide" : "order",
-      traces: uniqueTraces,
-    });
-  }
-
-  return anomalies
-    .sort((a, b) => b.traces.length - a.traces.length || a.key.localeCompare(b.key))
-    .slice(0, 250);
-}
-
-function uniqueSettlementTraces(traces: SettlementTrace[]): SettlementTrace[] {
-  const seen = new Set<string>();
-  const unique: SettlementTrace[] = [];
-  for (const trace of traces) {
-    const key = `${trace.file_name}|${trace.amount_to_liquidate}|${trace.settlement_status}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(trace);
-  }
-  return unique;
 }
 
 function matchesShopifyNoteAliasSearch(row: ShopifyNoteAliasRow, query: string): boolean {

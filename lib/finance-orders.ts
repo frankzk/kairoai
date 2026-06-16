@@ -41,6 +41,15 @@ export interface SettlementTrace {
   internal_status: string;
 }
 
+// Anomalia de doble liquidacion: una misma orden/guia aparece en >=2 archivos de
+// liquidacion. Movido VERBATIM desde page.tsx (Carril 2 — tab Liquidaciones) para
+// que la ruta settlements-view/ la calcule server-side.
+export interface DoubleSettlementAnomaly {
+  key: string;
+  kind: "order" | "guide";
+  traces: SettlementTrace[];
+}
+
 export interface ShopifyOrderSummary {
   id: string;
   order_number: number;
@@ -969,6 +978,74 @@ function addSettlementTrace(
     return;
   }
   traceByKey.set(key, [...existing, trace]);
+}
+
+// ---------------------------------------------------------------------------
+// Liquidaciones — alertas de cobro y anomalias (Carril 2 — tab Liquidaciones)
+// Movido VERBATIM desde app/admin/finance/page.tsx para que la ruta
+// settlements-view/ las calcule server-side y el navegador deje de cargar el
+// snapshot (~11k pedidos + logistica completa).
+// ---------------------------------------------------------------------------
+
+// Entregados sin liquidar ("por reclamar"): filas de logistica con
+// internal_status === "delivered" cuya orden/guia NO aparece en ninguna fila de
+// liquidacion. Copiado VERBATIM de getDeliveredWithoutSettlement (page.tsx).
+export function getDeliveredWithoutSettlement(
+  logisticsRows: LogisticsRow[],
+  settlementRows: SettlementRow[]
+): LogisticsRow[] {
+  const settledOrderKeys = new Set<string>();
+  const settledGuideKeys = new Set<string>();
+
+  for (const row of settlementRows) {
+    const orderKey = normalizeMatchKey(row.order_name || row.shopify_order_name);
+    const guideKey = normalizeMatchKey(row.guide_number);
+    if (orderKey) settledOrderKeys.add(orderKey);
+    if (guideKey) settledGuideKeys.add(guideKey);
+  }
+
+  return logisticsRows.filter((row) => {
+    if (row.internal_status !== "delivered") return false;
+    const orderKey = normalizeMatchKey(row.order_name || row.shopify_order_name);
+    const guideKey = normalizeMatchKey(row.guide_number);
+    return !((orderKey && settledOrderKeys.has(orderKey)) || (guideKey && settledGuideKeys.has(guideKey)));
+  });
+}
+
+// Doble liquidacion: claves (orden/guia) con >=2 trazas distintas. Copiado
+// VERBATIM de getDoubleSettlementAnomalies (page.tsx). El trace map debe venir de
+// buildSettlementTraceMap sobre las filas YA enriquecidas con Shopify.
+export function getDoubleSettlementAnomalies(
+  settlementTraceByKey: Map<string, SettlementTrace[]>
+): DoubleSettlementAnomaly[] {
+  const anomalies: DoubleSettlementAnomaly[] = [];
+
+  for (const [key, traces] of Array.from(settlementTraceByKey.entries())) {
+    const uniqueTraces = uniqueSettlementTraces(traces);
+    if (uniqueTraces.length < 2) continue;
+
+    anomalies.push({
+      key,
+      kind: /^\d{6,}$/.test(key) ? "guide" : "order",
+      traces: uniqueTraces,
+    });
+  }
+
+  return anomalies
+    .sort((a, b) => b.traces.length - a.traces.length || a.key.localeCompare(b.key))
+    .slice(0, 250);
+}
+
+function uniqueSettlementTraces(traces: SettlementTrace[]): SettlementTrace[] {
+  const seen = new Set<string>();
+  const unique: SettlementTrace[] = [];
+  for (const trace of traces) {
+    const key = `${trace.file_name}|${trace.amount_to_liquidate}|${trace.settlement_status}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(trace);
+  }
+  return unique;
 }
 
 // ---------------------------------------------------------------------------
