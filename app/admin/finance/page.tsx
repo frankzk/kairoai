@@ -1563,6 +1563,9 @@ function OrdersTab({
   const [rangeEnd, setRangeEnd] = useState("");
   const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>("all");
   const [settlementFilter, setSettlementFilter] = useState<OrderSettlementFilter>("all");
+  // En mobile los filtros (periodo/estado/liquidacion) se colapsan detras de un
+  // boton para no saturar la vista; en desktop siempre se muestran.
+  const [showFilters, setShowFilters] = useState(false);
   // --- Datos server-side (Carril 2 inc.2) ---------------------------------
   // La tabla de pedidos ya no consume el snapshot completo en memoria: pagina y
   // filtra contra /api/finance/orders. Los conteos de los chips, el total y las
@@ -1948,16 +1951,29 @@ function OrdersTab({
                 type="button"
                 variant="outline"
                 size="sm"
+                className="gap-1.5 sm:hidden"
+                onClick={() => setShowFilters((value) => !value)}
+                aria-expanded={showFilters}
+              >
+                Filtros {showFilters ? "▴" : "▾"}
+                {(periodMode !== "all" || trackingFilter !== "all" || settlementFilter !== "all") && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
                 className="gap-2"
                 disabled={exporting || !total}
                 onClick={handleExport}
               >
-                <Download className="h-4 w-4" /> {exporting ? "Exportando..." : `Exportar (${total})`}
+                <Download className="h-4 w-4" /> <span className="hidden sm:inline">{exporting ? "Exportando..." : `Exportar (${total})`}</span><span className="sm:hidden">{exporting ? "..." : total}</span>
               </Button>
             </div>
           </div>
 
-          <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+          <div className={`space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3 ${showFilters ? "" : "hidden"} sm:block`}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Periodo</span>
               <div className="inline-flex overflow-hidden rounded-md border border-border">
