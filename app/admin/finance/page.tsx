@@ -222,6 +222,18 @@ const PAYROLL_PAYMENT_TYPES = [
   "CTS",
   "Gratificacion",
 ] as const;
+const MISC_EXPENSE_CATEGORIES = [
+  "shopify",
+  "make.com",
+  "herramientas espia + heygen + capcut + higgsfield",
+  "chatseller",
+  "icomfly",
+  "zadarma",
+  "openai",
+  "whatsapp api",
+  "gastos financieros",
+  "otros",
+] as const;
 type ExpenseOriginalCurrency = (typeof EXPENSE_ORIGINAL_CURRENCIES)[number];
 
 const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string }> = [
@@ -4819,9 +4831,10 @@ function ExpensesTab({
   const platformFilterOptions = uniqueKeys(
     typeExpenses.map((expense) => expense.platform).filter(Boolean)
   ).sort((a, b) => a.localeCompare(b));
-  const categoryFilterOptions = uniqueKeys(
-    typeExpenses.map((expense) => expense.category).filter(Boolean)
-  ).sort((a, b) => a.localeCompare(b));
+  const categoryFilterOptions = uniqueKeys([
+    ...(activeType === "misc" ? [...MISC_EXPENSE_CATEGORIES] : []),
+    ...typeExpenses.map((expense) => expense.category).filter(Boolean),
+  ]).sort((a, b) => a.localeCompare(b));
   const hasExpenseFilters =
     filterMonth !== "all" || filterPlatform !== "all" || filterCategory !== "all";
 
@@ -5227,6 +5240,20 @@ function ExpensesTab({
                       {PAYROLL_PAYMENT_TYPES.map((paymentType) => (
                         <option key={paymentType} value={paymentType}>
                           {paymentType}
+                        </option>
+                      ))}
+                    </select>
+                  ) : activeType === "misc" ? (
+                    <select
+                      value={form.category}
+                      required
+                      onChange={(e) => setForm({ ...form, category: e.target.value, type: activeType })}
+                      className="h-10 w-full border border-input bg-background px-3 text-sm outline-none"
+                    >
+                      <option value="">Selecciona categoria...</option>
+                      {MISC_EXPENSE_CATEGORIES.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
                         </option>
                       ))}
                     </select>
