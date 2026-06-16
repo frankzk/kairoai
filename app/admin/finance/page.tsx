@@ -1840,44 +1840,47 @@ function OrdersTab({
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="gap-4 space-y-0 sm:flex-row sm:items-center sm:justify-between">
+        <CardHeader className="gap-2 space-y-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="space-y-1">
             <CardTitle className="text-base">Seguimiento de pedidos</CardTitle>
-            <p className="text-xs text-muted-foreground">
+            <p className="hidden text-xs text-muted-foreground sm:block">
               Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.
             </p>
           </div>
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
+          <div className="flex flex-wrap gap-2 sm:justify-end">
             {selectedStore.logisticsProvider === "moovin" && enRouteMoovinGuides.length > 0 && (
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 disabled={moovinSyncing}
                 onClick={updateMoovinStatuses}
                 className="gap-2"
               >
                 {moovinSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                {moovinSyncing ? "Actualizando..." : `Actualizar Moovin (${enRouteMoovinGuides.length})`}
+                {moovinSyncing ? "Actualizando..." : `Moovin (${enRouteMoovinGuides.length})`}
               </Button>
             )}
             {selectedStore.logisticsProvider === "forza" && enRouteForzaGuides.length > 0 && (
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 disabled={forzaSyncing}
                 onClick={updateForzaStatuses}
                 className="gap-2"
               >
                 {forzaSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                {forzaSyncing ? "Actualizando..." : `Actualizar Forza (${enRouteForzaGuides.length})`}
+                {forzaSyncing ? "Actualizando..." : `Forza (${enRouteForzaGuides.length})`}
               </Button>
             )}
-            <Button type="button" variant="outline" disabled={syncingShopify} onClick={onSyncShopify} className="gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={syncingShopify} onClick={onSyncShopify} className="gap-2">
               <Database className="h-4 w-4" />
               {syncingShopify ? "Sincronizando..." : "Sync Shopify"}
             </Button>
             <Button
               type="button"
+              size="sm"
               disabled={importingLogistics}
               onClick={() => {
                 setLogisticsModalError("");
@@ -2014,42 +2017,46 @@ function OrdersTab({
 
             <div className="h-px bg-border/60" />
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Estado</span>
-              {ORDER_TRACKING_FILTERS.map((filter) => (
-                <FilterChip
-                  key={filter.value}
-                  label={filter.label}
-                  count={trackingCounts[filter.value]}
-                  active={trackingFilter === filter.value}
-                  onClick={() => setTrackingFilter(filter.value)}
-                  dotClass={filter.value === "all" ? undefined : TRACKING_DOT_COLORS[filter.value]}
-                />
-              ))}
+            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground sm:w-[4.5rem] sm:shrink-0">Estado</span>
+              <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [&>button]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+                {ORDER_TRACKING_FILTERS.map((filter) => (
+                  <FilterChip
+                    key={filter.value}
+                    label={filter.label}
+                    count={trackingCounts[filter.value]}
+                    active={trackingFilter === filter.value}
+                    onClick={() => setTrackingFilter(filter.value)}
+                    dotClass={filter.value === "all" ? undefined : TRACKING_DOT_COLORS[filter.value]}
+                  />
+                ))}
+              </div>
             </div>
 
             <div className="h-px bg-border/60" />
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Liquidacion</span>
-              {ORDER_SETTLEMENT_FILTERS.map((filter) => (
-                <FilterChip
-                  key={filter.value}
-                  label={filter.label}
-                  count={settlementCounts[filter.value]}
-                  active={settlementFilter === filter.value}
-                  onClick={() => setSettlementFilter(filter.value)}
-                />
-              ))}
-              {settlementFilter !== "all" && (
-                <button
-                  type="button"
-                  onClick={() => setSettlementFilter("all")}
-                  className="ml-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  Limpiar
-                </button>
-              )}
+            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground sm:w-[4.5rem] sm:shrink-0">Liquidacion</span>
+              <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1 [&>button]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+                {ORDER_SETTLEMENT_FILTERS.map((filter) => (
+                  <FilterChip
+                    key={filter.value}
+                    label={filter.label}
+                    count={settlementCounts[filter.value]}
+                    active={settlementFilter === filter.value}
+                    onClick={() => setSettlementFilter(filter.value)}
+                  />
+                ))}
+                {settlementFilter !== "all" && (
+                  <button
+                    type="button"
+                    onClick={() => setSettlementFilter("all")}
+                    className="ml-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
