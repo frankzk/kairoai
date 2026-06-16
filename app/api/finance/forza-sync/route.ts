@@ -6,6 +6,7 @@ import {
   listForzaTracking,
   upsertForzaTracking,
 } from "@/lib/finance";
+import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -99,6 +100,14 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         console.warn("[forza-sync cache]", err);
       }
+    }
+
+    // Solo si hubo cambios reales en forza_tracking vale la pena reconstruir.
+    // Defensivo: nunca rompe el sync si la cache falla.
+    if (checked > 0) {
+      await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+        console.warn(`[forza-sync cache] ${store.code}:`, cacheErr)
+      );
     }
 
     return NextResponse.json({

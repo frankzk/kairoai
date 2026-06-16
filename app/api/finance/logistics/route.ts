@@ -20,6 +20,7 @@ import {
 } from "@/lib/finance";
 import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import { getRequiredStoreConfig, getRequiredStoreFromSearchParams } from "@/lib/stores";
+import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -203,6 +204,13 @@ export async function POST(req: NextRequest) {
       throw new Error(`No se pudieron guardar las filas (import revertido): ${detail}`);
     }
 
+    // El import muto logistics_rows: refresca la cache durable del dataset para
+    // que el dashboard refleje el cambio sin esperar al cron. Defensivo: nunca
+    // debe romper el import si la cache falla.
+    await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+      console.warn("[finance/logistics POST cache]", cacheErr)
+    );
+
     return NextResponse.json({
       import: logisticsImport,
       matched_rows: matchedRows,
@@ -224,6 +232,9 @@ export async function DELETE(req: NextRequest) {
 
   try {
     await deleteLogisticsImport(id, store.id);
+    await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+      console.warn("[finance/logistics DELETE cache]", cacheErr)
+    );
     return NextResponse.json({ ok: true });
   } catch (err) {
     const message = toFriendlyErrorMessage(err, "Error al eliminar logistica");

@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/shopify-refresh",
       "schedule": "0 */3 * * *"
+    },
+    {
+      "path": "/api/cron/finance-index",
+      "schedule": "*/10 * * * *"
     }
   ],
   "functions": {
@@ -30,6 +34,9 @@
       "maxDuration": 60
     },
     "app/api/cron/shopify-refresh/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/cron/finance-index/route.ts": {
       "maxDuration": 60
     },
     "app/api/finance/settlements/route.ts": {

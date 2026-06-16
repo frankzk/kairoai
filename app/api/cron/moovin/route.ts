@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { fetchMoovinTracking } from "@/lib/moovin";
 import { listMoovinSyncCandidates, upsertMoovinTracking } from "@/lib/finance";
+import { FINANCE_STORES, getStoreConfig } from "@/lib/stores";
+import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -59,6 +61,19 @@ async function run() {
     } catch (err) {
       console.warn("[cron/moovin cache]", err);
     }
+  }
+
+  // El cron muto moovin_tracking: refresca la cache durable del dataset de las
+  // tiendas que usan Moovin (solo si hubo cambios). Defensivo: nunca rompe el cron.
+  if (checked > 0) {
+    const moovinStores = FINANCE_STORES.filter((store) => store.logisticsProvider === "moovin");
+    await Promise.all(
+      moovinStores.map((store) =>
+        refreshFinanceDatasetCache(getStoreConfig(store.code)).catch((cacheErr) =>
+          console.warn(`[cron/moovin cache] ${store.code}:`, cacheErr)
+        )
+      )
+    );
   }
 
   return NextResponse.json({
