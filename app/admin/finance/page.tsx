@@ -1267,7 +1267,7 @@ export default function FinancePage() {
         </div>
       </header>
 
-      <main className="container mx-auto space-y-6 px-4 py-6">
+      <main className="container mx-auto space-y-4 px-4 py-4 sm:space-y-6 sm:py-6">
         {error && (
           <div className="border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-red-200">
             {formatFinancePageError(error)}
@@ -7613,18 +7613,18 @@ function OperationalKpiCard({
         : "text-muted-foreground";
   return (
     <Card className={borderClass}>
-      <CardContent className="p-4">
+      <CardContent className="p-3 sm:p-4">
         <div className="flex items-center justify-between gap-1">
-          <p className="truncate text-xs text-muted-foreground">{label}</p>
+          <p className="truncate text-[11px] text-muted-foreground sm:text-xs">{label}</p>
           {star && <span className="shrink-0 text-[10px] text-primary">★</span>}
         </div>
-        <div className="mt-2 flex items-baseline justify-between gap-2">
-          <p className={`text-2xl font-bold ${valueClass}`}>{loading ? "..." : value}</p>
+        <div className="mt-1 flex items-baseline justify-between gap-2 sm:mt-2">
+          <p className={`text-xl font-bold sm:text-2xl ${valueClass}`}>{loading ? "..." : value}</p>
           {deltaLabel && !loading && (
             <span className={`shrink-0 text-[11px] font-medium ${deltaClass}`}>{deltaLabel}</span>
           )}
         </div>
-        {sub && <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{sub}</p>}
+        {sub && <p className="mt-0.5 text-[11px] leading-tight text-muted-foreground sm:mt-1">{sub}</p>}
       </CardContent>
     </Card>
   );
