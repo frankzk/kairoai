@@ -167,7 +167,7 @@ async function run(full: boolean) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error";
     const friendly = /does not exist|42P01/.test(message)
-      ? "Falta una tabla requerida (migraciones 0014_incidencias / 0015_incident_sync_state, moovin_tracking, forza_tracking o logistics_rows)."
+      ? "Falta una tabla requerida (migraciones 0016_incidencias / 0017_incident_sync_state, moovin_tracking, forza_tracking o logistics_rows)."
       : message;
     return NextResponse.json({ error: friendly }, { status: 500 });
   }
