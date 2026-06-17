@@ -49,6 +49,7 @@ const STATUS_ORDER: IncidentStatus[] = [
 const currency = (n: number) => "₡" + Math.round(Number(n) || 0).toLocaleString("es-CR");
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString("es-CR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
+const fmtDay = (s: string | null) => (s ? s.slice(0, 10).split("-").reverse().join("/") : "—");
 
 export default function IncidenciasPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -286,6 +287,7 @@ export default function IncidenciasPage() {
 
       {selected && (
         <DetailModal
+          key={selected.id}
           incident={selected}
           events={events}
           busy={busy}
@@ -312,6 +314,8 @@ function DetailModal({
   onAction: (action: string, extra?: Record<string, unknown>) => void;
 }) {
   const [notes, setNotes] = useState(incident.notes);
+  const [reopened, setReopened] = useState(false);
+  const showResultView = incident.status === "reprogramada" && !reopened;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center overflow-y-auto p-4">
@@ -338,6 +342,27 @@ function DetailModal({
             <p className="text-xs bg-muted/40 rounded-md p-2"><span className="text-muted-foreground">Detalle del courier: </span>{incident.detail}</p>
           )}
 
+          {showResultView ? (
+            <div className="space-y-3">
+              <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+                <p className="text-sm font-medium flex items-center gap-2">
+                  <CalendarClock className="h-4 w-4 text-muted-foreground" />
+                  Reprogramada para {fmtDay(incident.reprogramada_para)}
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input type="date" className="h-9 w-auto" value={reprogFecha} onChange={(e) => setReprogFecha(e.target.value)} />
+                  <Button variant="outline" size="sm" disabled={busy || !reprogFecha || reprogFecha === incident.reprogramada_para} className="gap-2"
+                    onClick={() => onAction("reprogramar", { fecha: reprogFecha })}>
+                    <CalendarClock className="h-3.5 w-3.5" /> Actualizar fecha
+                  </Button>
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => setReopened(true)}>
+                Reabrir gestion
+              </Button>
+            </div>
+          ) : (
+          <>
           {/* Estado y causa */}
           <div className="flex flex-wrap gap-2">
             <select className="h-9 rounded-md border border-input bg-background px-3 text-sm"
@@ -388,6 +413,8 @@ function DetailModal({
               </Button>
             </div>
           </div>
+          </>
+          )}
 
           {/* Notas */}
           <div>
