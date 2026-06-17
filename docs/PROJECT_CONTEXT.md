@@ -779,7 +779,7 @@ Build in this order:
 - **Import idempotente** (decisión "la última versión reemplaza"), dividido por
   tabla porque el comportamiento correcto difiere:
   - **Liquidaciones** (`settlement_rows`): upsert por `(store_id, dedup_key)`
-    donde `dedup_key` = guía u orden (migración `0014`, índice único). Re-importar
+    donde `dedup_key` = guía u orden (migración `0015`, índice único). Re-importar
     una liquidación corregida reemplaza la fila de esa guía/orden ("última gana");
     el importador deduplica dentro del archivo (última fila gana) y reemplaza el
     import previo del mismo `file_name`. No fue destructivo: `settlement_rows` no

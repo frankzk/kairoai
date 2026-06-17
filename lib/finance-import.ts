@@ -96,7 +96,7 @@ export function parseDate(value: string): string | null {
 }
 
 // Clave de deduplicacion de una fila de liquidacion: guia (preferida) u orden.
-// Coincide con el backfill SQL de la migracion 0014
+// Coincide con el backfill SQL de la migracion 0015
 // (COALESCE(NULLIF(BTRIM(guide),''), NULLIF(BTRIM(order),''), 'id:'||id)) para que
 // el upsert por (store_id, dedup_key) encuentre las filas ya existentes. El
 // fallback 'id:'||id del SQL es SOLO para filas preexistentes sin guia ni orden;

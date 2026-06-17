@@ -257,7 +257,7 @@ export async function upsertSettlementRows(rows: SettlementRow[]): Promise<void>
 
 // Import idempotente: upsert por (store_id, dedup_key) para que re-importar una
 // liquidacion reemplace la fila previa de esa guia/orden ("la ultima gana") en
-// vez de duplicarla. Requiere el indice unico de la migracion 0014. El llamador
+// vez de duplicarla. Requiere el indice unico de la migracion 0015. El llamador
 // debe deduplicar por clave dentro del archivo antes de invocar (ver ruta).
 export async function upsertSettlementRowsByDedup(
   rows: Omit<SettlementRow, "id" | "created_at">[]
