@@ -769,6 +769,26 @@ Build in this order:
   guide collapses to one canonical form regardless of separators, whitespace, case
   or the float artifact Excel adds when it reads the guide as a number
   (`FD-268`, `fd 268`, `268.0` → `FD268`).
+- **Pluggable import formats** in `lib/finance-import.ts` (pure, tested): the
+  Boxful settlement/logistics Excel parsing (antes hardcodeado y duplicado en
+  ambas rutas de import) vive detrás de un registro de adaptadores
+  (`detect`/`parse` → fila canónica). Boxful es el adaptador #1; sumar un formato
+  = anteponer un adaptador. Un archivo no reconocido da un error claro en vez de
+  parsearse mal. `vitest.config.ts` mapea el alias `@/` para testear estos
+  módulos puros.
+- **Import idempotente** (decisión "la última versión reemplaza"), dividido por
+  tabla porque el comportamiento correcto difiere:
+  - **Liquidaciones** (`settlement_rows`): upsert por `(store_id, dedup_key)`
+    donde `dedup_key` = guía u orden (migración `0014`, índice único). Re-importar
+    una liquidación corregida reemplaza la fila de esa guía/orden ("última gana");
+    el importador deduplica dentro del archivo (última fila gana) y reemplaza el
+    import previo del mismo `file_name`. No fue destructivo: `settlement_rows` no
+    tenía duplicados.
+  - **Logística** (`logistics_rows`): idempotencia **solo a nivel archivo**
+    (re-subir el mismo `file_name` reemplaza su import). NO se fuerza unicidad por
+    guía: la multiplicidad por guía es esperada (imports de períodos solapados) y
+    la consolidación en lectura ya elige el estado final; un upsert "última import
+    gana" podría pisar un estado final con uno intermedio.
 - **Shared finance types** in `lib/finance-types.ts` (no imports), used by server
   and client.
 - **Vitest + GitHub Actions CI** (`.github/workflows/ci.yml`): typecheck + lint +

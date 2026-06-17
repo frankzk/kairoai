@@ -13,6 +13,7 @@ import {
 import {
   createLogisticsImport,
   deleteLogisticsImport,
+  deleteLogisticsImportByFileName,
   insertLogisticsRows,
   listLogisticsImports,
   listLogisticsRows,
@@ -134,6 +135,11 @@ export async function POST(req: NextRequest) {
 
       return { row, shopify };
     });
+
+    // Idempotencia a nivel archivo: si este archivo ya se importo, se reemplaza
+    // (borra el import previo y sus filas). No se deduplica por guia: la
+    // consolidacion en lectura ya maneja la multiplicidad por guia.
+    await deleteLogisticsImportByFileName(store.id, file.name);
 
     const logisticsImport = await createLogisticsImport(
       {

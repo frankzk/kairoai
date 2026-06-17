@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import {
+  dedupKey,
   money,
   parseDate,
   parseLogisticsWorkbook,
@@ -148,5 +149,19 @@ describe("cell helpers", () => {
     expect(parseDate("2026-02-01")).toBe("2026-02-01");
     expect(parseDate("-")).toBeNull();
     expect(parseDate("")).toBeNull();
+  });
+});
+
+describe("dedupKey (idempotencia de liquidaciones)", () => {
+  it("prefiere la guia, con fallback a la orden", () => {
+    expect(dedupKey("FD123", "#MCRC1")).toBe("FD123");
+    expect(dedupKey("", "#MCRC1")).toBe("#MCRC1");
+    expect(dedupKey("  G2  ", "X")).toBe("G2");
+  });
+
+  it("devuelve cadena vacia cuando no hay ni guia ni orden", () => {
+    expect(dedupKey("", "")).toBe("");
+    expect(dedupKey(null, null)).toBe("");
+    expect(dedupKey(undefined, "  ord ")).toBe("ord");
   });
 });

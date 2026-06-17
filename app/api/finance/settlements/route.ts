@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readWorkbook } from "@/lib/xlsx";
 import {
+  dedupKey,
   inferEarliestCreatedOn,
   parseSettlementWorkbook,
   type ParsedSettlementRow,
@@ -13,10 +14,11 @@ import {
 import {
   createSettlementImport,
   deleteSettlementImport,
-  insertSettlementRows,
+  deleteSettlementImportByFileName,
   listSettlementImports,
   listSettlementRows,
   upsertBoxfulFileControl,
+  upsertSettlementRowsByDedup,
   type SettlementOrderItem,
   type SettlementRow,
 } from "@/lib/finance";
@@ -62,10 +64,16 @@ export async function POST(req: NextRequest) {
       String(form.get("period_label") ?? "").trim() || (periodEnd ? `Corte ${periodEnd}` : "");
 
     const workbook = readWorkbook(await file.arrayBuffer());
-    const { rows: settlementRows, consolidated } = parseSettlementWorkbook(workbook);
-    if (!settlementRows.length) {
+    const { rows: parsedRows, consolidated } = parseSettlementWorkbook(workbook);
+    if (!parsedRows.length) {
       return NextResponse.json({ error: "No se encontraron filas en la hoja Envios" }, { status: 400 });
     }
+
+    // Dedupe dentro del archivo por clave (guia/orden): la ultima fila gana. Evita
+    // que el upsert por (store_id, dedup_key) choque entre lotes concurrentes.
+    const byDedupKey = new Map<string, (typeof parsedRows)[number]>();
+    for (const row of parsedRows) byDedupKey.set(dedupKey(row.guide_number, row.order_name), row);
+    const settlementRows = Array.from(byDedupKey.values());
 
     const shopifyOrders = await loadShopifyOrdersForMatching(
       periodStart ?? inferEarliestCreatedOn(settlementRows),
@@ -90,6 +98,10 @@ export async function POST(req: NextRequest) {
 
       return { row, shopify };
     });
+
+    // Idempotencia a nivel archivo: si este archivo ya se importo, se reemplaza
+    // (borra el import previo y sus filas) antes de recrearlo.
+    await deleteSettlementImportByFileName(store.id, file.name);
 
     const settlementImport = await createSettlementImport(
       {
@@ -128,14 +140,15 @@ export async function POST(req: NextRequest) {
     );
 
     // Si las filas no entran, el import se revierte: un archivo nunca debe
-    // quedar registrado con 0 filas.
+    // quedar registrado con 0 filas. El upsert es por (store_id, dedup_key), de
+    // modo que re-importar reemplaza la fila previa de esa guia/orden.
     try {
       const batches: (typeof rowsToInsert)[] = [];
       for (let i = 0; i < rowsToInsert.length; i += INSERT_BATCH_SIZE) {
         batches.push(rowsToInsert.slice(i, i + INSERT_BATCH_SIZE));
       }
       for (let i = 0; i < batches.length; i += INSERT_CONCURRENCY) {
-        await Promise.all(batches.slice(i, i + INSERT_CONCURRENCY).map(insertSettlementRows));
+        await Promise.all(batches.slice(i, i + INSERT_CONCURRENCY).map(upsertSettlementRowsByDedup));
       }
     } catch (insertError) {
       await deleteSettlementImport(settlementImport.id, store.id).catch(() => undefined);
@@ -204,6 +217,7 @@ function buildSettlementRow(
     store_id: storeId,
     import_id: importId,
     guide_number: row.guide_number,
+    dedup_key: dedupKey(row.guide_number, row.order_name),
     order_name: row.order_name,
     store_order_number: row.store_order_number,
     customer_name: row.customer_name,

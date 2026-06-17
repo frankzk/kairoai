@@ -95,6 +95,16 @@ export function parseDate(value: string): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
 }
 
+// Clave de deduplicacion de una fila de liquidacion: guia (preferida) u orden.
+// DEBE coincidir con el backfill SQL de la migracion 0014
+// (COALESCE(NULLIF(BTRIM(guide),''), NULLIF(BTRIM(order),''))) para que el upsert
+// por (store_id, dedup_key) encuentre las filas ya existentes.
+export function dedupKey(guide: string | null | undefined, order: string | null | undefined): string {
+  const g = String(guide ?? "").trim();
+  if (g) return g;
+  return String(order ?? "").trim();
+}
+
 export function inferEarliestCreatedOn(rows: Array<{ created_on: string | null }>): string | null {
   const dates = rows
     .map((row) => row.created_on)

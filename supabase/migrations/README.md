@@ -25,6 +25,9 @@ Estado actual:
 | `0009_product_costs_store_id_nullable.sql` | Relaja NOT NULL en product_costs.store_id (columna multi-tienda divergente que bloqueaba el guardado de costos) | Si (14/06/2026) |
 | `0010_multi_store_finance.sql` | Dimension `stores` y `store_id` en tablas financieras para separar Costa Rica y Honduras | Pendiente |
 | `0011_forza_tracking.sql` | Cache de rastreo Forza para Honduras, separado por `store_id` y guia | Pendiente |
+| `0012_finance_perf_indexes.sql` | Indices de performance para las lecturas financieras | Pendiente |
+| `0013_finance_dataset_cache.sql` | Cache durable del dataset de pedidos del dashboard | Pendiente |
+| `0014_settlement_import_idempotency.sql` | `dedup_key` + indice unico `(store_id, dedup_key)` en `settlement_rows` para que re-importar una liquidacion reemplace la fila por guia/orden (requiere 0010) | Pendiente |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de

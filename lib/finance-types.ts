@@ -80,6 +80,9 @@ export interface SettlementRow {
   store_id: number;
   import_id: number;
   guide_number: string;
+  // Clave de deduplicacion (guia u orden). La pone el importador; el upsert por
+  // (store_id, dedup_key) hace que re-importar reemplace la fila ("ultima gana").
+  dedup_key?: string;
   order_name: string;
   store_order_number: string;
   customer_name: string;

@@ -208,6 +208,21 @@ export async function deleteSettlementImport(
   if (error) throw new Error(`deleteSettlementImport: ${error.message}`);
 }
 
+// Idempotencia a nivel archivo: re-importar el mismo archivo reemplaza su import
+// previo. Borra los import(s) con ese file_name (cascade elimina sus filas).
+export async function deleteSettlementImportByFileName(
+  storeId: number,
+  fileName: string
+): Promise<void> {
+  if (!fileName) return;
+  const { error } = await getDB()
+    .from("settlement_imports")
+    .delete()
+    .eq("store_id", storeId)
+    .eq("file_name", fileName);
+  if (error) throw new Error(`deleteSettlementImportByFileName: ${error.message}`);
+}
+
 export async function createSettlementImport(
   input: Omit<SettlementImport, "id" | "created_at" | "store_id">,
   storeId = DEFAULT_FINANCE_STORE_ID
@@ -238,6 +253,20 @@ export async function upsertSettlementRows(rows: SettlementRow[]): Promise<void>
     .from("settlement_rows")
     .upsert(rows, { onConflict: "id" });
   if (error) throw new Error(`upsertSettlementRows: ${error.message}`);
+}
+
+// Import idempotente: upsert por (store_id, dedup_key) para que re-importar una
+// liquidacion reemplace la fila previa de esa guia/orden ("la ultima gana") en
+// vez de duplicarla. Requiere el indice unico de la migracion 0014. El llamador
+// debe deduplicar por clave dentro del archivo antes de invocar (ver ruta).
+export async function upsertSettlementRowsByDedup(
+  rows: Omit<SettlementRow, "id" | "created_at">[]
+): Promise<void> {
+  if (!rows.length) return;
+  const { error } = await getDB()
+    .from("settlement_rows")
+    .upsert(rows, { onConflict: "store_id,dedup_key" });
+  if (error) throw new Error(`upsertSettlementRowsByDedup: ${error.message}`);
 }
 
 export async function updateSettlementImportMatchCounts(
@@ -352,6 +381,23 @@ export async function deleteLogisticsImport(
     .eq("id", id)
     .eq("store_id", storeId);
   if (error) throw new Error(`deleteLogisticsImport: ${error.message}`);
+}
+
+// Idempotencia a nivel archivo para logistica: re-importar el mismo archivo
+// reemplaza su import previo (cascade elimina sus filas). No hay dedupe por guia
+// en logistica: la multiplicidad por guia es esperada y la consolidacion en
+// lectura ya elige el estado final.
+export async function deleteLogisticsImportByFileName(
+  storeId: number,
+  fileName: string
+): Promise<void> {
+  if (!fileName) return;
+  const { error } = await getDB()
+    .from("logistics_imports")
+    .delete()
+    .eq("store_id", storeId)
+    .eq("file_name", fileName);
+  if (error) throw new Error(`deleteLogisticsImportByFileName: ${error.message}`);
 }
 
 export async function insertLogisticsRows(
