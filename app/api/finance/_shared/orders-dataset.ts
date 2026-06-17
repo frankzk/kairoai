@@ -118,10 +118,17 @@ function decodeCachePayload(payload: { gz?: string } | SerializedDataset): Seria
   return payload as SerializedDataset;
 }
 
-// Lee la fila de cache L2 de una tienda. Devuelve null si no existe, si la
-// frescura expiro, o si el acceso falla (p. ej. la migracion 0013 aun no se
-// aplico): el llamador entonces reconstruye en memoria. Nunca lanza.
-async function readDatasetCache(store: FinanceStorePublic): Promise<OrdersDataset | null> {
+interface CachedDataset {
+  data: OrdersDataset;
+  stale: boolean;
+}
+
+// Lee la fila de cache L2 de una tienda. Devuelve null solo si NO existe o si el
+// acceso falla (p. ej. la migracion 0013 aun no se aplico): el llamador entonces
+// reconstruye en memoria. Si la fila existe pero esta vencida, se devuelve igual
+// marcada como `stale` (serve-stale): el llamador la sirve y refresca en segundo
+// plano, asi el cold build pesado nunca cae en el path del request. Nunca lanza.
+async function readDatasetCache(store: FinanceStorePublic): Promise<CachedDataset | null> {
   try {
     const { data, error } = await getDB()
       .from(DATASET_CACHE_TABLE)
@@ -135,10 +142,8 @@ async function readDatasetCache(store: FinanceStorePublic): Promise<OrdersDatase
     const row = data as DatasetCacheRow | null;
     if (!row) return null;
     const refreshedAt = new Date(row.refreshed_at).getTime();
-    if (!Number.isFinite(refreshedAt) || Date.now() - refreshedAt >= DATASET_CACHE_TTL_MS) {
-      return null;
-    }
-    return deserializeDataset(decodeCachePayload(row.payload));
+    const stale = !Number.isFinite(refreshedAt) || Date.now() - refreshedAt >= DATASET_CACHE_TTL_MS;
+    return { data: deserializeDataset(decodeCachePayload(row.payload)), stale };
   } catch (err) {
     console.warn(`[orders-dataset L2 read] ${store.code}:`, err);
     return null;
@@ -228,6 +233,18 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
 // El valor devuelto es identico al de buildDataset (caso L1/build directos) o a
 // uno reconstruido byte a byte desde JSONB (caso L2). Esto es solo cache: si L2
 // falla o la tabla no existe, cae a armar en memoria — el dashboard no se rompe.
+// Refrescos en vuelo por tienda: evita que varios requests con cache vencida
+// disparen rebuilds simultaneos (thundering herd) en la misma instancia.
+const refreshingStores = new Set<string>();
+
+function refreshDatasetInBackground(store: FinanceStorePublic): void {
+  if (refreshingStores.has(store.code)) return;
+  refreshingStores.add(store.code);
+  void refreshFinanceDatasetCache(store)
+    .catch((err) => console.warn(`[orders-dataset bg refresh] ${store.code}:`, err))
+    .finally(() => refreshingStores.delete(store.code));
+}
+
 export async function getOrdersDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   const cached = datasetCache.get(store.code);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
@@ -236,10 +253,15 @@ export async function getOrdersDataset(store: FinanceStorePublic): Promise<Order
 
   const fromL2 = await readDatasetCache(store);
   if (fromL2) {
-    datasetCache.set(store.code, { at: Date.now(), data: fromL2 });
-    return fromL2;
+    datasetCache.set(store.code, { at: Date.now(), data: fromL2.data });
+    // Serve-stale: si la fila esta vencida se sirve igual y se reconstruye en
+    // segundo plano. El request responde rapido (lee una fila) y NUNCA hace el
+    // cold build inline, que es lo que disparaba el FUNCTION_INVOCATION_TIMEOUT.
+    if (fromL2.stale) refreshDatasetInBackground(store);
+    return fromL2.data;
   }
 
+  // Solo el primerisimo build (sin ninguna fila en L2) reconstruye on-request.
   const data = await buildDataset(store);
   datasetCache.set(store.code, { at: Date.now(), data });
   await writeDatasetCache(store, data);
