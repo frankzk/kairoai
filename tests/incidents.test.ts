@@ -9,6 +9,7 @@ import {
   applyDetection,
 } from "../lib/incidents-detect";
 import type { MoovinTrackingRow, ForzaTrackingRow, LogisticsRow } from "../lib/finance-types";
+import type { ShopifyOrderSummary } from "../lib/finance-orders";
 import type { Incident } from "../lib/incidents-types";
 
 function moovin(over: Partial<MoovinTrackingRow> = {}): MoovinTrackingRow {
@@ -44,6 +45,26 @@ function forza(over: Partial<ForzaTrackingRow> = {}): ForzaTrackingRow {
     receiver_name: "",
     events: [],
     checked_at: "",
+    ...over,
+  };
+}
+
+function shopify(over: Partial<ShopifyOrderSummary> = {}): ShopifyOrderSummary {
+  return {
+    id: "gid://shopify/Order/1",
+    order_number: 1001,
+    name: "",
+    customer_name: "",
+    phone: null,
+    products: "",
+    total: "0 CRC",
+    total_price: 0,
+    currency: "CRC",
+    financial_status: "",
+    fulfillment_status: null,
+    cancelled_at: null,
+    created_at: "",
+    line_items: [],
     ...over,
   };
 }
@@ -212,6 +233,37 @@ describe("detectMoovinIncident", () => {
       2
     );
     expect(fromParam!.store_id).toBe(2);
+  });
+
+  it("toma cliente/pedido del pedido de Shopify cuando la guia no esta en logistica", () => {
+    const c = detectMoovinIncident(
+      moovin({ id_package: "2535872", has_incident: true, latest_group: "failed" }),
+      undefined,
+      1,
+      shopify({ name: "#MCRC11796", customer_name: "Dick Carvajal Soto", phone: "85200655", total_price: 19900 })
+    );
+    expect(c!.customer_name).toBe("Dick Carvajal Soto");
+    expect(c!.customer_phone).toBe("85200655");
+    expect(c!.order_name).toBe("#MCRC11796");
+    expect(c!.cod_amount).toBe(19900);
+  });
+
+  it("la logistica tiene prioridad sobre Shopify; 'Sin nombre' se ignora", () => {
+    const conLogistica = detectMoovinIncident(
+      moovin({ id_package: "G", has_incident: true, latest_group: "failed" }),
+      logistics({ guide_number: "G", customer_name: "Cliente Logistica" }),
+      1,
+      shopify({ customer_name: "Cliente Shopify" })
+    );
+    expect(conLogistica!.customer_name).toBe("Cliente Logistica");
+
+    const placeholder = detectMoovinIncident(
+      moovin({ id_package: "G3", has_incident: true, latest_group: "failed", last_name: "Perez" }),
+      undefined,
+      1,
+      shopify({ customer_name: "Sin nombre" })
+    );
+    expect(placeholder!.customer_name).toBe("Perez");
   });
 });
 

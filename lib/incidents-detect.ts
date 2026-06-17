@@ -5,6 +5,7 @@
 import { normalizeMatchKey } from "./order-matching";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
 import type { MoovinTrackingRow, ForzaTrackingRow, LogisticsRow } from "./finance-types";
+import type { ShopifyOrderSummary } from "./finance-orders";
 import type {
   DetectedIncident,
   Incident,
@@ -18,6 +19,13 @@ import { TERMINAL_STATUSES } from "./incidents-types";
 // (el caller decide el fallback, p.ej. una clave con timestamp para manuales).
 export function buildIncidentKey(guideNumber: string, orderName: string): string {
   return normalizeMatchKey(guideNumber || "") || normalizeMatchKey(orderName || "");
+}
+
+// Nombre del cliente desde el pedido de Shopify, descartando el placeholder
+// "Sin nombre" que usa el resumen persistido cuando el pedido no trae cliente.
+function shopifyCustomerName(shopify?: ShopifyOrderSummary): string {
+  const name = (shopify?.customer_name || "").trim();
+  return name && name.toLowerCase() !== "sin nombre" ? name : "";
 }
 
 // Mapea la razon/grupo de Moovin a una causa. Usa coincidencias parciales para
@@ -60,7 +68,8 @@ export function mapBoxfulCategory(boxfulStatus: string): IncidentCategory | null
 export function detectMoovinIncident(
   tracking: MoovinTrackingRow,
   row?: LogisticsRow,
-  storeId: number = DEFAULT_FINANCE_STORE_ID
+  storeId: number = DEFAULT_FINANCE_STORE_ID,
+  shopify?: ShopifyOrderSummary
 ): DetectedIncident | null {
   const group = tracking.latest_group || "";
   // "Incidencia activa" = el ultimo evento de Moovin es una falla (has_incident).
@@ -72,7 +81,10 @@ export function detectMoovinIncident(
   if (!isFailure && !isDelivered) return null;
 
   const guide = tracking.id_package || row?.guide_number || "";
-  const orderName = row?.order_name || "";
+  // Datos de cliente/pedido por prioridad: 1) logistica importada, 2) pedido de
+  // Shopify cruzado por guia (tracking_number) aunque aun no este en un Excel,
+  // 3) lo poco que trae el tracking.
+  const orderName = row?.order_name || shopify?.name || "";
   const reason = tracking.incident_reason || tracking.latest_status || "";
 
   return {
@@ -81,11 +93,11 @@ export function detectMoovinIncident(
     source: "moovin",
     order_name: orderName,
     guide_number: guide,
-    shopify_order_id: row?.shopify_order_id || "",
-    customer_name: row?.customer_name || tracking.last_name || "",
-    customer_phone: row?.customer_phone || "",
+    shopify_order_id: row?.shopify_order_id || shopify?.id || "",
+    customer_name: row?.customer_name || shopifyCustomerName(shopify) || tracking.last_name || "",
+    customer_phone: row?.customer_phone || shopify?.phone || "",
     courier: row?.courier || "Moovin",
-    cod_amount: Number(row?.cod_amount ?? 0),
+    cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
     category: isFailure ? mapMoovinCategory(reason, group) : "otro",
     detail: reason,
     last_tracking_status: tracking.latest_status || "",
@@ -99,7 +111,8 @@ export function detectMoovinIncident(
 // guide_number (no id_package). El mapeo de causa se comparte con Moovin.
 export function detectForzaIncident(
   tracking: ForzaTrackingRow,
-  row?: LogisticsRow
+  row?: LogisticsRow,
+  shopify?: ShopifyOrderSummary
 ): DetectedIncident | null {
   const group = tracking.latest_group || "";
   const isFailure = tracking.has_incident || group === "failed";
@@ -107,7 +120,7 @@ export function detectForzaIncident(
   if (!isFailure && !isDelivered) return null;
 
   const guide = tracking.guide_number || row?.guide_number || "";
-  const orderName = row?.order_name || "";
+  const orderName = row?.order_name || shopify?.name || "";
   const reason = tracking.incident_reason || tracking.latest_status || "";
 
   return {
@@ -116,11 +129,11 @@ export function detectForzaIncident(
     source: "forza",
     order_name: orderName,
     guide_number: guide,
-    shopify_order_id: row?.shopify_order_id || "",
-    customer_name: row?.customer_name || tracking.receiver_name || "",
-    customer_phone: row?.customer_phone || "",
+    shopify_order_id: row?.shopify_order_id || shopify?.id || "",
+    customer_name: row?.customer_name || tracking.receiver_name || shopifyCustomerName(shopify) || "",
+    customer_phone: row?.customer_phone || shopify?.phone || "",
     courier: row?.courier || "Forza",
-    cod_amount: Number(row?.cod_amount ?? 0),
+    cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
     category: isFailure ? mapMoovinCategory(reason, group) : "otro",
     detail: reason,
     last_tracking_status: tracking.latest_status || "",

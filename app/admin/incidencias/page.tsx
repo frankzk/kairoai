@@ -102,7 +102,7 @@ export default function IncidenciasPage() {
   async function detectar() {
     setBusy(true);
     try {
-      const res = await fetch("/api/cron/incidencias", { method: "POST" });
+      const res = await fetch("/api/cron/incidencias?full=1", { method: "POST" });
       const json = await res.json();
       if (json.error) alert(json.error);
       else alert(`Deteccion lista: ${json.created} nuevas, ${json.updated} actualizadas, ${json.scanned} revisadas.`);
