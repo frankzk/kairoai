@@ -52,12 +52,12 @@ import type {
   SettlementRow,
 } from "@/lib/finance-types";
 import {
-  DEFAULT_FINANCE_STORE_CODE,
   FINANCE_STORES,
   getFinanceStore,
   type FinanceStoreCode,
   type FinanceStorePublic,
 } from "@/lib/store-config";
+import { useSelectedStore } from "@/lib/use-selected-store";
 import { sanitizeExternalError } from "@/lib/api-errors";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -453,9 +453,7 @@ export default function FinancePage() {
   const [noteShopifyOrderCount, setNoteShopifyOrderCount] = useState(0);
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState("");
-  const [selectedStoreCode, setSelectedStoreCode] = useState<FinanceStoreCode>(
-    DEFAULT_FINANCE_STORE_CODE
-  );
+  const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
   const [imports, setImports] = useState<SettlementImport[]>([]);
   const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
   // shopifyOrders se mantiene SOLO como contador base para el tab Pedidos

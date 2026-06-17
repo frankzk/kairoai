@@ -11,7 +11,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory } from "@/lib/incidents-types";
-import { FINANCE_STORES, DEFAULT_FINANCE_STORE_CODE, type FinanceStoreCode } from "@/lib/store-config";
+import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
+import { useSelectedStore } from "@/lib/use-selected-store";
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "muted";
 
@@ -55,7 +56,7 @@ export default function IncidenciasPage() {
   const [busy, setBusy] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
-  const [selectedStoreCode, setSelectedStoreCode] = useState<FinanceStoreCode>(DEFAULT_FINANCE_STORE_CODE);
+  const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
   const [soloReintento, setSoloReintento] = useState(false);
   const [search, setSearch] = useState("");
 
