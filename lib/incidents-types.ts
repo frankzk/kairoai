@@ -1,0 +1,108 @@
+// Formas de datos del modulo de novedades (incidencias de reparto), compartidas
+// entre el servidor (lib/incidents.ts, rutas, deteccion) y el cliente (page de
+// incidencias). Sin imports.
+
+export type IncidentSource = "moovin" | "forza" | "boxful" | "manual";
+
+// Estados de gestion. Cada uno tiene un color en la UI (colorimetria).
+export type IncidentStatus =
+  | "pendiente"      // nueva, sin gestionar
+  | "reprogramada"   // contesto y acordo nueva fecha
+  | "sin_contestar"  // no contesto; cola de reintento "fin del dia"
+  | "no_llamar"      // no volver a llamar
+  | "resuelta"       // entregada / cerrada con exito
+  | "perdida"        // devuelta o cancelada definitivamente
+  | "descartada";    // falso positivo de la deteccion automatica
+
+// Causa de la novedad.
+export type IncidentCategory =
+  | "fallo_entrega"
+  | "direccion_incorrecta"
+  | "cliente_no_responde"
+  | "cliente_rechaza"
+  | "devuelto_origen"
+  | "dano_paquete"
+  | "otro";
+
+export type IncidentEventKind =
+  | "detectada"
+  | "estado_cambiado"
+  | "categoria_cambiada"
+  | "nota"
+  | "llamada"
+  | "reprogramada"
+  | "no_llamar"
+  | "accion_rts"
+  | "accion_cancelar_shopify"
+  | "descartada";
+
+export type IncidentActionType =
+  | "registrar_llamada"
+  | "reprogramar"
+  | "no_llamar"
+  | "rts"
+  | "cancelar_shopify"
+  | "descartar";
+
+export interface Incident {
+  id: number;
+  store_id: number;
+  incident_key: string;
+  source: IncidentSource;
+  order_name: string;
+  guide_number: string;
+  shopify_order_id: string;
+  customer_name: string;
+  customer_phone: string;
+  courier: string;
+  cod_amount: number;
+  category: IncidentCategory;
+  status: IncidentStatus;
+  detail: string;
+  notes: string;
+  reprogramada_para: string | null;
+  intentos_llamada: number;
+  ultimo_intento_at: string | null;
+  last_tracking_status: string;
+  last_tracking_group: string;
+  manual_override: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IncidentEvent {
+  id: number;
+  incident_id: number;
+  kind: IncidentEventKind;
+  from_status: string;
+  to_status: string;
+  message: string;
+  result: "ok" | "error" | "info";
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+// Candidata producida por la deteccion automatica (lib/incidents-detect.ts).
+export interface DetectedIncident {
+  store_id: number;
+  incident_key: string;
+  source: IncidentSource;
+  order_name: string;
+  guide_number: string;
+  shopify_order_id: string;
+  customer_name: string;
+  customer_phone: string;
+  courier: string;
+  cod_amount: number;
+  category: IncidentCategory;
+  detail: string;
+  last_tracking_status: string;
+  last_tracking_group: string;
+}
+
+// Estados terminales: la deteccion automatica no los reabre.
+export const TERMINAL_STATUSES: IncidentStatus[] = ["resuelta", "perdida", "descartada"];
+
+// El filtro por tienda usa el catalogo multi-tienda de produccion
+// (lib/store-config.ts: FINANCE_STORES) a traves de ?store=<code>. Cada novedad
+// queda asociada a una tienda por store_id.
