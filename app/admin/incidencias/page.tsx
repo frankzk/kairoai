@@ -66,6 +66,7 @@ export default function IncidenciasPage() {
   const [showNew, setShowNew] = useState(false);
 
   const fetchData = useCallback(async () => {
+    setLoading(true);
     const qs = new URLSearchParams();
     if (soloReintento) qs.set("reintento", "1");
     else if (statusFilter) qs.set("status", statusFilter);
@@ -171,7 +172,7 @@ export default function IncidenciasPage() {
           <div className="flex items-center gap-2">
             <select className="h-9 rounded-md border border-input bg-background px-2 text-sm"
               value={selectedStoreCode} onChange={(e) => setSelectedStoreCode(e.target.value as FinanceStoreCode)} title="Tienda">
-              {FINANCE_STORES.map((s) => <option key={s.code} value={s.code}>{s.shortLabel}</option>)}
+              {FINANCE_STORES.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
             </select>
             <Button variant="outline" size="sm" onClick={() => fetchData()} className="gap-2">
               <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Actualizar</span>
@@ -245,7 +246,11 @@ export default function IncidenciasPage() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">Cargando…</td></tr>
+                  <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">
+                    <span className="inline-flex items-center gap-2">
+                      <RefreshCw className="h-4 w-4 animate-spin" /> Cargando novedades…
+                    </span>
+                  </td></tr>
                 ) : shown.length === 0 ? (
                   <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">
                     No hay novedades. Usa “Detectar novedades” o crea una manual.

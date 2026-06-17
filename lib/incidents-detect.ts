@@ -82,7 +82,7 @@ export function detectMoovinIncident(
     order_name: orderName,
     guide_number: guide,
     shopify_order_id: row?.shopify_order_id || "",
-    customer_name: row?.customer_name || "",
+    customer_name: row?.customer_name || tracking.last_name || "",
     customer_phone: row?.customer_phone || "",
     courier: row?.courier || "Moovin",
     cod_amount: Number(row?.cod_amount ?? 0),
