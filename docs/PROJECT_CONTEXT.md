@@ -756,6 +756,19 @@ Build in this order:
   the finance page and both import routes; no more divergent copies. Numeric
   Boxful codes only match via an explicit note alias ("Pedido <code>"), never by
   bare order number. Reshipped guides (`#MCRC10099-V2`) match their base order.
+- **Shared carrier resolution** in `lib/carriers.ts` (pure, tested) consumed by
+  the finance page, `lib/finance-orders.ts` and `lib/forza.ts`. The courier/guide
+  helpers that used to be triplicated (`isMoovinCourier`, `isForzaCourier`,
+  `normalizeShopifyCourier`, `normalizeForzaGuide`, `buildForzaTrackingMap`, …)
+  now have a single source. Carrier is resolved **per row** through a small
+  registry + `resolveRowCarrier({courier, guide, store})`: single-carrier stores
+  (all current ones) behave exactly as before — the store still wins over a stale
+  Shopify courier label — and a store can later declare several `carriers`
+  (`store-config.ts`) to disambiguate per row (courier label → guide prefix →
+  primary carrier). `normalizeForzaGuide` is hardened so that the `FD` serie of a
+  guide collapses to one canonical form regardless of separators, whitespace, case
+  or the float artifact Excel adds when it reads the guide as a number
+  (`FD-268`, `fd 268`, `268.0` → `FD268`).
 - **Shared finance types** in `lib/finance-types.ts` (no imports), used by server
   and client.
 - **Vitest + GitHub Actions CI** (`.github/workflows/ci.yml`): typecheck + lint +

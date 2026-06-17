@@ -27,6 +27,18 @@ import {
   normalizeSearchText,
   type OrderMatchKeySource,
 } from "@/lib/order-matching";
+import {
+  getForzaTrackingFromMap,
+  getStoreCarriers,
+  normalizeGuideForStore,
+  normalizeOperationalCourier,
+  normalizeShopifyCourier,
+  rowMatchesCarrier,
+} from "@/lib/carriers";
+
+// Re-export: app/api/finance/_shared/orders-dataset.ts importa buildForzaTrackingMap
+// desde este modulo. La implementacion vive ahora en lib/carriers.ts.
+export { buildForzaTrackingMap } from "@/lib/carriers";
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -153,94 +165,11 @@ type ShopifyCancelledSource = {
 };
 
 // ---------------------------------------------------------------------------
-// Courier / guia (page.tsx ~2270-2354)
+// Courier / guia
 // ---------------------------------------------------------------------------
-
-function isMoovinCourier(courier: string | undefined, store?: FinanceStorePublic): boolean {
-  if (store?.logisticsProvider === "forza") return false;
-  return String(courier ?? "").toLowerCase().includes("moovin");
-}
-
-function isForzaCourier(courier: string | undefined, store?: FinanceStorePublic): boolean {
-  if (store?.logisticsProvider === "forza") return Boolean(String(courier ?? "").trim());
-  return String(courier ?? "").toLowerCase().includes("forza");
-}
-
-// EasySell/Shopify a veces rotula el fulfillment con un valor generico
-// ("Transportadora", "Other", etc.) en vez del courier real. La transportadora
-// por defecto depende de la tienda: Costa Rica usa Moovin, Honduras usa Forza.
-const GENERIC_COURIER_LABELS = new Set([
-  "",
-  "transportadora",
-  "transportista",
-  "other",
-  "otra",
-  "custom",
-  "manual",
-  "n/a",
-  "na",
-  "none",
-  "easysell",
-]);
-
-function getDefaultCourierForStore(store: FinanceStorePublic): string {
-  return store.logisticsProvider === "forza" ? "Forza" : "Moovin";
-}
-
-function normalizeShopifyCourier(rawCompany: string | undefined, store: FinanceStorePublic): string {
-  const company = String(rawCompany ?? "").trim();
-  const lower = company.toLowerCase();
-  if (GENERIC_COURIER_LABELS.has(lower)) return getDefaultCourierForStore(store);
-  if (store.logisticsProvider === "forza") {
-    if (lower.includes("forza") || lower.includes("moovin")) return "Forza";
-  }
-  if (store.logisticsProvider === "moovin" && lower.includes("moovin")) return "Moovin";
-  return company;
-}
-
-function normalizeOperationalCourier(
-  rawCompany: string | undefined,
-  store: FinanceStorePublic,
-  guide?: string
-): string {
-  const company = String(rawCompany ?? "").trim();
-  if (company) return normalizeShopifyCourier(company, store);
-  return guide ? getDefaultCourierForStore(store) : "";
-}
-
-function normalizeForzaGuide(guide: string): string {
-  const trimmed = String(guide ?? "").trim().toUpperCase();
-  if (!trimmed) return "";
-  return trimmed.startsWith("FD") ? trimmed : `FD${trimmed.replace(/^FD/i, "")}`;
-}
-
-function normalizeGuideForStore(guide: string | undefined, store: FinanceStorePublic): string {
-  const trimmed = String(guide ?? "").trim();
-  if (!trimmed) return "";
-  return store.logisticsProvider === "forza" ? normalizeForzaGuide(trimmed) : trimmed;
-}
-
-export function buildForzaTrackingMap(rows: ForzaTrackingRow[]): Map<string, ForzaTrackingRow> {
-  const map = new Map<string, ForzaTrackingRow>();
-  for (const row of rows) {
-    const normalized = normalizeForzaGuide(row.guide_number || row.tracking_number);
-    if (!normalized) continue;
-    map.set(normalized, row);
-    map.set(normalized.replace(/^FD/i, ""), row);
-    if (row.guide_number) map.set(String(row.guide_number).trim().toUpperCase(), row);
-    if (row.tracking_number) map.set(String(row.tracking_number).trim().toUpperCase(), row);
-  }
-  return map;
-}
-
-function getForzaTrackingFromMap(
-  map: Map<string, ForzaTrackingRow>,
-  guide: string | undefined
-): ForzaTrackingRow | undefined {
-  const normalized = normalizeForzaGuide(String(guide ?? ""));
-  if (!normalized) return undefined;
-  return map.get(normalized) ?? map.get(normalized.replace(/^FD/i, "")) ?? map.get(String(guide).trim().toUpperCase());
-}
+// La logica de transportadoras (resolucion por fila, normalizacion de guia,
+// helpers de courier) vive ahora en lib/carriers.ts como fuente unica,
+// compartida con page.tsx y forza.ts. Ver imports al inicio del archivo.
 
 // ---------------------------------------------------------------------------
 // KPIs (page.tsx ~7145-7272, util sum ~7562)
@@ -420,8 +349,16 @@ export function buildVisibleOrderRows(
     const shopify = findShopifyOrderForRow(row, shopifyByMatchKey);
     const guideNumber = normalizeGuideForStore(row.guide_number, selectedStore);
     const courier = normalizeOperationalCourier(row.courier, selectedStore, guideNumber);
-    const moovinHit = isMoovinCourier(courier, selectedStore) && guideNumber ? moovinByPackage.get(guideNumber) : undefined;
-    const forzaHit = isForzaCourier(courier, selectedStore) && guideNumber ? getForzaTrackingFromMap(forzaByGuide, guideNumber) : undefined;
+    const moovinHit =
+      rowMatchesCarrier("moovin", { displayCourier: courier, rawCourier: row.courier, guide: guideNumber, store: selectedStore }) &&
+      guideNumber
+        ? moovinByPackage.get(guideNumber)
+        : undefined;
+    const forzaHit =
+      rowMatchesCarrier("forza", { displayCourier: courier, rawCourier: row.courier, guide: guideNumber, store: selectedStore }) &&
+      guideNumber
+        ? getForzaTrackingFromMap(forzaByGuide, guideNumber)
+        : undefined;
     const shopifyItems = shopify
       ? shopify.line_items.map((item) => ({
           sku: item.sku,
@@ -474,10 +411,24 @@ export function buildVisibleOrderRows(
     // se decide por tienda para evitar cruces Costa Rica/Honduras.
     const shopifyGuide = normalizeGuideForStore(order.tracking_number ?? "", selectedStore);
     const baseCourier = shopifyGuide ? normalizeShopifyCourier(order.tracking_company, selectedStore) : "";
-    const moovinHit = isMoovinCourier(baseCourier, selectedStore) && shopifyGuide ? moovinByPackage.get(shopifyGuide) : undefined;
-    const forzaHit = isForzaCourier(baseCourier, selectedStore) && shopifyGuide
-      ? getForzaTrackingFromMap(forzaByGuide, shopifyGuide)
-      : undefined;
+    const moovinHit =
+      rowMatchesCarrier("moovin", {
+        displayCourier: baseCourier,
+        rawCourier: order.tracking_company,
+        guide: shopifyGuide,
+        store: selectedStore,
+      }) && shopifyGuide
+        ? moovinByPackage.get(shopifyGuide)
+        : undefined;
+    const forzaHit =
+      rowMatchesCarrier("forza", {
+        displayCourier: baseCourier,
+        rawCourier: order.tracking_company,
+        guide: shopifyGuide,
+        store: selectedStore,
+      }) && shopifyGuide
+        ? getForzaTrackingFromMap(forzaByGuide, shopifyGuide)
+        : undefined;
     const shopifyCourier = shopifyGuide
       ? moovinHit
         ? "Moovin"
@@ -823,29 +774,42 @@ export function buildEnRouteGuides(
   const isOpenStatus = (status: string) =>
     status === "en_route" || status === "en_route_retry" || status === "incident" || status === "pending";
 
-  if (store.logisticsProvider === "moovin") {
-    const byGuide = new Map<string, { idPackage: string; lastName: string }>();
-    for (const row of rows) {
-      if (!isMoovinCourier(row.courier, store) || !row.guide_number) continue;
-      const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      if (!isOpenStatus(status)) continue;
-      if (!byGuide.has(row.guide_number)) {
-        byGuide.set(row.guide_number, { idPackage: row.guide_number, lastName: row.last_name ?? "" });
-      }
-    }
-    return { moovin: Array.from(byGuide.values()), forza: [] };
-  }
+  // Resolucion por fila: cada guia se enruta a su transportadora. En tiendas
+  // mono-transportadora (todas las actuales) equivale al comportamiento anterior
+  // (solo se considera la transportadora de la tienda); en tiendas con varias,
+  // cada fila cae en el bucket que le corresponde.
+  const carriers = getStoreCarriers(store);
+  const usesMoovin = carriers.includes("moovin");
+  const usesForza = carriers.includes("forza");
+  const moovinByGuide = new Map<string, { idPackage: string; lastName: string }>();
+  const forzaByGuide = new Map<string, { guide: string }>();
 
-  const byGuide = new Map<string, { guide: string }>();
   for (const row of rows) {
-    const guide = normalizeGuideForStore(row.guide_number, store);
-    if (!guide || !isForzaCourier(row.courier, store)) continue;
+    if (!row.guide_number) continue;
     const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
     if (!isOpenStatus(status)) continue;
-    if (row.forza_group === "delivered" || row.forza_group === "returned") continue;
-    if (!byGuide.has(guide)) byGuide.set(guide, { guide });
+
+    if (
+      usesMoovin &&
+      rowMatchesCarrier("moovin", { displayCourier: row.courier, rawCourier: row.courier, guide: row.guide_number, store })
+    ) {
+      if (!moovinByGuide.has(row.guide_number)) {
+        moovinByGuide.set(row.guide_number, { idPackage: row.guide_number, lastName: row.last_name ?? "" });
+      }
+    }
+
+    if (
+      usesForza &&
+      rowMatchesCarrier("forza", { displayCourier: row.courier, rawCourier: row.courier, guide: row.guide_number, store })
+    ) {
+      const guide = normalizeGuideForStore(row.guide_number, store);
+      if (guide && row.forza_group !== "delivered" && row.forza_group !== "returned" && !forzaByGuide.has(guide)) {
+        forzaByGuide.set(guide, { guide });
+      }
+    }
   }
-  return { moovin: [], forza: Array.from(byGuide.values()) };
+
+  return { moovin: Array.from(moovinByGuide.values()), forza: Array.from(forzaByGuide.values()) };
 }
 
 

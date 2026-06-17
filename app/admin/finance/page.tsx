@@ -27,6 +27,14 @@ import {
 } from "lucide-react";
 import { normalizeSearchText } from "@/lib/order-matching";
 import {
+  buildForzaTrackingMap,
+  getForzaTrackingFromMap,
+  isForzaCourier,
+  isMoovinCourier,
+  normalizeForzaGuide,
+  normalizeOperationalCourier,
+} from "@/lib/carriers";
+import {
   type FinanceControlCenter,
   type FinancialAnomaly,
   type MonthlyCloseRow,
@@ -2447,91 +2455,8 @@ function OrdersTable({
   );
 }
 
-function isMoovinCourier(courier: string | undefined, store?: FinanceStorePublic): boolean {
-  if (store?.logisticsProvider === "forza") return false;
-  return String(courier ?? "").toLowerCase().includes("moovin");
-}
-
-function isForzaCourier(courier: string | undefined, store?: FinanceStorePublic): boolean {
-  if (store?.logisticsProvider === "forza") return Boolean(String(courier ?? "").trim());
-  return String(courier ?? "").toLowerCase().includes("forza");
-}
-
-// EasySell/Shopify a veces rotula el fulfillment con un valor generico
-// ("Transportadora", "Other", etc.) en vez del courier real. La transportadora
-// por defecto depende de la tienda: Costa Rica usa Moovin, Honduras usa Forza.
-const GENERIC_COURIER_LABELS = new Set([
-  "",
-  "transportadora",
-  "transportista",
-  "other",
-  "otra",
-  "custom",
-  "manual",
-  "n/a",
-  "na",
-  "none",
-  "easysell",
-]);
-
-function getDefaultCourierForStore(store: FinanceStorePublic): string {
-  return store.logisticsProvider === "forza" ? "Forza" : "Moovin";
-}
-
-function normalizeShopifyCourier(rawCompany: string | undefined, store: FinanceStorePublic): string {
-  const company = String(rawCompany ?? "").trim();
-  const lower = company.toLowerCase();
-  if (GENERIC_COURIER_LABELS.has(lower)) return getDefaultCourierForStore(store);
-  if (store.logisticsProvider === "forza") {
-    if (lower.includes("forza") || lower.includes("moovin")) return "Forza";
-  }
-  if (store.logisticsProvider === "moovin" && lower.includes("moovin")) return "Moovin";
-  return company;
-}
-
-function normalizeOperationalCourier(
-  rawCompany: string | undefined,
-  store: FinanceStorePublic,
-  guide?: string
-): string {
-  const company = String(rawCompany ?? "").trim();
-  if (company) return normalizeShopifyCourier(company, store);
-  return guide ? getDefaultCourierForStore(store) : "";
-}
-
-function normalizeForzaGuide(guide: string): string {
-  const trimmed = String(guide ?? "").trim().toUpperCase();
-  if (!trimmed) return "";
-  return trimmed.startsWith("FD") ? trimmed : `FD${trimmed.replace(/^FD/i, "")}`;
-}
-
-function normalizeGuideForStore(guide: string | undefined, store: FinanceStorePublic): string {
-  const trimmed = String(guide ?? "").trim();
-  if (!trimmed) return "";
-  return store.logisticsProvider === "forza" ? normalizeForzaGuide(trimmed) : trimmed;
-}
-
-function buildForzaTrackingMap(rows: ForzaTrackingRow[]): Map<string, ForzaTrackingRow> {
-  const map = new Map<string, ForzaTrackingRow>();
-  for (const row of rows) {
-    const normalized = normalizeForzaGuide(row.guide_number || row.tracking_number);
-    if (!normalized) continue;
-    map.set(normalized, row);
-    map.set(normalized.replace(/^FD/i, ""), row);
-    if (row.guide_number) map.set(String(row.guide_number).trim().toUpperCase(), row);
-    if (row.tracking_number) map.set(String(row.tracking_number).trim().toUpperCase(), row);
-  }
-  return map;
-}
-
-function getForzaTrackingFromMap(
-  map: Map<string, ForzaTrackingRow>,
-  guide: string | undefined
-): ForzaTrackingRow | undefined {
-  const normalized = normalizeForzaGuide(String(guide ?? ""));
-  if (!normalized) return undefined;
-  return map.get(normalized) ?? map.get(normalized.replace(/^FD/i, "")) ?? map.get(String(guide).trim().toUpperCase());
-}
+// La logica de transportadoras (courier, guia, tracking maps) vive ahora en
+// lib/carriers.ts como fuente unica; se importa al inicio del archivo.
 
 interface MoovinTrackingEvent {
   code: string;

@@ -9,7 +9,12 @@ export interface FinanceStorePublic {
   countryCode: "CR" | "HN";
   currency: "CRC" | "HNL";
   locale: string;
+  // Transportadora primaria / por defecto de la tienda.
   logisticsProvider: LogisticsProviderCode;
+  // Transportadoras habilitadas para la tienda. Si se omite (caso actual), la
+  // tienda es mono-transportadora y usa `logisticsProvider`. Declarar mas de una
+  // activa la resolucion de transportadora por fila (ver lib/carriers.ts).
+  carriers?: LogisticsProviderCode[];
 }
 
 export const DEFAULT_FINANCE_STORE_CODE: FinanceStoreCode = "mireva-cr";

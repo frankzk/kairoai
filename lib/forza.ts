@@ -1,3 +1,9 @@
+import { normalizeForzaGuide } from "@/lib/carriers";
+
+// Reexport: app/api/finance/forza-sync y lib/finance.ts importan
+// normalizeForzaGuide desde "@/lib/forza". La implementacion vive en lib/carriers.ts.
+export { normalizeForzaGuide };
+
 const FORZA_HN_API_URL = "https://portal.portal.forzadelivery.com/fdHN/Home.aspx/API";
 const FORZA_PUBLIC_API_URL = "https://rastreo.forzadelivery.com/fd2/Home.aspx/API";
 const FORZA_TRACKING_BASE = "https://rastreo.forzadelivery.com";
@@ -43,12 +49,6 @@ interface ForzaRequestVariant {
 export function buildForzaTrackingUrl(guide: string): string {
   const normalized = normalizeForzaGuide(guide);
   return `${FORZA_TRACKING_BASE}/${encodeURIComponent(normalized || guide)}`;
-}
-
-export function normalizeForzaGuide(guide: string): string {
-  const trimmed = String(guide ?? "").trim().toUpperCase();
-  if (!trimmed) return "";
-  return trimmed.startsWith("FD") ? trimmed : `FD${trimmed.replace(/^FD/i, "")}`;
 }
 
 export async function fetchForzaTracking(
