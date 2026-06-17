@@ -791,11 +791,11 @@ Build in this order:
     gana" podría pisar un estado final con uno intermedio.
 - **Detector de discrepancia COD** (P&L): el ingreso/margen del pedido SIEMPRE usa
   el COD liquidado (`A Liquidar` / `Monto COD` de la liquidación), no el total
-  Shopify. Cuando el COD liquidado y el total Shopify difieren más que una
-  tolerancia relativa (`COD_MISMATCH_REL_TOLERANCE`, 5% por defecto, ajustable) se
+  Shopify. La concordancia debe ser **exacta**: cualquier diferencia (≥ 1 centavo,
+  comparando redondeado a centavos) entre el COD liquidado y el total Shopify
   levanta la anomalía `Discrepancia COD` (severidad media) para verificación
-  manual — no cambia el número, solo lo hace visible. `isCodMismatch` en
-  `lib/finance-orders.ts` (testeado). Reglas de retorno/-V2 sin cambios: "no
+  manual — no cambia el número, solo lo hace visible. Se evalúa con COD liquidado
+  > 0 y total Shopify > 0. `isCodMismatch` en `lib/finance-orders.ts` (testeado). Reglas de retorno/-V2 sin cambios: "no
   entregado" ya descuenta el costo logístico vía `A Liquidar` negativo, los
   reenvíos `-V2` ya se atan al pedido base por el matching, y las devoluciones
   post-entrega se registran como gasto "Varios" (sin reversar ingreso). Los

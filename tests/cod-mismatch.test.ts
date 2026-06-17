@@ -1,20 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { isCodMismatch } from "../lib/finance-orders";
 
-// Detector de discrepancia COD: el COD liquidado vs el total Shopify. Tolerancia
-// relativa del 5% (estricta: 5% exacto NO marca). El ingreso siempre usa el COD
-// liquidado; esto solo levanta una alerta de verificacion manual.
+// Detector de discrepancia COD: el COD liquidado debe coincidir EXACTAMENTE con
+// el total Shopify (a nivel centavo). Cualquier diferencia >= 1 centavo marca.
+// El ingreso siempre usa el COD liquidado; esto solo levanta una alerta de
+// verificacion manual.
 describe("isCodMismatch", () => {
-  it("no marca cuando los montos coinciden o difieren poco", () => {
+  it("no marca cuando coinciden exactamente (a nivel centavo)", () => {
     expect(isCodMismatch(10000, 10000)).toBe(false);
-    expect(isCodMismatch(10000, 10400)).toBe(false); // 4%
-    expect(isCodMismatch(10500, 10000)).toBe(false); // 5% exacto (no es > 5%)
+    expect(isCodMismatch(10000.004, 10000)).toBe(false); // ruido sub-centavo
+    expect(isCodMismatch(12345.67, 12345.67)).toBe(false);
   });
 
-  it("marca cuando difieren mas que la tolerancia", () => {
-    expect(isCodMismatch(11000, 10000)).toBe(true); // +10%
-    expect(isCodMismatch(9000, 10000)).toBe(true); // -10%
-    expect(isCodMismatch(10600, 10000)).toBe(true); // 6%
+  it("marca cualquier diferencia de 1 centavo o mas", () => {
+    expect(isCodMismatch(10000, 10000.01)).toBe(true); // 1 centavo
+    expect(isCodMismatch(10000, 10400)).toBe(true); // 4%
+    expect(isCodMismatch(10500, 10000)).toBe(true); // 5%
+    expect(isCodMismatch(9999, 10000)).toBe(true);
   });
 
   it("no marca si no hubo COD cobrado o no hay total Shopify", () => {

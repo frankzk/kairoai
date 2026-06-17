@@ -1395,16 +1395,14 @@ function shouldFlagNegativeMargin(contributionMargin: number, settlementCodAmoun
   return settlementCodAmount > 0;
 }
 
-// Tolerancia relativa para marcar discrepancia entre el COD liquidado y el total
-// Shopify. Es un aviso de verificacion manual (el ingreso siempre usa el COD
-// liquidado); si genera demasiado ruido, subir este umbral.
-const COD_MISMATCH_REL_TOLERANCE = 0.05;
-
-// Hay discrepancia cuando ambos montos son positivos y difieren mas que la
-// tolerancia relativa. Se evalua solo con COD liquidado > 0 (pedido cobrado).
+// La concordancia debe ser EXACTA: cualquier diferencia (>= 1 centavo) entre el
+// COD liquidado y el total Shopify es discrepancia. Se compara redondeando a
+// centavos solo para ignorar ruido de punto flotante. Se evalua con COD
+// liquidado > 0 (pedido cobrado) y total Shopify > 0 (hay con que comparar); el
+// ingreso siempre usa el COD liquidado, esto solo es aviso de revision manual.
 export function isCodMismatch(settlementCodAmount: number, shopifyTotal: number): boolean {
   if (!(settlementCodAmount > 0) || !(shopifyTotal > 0)) return false;
-  return Math.abs(settlementCodAmount - shopifyTotal) / shopifyTotal > COD_MISMATCH_REL_TOLERANCE;
+  return Math.round(settlementCodAmount * 100) !== Math.round(shopifyTotal * 100);
 }
 
 function summarizeItems(items: Array<{ sku?: string; title: string; quantity: number }>): string {
