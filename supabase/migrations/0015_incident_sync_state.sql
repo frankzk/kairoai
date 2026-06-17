@@ -8,3 +8,5 @@ create table if not exists incident_sync_state (
   watermark  timestamptz,
   updated_at timestamptz not null default now()
 );
+
+NOTIFY pgrst, 'reload schema';
