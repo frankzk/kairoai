@@ -18,7 +18,7 @@ const CATEGORIES = new Set([
   "fallo_entrega", "direccion_incorrecta", "cliente_no_responde", "cliente_rechaza",
   "devuelto_origen", "dano_paquete", "otro",
 ]);
-const SOURCES = new Set(["moovin", "boxful", "manual"]);
+const SOURCES = new Set(["moovin", "forza", "boxful", "manual"]);
 
 function asStatus(v: string | null): IncidentStatus | undefined {
   return v && STATUSES.has(v) ? (v as IncidentStatus) : undefined;

@@ -2,7 +2,7 @@
 // entre el servidor (lib/incidents.ts, rutas, deteccion) y el cliente (page de
 // incidencias). Sin imports.
 
-export type IncidentSource = "moovin" | "boxful" | "manual";
+export type IncidentSource = "moovin" | "forza" | "boxful" | "manual";
 
 // Estados de gestion. Cada uno tiene un color en la UI (colorimetria).
 export type IncidentStatus =

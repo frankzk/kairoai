@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { listLogisticsRows, listMoovinTracking } from "@/lib/finance";
+import { listForzaTracking, listLogisticsRows, listMoovinTracking } from "@/lib/finance";
 import { FINANCE_STORES } from "@/lib/store-config";
 import type { LogisticsRow } from "@/lib/finance-types";
-import { detectMoovinIncident } from "@/lib/incidents-detect";
+import { detectForzaIncident, detectMoovinIncident } from "@/lib/incidents-detect";
 import { listIncidentKeys, upsertDetectedIncident } from "@/lib/incidents";
 
 export const runtime = "nodejs";
@@ -57,10 +57,37 @@ async function run() {
         bump(outcome);
       }
     }
+
+    // Honduras (courier Forza): el tracking de Forza ya esta particionado por
+    // tienda (store_id), asi que se lee por tienda y se cruza con su logistica.
+    const forzaStores = FINANCE_STORES.filter((s) => s.logisticsProvider === "forza");
+    for (const store of forzaStores) {
+      const [tracking, rows, existingKeys] = await Promise.all([
+        listForzaTracking(store.id),
+        listLogisticsRows(undefined, store.id),
+        listIncidentKeys(store.id),
+      ]);
+
+      const byGuide = new Map<string, LogisticsRow>();
+      for (const row of rows) {
+        if (row.guide_number && !byGuide.has(row.guide_number)) byGuide.set(row.guide_number, row);
+      }
+
+      for (const t of tracking) {
+        const candidate = detectForzaIncident(t, byGuide.get(t.guide_number));
+        if (!candidate) continue;
+        if (candidate.last_tracking_group === "delivered" && !existingKeys.has(candidate.incident_key)) {
+          continue;
+        }
+        scanned += 1;
+        const { outcome } = await upsertDetectedIncident(candidate);
+        bump(outcome);
+      }
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error";
     const friendly = /does not exist|42P01/.test(message)
-      ? "Falta una tabla requerida (migracion 0014_incidencias, moovin_tracking o logistics_rows)."
+      ? "Falta una tabla requerida (migracion 0014_incidencias, moovin_tracking, forza_tracking o logistics_rows)."
       : message;
     return NextResponse.json({ error: friendly }, { status: 500 });
   }

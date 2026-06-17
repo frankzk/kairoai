@@ -1,16 +1,31 @@
-const SHOPIFY_BASE_URL = `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01`;
-const SHOPIFY_HEADERS = {
-  "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN!,
-  "Content-Type": "application/json",
-};
+// Credenciales de una tienda Shopify. Si no se pasan, se usan las del entorno por
+// defecto (tienda legacy / Costa Rica), de modo que los llamadores existentes
+// siguen funcionando sin cambios.
+export interface ShopifyCreds {
+  shop: string;
+  token: string;
+}
+
+function resolveShopifyCreds(creds?: ShopifyCreds): ShopifyCreds {
+  return {
+    shop: creds?.shop || process.env.SHOPIFY_SHOP_DOMAIN || "",
+    token: creds?.token || process.env.SHOPIFY_ACCESS_TOKEN || "",
+  };
+}
 
 async function shopifyFetch<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  creds?: ShopifyCreds
 ): Promise<T> {
-  const res = await fetch(`${SHOPIFY_BASE_URL}${path}`, {
+  const { shop, token } = resolveShopifyCreds(creds);
+  const res = await fetch(`https://${shop}/admin/api/2024-01${path}`, {
     ...options,
-    headers: { ...SHOPIFY_HEADERS, ...options.headers },
+    headers: {
+      "X-Shopify-Access-Token": token,
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
   if (!res.ok) {
     const text = await res.text();
@@ -81,18 +96,21 @@ export interface ShopifyCheckout {
 
 // ─── Order Operations ───────────────────────────────────────────────────────
 
-export async function getOrder(orderId: string): Promise<ShopifyOrder> {
+export async function getOrder(orderId: string, creds?: ShopifyCreds): Promise<ShopifyOrder> {
   const data = await shopifyFetch<{ order: ShopifyOrder }>(
-    `/orders/${orderId}.json`
+    `/orders/${orderId}.json`,
+    {},
+    creds
   );
   return data.order;
 }
 
 export async function addOrderTag(
   orderId: string,
-  tag: string
+  tag: string,
+  creds?: ShopifyCreds
 ): Promise<ShopifyOrder> {
-  const order = await getOrder(orderId);
+  const order = await getOrder(orderId, creds);
   const existingTags = order.tags ? order.tags.split(", ") : [];
   if (existingTags.includes(tag)) return order;
   const newTags = [...existingTags, tag].join(", ");
@@ -102,7 +120,8 @@ export async function addOrderTag(
     {
       method: "PUT",
       body: JSON.stringify({ order: { id: orderId, tags: newTags } }),
-    }
+    },
+    creds
   );
   return data.order;
 }
@@ -123,13 +142,18 @@ export async function addOrderNote(
 
 export async function cancelOrder(
   orderId: string,
-  reason = "customer"
+  reason = "customer",
+  creds?: ShopifyCreds
 ): Promise<void> {
-  await shopifyFetch(`/orders/${orderId}/cancel.json`, {
-    method: "POST",
-    body: JSON.stringify({ reason, email: false }),
-  });
-  await addOrderTag(orderId, "cancelado-kairo");
+  await shopifyFetch(
+    `/orders/${orderId}/cancel.json`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason, email: false }),
+    },
+    creds
+  );
+  await addOrderTag(orderId, "cancelado-kairo", creds);
 }
 
 export async function confirmOrder(orderId: string): Promise<ShopifyOrder> {

@@ -4,7 +4,7 @@
 
 import { normalizeMatchKey } from "./order-matching";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
-import type { MoovinTrackingRow, LogisticsRow } from "./finance-types";
+import type { MoovinTrackingRow, ForzaTrackingRow, LogisticsRow } from "./finance-types";
 import type {
   DetectedIncident,
   Incident,
@@ -85,6 +85,41 @@ export function detectMoovinIncident(
     customer_name: row?.customer_name || "",
     customer_phone: row?.customer_phone || "",
     courier: row?.courier || "Moovin",
+    cod_amount: Number(row?.cod_amount ?? 0),
+    category: isFailure ? mapMoovinCategory(reason, group) : "otro",
+    detail: reason,
+    last_tracking_status: tracking.latest_status || "",
+    last_tracking_group: group,
+  };
+}
+
+// Construye una candidata desde el tracking de Forza (Honduras). Misma semantica
+// que Moovin: failed/has_incident = novedad activa; delivered permite auto-resolver.
+// El tracking de Forza ya viene particionado por tienda (store_id) y la guia es
+// guide_number (no id_package). El mapeo de causa se comparte con Moovin.
+export function detectForzaIncident(
+  tracking: ForzaTrackingRow,
+  row?: LogisticsRow
+): DetectedIncident | null {
+  const group = tracking.latest_group || "";
+  const isFailure = tracking.has_incident || group === "failed";
+  const isDelivered = group === "delivered";
+  if (!isFailure && !isDelivered) return null;
+
+  const guide = tracking.guide_number || row?.guide_number || "";
+  const orderName = row?.order_name || "";
+  const reason = tracking.incident_reason || tracking.latest_status || "";
+
+  return {
+    store_id: tracking.store_id || row?.store_id || DEFAULT_FINANCE_STORE_ID,
+    incident_key: buildIncidentKey(guide, orderName),
+    source: "forza",
+    order_name: orderName,
+    guide_number: guide,
+    shopify_order_id: row?.shopify_order_id || "",
+    customer_name: row?.customer_name || tracking.receiver_name || "",
+    customer_phone: row?.customer_phone || "",
+    courier: row?.courier || "Forza",
     cod_amount: Number(row?.cod_amount ?? 0),
     category: isFailure ? mapMoovinCategory(reason, group) : "otro",
     detail: reason,

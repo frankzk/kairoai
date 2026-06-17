@@ -4,10 +4,11 @@ import {
   mapMoovinCategory,
   mapBoxfulCategory,
   detectMoovinIncident,
+  detectForzaIncident,
   detectBoxfulIncident,
   applyDetection,
 } from "../lib/incidents-detect";
-import type { MoovinTrackingRow, LogisticsRow } from "../lib/finance-types";
+import type { MoovinTrackingRow, ForzaTrackingRow, LogisticsRow } from "../lib/finance-types";
 import type { Incident } from "../lib/incidents-types";
 
 function moovin(over: Partial<MoovinTrackingRow> = {}): MoovinTrackingRow {
@@ -22,6 +23,25 @@ function moovin(over: Partial<MoovinTrackingRow> = {}): MoovinTrackingRow {
     has_incident: false,
     incident_reason: "",
     delivery_address: "",
+    events: [],
+    checked_at: "",
+    ...over,
+  };
+}
+
+function forza(over: Partial<ForzaTrackingRow> = {}): ForzaTrackingRow {
+  return {
+    store_id: 2,
+    guide_number: "",
+    tracking_number: "",
+    latest_status: "",
+    latest_code: "",
+    latest_group: "",
+    latest_at: null,
+    has_incident: false,
+    incident_reason: "",
+    delivery_address: "",
+    receiver_name: "",
     events: [],
     checked_at: "",
     ...over,
@@ -192,6 +212,33 @@ describe("detectMoovinIncident", () => {
       2
     );
     expect(fromParam!.store_id).toBe(2);
+  });
+});
+
+describe("detectForzaIncident", () => {
+  it("genera candidata forza con store_id de Honduras", () => {
+    const c = detectForzaIncident(
+      forza({ guide_number: "FZ1", store_id: 2, has_incident: true, latest_group: "failed", incident_reason: "El cliente no responde" }),
+      logistics({ guide_number: "FZ1", store_id: 2, order_name: "#MIRH900", customer_phone: "99990000" })
+    );
+    expect(c).not.toBeNull();
+    expect(c!.source).toBe("forza");
+    expect(c!.store_id).toBe(2);
+    expect(c!.category).toBe("cliente_no_responde");
+    expect(c!.customer_phone).toBe("99990000");
+  });
+
+  it("usa receiver_name y courier Forza sin fila de logistica", () => {
+    const c = detectForzaIncident(
+      forza({ guide_number: "FZ2", has_incident: true, latest_group: "failed", receiver_name: "Maria" })
+    );
+    expect(c!.customer_name).toBe("Maria");
+    expect(c!.courier).toBe("Forza");
+    expect(c!.store_id).toBe(2);
+  });
+
+  it("devuelve null cuando sigue en progreso", () => {
+    expect(detectForzaIncident(forza({ guide_number: "FZ3", latest_group: "in_progress" }))).toBeNull();
   });
 });
 

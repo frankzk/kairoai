@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getIncident, patchIncident, recordIncidentEvent } from "@/lib/incidents";
 import type { Incident } from "@/lib/incidents-types";
 import { addOrderTag, cancelOrder } from "@/lib/shopify";
+import { FINANCE_STORES, getShopifyCredentials, getStoreConfig } from "@/lib/stores";
 
 export const runtime = "nodejs";
 
@@ -22,6 +23,10 @@ export async function POST(req: NextRequest) {
   try {
     const incident = await getIncident(id);
     if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
+
+    // Credenciales Shopify de la tienda dueña de la novedad (multi-tienda).
+    const storeCode = FINANCE_STORES.find((s) => s.id === incident.store_id)?.code;
+    const shopifyCreds = getShopifyCredentials(getStoreConfig(storeCode));
 
     switch (body.action) {
       case "registrar_llamada": {
@@ -80,7 +85,7 @@ export async function POST(req: NextRequest) {
         let message = "Marcada para devolucion al origen (RTS)";
         if (incident.shopify_order_id) {
           try {
-            await addOrderTag(incident.shopify_order_id, "rts-kairo");
+            await addOrderTag(incident.shopify_order_id, "rts-kairo", shopifyCreds);
           } catch {
             result = "info";
             message += " (no se pudo etiquetar en Shopify)";
@@ -101,8 +106,14 @@ export async function POST(req: NextRequest) {
             { status: 400 }
           );
         }
+        if (shopifyCreds.missing.length) {
+          return NextResponse.json(
+            { error: `Faltan credenciales de Shopify de esta tienda: ${shopifyCreds.missing.join(", ")}` },
+            { status: 400 }
+          );
+        }
         try {
-          await cancelOrder(incident.shopify_order_id, body.reason ?? "other");
+          await cancelOrder(incident.shopify_order_id, body.reason ?? "other", shopifyCreds);
         } catch (e) {
           const m = e instanceof Error ? e.message : "Error";
           await recordIncidentEvent(id, {
