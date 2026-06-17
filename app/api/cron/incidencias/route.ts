@@ -8,10 +8,10 @@ import { listIncidentKeys, upsertDetectedIncident } from "@/lib/incidents";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Arma/actualiza la bandeja de novedades POR TIENDA. Para las tiendas con courier
-// Moovin (Costa Rica) cruza la cache de Moovin con las filas de logistica de esa
-// tienda. Idempotente por (store_id, clave de envio): reejecutar no duplica ni
-// pisa la gestion manual. (Las tiendas con Forza -Honduras- entran en la fase 2.)
+// Arma/actualiza la bandeja de novedades POR TIENDA. Cruza, para cada tienda, su
+// tracking de courier (Moovin en Costa Rica, Forza en Honduras) con sus filas de
+// logistica. Idempotente por (store_id, clave de envio): reejecutar no duplica ni
+// pisa la gestion manual.
 async function run() {
   let scanned = 0;
   let created = 0;

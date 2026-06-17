@@ -12,6 +12,10 @@
     {
       "path": "/api/cron/finance-index",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/incidencias",
+      "schedule": "15 8,12,16,20 * * *"
     }
   ],
   "functions": {
@@ -43,6 +47,9 @@
       "maxDuration": 60
     },
     "app/api/finance/logistics/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/cron/incidencias/route.ts": {
       "maxDuration": 60
     }
   }

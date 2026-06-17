@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   try {
     if (idParam) {
       const id = Number(idParam);
-      const incident = await getIncident(id);
+      const incident = await getIncident(id, getStoreFromSearchParams(sp).id);
       if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
       const events = await listIncidentEvents(id);
       return NextResponse.json({ incident, events });
@@ -112,7 +112,11 @@ export async function PATCH(req: NextRequest) {
   }
 
   try {
-    const incident = await updateIncident(Number(body.id), updates);
+    const incident = await updateIncident(
+      Number(body.id),
+      updates,
+      getStoreFromSearchParams(req.nextUrl.searchParams).id
+    );
     return NextResponse.json({ incident });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al actualizar novedad";

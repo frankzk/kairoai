@@ -68,8 +68,10 @@ export async function listIncidentKeys(storeId: number): Promise<Set<string>> {
   return keys;
 }
 
-export async function getIncident(id: number): Promise<Incident | null> {
-  const { data, error } = await getDB().from("incidents").select("*").eq("id", id).maybeSingle();
+export async function getIncident(id: number, storeId?: number): Promise<Incident | null> {
+  let query = getDB().from("incidents").select("*").eq("id", id);
+  if (storeId) query = query.eq("store_id", storeId);
+  const { data, error } = await query.maybeSingle();
   if (error) throw new Error(`getIncident: ${error.message}`);
   return (data as Incident | null) ?? null;
 }
@@ -162,9 +164,10 @@ export async function updateIncident(
   id: number,
   updates: Partial<
     Pick<Incident, "status" | "category" | "notes" | "customer_phone" | "detail" | "reprogramada_para">
-  >
+  >,
+  storeId?: number
 ): Promise<Incident> {
-  const current = await getIncident(id);
+  const current = await getIncident(id, storeId);
   if (!current) throw new Error("updateIncident: novedad no encontrada");
 
   const updated = await patchIncident(id, updates);

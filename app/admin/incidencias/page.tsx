@@ -88,7 +88,7 @@ export default function IncidenciasPage() {
   }, [fetchData]);
 
   async function openDetail(id: number) {
-    const res = await fetch(`/api/incidents?id=${id}`, { cache: "no-store" });
+    const res = await fetch(`/api/incidents?id=${id}&store=${selectedStoreCode}`, { cache: "no-store" });
     const json = await res.json();
     if (json.incident) {
       setSelected(json.incident);
@@ -112,7 +112,7 @@ export default function IncidenciasPage() {
 
   async function patchField(patch: Record<string, unknown>) {
     if (!selected) return;
-    const res = await fetch("/api/incidents", {
+    const res = await fetch(`/api/incidents?store=${selectedStoreCode}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: selected.id, ...patch }),
@@ -127,7 +127,7 @@ export default function IncidenciasPage() {
     if (!selected) return;
     setBusy(true);
     try {
-      const res = await fetch("/api/incidents/actions", {
+      const res = await fetch(`/api/incidents/actions?store=${selectedStoreCode}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: selected.id, action, ...extra }),

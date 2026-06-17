@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getIncident, patchIncident, recordIncidentEvent } from "@/lib/incidents";
 import type { Incident } from "@/lib/incidents-types";
 import { addOrderTag, cancelOrder } from "@/lib/shopify";
-import { FINANCE_STORES, getShopifyCredentials, getStoreConfig } from "@/lib/stores";
+import { FINANCE_STORES, getShopifyCredentials, getStoreConfig, getStoreFromSearchParams } from "@/lib/stores";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,8 @@ export async function POST(req: NextRequest) {
   const id = Number(body.id);
 
   try {
-    const incident = await getIncident(id);
+    const storeId = getStoreFromSearchParams(req.nextUrl.searchParams).id;
+    const incident = await getIncident(id, storeId);
     if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
 
     // Credenciales Shopify de la tienda dueña de la novedad (multi-tienda).
