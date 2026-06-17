@@ -789,6 +789,17 @@ Build in this order:
     guía: la multiplicidad por guía es esperada (imports de períodos solapados) y
     la consolidación en lectura ya elige el estado final; un upsert "última import
     gana" podría pisar un estado final con uno intermedio.
+- **Detector de discrepancia COD** (P&L): el ingreso/margen del pedido SIEMPRE usa
+  el COD liquidado (`A Liquidar` / `Monto COD` de la liquidación), no el total
+  Shopify. Cuando el COD liquidado y el total Shopify difieren más que una
+  tolerancia relativa (`COD_MISMATCH_REL_TOLERANCE`, 5% por defecto, ajustable) se
+  levanta la anomalía `Discrepancia COD` (severidad media) para verificación
+  manual — no cambia el número, solo lo hace visible. `isCodMismatch` en
+  `lib/finance-orders.ts` (testeado). Reglas de retorno/-V2 sin cambios: "no
+  entregado" ya descuenta el costo logístico vía `A Liquidar` negativo, los
+  reenvíos `-V2` ya se atan al pedido base por el matching, y las devoluciones
+  post-entrega se registran como gasto "Varios" (sin reversar ingreso). Los
+  reclamos (`finance_claims`) siguen fuera del cálculo de rentabilidad.
 - **Shared finance types** in `lib/finance-types.ts` (no imports), used by server
   and client.
 - **Vitest + GitHub Actions CI** (`.github/workflows/ci.yml`): typecheck + lint +

@@ -101,6 +101,8 @@ export interface TrackableOrderRow {
   internal_status: string;
   match_status: string;
   cod_amount: number;
+  // Total del pedido en Shopify (para el detector de discrepancia COD).
+  shopify_total?: number;
   shopify_order_name: string;
   shopify_order_number: number | null;
   shopify_financial_status: string;
@@ -382,6 +384,7 @@ export function buildVisibleOrderRows(
       last_name: row.last_name || shopify?.last_name || "",
       match_status: shopify ? "matched" : row.match_status,
       cod_amount: row.cod_amount || Number(shopify?.total_price || parseMoneyText(shopify?.total ?? "")),
+      shopify_total: shopify ? Number(shopify.total_price || parseMoneyText(shopify.total)) : Number(row.shopify_total || 0),
       shopify_order_name: shopify?.name ?? row.shopify_order_name,
       shopify_order_number: shopify?.order_number ?? row.shopify_order_number,
       shopify_financial_status: shopify?.financial_status ?? row.shopify_financial_status,
@@ -453,6 +456,7 @@ export function buildVisibleOrderRows(
         order.cancelled_at || order.financial_status === "voided" ? "annulled" : "pending",
       match_status: "matched",
       cod_amount: Number(order.total_price || parseMoneyText(order.total)),
+      shopify_total: Number(order.total_price || parseMoneyText(order.total)),
       shopify_order_name: order.name,
       shopify_order_number: order.order_number ?? null,
       shopify_financial_status: order.financial_status,
@@ -1046,6 +1050,10 @@ export interface OrderProfitabilityRow {
   settlement_packaging_cost: number;
   amount_to_liquidate: number;
   expected_cod: number;
+  // Total del pedido en Shopify y diferencia vs el COD liquidado (detector de
+  // discrepancia COD). El ingreso/margen siempre usa el COD liquidado.
+  shopify_total: number;
+  cod_mismatch: boolean;
   order_value: number;
   product_cost: number;
   contribution_margin: number;
@@ -1387,6 +1395,18 @@ function shouldFlagNegativeMargin(contributionMargin: number, settlementCodAmoun
   return settlementCodAmount > 0;
 }
 
+// Tolerancia relativa para marcar discrepancia entre el COD liquidado y el total
+// Shopify. Es un aviso de verificacion manual (el ingreso siempre usa el COD
+// liquidado); si genera demasiado ruido, subir este umbral.
+const COD_MISMATCH_REL_TOLERANCE = 0.05;
+
+// Hay discrepancia cuando ambos montos son positivos y difieren mas que la
+// tolerancia relativa. Se evalua solo con COD liquidado > 0 (pedido cobrado).
+export function isCodMismatch(settlementCodAmount: number, shopifyTotal: number): boolean {
+  if (!(settlementCodAmount > 0) || !(shopifyTotal > 0)) return false;
+  return Math.abs(settlementCodAmount - shopifyTotal) / shopifyTotal > COD_MISMATCH_REL_TOLERANCE;
+}
+
 function summarizeItems(items: Array<{ sku?: string; title: string; quantity: number }>): string {
   return items
     .slice(0, 2)
@@ -1450,6 +1470,11 @@ function buildOrderProfitabilityRow({
     settlementPackagingCost;
   const settlementCodAmount = sum(settlementRows.map((row) => row.cod_amount));
   const expectedCod = order.cod_amount || sum(settlementRows.map((row) => row.cod_amount));
+  const shopifyTotal = Number(order.shopify_total ?? 0);
+  // Detector de discrepancia COD: el COD liquidado vs el total Shopify. El
+  // ingreso/margen igual usa el COD liquidado; esto solo levanta una alerta de
+  // verificacion manual.
+  const codMismatch = isCodMismatch(settlementCodAmount, shopifyTotal);
   const items = getProfitabilityItems(order, settlementRows);
   const orderValue =
     sum(items.map((item) => Number(item.price || 0) * Number(item.quantity || 0))) || expectedCod;
@@ -1464,6 +1489,7 @@ function buildOrderProfitabilityRow({
     (settlementRows.length > 1 ? 1 : 0) +
     (shopifyCancelledWithMovement ? 1 : 0) +
     (productCostResult.missingCostSkus.length ? 1 : 0) +
+    (codMismatch ? 1 : 0) +
     (shouldFlagNegativeMargin(amountToLiquidate - productCostResult.productCost, settlementCodAmount) ? 1 : 0);
 
   return {
@@ -1487,6 +1513,8 @@ function buildOrderProfitabilityRow({
     settlement_packaging_cost: roundMoney(settlementPackagingCost),
     amount_to_liquidate: roundMoney(amountToLiquidate),
     expected_cod: roundMoney(expectedCod),
+    shopify_total: roundMoney(shopifyTotal),
+    cod_mismatch: codMismatch,
     order_value: roundMoney(orderValue),
     product_cost: productCostResult.productCost,
     contribution_margin: roundMoney(amountToLiquidate - productCostResult.productCost),
@@ -1593,6 +1621,22 @@ function buildFinancialAnomalies(
       source_file: sourceFile,
       message: `El pedido queda con margen ${currency(row.contribution_margin)} antes de ads/planilla.`,
       action: "Revisar precio, costo SKU, cobros logisticos y promociones.",
+    });
+  }
+
+  if (hasSettlement && isCodMismatch(settlementCodAmount, row.shopify_total)) {
+    const diff = roundMoney(settlementCodAmount - row.shopify_total);
+    anomalies.push({
+      id: `${row.order_key}-cod-mismatch`,
+      severity: "medium",
+      type: "Discrepancia COD",
+      order_name: row.order_name,
+      guide_number: row.guide_number,
+      amount: diff,
+      source_file: sourceFile,
+      message: `COD liquidado ${currency(settlementCodAmount)} vs total Shopify ${currency(row.shopify_total)} (diferencia ${currency(diff)}).`,
+      action:
+        "El ingreso usa el COD liquidado; verificar manualmente la diferencia (cobro del courier, envio, upsell o descuento).",
     });
   }
 
