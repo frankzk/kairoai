@@ -564,22 +564,38 @@ export async function listPersistedShopifyOrders(
     raw_line_items: Array<Record<string, unknown>> | null;
   };
   // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
-  // defecto); se pagina con range() hasta el limite pedido.
+  // defecto); se piden bloques de ese tamano hasta el limite pedido.
   const pageSize = 1000;
   const rows: RawSummary[] = [];
   const safeLimit = Math.max(Math.floor(limit), 0);
   const safeOffset = Math.max(Math.floor(offset), 0);
+  // Lectura desde el principio (offset 0): paginacion por keyset sobre el id
+  // (PK). Es el camino del rebuild del dataset (hasta 20k filas) y de la
+  // cobertura. Un OFFSET profundo obliga a Postgres a reordenar toda la tabla
+  // (arrastrando el JSONB de cada fila) y descartar miles de filas por pagina,
+  // lo que reventaba el statement timeout -> FUNCTION_INVOCATION_TIMEOUT en
+  // /api/finance/orders con la cache fria. El consumidor reordena por fecha, asi
+  // que ordenar por id alcanza. Para offset>0 (uso puntual y acotado del GET de
+  // shopify-sync) se mantiene range().
+  const useKeyset = safeOffset === 0;
+  let lastId: number | null = null;
   for (let fetched = 0; fetched < safeLimit; fetched += pageSize) {
-    const from = safeOffset + fetched;
-    const to = safeOffset + Math.min(fetched + pageSize, safeLimit) - 1;
-    const fetchPage = (columns: string) =>
-      getDB()
-        .from("shopify_orders")
-        .select(columns)
-        .eq("store_id", storeId)
-        .order("shopify_created_at", { ascending: false, nullsFirst: false })
-        .order("id", { ascending: false })
-        .range(from, to);
+    const batchSize = Math.min(pageSize, safeLimit - fetched);
+    const fetchPage = (columns: string) => {
+      let query = getDB().from("shopify_orders").select(columns).eq("store_id", storeId);
+      if (useKeyset) {
+        query = query.order("id", { ascending: false }).limit(batchSize);
+        if (lastId !== null) query = query.lt("id", lastId);
+      } else {
+        const from = safeOffset + fetched;
+        const to = safeOffset + Math.min(fetched + pageSize, safeLimit) - 1;
+        query = query
+          .order("shopify_created_at", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: false })
+          .range(from, to);
+      }
+      return query;
+    };
 
     let result = await fetchPage(PERSISTED_TIERS[persistedTier]);
     if (shouldFallbackToLegacyStore(result.error, storeId)) {
@@ -596,8 +612,10 @@ export async function listPersistedShopifyOrders(
     }
     if (result.error) throw new Error(`listPersistedShopifyOrders: ${result.error.message}`);
     const page = (result.data ?? []) as unknown as RawSummary[];
+    if (!page.length) break;
     rows.push(...page);
-    if (page.length < pageSize) break;
+    lastId = Number((page[page.length - 1] as unknown as { id: number }).id);
+    if (page.length < batchSize) break;
   }
   return rows.map(({ raw_line_items, ...order }) => ({
     ...order,
