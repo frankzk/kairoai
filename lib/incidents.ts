@@ -68,6 +68,29 @@ export async function listIncidentKeys(storeId: number): Promise<Set<string>> {
   return keys;
 }
 
+// Watermark incremental por fuente de tracking ("moovin" global; "forza:<id>"
+// por tienda): el cron procesa solo el tracking con checked_at posterior al
+// guardado, en vez de reescanear todo el historico en cada corrida.
+export async function getIncidentWatermark(sourceKey: string): Promise<string | null> {
+  const { data, error } = await getDB()
+    .from("incident_sync_state")
+    .select("watermark")
+    .eq("source_key", sourceKey)
+    .maybeSingle();
+  if (error) throw new Error(`getIncidentWatermark: ${error.message}`);
+  return (data?.watermark as string | null) ?? null;
+}
+
+export async function setIncidentWatermark(sourceKey: string, watermark: string): Promise<void> {
+  const { error } = await getDB()
+    .from("incident_sync_state")
+    .upsert(
+      { source_key: sourceKey, watermark, updated_at: new Date().toISOString() },
+      { onConflict: "source_key" }
+    );
+  if (error) throw new Error(`setIncidentWatermark: ${error.message}`);
+}
+
 export async function getIncident(id: number, storeId?: number): Promise<Incident | null> {
   let query = getDB().from("incidents").select("*").eq("id", id);
   if (storeId) query = query.eq("store_id", storeId);

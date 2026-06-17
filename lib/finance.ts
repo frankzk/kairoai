@@ -1075,14 +1075,17 @@ export async function deletePayrollStaff(id: number): Promise<void> {
   if (error) throw new Error(`deletePayrollStaff: ${error.message}`);
 }
 
-export async function listMoovinTracking(): Promise<MoovinTrackingRow[]> {
+export async function listMoovinTracking(
+  opts: { since?: string | null } = {}
+): Promise<MoovinTrackingRow[]> {
   const pageSize = 1000;
   const concurrency = 5;
   const maxRows = 50000;
   const all: MoovinTrackingRow[] = [];
   let done = false;
-  // Lee las paginas en lotes concurrentes (en vez de una por una en serie)
-  // para no encadenar hasta 50 viajes a Supabase en una sola carga.
+  // Lee las paginas en lotes concurrentes (en vez de una por una en serie) para
+  // no encadenar hasta 50 viajes a Supabase. Con `since` solo trae el tracking
+  // re-chequeado despues de esa marca (modo incremental del cron de novedades).
   for (let base = 0; base < maxRows && !done; base += pageSize * concurrency) {
     const ranges: Array<[number, number]> = [];
     for (let i = 0; i < concurrency; i++) {
@@ -1091,13 +1094,15 @@ export async function listMoovinTracking(): Promise<MoovinTrackingRow[]> {
       ranges.push([from, from + pageSize - 1]);
     }
     const results = await Promise.all(
-      ranges.map(([from, to]) =>
-        getDB()
+      ranges.map(([from, to]) => {
+        let query = getDB()
           .from("moovin_tracking")
           .select("*")
           .order("checked_at", { ascending: false })
-          .range(from, to)
-      )
+          .range(from, to);
+        if (opts.since) query = query.gt("checked_at", opts.since);
+        return query;
+      })
     );
     for (const { data, error } of results) {
       if (error) throw new Error(`listMoovinTracking: ${error.message}`);
@@ -1190,16 +1195,21 @@ export async function listMoovinSyncCandidates(
   return candidates;
 }
 
-export async function listForzaTracking(storeId = DEFAULT_FINANCE_STORE_ID): Promise<ForzaTrackingRow[]> {
+export async function listForzaTracking(
+  storeId = DEFAULT_FINANCE_STORE_ID,
+  opts: { since?: string | null } = {}
+): Promise<ForzaTrackingRow[]> {
   const pageSize = 1000;
   const all: ForzaTrackingRow[] = [];
   for (let from = 0; from < 50000; from += pageSize) {
-    const { data, error } = await getDB()
+    let query = getDB()
       .from("forza_tracking")
       .select("*")
       .eq("store_id", storeId)
       .order("checked_at", { ascending: false })
       .range(from, from + pageSize - 1);
+    if (opts.since) query = query.gt("checked_at", opts.since);
+    const { data, error } = await query;
     if (error) throw new Error(`listForzaTracking: ${error.message}`);
     const page = (data ?? []) as ForzaTrackingRow[];
     all.push(...page);

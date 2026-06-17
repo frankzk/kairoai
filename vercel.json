@@ -50,7 +50,7 @@
       "maxDuration": 60
     },
     "app/api/cron/incidencias/route.ts": {
-      "maxDuration": 60
+      "maxDuration": 300
     }
   }
 }

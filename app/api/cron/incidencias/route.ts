@@ -3,15 +3,40 @@ import { listForzaTracking, listLogisticsRows, listMoovinTracking } from "@/lib/
 import { FINANCE_STORES } from "@/lib/store-config";
 import type { LogisticsRow } from "@/lib/finance-types";
 import { detectForzaIncident, detectMoovinIncident } from "@/lib/incidents-detect";
-import { listIncidentKeys, upsertDetectedIncident } from "@/lib/incidents";
+import {
+  getIncidentWatermark,
+  listIncidentKeys,
+  setIncidentWatermark,
+  upsertDetectedIncident,
+} from "@/lib/incidents";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Holgado para el backfill de la primera corrida (watermark vacio). En regimen
+// incremental cada corrida procesa poco y termina mucho antes.
+export const maxDuration = 300;
 
-// Arma/actualiza la bandeja de novedades POR TIENDA. Cruza, para cada tienda, su
-// tracking de courier (Moovin en Costa Rica, Forza en Honduras) con sus filas de
-// logistica. Idempotente por (store_id, clave de envio): reejecutar no duplica ni
-// pisa la gestion manual.
+// Indexa las filas de logistica de una tienda por su guia, para enriquecer la
+// novedad (pedido, telefono, COD) al cruzar con el tracking del courier.
+function indexByGuide(rows: LogisticsRow[]): Map<string, LogisticsRow> {
+  const byGuide = new Map<string, LogisticsRow>();
+  for (const row of rows) {
+    if (row.guide_number && !byGuide.has(row.guide_number)) byGuide.set(row.guide_number, row);
+  }
+  return byGuide;
+}
+
+// Maximo checked_at de un lote. Viene en ISO-UTC consistente desde Supabase, asi
+// que el maximo lexicografico coincide con el maximo temporal.
+function maxChecked(rows: Array<{ checked_at: string }>, seed: string): string {
+  return rows.reduce((m, r) => (r.checked_at && r.checked_at > m ? r.checked_at : m), seed);
+}
+
+// Arma/actualiza la bandeja de novedades POR TIENDA, de forma INCREMENTAL: por
+// cada fuente de tracking (Moovin global en Costa Rica; Forza por tienda en
+// Honduras) procesa solo las guias con checked_at posterior al ultimo watermark
+// guardado, en vez de reescanear todo el historico. Asi el trabajo por corrida
+// es proporcional a lo que se movio, no al total acumulado. Idempotente por
+// (store_id, clave de envio): reejecutar no duplica ni pisa la gestion manual.
 async function run() {
   let scanned = 0;
   let created = 0;
@@ -24,55 +49,48 @@ async function run() {
   };
 
   try {
-    // El tracking de Moovin es global (no esta particionado por tienda); las filas
-    // de logistica si lo estan, asi que el cruce por guia ancla cada novedad a la
-    // tienda correcta. Hoy solo Costa Rica usa Moovin.
+    // ----- Costa Rica (Moovin): tracking global, anclado a la tienda por guia.
     const moovinStores = FINANCE_STORES.filter((s) => s.logisticsProvider === "moovin");
-    const moovinTracking = moovinStores.length ? await listMoovinTracking() : [];
+    if (moovinStores.length) {
+      const since = await getIncidentWatermark("moovin");
+      const tracking = await listMoovinTracking({ since });
+      if (tracking.length) {
+        for (const store of moovinStores) {
+          const [rows, existingKeys] = await Promise.all([
+            listLogisticsRows(undefined, store.id),
+            listIncidentKeys(store.id),
+          ]);
+          const byGuide = indexByGuide(rows);
+          for (const t of tracking) {
+            const candidate = detectMoovinIncident(t, byGuide.get(t.id_package), store.id);
+            if (!candidate) continue;
+            // Una entrega solo importa si ya existe una novedad para ese envio.
+            if (candidate.last_tracking_group === "delivered" && !existingKeys.has(candidate.incident_key)) {
+              continue;
+            }
+            scanned += 1;
+            const { outcome } = await upsertDetectedIncident(candidate);
+            bump(outcome);
+          }
+        }
+        const next = maxChecked(tracking, since ?? "");
+        if (next) await setIncidentWatermark("moovin", next);
+      }
+    }
 
-    for (const store of moovinStores) {
+    // ----- Honduras (Forza): tracking ya particionado por tienda (store_id).
+    const forzaStores = FINANCE_STORES.filter((s) => s.logisticsProvider === "forza");
+    for (const store of forzaStores) {
+      const sourceKey = `forza:${store.id}`;
+      const since = await getIncidentWatermark(sourceKey);
+      const tracking = await listForzaTracking(store.id, { since });
+      if (!tracking.length) continue;
+
       const [rows, existingKeys] = await Promise.all([
         listLogisticsRows(undefined, store.id),
         listIncidentKeys(store.id),
       ]);
-
-      // Indice guia -> fila de logistica (de esta tienda) para enriquecer Moovin.
-      const byGuide = new Map<string, LogisticsRow>();
-      for (const row of rows) {
-        if (row.guide_number && !byGuide.has(row.guide_number)) byGuide.set(row.guide_number, row);
-      }
-
-      // Solo incidencias activas de Moovin (ultimo evento failed / has_incident),
-      // que es lo que la pagina de finanzas marca como "Incidencia". Incluye
-      // auto-resolucion cuando el courier confirma la entrega.
-      for (const t of moovinTracking) {
-        const candidate = detectMoovinIncident(t, byGuide.get(t.id_package), store.id);
-        if (!candidate) continue;
-        // Una entrega solo importa si ya existe una novedad para ese envio.
-        if (candidate.last_tracking_group === "delivered" && !existingKeys.has(candidate.incident_key)) {
-          continue;
-        }
-        scanned += 1;
-        const { outcome } = await upsertDetectedIncident(candidate);
-        bump(outcome);
-      }
-    }
-
-    // Honduras (courier Forza): el tracking de Forza ya esta particionado por
-    // tienda (store_id), asi que se lee por tienda y se cruza con su logistica.
-    const forzaStores = FINANCE_STORES.filter((s) => s.logisticsProvider === "forza");
-    for (const store of forzaStores) {
-      const [tracking, rows, existingKeys] = await Promise.all([
-        listForzaTracking(store.id),
-        listLogisticsRows(undefined, store.id),
-        listIncidentKeys(store.id),
-      ]);
-
-      const byGuide = new Map<string, LogisticsRow>();
-      for (const row of rows) {
-        if (row.guide_number && !byGuide.has(row.guide_number)) byGuide.set(row.guide_number, row);
-      }
-
+      const byGuide = indexByGuide(rows);
       for (const t of tracking) {
         const candidate = detectForzaIncident(t, byGuide.get(t.guide_number));
         if (!candidate) continue;
@@ -83,11 +101,13 @@ async function run() {
         const { outcome } = await upsertDetectedIncident(candidate);
         bump(outcome);
       }
+      const next = maxChecked(tracking, since ?? "");
+      if (next) await setIncidentWatermark(sourceKey, next);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error";
     const friendly = /does not exist|42P01/.test(message)
-      ? "Falta una tabla requerida (migracion 0014_incidencias, moovin_tracking, forza_tracking o logistics_rows)."
+      ? "Falta una tabla requerida (migraciones 0014_incidencias / 0015_incident_sync_state, moovin_tracking, forza_tracking o logistics_rows)."
       : message;
     return NextResponse.json({ error: friendly }, { status: 500 });
   }
