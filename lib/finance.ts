@@ -324,26 +324,38 @@ export interface PersistedShopifyOrderSummary
   note_attributes: Array<{ name?: string | null; value?: string | null }>;
 }
 
-export async function listPersistedShopifyOrders(limit = 1000, offset = 0): Promise<PersistedShopifyOrderSummary[]> {
+export async function listPersistedShopifyOrders(
+  limit = 1000,
+  cursorId?: number | null
+): Promise<PersistedShopifyOrderSummary[]> {
   type RawSummary = PersistedShopifyOrderSummary & {
     raw_line_items: Array<Record<string, unknown>> | null;
   };
   // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
-  // defecto); se pagina con range() hasta el limite pedido.
+  // defecto); se piden bloques de ese tamano hasta completar el limite.
   const pageSize = 1000;
   const rows: RawSummary[] = [];
   const safeLimit = Math.max(Math.floor(limit), 0);
-  const safeOffset = Math.max(Math.floor(offset), 0);
-  for (let fetched = 0; fetched < safeLimit; fetched += pageSize) {
-    const from = safeOffset + fetched;
-    const to = safeOffset + Math.min(fetched + pageSize, safeLimit) - 1;
-    const fetchPage = (columns: string) =>
-      getDB()
+  // Paginacion por keyset sobre el id (PK) en vez de OFFSET: un OFFSET profundo
+  // obliga a Postgres a ordenar la tabla entera (arrastrando el JSONB de cada
+  // fila) y descartar miles de filas en cada pagina, lo que disparaba el
+  // statement timeout y devolvia FUNCTION_INVOCATION_TIMEOUT en /admin/finance.
+  // `WHERE id < cursor ORDER BY id DESC LIMIT n` usa el indice primario y lee
+  // solo n filas. El cliente reordena por fecha, asi que ordenar por id basta.
+  let lastId =
+    typeof cursorId === "number" && Number.isFinite(cursorId) ? Math.floor(cursorId) : null;
+
+  while (rows.length < safeLimit) {
+    const batchSize = Math.min(pageSize, safeLimit - rows.length);
+    const fetchPage = (columns: string) => {
+      let query = getDB()
         .from("shopify_orders")
         .select(columns)
-        .order("shopify_created_at", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false })
-        .range(from, to);
+        .limit(batchSize);
+      if (lastId !== null) query = query.lt("id", lastId);
+      return query;
+    };
 
     let result = await fetchPage(PERSISTED_TIERS[persistedTier]);
     // Si falta una columna de una migracion no aplicada, baja al siguiente
@@ -354,8 +366,10 @@ export async function listPersistedShopifyOrders(limit = 1000, offset = 0): Prom
     }
     if (result.error) throw new Error(`listPersistedShopifyOrders: ${result.error.message}`);
     const page = (result.data ?? []) as unknown as RawSummary[];
+    if (!page.length) break;
     rows.push(...page);
-    if (page.length < pageSize) break;
+    lastId = Number((page[page.length - 1] as unknown as { id: number }).id);
+    if (page.length < batchSize) break;
   }
   return rows.map(({ raw_line_items, ...order }) => ({
     ...order,

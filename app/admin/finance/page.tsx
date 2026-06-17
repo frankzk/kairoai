@@ -7112,13 +7112,12 @@ async function fetchPersistedShopifySnapshot(
 ): Promise<Record<string, unknown>> {
   const orders: Array<Record<string, unknown>> = [];
   let coverage: { count: number; oldest: string | null; newest: string | null } | null = null;
-  let offset = 0;
+  let cursor: number | null = null;
 
   while (orders.length < FINANCE_SHOPIFY_SYNC_MAX_ROWS) {
-    const res = await fetch(
-      `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_PAGE_SIZE}&offset=${offset}`,
-      { cache: "no-store" }
-    );
+    const params = new URLSearchParams({ limit: String(FINANCE_SHOPIFY_SYNC_PAGE_SIZE) });
+    if (cursor !== null) params.set("cursor", String(cursor));
+    const res = await fetch(`/api/finance/shopify-sync?${params.toString()}`, { cache: "no-store" });
     const json = await readApiJson(res);
     if (!res.ok) throw new Error(json.error ?? "No se pudo leer el historico Shopify");
 
@@ -7131,9 +7130,9 @@ async function fetchPersistedShopifySnapshot(
     onProgress?.({ orders: [...orders], total: orders.length, coverage });
 
     if (!json.has_more || !pageOrders.length) break;
-    const nextOffset = Number(json.next_offset ?? offset + pageOrders.length);
-    if (!Number.isFinite(nextOffset) || nextOffset <= offset) break;
-    offset = nextOffset;
+    const nextCursor = Number(json.next_cursor);
+    if (!Number.isFinite(nextCursor) || nextCursor === cursor) break;
+    cursor = nextCursor;
   }
 
   return { orders, total: orders.length, coverage };

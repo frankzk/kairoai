@@ -62,6 +62,7 @@ export async function loadShopifyOrdersForMatching(
 }
 
 interface PersistedOrderSlim {
+  id: number;
   shopify_order_id: string;
   order_number: number | null;
   name: string;
@@ -85,17 +86,25 @@ async function listPersistedOrdersSlim(): Promise<{
   // Camino rapido sin tocar raw_order (requiere migracion 0003); extraer del
   // JSONB completo por fila dispara el statement timeout con 10k+ pedidos.
   const FAST_COLUMNS =
-    "shopify_order_id, order_number, name, financial_status, fulfillment_status, cancelled_at, total_price, shopify_created_at, shopify_updated_at, line_items, note, note_attributes";
+    "id, shopify_order_id, order_number, name, financial_status, fulfillment_status, cancelled_at, total_price, shopify_created_at, shopify_updated_at, line_items, note, note_attributes";
   const LEGACY_COLUMNS =
-    "shopify_order_id, order_number, name, financial_status, fulfillment_status, cancelled_at, total_price, shopify_created_at, shopify_updated_at, line_items, note:raw_order->>note, note_attributes:raw_order->note_attributes";
+    "id, shopify_order_id, order_number, name, financial_status, fulfillment_status, cancelled_at, total_price, shopify_created_at, shopify_updated_at, line_items, note:raw_order->>note, note_attributes:raw_order->note_attributes";
   let useLegacyColumns = false;
-  for (let from = 0; ; from += DB_PAGE_SIZE) {
-    const fetchPage = (columns: string) =>
-      getDB()
+  // Paginacion por keyset sobre el id (PK), no OFFSET: con OFFSET profundo
+  // Postgres ordena la tabla entera y descarta miles de filas por pagina, lo
+  // que dispara el statement timeout (FUNCTION_INVOCATION_TIMEOUT) en cada
+  // importacion conforme crece la base. `WHERE id > cursor` usa el indice.
+  let lastId: number | null = null;
+  for (;;) {
+    const fetchPage = (columns: string) => {
+      let query = getDB()
         .from("shopify_orders")
         .select(columns)
         .order("id", { ascending: true })
-        .range(from, from + DB_PAGE_SIZE - 1);
+        .limit(DB_PAGE_SIZE);
+      if (lastId !== null) query = query.gt("id", lastId);
+      return query;
+    };
 
     let result = await fetchPage(useLegacyColumns ? LEGACY_COLUMNS : FAST_COLUMNS);
     if (
@@ -130,6 +139,8 @@ async function listPersistedOrdersSlim(): Promise<{
         line_items: row.line_items ?? [],
       });
     }
+    if (!page.length) break;
+    lastId = Number(page[page.length - 1].id);
     if (page.length < DB_PAGE_SIZE) break;
   }
   return { orders, latestUpdatedAt };

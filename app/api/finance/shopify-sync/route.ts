@@ -19,22 +19,30 @@ const PAGE_DELAY_MS = 350;
 export async function GET(req: NextRequest) {
   try {
     const requestedLimit = Number(req.nextUrl.searchParams.get("limit") || 1000);
-    const offset = Math.max(Number(req.nextUrl.searchParams.get("offset") || 0), 0);
     const limit = Math.min(Math.max(requestedLimit, 1), MAX_GET_LIMIT);
+    const cursorParam = req.nextUrl.searchParams.get("cursor");
+    const cursorValue = cursorParam ? Number(cursorParam) : NaN;
+    const cursor = Number.isFinite(cursorValue) ? cursorValue : null;
+    const isFirstPage = cursor === null;
+
     const [orders, coverage] = await Promise.all([
-      listPersistedShopifyOrders(limit + 1, offset),
-      getPersistedShopifyCoverage(),
+      listPersistedShopifyOrders(limit + 1, cursor),
+      // El conteo total solo se necesita una vez; recalcularlo en cada pagina
+      // multiplicaba el trabajo y ayudaba a disparar el timeout.
+      isFirstPage ? getPersistedShopifyCoverage() : Promise.resolve(null),
     ]);
     const pageOrders = orders.slice(0, limit);
     const hasMore = orders.length > limit;
+    const nextCursor =
+      hasMore && pageOrders.length ? Number(pageOrders[pageOrders.length - 1].id) : null;
     return NextResponse.json({
       orders: pageOrders,
       total: pageOrders.length,
       coverage,
-      offset,
+      cursor,
       limit,
       has_more: hasMore,
-      next_offset: hasMore ? offset + pageOrders.length : null,
+      next_cursor: nextCursor,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer pedidos Shopify sincronizados";
