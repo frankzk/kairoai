@@ -61,6 +61,12 @@ interface CacheEntry {
   data: OrdersDataset;
 }
 
+// Builds en curso por tienda. Si dos requests caen con L1/L2 vencidos a la vez,
+// comparten el mismo cold-build en vez de disparar varios en paralelo (pico de
+// lecturas en Supabase). El get...set es sincrono (sin await en medio), asi que
+// el latch es atomico frente al event loop.
+const buildInFlight = new Map<string, Promise<OrdersDataset>>();
+
 // L1: cache en memoria por instancia. TTL corto para que dentro de una misma
 // instancia varios requests seguidos reusen el dataset sin ni siquiera tocar L2.
 const CACHE_TTL_MS = 60_000;
@@ -240,10 +246,19 @@ export async function getOrdersDataset(store: FinanceStorePublic): Promise<Order
     return fromL2;
   }
 
-  const data = await buildDataset(store);
-  datasetCache.set(store.code, { at: Date.now(), data });
-  await writeDatasetCache(store, data);
-  return data;
+  // Cold build serializado por tienda: si ya hay uno en curso, se reusa.
+  const inFlight = buildInFlight.get(store.code);
+  if (inFlight) return inFlight;
+
+  const build = (async () => {
+    const data = await buildDataset(store);
+    datasetCache.set(store.code, { at: Date.now(), data });
+    await writeDatasetCache(store, data);
+    return data;
+  })().finally(() => buildInFlight.delete(store.code));
+
+  buildInFlight.set(store.code, build);
+  return build;
 }
 
 // Reconstruye el dataset de una tienda y refresca ambas caches (L2 upsert + L1).

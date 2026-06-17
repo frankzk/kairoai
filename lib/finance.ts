@@ -269,6 +269,32 @@ export async function upsertSettlementRowsByDedup(
   if (error) throw new Error(`upsertSettlementRowsByDedup: ${error.message}`);
 }
 
+// Filas de liquidacion existentes para un conjunto de dedup_keys. Sirve para el
+// rollback del import idempotente: captura las pre-imagenes de filas de OTROS
+// archivos con la misma clave (que el upsert por (store_id, dedup_key) podria
+// re-apuntar/pisar) para poder restaurarlas si el import falla. El .in() se
+// trocea para no exceder el largo de URL de PostgREST.
+export async function listSettlementRowsByDedupKeys(
+  storeId: number,
+  keys: string[]
+): Promise<SettlementRow[]> {
+  const unique = Array.from(new Set(keys.filter(Boolean)));
+  if (!unique.length) return [];
+  const out: SettlementRow[] = [];
+  const chunkSize = 150;
+  for (let i = 0; i < unique.length; i += chunkSize) {
+    const slice = unique.slice(i, i + chunkSize);
+    const { error, data } = await getDB()
+      .from("settlement_rows")
+      .select(`${SETTLEMENT_ROW_COLUMNS_BASE}, dedup_key`)
+      .eq("store_id", storeId)
+      .in("dedup_key", slice);
+    if (error) throw new Error(`listSettlementRowsByDedupKeys: ${error.message}`);
+    out.push(...((data ?? []) as unknown as SettlementRow[]));
+  }
+  return out;
+}
+
 export async function updateSettlementImportMatchCounts(
   id: number,
   storeId: number,

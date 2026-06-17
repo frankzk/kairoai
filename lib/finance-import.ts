@@ -13,7 +13,7 @@
 
 import * as XLSX from "xlsx";
 import { sheetToJson } from "@/lib/xlsx";
-import type { InternalOrderStatus, LogisticsPackageItem } from "@/lib/finance-types";
+import type { InternalOrderStatus, LogisticsPackageItem, SettlementRow } from "@/lib/finance-types";
 
 // ---------------------------------------------------------------------------
 // Filas canonicas (movidas VERBATIM desde las rutas)
@@ -96,13 +96,57 @@ export function parseDate(value: string): string | null {
 }
 
 // Clave de deduplicacion de una fila de liquidacion: guia (preferida) u orden.
-// DEBE coincidir con el backfill SQL de la migracion 0014
-// (COALESCE(NULLIF(BTRIM(guide),''), NULLIF(BTRIM(order),''))) para que el upsert
-// por (store_id, dedup_key) encuentre las filas ya existentes.
+// Coincide con el backfill SQL de la migracion 0014
+// (COALESCE(NULLIF(BTRIM(guide),''), NULLIF(BTRIM(order),''), 'id:'||id)) para que
+// el upsert por (store_id, dedup_key) encuentre las filas ya existentes. El
+// fallback 'id:'||id del SQL es SOLO para filas preexistentes sin guia ni orden;
+// el import nunca produce clave vacia porque parseBoxfulSettlement descarta las
+// filas sin guia ni orden, asi que aca no hace falta replicar ese fallback.
 export function dedupKey(guide: string | null | undefined, order: string | null | undefined): string {
   const g = String(guide ?? "").trim();
   if (g) return g;
   return String(order ?? "").trim();
+}
+
+// Operaciones de BD inyectadas para persistir un import de liquidaciones con
+// rollback seguro (se inyectan para poder testear el rollback sin tocar Supabase).
+export interface SettlementPersistDeps {
+  // Filas existentes con esas dedup_keys (pre-imagenes de OTROS archivos).
+  listByDedupKeys: (storeId: number, keys: string[]) => Promise<SettlementRow[]>;
+  upsertByDedup: (rows: Array<Omit<SettlementRow, "id" | "created_at">>) => Promise<void>;
+  restoreById: (rows: SettlementRow[]) => Promise<void>;
+  deleteImport: (importId: number, storeId: number) => Promise<void>;
+}
+
+// Persiste las filas del import con upsert idempotente por (store_id, dedup_key)
+// y rollback SEGURO. El upsert puede ACTUALIZAR (re-apuntar) filas de otro archivo
+// que compartan dedup_key; por eso, antes de upsertar se capturan sus pre-imagenes
+// y, si algun lote falla, se restauran ANTES de borrar el import nuevo — asi el
+// cascade del delete solo alcanza las filas recien insertadas, nunca las ajenas.
+export async function persistSettlementRowsWithRollback(args: {
+  rows: Array<Omit<SettlementRow, "id" | "created_at">>;
+  storeId: number;
+  importId: number;
+  batchSize: number;
+  concurrency: number;
+  deps: SettlementPersistDeps;
+}): Promise<void> {
+  const { rows, storeId, importId, batchSize, concurrency, deps } = args;
+  const dedupKeys = rows.map((row) => row.dedup_key).filter((key): key is string => Boolean(key));
+  let preimages: SettlementRow[] = [];
+  try {
+    preimages = await deps.listByDedupKeys(storeId, dedupKeys);
+    const batches: (typeof rows)[] = [];
+    for (let i = 0; i < rows.length; i += batchSize) batches.push(rows.slice(i, i + batchSize));
+    for (let i = 0; i < batches.length; i += concurrency) {
+      await Promise.all(batches.slice(i, i + concurrency).map(deps.upsertByDedup));
+    }
+  } catch (insertError) {
+    if (preimages.length) await deps.restoreById(preimages).catch(() => undefined);
+    await deps.deleteImport(importId, storeId).catch(() => undefined);
+    const detail = insertError instanceof Error ? insertError.message : String(insertError);
+    throw new Error(`No se pudieron guardar las filas (import revertido): ${detail}`);
+  }
 }
 
 export function inferEarliestCreatedOn(rows: Array<{ created_on: string | null }>): string | null {

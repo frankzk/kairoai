@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchForzaTracking, normalizeForzaGuide } from "@/lib/forza";
-import { getStoreFromBody, getStoreFromSearchParams } from "@/lib/stores";
+import { getRequiredStoreFromBody, getRequiredStoreFromSearchParams } from "@/lib/stores";
 import {
   getRecentlyCheckedForzaGuides,
   listForzaTracking,
@@ -20,7 +20,13 @@ interface RequestedGuide {
 }
 
 export async function GET(req: NextRequest) {
-  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) {
+    return NextResponse.json(
+      { rows: [], total: 0, error: "store requerido: usa mireva-cr o mireva-hn" },
+      { status: 400 }
+    );
+  }
   try {
     const rows = await listForzaTracking(store.id);
     return NextResponse.json({ rows, total: rows.length });
@@ -36,7 +42,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const store = getStoreFromBody(body);
+    const store = getRequiredStoreFromBody(body);
+    if (!store) {
+      return NextResponse.json({ error: "store requerido: usa mireva-cr o mireva-hn" }, { status: 400 });
+    }
     const requested = Array.isArray(body.guides) ? (body.guides as RequestedGuide[]) : [];
     const force = body.force === true;
     if (!requested.length) {

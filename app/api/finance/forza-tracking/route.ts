@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchForzaTracking } from "@/lib/forza";
-import { getStoreFromSearchParams } from "@/lib/stores";
+import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { upsertForzaTracking } from "@/lib/finance";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 export async function GET(req: NextRequest) {
-  const store = getStoreFromSearchParams(req.nextUrl.searchParams);
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) {
+    return NextResponse.json({ error: "store requerido: usa mireva-cr o mireva-hn" }, { status: 400 });
+  }
   const guide = (req.nextUrl.searchParams.get("guide") || "").trim();
   const includeRaw = req.nextUrl.searchParams.get("raw") === "1";
   if (!guide) {

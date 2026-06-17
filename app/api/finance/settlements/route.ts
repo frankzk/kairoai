@@ -4,6 +4,7 @@ import {
   dedupKey,
   inferEarliestCreatedOn,
   parseSettlementWorkbook,
+  persistSettlementRowsWithRollback,
   type ParsedSettlementRow,
 } from "@/lib/finance-import";
 import { buildShopifyMatchIndex, findShopifyOrderForRow } from "@/lib/order-matching";
@@ -17,7 +18,9 @@ import {
   deleteSettlementImportByFileName,
   listSettlementImports,
   listSettlementRows,
+  listSettlementRowsByDedupKeys,
   upsertBoxfulFileControl,
+  upsertSettlementRows,
   upsertSettlementRowsByDedup,
   type SettlementOrderItem,
   type SettlementRow,
@@ -139,22 +142,24 @@ export async function POST(req: NextRequest) {
       buildSettlementRow(settlementImport.id, row, store.id, shopify)
     );
 
-    // Si las filas no entran, el import se revierte: un archivo nunca debe
-    // quedar registrado con 0 filas. El upsert es por (store_id, dedup_key), de
-    // modo que re-importar reemplaza la fila previa de esa guia/orden.
-    try {
-      const batches: (typeof rowsToInsert)[] = [];
-      for (let i = 0; i < rowsToInsert.length; i += INSERT_BATCH_SIZE) {
-        batches.push(rowsToInsert.slice(i, i + INSERT_BATCH_SIZE));
-      }
-      for (let i = 0; i < batches.length; i += INSERT_CONCURRENCY) {
-        await Promise.all(batches.slice(i, i + INSERT_CONCURRENCY).map(upsertSettlementRowsByDedup));
-      }
-    } catch (insertError) {
-      await deleteSettlementImport(settlementImport.id, store.id).catch(() => undefined);
-      const detail = insertError instanceof Error ? insertError.message : String(insertError);
-      throw new Error(`No se pudieron guardar las filas (import revertido): ${detail}`);
-    }
+    // Persistencia idempotente con rollback seguro. El upsert es por
+    // (store_id, dedup_key) — re-importar reemplaza la fila previa de esa
+    // guia/orden — y si algun lote falla, se restauran las filas de OTROS archivos
+    // que el upsert pudo re-apuntar antes de borrar el import nuevo (ver
+    // persistSettlementRowsWithRollback). Un archivo nunca queda con 0 filas.
+    await persistSettlementRowsWithRollback({
+      rows: rowsToInsert,
+      storeId: store.id,
+      importId: settlementImport.id,
+      batchSize: INSERT_BATCH_SIZE,
+      concurrency: INSERT_CONCURRENCY,
+      deps: {
+        listByDedupKeys: listSettlementRowsByDedupKeys,
+        upsertByDedup: upsertSettlementRowsByDedup,
+        restoreById: upsertSettlementRows,
+        deleteImport: deleteSettlementImport,
+      },
+    });
 
     // El import muto settlement_rows: refresca la cache durable del dataset.
     // Defensivo: nunca debe romper el import si la cache falla.
