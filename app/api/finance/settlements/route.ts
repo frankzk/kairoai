@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import * as XLSX from "xlsx";
-import { readWorkbook, sheetToJson } from "@/lib/xlsx";
+import { readWorkbook } from "@/lib/xlsx";
+import {
+  inferEarliestCreatedOn,
+  parseSettlementWorkbook,
+  type ParsedSettlementRow,
+} from "@/lib/finance-import";
 import { buildShopifyMatchIndex, findShopifyOrderForRow } from "@/lib/order-matching";
 import {
   loadShopifyOrdersForMatching,
@@ -13,7 +17,6 @@ import {
   listSettlementImports,
   listSettlementRows,
   upsertBoxfulFileControl,
-  type InternalOrderStatus,
   type SettlementOrderItem,
   type SettlementRow,
 } from "@/lib/finance";
@@ -26,29 +29,6 @@ export const maxDuration = 60;
 
 const INSERT_BATCH_SIZE = 250;
 const INSERT_CONCURRENCY = 4;
-
-interface ParsedSettlementRow {
-  raw: Record<string, unknown>;
-  guide_number: string;
-  order_name: string;
-  store_order_number: string;
-  customer_name: string;
-  first_name: string;
-  last_name: string;
-  customer_phone: string;
-  created_on: string | null;
-  courier: string;
-  service_type: string;
-  cod_amount: number;
-  cod_commission: number;
-  card_commission: number;
-  delivery_cost: number;
-  pick_pack_cost: number;
-  packaging_cost: number;
-  amount_to_liquidate: number;
-  settlement_status: string;
-  internal_status: InternalOrderStatus;
-}
 
 export async function GET(req: NextRequest) {
   const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
@@ -82,14 +62,13 @@ export async function POST(req: NextRequest) {
       String(form.get("period_label") ?? "").trim() || (periodEnd ? `Corte ${periodEnd}` : "");
 
     const workbook = readWorkbook(await file.arrayBuffer());
-    const settlementRows = parseSettlementRows(workbook);
+    const { rows: settlementRows, consolidated } = parseSettlementWorkbook(workbook);
     if (!settlementRows.length) {
       return NextResponse.json({ error: "No se encontraron filas en la hoja Envios" }, { status: 400 });
     }
 
-    const consolidated = parseConsolidated(workbook);
     const shopifyOrders = await loadShopifyOrdersForMatching(
-      periodStart ?? inferEarliestDate(settlementRows),
+      periodStart ?? inferEarliestCreatedOn(settlementRows),
       store.id
     );
     const matchIndex = buildShopifyMatchIndex(shopifyOrders);
@@ -208,69 +187,6 @@ function missingStoreResponse() {
   );
 }
 
-function parseSettlementRows(workbook: XLSX.WorkBook): ParsedSettlementRow[] {
-  const sheet = workbook.Sheets.Envios ?? workbook.Sheets[workbook.SheetNames[0]];
-  const rows = sheetToJson<Record<string, unknown>>(sheet, {
-    defval: "",
-    raw: false,
-  });
-
-  return rows
-    .map((raw) => {
-      const firstName = text(raw.Nombre);
-      const lastName = text(raw.Apellido);
-      const settlementStatus = text(raw.Estado);
-      return {
-        raw,
-        guide_number: text(raw["No. Guia"]),
-        order_name: text(raw.Orden),
-        store_order_number: text(raw["No. Orden tienda"]),
-        customer_name: `${firstName} ${lastName}`.trim(),
-        first_name: firstName,
-        last_name: lastName,
-        customer_phone: text(raw.Telefono),
-        created_on: parseDate(text(raw["Creado en"])),
-        courier: text(raw.Courier),
-        service_type: text(raw["Tipo de Servicio"]),
-        cod_amount: money(raw["Monto COD"]),
-        cod_commission: money(raw["Monto de comision COD"]),
-        card_commission: money(raw["Com. Tarjeta"]),
-        delivery_cost: money(raw["Costo de entrega"]),
-        pick_pack_cost: money(raw["Pick&Pack"]),
-        packaging_cost: money(raw.Empaque),
-        amount_to_liquidate: money(raw["A Liquidar"]),
-        settlement_status: settlementStatus,
-        internal_status: mapSettlementStatus(settlementStatus),
-      };
-    })
-    .filter((row) => row.order_name || row.guide_number);
-}
-
-function parseConsolidated(workbook: XLSX.WorkBook): {
-  total_collected: number;
-  total_to_liquidate: number;
-} {
-  const sheet = workbook.Sheets.Consolidado;
-  if (!sheet) return { total_collected: 0, total_to_liquidate: 0 };
-
-  const rows = sheetToJson<Record<string, unknown>>(sheet, {
-    header: ["description", "amount"],
-    defval: "",
-    raw: false,
-  });
-
-  let totalCollected = 0;
-  let totalToLiquidate = 0;
-  for (const row of rows) {
-    const description = text(row.description).toLowerCase();
-    if (description.includes("total colectado")) totalCollected = money(row.amount);
-    if (description.includes("monto a liquidar") || description.includes("total a recibir")) {
-      totalToLiquidate = money(row.amount);
-    }
-  }
-  return { total_collected: totalCollected, total_to_liquidate: totalToLiquidate };
-}
-
 function buildSettlementRow(
   importId: number,
   row: ParsedSettlementRow,
@@ -319,44 +235,8 @@ function buildSettlementRow(
   };
 }
 
-function mapSettlementStatus(status: string): InternalOrderStatus {
-  const lower = status.toLowerCase();
-  if (lower.includes("entregado") && !lower.includes("no entregado")) return "delivered";
-  if (lower.includes("no entregado") || lower.includes("devuelto")) return "not_delivered";
-  return "pending";
-}
-
-function text(value: unknown): string {
-  return String(value ?? "").trim();
-}
-
-function money(value: unknown): number {
-  const raw = text(value);
-  if (!raw || raw === "-") return 0;
-  return Number(raw.replace(/,/g, "").replace(/[^0-9.-]/g, "")) || 0;
-}
-
-function parseDate(value: string): string | null {
-  if (!value) return null;
-  const parts = value.split(/[/-]/).map(Number);
-  if (parts.length === 3 && parts[2] > 1900) {
-    const [day, month, year] = parts;
-    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
-}
-
 function nullableDate(value: string): string | null {
   return value ? value : null;
-}
-
-function inferEarliestDate(rows: ParsedSettlementRow[]): string | null {
-  const dates = rows
-    .map((row) => row.created_on)
-    .filter((date): date is string => Boolean(date))
-    .sort();
-  return dates[0] ?? null;
 }
 
 function sum(values: number[]): number {

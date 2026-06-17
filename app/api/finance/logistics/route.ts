@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import * as XLSX from "xlsx";
-import { readWorkbook, sheetToJson } from "@/lib/xlsx";
+import { readWorkbook } from "@/lib/xlsx";
+import {
+  inferEarliestCreatedOn,
+  parseLogisticsWorkbook,
+  type ParsedLogisticsRow,
+} from "@/lib/finance-import";
 import { buildShopifyMatchIndex, findShopifyOrderForRow } from "@/lib/order-matching";
 import {
   loadShopifyOrdersForMatching,
@@ -15,7 +19,6 @@ import {
   listLogisticsRowsPage,
   upsertBoxfulFileControl,
   type InternalOrderStatus,
-  type LogisticsPackageItem,
   type LogisticsRow,
 } from "@/lib/finance";
 import { toFriendlyErrorMessage } from "@/lib/api-errors";
@@ -27,29 +30,6 @@ export const maxDuration = 60;
 
 const INSERT_BATCH_SIZE = 500;
 const INSERT_CONCURRENCY = 3;
-
-interface ParsedLogisticsRow {
-  raw: Record<string, unknown>;
-  guide_number: string;
-  order_name: string;
-  store_order_number: string;
-  customer_name: string;
-  first_name: string;
-  last_name: string;
-  customer_phone: string;
-  created_on: string | null;
-  courier: string;
-  boxful_status: string;
-  service_type: string;
-  cod_amount: number;
-  cod_commission: number;
-  delivery_cost: number;
-  total_cost: number;
-  liquidated_on: string | null;
-  finalized_on: string | null;
-  label_url: string;
-  package_items: LogisticsPackageItem[];
-}
 
 export async function GET(req: NextRequest) {
   const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
@@ -124,13 +104,13 @@ export async function POST(req: NextRequest) {
     const periodEnd = nullableDate(String(form.get("period_end") ?? ""));
 
     const workbook = readWorkbook(await file.arrayBuffer());
-    const boxfulRows = parseBoxfulRows(workbook);
+    const { rows: boxfulRows } = parseLogisticsWorkbook(workbook);
     if (!boxfulRows.length) {
       return NextResponse.json({ error: "No se encontraron filas logisticas" }, { status: 400 });
     }
 
     const shopifyOrders = await loadShopifyOrdersForMatching(
-      periodStart ?? inferEarliestDate(boxfulRows),
+      periodStart ?? inferEarliestCreatedOn(boxfulRows),
       store.id,
       {
         // La carga de Excel debe ser deterministica y rapida. El boton Sync
@@ -249,57 +229,6 @@ function missingStoreResponse() {
   );
 }
 
-function parseBoxfulRows(workbook: XLSX.WorkBook): ParsedLogisticsRow[] {
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = sheetToJson<Record<string, unknown>>(sheet, {
-    defval: "",
-    raw: false,
-  });
-
-  return rows
-    .map((raw) => {
-      const firstName = text(raw.Nombre);
-      const lastName = text(raw.Apellido);
-      return {
-        raw,
-        guide_number: text(raw["No. Guia"]),
-        order_name: text(raw.Orden),
-        store_order_number: text(raw["No. Orden tienda"]),
-        customer_name: `${firstName} ${lastName}`.trim(),
-        first_name: firstName,
-        last_name: lastName,
-        customer_phone: text(raw.Telefono),
-        created_on: parseDate(text(raw["Creado en"])),
-        courier: text(raw.Courier),
-        boxful_status: text(raw.Estado),
-        service_type: text(raw["Tipo de Servicio"]),
-        cod_amount: money(raw["Monto COD"]),
-        cod_commission: money(raw["Monto de comision COD"]),
-        delivery_cost: money(raw["Costo de entrega"]),
-        total_cost: money(raw.Total),
-        liquidated_on: parseDate(text(raw["Liquidado en"])),
-        finalized_on: parseDate(text(raw["Finalización"])),
-        label_url: text(raw.Etiqueta),
-        package_items: parsePackageItems(raw),
-      };
-    })
-    .filter((row) => row.guide_number || row.order_name);
-}
-
-function parsePackageItems(raw: Record<string, unknown>): LogisticsPackageItem[] {
-  const items: LogisticsPackageItem[] = [];
-  for (let i = 1; i <= 4; i++) {
-    const title = text(raw[`Paquete ${i}`]);
-    if (!title) continue;
-    items.push({
-      title,
-      quantity: Number(text(raw[`Cantidad Paquete ${i}`]) || 0),
-      price: money(raw[`Precio Paquete ${i}`]),
-    });
-  }
-  return items;
-}
-
 function buildLogisticsRow(
   importId: number,
   row: ParsedLogisticsRow,
@@ -354,35 +283,6 @@ function mapInternalStatus(status: string, shopify?: ShopifyOrder): InternalOrde
   return "pending";
 }
 
-function text(value: unknown): string {
-  return String(value ?? "").trim();
-}
-
-function money(value: unknown): number {
-  const raw = text(value);
-  if (!raw || raw === "-") return 0;
-  return Number(raw.replace(/,/g, "").replace(/[^0-9.-]/g, "")) || 0;
-}
-
-function parseDate(value: string): string | null {
-  if (!value || value === "-") return null;
-  const parts = value.split(/[/-]/).map(Number);
-  if (parts.length === 3 && parts[2] > 1900) {
-    const [day, month, year] = parts;
-    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
-}
-
 function nullableDate(value: string): string | null {
   return value ? value : null;
-}
-
-function inferEarliestDate(rows: ParsedLogisticsRow[]): string | null {
-  const dates = rows
-    .map((row) => row.created_on)
-    .filter((date): date is string => Boolean(date))
-    .sort();
-  return dates[0] ?? null;
 }
