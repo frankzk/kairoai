@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  AlertTriangle, ArrowLeft, Ban, CalendarClock, History, Phone, PhoneOff,
+  AlertTriangle, ArrowLeft, Ban, CalendarClock, Check, Copy, History, Phone, PhoneOff,
   Plus, RefreshCw, Search, Undo2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -321,6 +321,22 @@ function DetailModal({
   const showResultView = incident.status === "reprogramada" && !reopened;
   const intentosEntrega = trackingEvents.filter((e) => e.group === "failed").length;
   const trackingOrdenado = [...trackingEvents].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+
+  // Mensaje estructurado para pedir la reprogramacion al equipo del courier.
+  const copyReprogMsg = async (ev: IncidentEvent) => {
+    const fecha = typeof ev.metadata?.reprogramada_para === "string"
+      ? ev.metadata.reprogramada_para
+      : incident.reprogramada_para ?? "";
+    const msg = `Hola equipo buenas tardes se solicita re programación (${incident.guide_number}) del paquete, para el día (${fmtDay(fecha)})`;
+    try {
+      await navigator.clipboard.writeText(msg);
+      setCopiedId(ev.id);
+      setTimeout(() => setCopiedId((c) => (c === ev.id ? null : c)), 2000);
+    } catch {
+      // Clipboard no disponible (contexto inseguro o permiso denegado).
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -351,10 +367,13 @@ function DetailModal({
             <div><span className="text-muted-foreground">Courier:</span> {incident.courier || "—"}</div>
             <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount) : "—"}</div>
             <div><span className="text-muted-foreground">Origen:</span> {incident.source}</div>
-            {trackingEvents.length > 0 && (
-              <div><span className="text-muted-foreground">Intentos de entrega:</span> <span className="font-medium">{intentosEntrega}</span></div>
-            )}
           </div>
+          {trackingEvents.length > 0 && (
+            <div className="flex items-baseline gap-2">
+              <span className="text-sm text-muted-foreground">Intentos de entrega:</span>
+              <span className="text-2xl font-bold leading-none tabular-nums">{intentosEntrega}</span>
+            </div>
+          )}
           {incident.detail && (
             <p className="text-xs bg-muted/40 rounded-md p-2"><span className="text-muted-foreground">Detalle del courier: </span>{incident.detail}</p>
           )}
@@ -478,6 +497,18 @@ function DetailModal({
                     <span className="text-muted-foreground whitespace-nowrap">{fmtDate(ev.created_at)}</span>
                     <span className="font-medium">{EVENT_LABELS[ev.kind] ?? ev.kind}</span>
                     <span className="text-muted-foreground">{ev.message}</span>
+                    {ev.kind === "reprogramada" && (
+                      <button
+                        type="button"
+                        onClick={() => copyReprogMsg(ev)}
+                        title="Copiar mensaje de reprogramacion para el courier"
+                        className="ml-auto inline-flex items-center gap-1 whitespace-nowrap rounded border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        {copiedId === ev.id
+                          ? <><Check className="h-3 w-3" /> Copiado</>
+                          : <><Copy className="h-3 w-3" /> Copiar mensaje</>}
+                      </button>
+                    )}
                   </div>
                 ))
               )}
