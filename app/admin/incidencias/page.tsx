@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle, ArrowLeft, Ban, CalendarClock, History, Phone, PhoneOff,
-  Plus, RefreshCw, Search, Trash2, Undo2, X,
+  Plus, RefreshCw, Search, Undo2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -412,10 +412,6 @@ function DetailModal({
               </Button>
               <Button variant="outline" size="sm" disabled={busy} className="gap-2" onClick={() => onAction("rts")}>
                 <Undo2 className="h-3.5 w-3.5" /> Devolucion (RTS)
-              </Button>
-              <Button variant="destructive" size="sm" disabled={busy || !incident.shopify_order_id} className="gap-2"
-                onClick={() => { if (confirm("¿Cancelar este pedido en Shopify? Esta accion no se puede deshacer.")) onAction("cancelar_shopify"); }}>
-                <Trash2 className="h-3.5 w-3.5" /> Cancelar en Shopify
               </Button>
               <Button variant="ghost" size="sm" disabled={busy} className="gap-2" onClick={() => onAction("descartar")}>
                 Descartar
