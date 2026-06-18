@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  AlertTriangle, ArrowLeft, Ban, CalendarClock, Check, Copy, History, Phone, PhoneOff,
+  AlertTriangle, ArrowLeft, CalendarClock, Check, Copy, History, Phone, PhoneOff,
   Plus, RefreshCw, Search, Undo2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -498,9 +498,6 @@ function DetailModal({
             )}
             <p className="text-xs font-medium text-muted-foreground pt-1">Cierre</p>
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" disabled={busy} className="gap-2" onClick={() => onAction("no_llamar")}>
-                <Ban className="h-3.5 w-3.5" /> No volver a llamar
-              </Button>
               <Button variant="outline" size="sm" disabled={busy} className="gap-2" onClick={() => onAction("rts")}>
                 <Undo2 className="h-3.5 w-3.5" /> Devolucion (RTS)
               </Button>
