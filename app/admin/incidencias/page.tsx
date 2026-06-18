@@ -317,8 +317,17 @@ function DetailModal({
   const [reopened, setReopened] = useState(false);
   const showResultView = incident.status === "reprogramada" && !reopened;
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center overflow-y-auto p-4">
+    <div
+      className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center overflow-y-auto p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       <Card className="w-full max-w-2xl my-8">
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2">
