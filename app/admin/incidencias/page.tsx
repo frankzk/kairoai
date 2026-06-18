@@ -46,6 +46,20 @@ const STATUS_ORDER: IncidentStatus[] = [
   "pendiente", "reprogramada", "sin_contestar", "no_llamar", "resuelta", "perdida", "descartada",
 ];
 
+// Cuenta para cobrar el nuevo envio por adelantado cuando el courier ya no
+// reintenta (>=2 intentos de entrega fallidos). Es por tienda/pais: CR cobra en
+// colones; HN queda pendiente de definir (su cuenta sera en lempiras).
+type CuentaReenvio = { banco: string; moneda: string; cuenta: string; cedula: string };
+const CUENTA_REENVIO: Record<FinanceStoreCode, CuentaReenvio | null> = {
+  "mireva-cr": {
+    banco: "BAC Credomatic",
+    moneda: "colones",
+    cuenta: "CR39010200009692837534",
+    cedula: "3-101-947603 (Sociedad Anónima)",
+  },
+  "mireva-hn": null,
+};
+
 const currency = (n: number) => "₡" + Math.round(Number(n) || 0).toLocaleString("es-CR");
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString("es-CR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -311,6 +325,7 @@ export default function IncidenciasPage() {
       {selected && (
         <DetailModal
           key={selected.id}
+          storeCode={selectedStoreCode}
           incident={selected}
           events={events}
           trackingEvents={trackingEvents}
@@ -331,8 +346,9 @@ export default function IncidenciasPage() {
 }
 
 function DetailModal({
-  incident, events, trackingEvents, busy, reprogFecha, setReprogFecha, onClose, onPatch, onAction, onAddNote, onEditNote,
+  storeCode, incident, events, trackingEvents, busy, reprogFecha, setReprogFecha, onClose, onPatch, onAction, onAddNote, onEditNote,
 }: {
+  storeCode: FinanceStoreCode;
   incident: Incident; events: IncidentEvent[]; trackingEvents: TrackingEvent[]; busy: boolean;
   reprogFecha: string; setReprogFecha: (v: string) => void;
   onClose: () => void;
@@ -380,6 +396,7 @@ function DetailModal({
     return ymd(d);
   })();
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [copiedNuevoEnvio, setCopiedNuevoEnvio] = useState(false);
 
   // Mensaje estructurado para pedir la reprogramacion al equipo del courier.
   const copyReprogMsg = async (ev: IncidentEvent) => {
@@ -391,6 +408,33 @@ function DetailModal({
       await navigator.clipboard.writeText(msg);
       setCopiedId(ev.id);
       setTimeout(() => setCopiedId((c) => (c === ev.id ? null : c)), 2000);
+    } catch {
+      // Clipboard no disponible (contexto inseguro o permiso denegado).
+    }
+  };
+
+  // Mensaje para el cliente cuando el courier ya no reintenta (>=2 intentos): se
+  // cobra el nuevo envio por adelantado a la cuenta de la tienda.
+  const cuentaReenvio = CUENTA_REENVIO[storeCode];
+  const copyNuevoEnvioMsg = async () => {
+    if (!cuentaReenvio) return;
+    const nombre = (incident.customer_name || "").trim().split(/\s+/)[0] || "";
+    const pedido = incident.order_name || incident.guide_number || "tu pedido";
+    const msg = [
+      `Buenas${nombre ? ` ${nombre}` : ""}. Tu pedido ${pedido} registró ${intentosEntrega} intentos de entrega sin éxito y el courier ya no realiza más intentos.`,
+      ``,
+      `Para programar un nuevo envío, te pedimos realizar el pago por adelantado mediante transferencia bancaria a la siguiente cuenta:`,
+      ``,
+      `Banco: ${cuentaReenvio.banco}`,
+      `Cuenta (${cuentaReenvio.moneda}): ${cuentaReenvio.cuenta}`,
+      `Cédula jurídica: ${cuentaReenvio.cedula}`,
+      ``,
+      `En cuanto recibamos el comprobante, coordinamos el reenvío. ¡Gracias!`,
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(msg);
+      setCopiedNuevoEnvio(true);
+      setTimeout(() => setCopiedNuevoEnvio(false), 2000);
     } catch {
       // Clipboard no disponible (contexto inseguro o permiso denegado).
     }
@@ -430,6 +474,31 @@ function DetailModal({
             <div className="flex items-baseline gap-2">
               <span className="text-sm text-muted-foreground">Intentos de entrega:</span>
               <span className="text-2xl font-bold leading-none tabular-nums">{intentosEntrega}</span>
+            </div>
+          )}
+          {intentosEntrega >= 2 && (
+            <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+              <p className="text-sm font-medium flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+                Nuevo envío
+                <Badge variant="warning" className="ml-1">{intentosEntrega} intentos · sin más reintentos</Badge>
+              </p>
+              {cuentaReenvio ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    El courier ya no reintenta. Cobra el nuevo envío por adelantado y reprograma cuando recibas el comprobante.
+                  </p>
+                  <Button variant="outline" size="sm" className="gap-2" onClick={copyNuevoEnvioMsg}>
+                    {copiedNuevoEnvio
+                      ? <><Check className="h-3.5 w-3.5" /> Copiado</>
+                      : <><Copy className="h-3.5 w-3.5" /> Copiar mensaje de nuevo envío</>}
+                  </Button>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Configura la cuenta de cobro de esta tienda para generar el mensaje.
+                </p>
+              )}
             </div>
           )}
           {incident.detail && (
