@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  AlertTriangle, ArrowLeft, CalendarClock, Check, Copy, History, Phone, PhoneOff,
+  AlertTriangle, ArrowLeft, CalendarClock, Check, Copy, History, Pencil, Phone, PhoneOff,
   Plus, RefreshCw, Search, Undo2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -146,6 +146,30 @@ export default function IncidenciasPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function addNote(text: string) {
+    if (!selected || !text.trim()) return;
+    const res = await fetch(`/api/incidents/events?store=${selectedStoreCode}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ incident_id: selected.id, message: text.trim() }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return alert(json.error || "Error al guardar la nota");
+    await openDetail(selected.id);
+  }
+
+  async function editNote(eventId: number, text: string) {
+    if (!selected || !text.trim()) return;
+    const res = await fetch(`/api/incidents/events?store=${selectedStoreCode}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_id: eventId, message: text.trim() }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return alert(json.error || "Error al editar la nota");
+    await openDetail(selected.id);
   }
 
   const shown = incidents.slice(0, 120);
@@ -296,6 +320,8 @@ export default function IncidenciasPage() {
           onClose={() => setSelected(null)}
           onPatch={patchField}
           onAction={doAction}
+          onAddNote={addNote}
+          onEditNote={editNote}
         />
       )}
 
@@ -305,15 +331,19 @@ export default function IncidenciasPage() {
 }
 
 function DetailModal({
-  incident, events, trackingEvents, busy, reprogFecha, setReprogFecha, onClose, onPatch, onAction,
+  incident, events, trackingEvents, busy, reprogFecha, setReprogFecha, onClose, onPatch, onAction, onAddNote, onEditNote,
 }: {
   incident: Incident; events: IncidentEvent[]; trackingEvents: TrackingEvent[]; busy: boolean;
   reprogFecha: string; setReprogFecha: (v: string) => void;
   onClose: () => void;
   onPatch: (patch: Record<string, unknown>) => void;
   onAction: (action: string, extra?: Record<string, unknown>) => void;
+  onAddNote: (text: string) => Promise<void>;
+  onEditNote: (eventId: number, text: string) => Promise<void>;
 }) {
-  const [notes, setNotes] = useState(incident.notes);
+  const [nuevaNota, setNuevaNota] = useState("");
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
+  const [editNoteText, setEditNoteText] = useState("");
   const [reopened, setReopened] = useState(false);
   const showResultView = incident.status === "reprogramada" && !reopened;
   const intentosEntrega = trackingEvents.filter((e) => e.group === "failed").length;
@@ -509,15 +539,20 @@ function DetailModal({
           </>
           )}
 
-          {/* Notas */}
+          {/* Notas: se registran como eventos del historial */}
           <div>
-            <p className="text-xs font-medium text-muted-foreground mb-1">Notas</p>
+            <p className="text-xs font-medium text-muted-foreground mb-1">Agregar nota</p>
             <textarea
-              className="w-full min-h-[60px] rounded-md border border-input bg-background px-3 py-2 text-sm"
-              value={notes} onChange={(e) => setNotes(e.target.value)}
-              onBlur={() => { if (notes !== incident.notes) onPatch({ notes }); }}
-              placeholder="Notas del operador…"
+              className="w-full min-h-[52px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={nuevaNota} onChange={(e) => setNuevaNota(e.target.value)}
+              placeholder="Escribe una nota… (queda en el historial)"
             />
+            <div className="mt-1 flex justify-end">
+              <Button variant="outline" size="sm" disabled={busy || !nuevaNota.trim()} className="gap-2"
+                onClick={async () => { await onAddNote(nuevaNota); setNuevaNota(""); }}>
+                <Plus className="h-3.5 w-3.5" /> Agregar nota
+              </Button>
+            </div>
           </div>
 
           {/* Historial */}
@@ -533,7 +568,35 @@ function DetailModal({
                   <div key={ev.id} className="text-xs flex gap-2 border-b border-border/30 py-1">
                     <span className="text-muted-foreground whitespace-nowrap">{fmtDate(ev.created_at)}</span>
                     <span className="font-medium">{EVENT_LABELS[ev.kind] ?? ev.kind}</span>
-                    <span className="text-muted-foreground">{ev.message}</span>
+                    {editingNoteId === ev.id ? (
+                      <span className="flex-1 flex flex-col gap-1">
+                        <textarea
+                          className="w-full min-h-[44px] rounded-md border border-input bg-background px-2 py-1 text-xs"
+                          value={editNoteText} onChange={(e) => setEditNoteText(e.target.value)}
+                        />
+                        <span className="flex gap-1">
+                          <button type="button" disabled={busy || !editNoteText.trim()}
+                            onClick={async () => { await onEditNote(ev.id, editNoteText); setEditingNoteId(null); }}
+                            className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-medium hover:bg-muted">
+                            <Check className="h-3 w-3" /> Guardar
+                          </button>
+                          <button type="button" onClick={() => setEditingNoteId(null)}
+                            className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-muted-foreground hover:bg-muted">
+                            <X className="h-3 w-3" /> Cancelar
+                          </button>
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground flex-1">{ev.message}</span>
+                    )}
+                    {ev.kind === "nota" && editingNoteId !== ev.id && (
+                      <button type="button" title="Editar nota"
+                        onClick={() => { setEditingNoteId(ev.id); setEditNoteText(ev.message); }}
+                        className="ml-auto inline-flex items-center gap-1 whitespace-nowrap rounded border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        <Pencil className="h-3 w-3" /> Editar
+                      </button>
+                    )}
                     {ev.kind === "reprogramada" && (
                       <button
                         type="button"

@@ -147,6 +147,17 @@ export async function recordIncidentEvent(
   if (error) throw new Error(`recordIncidentEvent: ${error.message}`);
 }
 
+// Edita el texto de una nota del historial. Restringido a kind "nota": el resto
+// de eventos (deteccion, llamadas, cambios de estado) es bitacora inmutable.
+export async function updateIncidentNote(eventId: number, message: string): Promise<void> {
+  const { error } = await getDB()
+    .from("incident_events")
+    .update({ message })
+    .eq("id", eventId)
+    .eq("kind", "nota");
+  if (error) throw new Error(`updateIncidentNote: ${error.message}`);
+}
+
 // Alta manual de una novedad. Deriva la clave del envio; si no hay guia ni
 // pedido usa una clave con timestamp para no colisionar con otras manuales.
 export async function createIncident(input: Partial<Incident>): Promise<Incident> {
