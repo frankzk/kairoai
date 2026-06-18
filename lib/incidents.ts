@@ -54,6 +54,28 @@ export async function listIncidents(filters: IncidentFilters = {}): Promise<Inci
   return (data ?? []) as Incident[];
 }
 
+// Conteo de novedades por estado para TODA la tienda, SIN los filtros de la
+// bandeja. Alimenta los chips-resumen, que deben reflejar el panorama global y
+// no la lista filtrada que se muestra en la tabla. Usa count exacto por estado
+// (head: true, sin traer filas).
+export async function countIncidentsByStatus(storeId: number): Promise<Record<string, number>> {
+  const statuses: IncidentStatus[] = [
+    "pendiente", "reprogramada", "sin_contestar", "no_llamar", "resuelta", "perdida", "descartada",
+  ];
+  const pairs = await Promise.all(
+    statuses.map(async (s) => {
+      const { count, error } = await getDB()
+        .from("incidents")
+        .select("id", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .eq("status", s);
+      if (error) throw new Error(`countIncidentsByStatus(${s}): ${error.message}`);
+      return [s, count ?? 0] as const;
+    })
+  );
+  return Object.fromEntries(pairs);
+}
+
 // Conjunto de claves existentes, para que la deteccion automatica descarte
 // entregas ya confirmadas sin consultar fila por fila.
 export async function listIncidentKeys(storeId: number): Promise<Set<string>> {
@@ -123,6 +145,17 @@ export async function recordIncidentEvent(
     metadata: event.metadata ?? {},
   });
   if (error) throw new Error(`recordIncidentEvent: ${error.message}`);
+}
+
+// Edita el texto de una nota del historial. Restringido a kind "nota": el resto
+// de eventos (deteccion, llamadas, cambios de estado) es bitacora inmutable.
+export async function updateIncidentNote(eventId: number, message: string): Promise<void> {
+  const { error } = await getDB()
+    .from("incident_events")
+    .update({ message })
+    .eq("id", eventId)
+    .eq("kind", "nota");
+  if (error) throw new Error(`updateIncidentNote: ${error.message}`);
 }
 
 // Alta manual de una novedad. Deriva la clave del envio; si no hay guia ni

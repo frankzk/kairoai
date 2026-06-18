@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  countIncidentsByStatus,
   createIncident,
   getIncident,
   listIncidentEvents,
   listIncidents,
   updateIncident,
 } from "@/lib/incidents";
+import { getForzaTrackingByGuide, getMoovinTrackingByPackage } from "@/lib/finance";
 import { getStoreFromSearchParams } from "@/lib/stores";
-import type { Incident, IncidentCategory, IncidentSource, IncidentStatus } from "@/lib/incidents-types";
+import type { Incident, IncidentCategory, IncidentSource, IncidentStatus, TrackingEvent } from "@/lib/incidents-types";
 
 export const runtime = "nodejs";
 
@@ -30,6 +32,27 @@ function asSource(v: string | null): IncidentSource | undefined {
   return v && SOURCES.has(v) ? (v as IncidentSource) : undefined;
 }
 
+// El historial de tracking del courier vive en moovin_tracking / forza_tracking
+// (columna events JSONB), no en la tabla incidents. Se trae por la guia para el
+// detalle. Es complementario: si la tabla falta o la consulta falla, se devuelve
+// vacio para no romper el detalle de la novedad.
+async function trackingEventsFor(incident: Incident): Promise<TrackingEvent[]> {
+  if (!incident.guide_number) return [];
+  try {
+    if (incident.source === "moovin") {
+      const t = await getMoovinTrackingByPackage(incident.guide_number);
+      return (t?.events ?? []) as TrackingEvent[];
+    }
+    if (incident.source === "forza") {
+      const t = await getForzaTrackingByGuide(incident.store_id, incident.guide_number);
+      return (t?.events ?? []) as TrackingEvent[];
+    }
+  } catch {
+    // tracking complementario: ignorar y devolver vacio.
+  }
+  return [];
+}
+
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const idParam = sp.get("id");
@@ -40,18 +63,23 @@ export async function GET(req: NextRequest) {
       const incident = await getIncident(id, getStoreFromSearchParams(sp).id);
       if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
       const events = await listIncidentEvents(id);
-      return NextResponse.json({ incident, events });
+      const tracking_events = await trackingEventsFor(incident);
+      return NextResponse.json({ incident, events, tracking_events });
     }
 
-    const incidents = await listIncidents({
-      storeId: getStoreFromSearchParams(sp).id,
-      status: asStatus(sp.get("status")),
-      category: asCategory(sp.get("category")),
-      source: asSource(sp.get("source")),
-      search: sp.get("q") ?? undefined,
-      soloReintento: sp.get("reintento") === "1",
-    });
-    return NextResponse.json({ incidents });
+    const storeId = getStoreFromSearchParams(sp).id;
+    const [incidents, counts] = await Promise.all([
+      listIncidents({
+        storeId,
+        status: asStatus(sp.get("status")),
+        category: asCategory(sp.get("category")),
+        source: asSource(sp.get("source")),
+        search: sp.get("q") ?? undefined,
+        soloReintento: sp.get("reintento") === "1",
+      }),
+      countIncidentsByStatus(storeId),
+    ]);
+    return NextResponse.json({ incidents, counts });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer novedades";
     return NextResponse.json({ incidents: [], error: message }, { status: 500 });
