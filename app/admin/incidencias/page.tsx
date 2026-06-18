@@ -49,13 +49,13 @@ const STATUS_ORDER: IncidentStatus[] = [
 // Cuenta para cobrar el nuevo envio por adelantado cuando el courier ya no
 // reintenta (>=2 intentos de entrega fallidos). Es por tienda/pais: CR cobra en
 // colones; HN queda pendiente de definir (su cuenta sera en lempiras).
-type CuentaReenvio = { banco: string; moneda: string; cuenta: string; cedula: string };
+type CuentaReenvio = { banco: string; titular: string; moneda: string; cuenta: string };
 const CUENTA_REENVIO: Record<FinanceStoreCode, CuentaReenvio | null> = {
   "mireva-cr": {
     banco: "BAC Credomatic",
+    titular: "3-101-947603 Sociedad Anónima",
     moneda: "colones",
     cuenta: "CR39010200009692837534",
-    cedula: "3-101-947603 (Sociedad Anónima)",
   },
   "mireva-hn": null,
 };
@@ -426,8 +426,8 @@ function DetailModal({
       `Para programar un nuevo envío, te pedimos realizar el pago por adelantado mediante transferencia bancaria a la siguiente cuenta:`,
       ``,
       `Banco: ${cuentaReenvio.banco}`,
+      `Titular: ${cuentaReenvio.titular}`,
       `Cuenta (${cuentaReenvio.moneda}): ${cuentaReenvio.cuenta}`,
-      `Cédula jurídica: ${cuentaReenvio.cedula}`,
       ``,
       `En cuanto recibamos el comprobante, coordinamos el reenvío. ¡Gracias!`,
     ].join("\n");
