@@ -3,6 +3,7 @@ import {
   countIncidentsByStatus,
   createIncident,
   getIncident,
+  getIncidentLastRun,
   listIncidentEvents,
   listIncidents,
   updateIncident,
@@ -79,7 +80,10 @@ export async function GET(req: NextRequest) {
       }),
       countIncidentsByStatus(storeId),
     ]);
-    return NextResponse.json({ incidents, counts });
+    // "Ultima actualizacion" para la UI; opcional, no debe romper el listado.
+    let last_run: string | null = null;
+    try { last_run = await getIncidentLastRun(); } catch { /* opcional */ }
+    return NextResponse.json({ incidents, counts, last_run });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer novedades";
     return NextResponse.json({ incidents: [], error: message }, { status: 500 });

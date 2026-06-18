@@ -12,6 +12,7 @@ import { detectForzaIncident, detectMoovinIncident } from "@/lib/incidents-detec
 import {
   getIncidentWatermark,
   listIncidentKeys,
+  recordIncidentRun,
   setIncidentWatermark,
   upsertDetectedIncident,
 } from "@/lib/incidents";
@@ -171,6 +172,10 @@ async function run(full: boolean) {
       : message;
     return NextResponse.json({ error: friendly }, { status: 500 });
   }
+
+  // Marca la ultima corrida exitosa para la UI ("ultima actualizacion").
+  // Best-effort: que un fallo al escribir el timestamp no tumbe el resultado.
+  try { await recordIncidentRun(); } catch { /* timestamp opcional */ }
 
   return NextResponse.json({ scanned, created, updated, skipped });
 }

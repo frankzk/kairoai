@@ -113,6 +113,32 @@ export async function setIncidentWatermark(sourceKey: string, watermark: string)
   if (error) throw new Error(`setIncidentWatermark: ${error.message}`);
 }
 
+// Marca de tiempo de la ultima corrida de deteccion (cron incremental o boton
+// "Detectar novedades"), para mostrar en la UI cuando se actualizaron las
+// novedades por ultima vez. Reusa incident_sync_state con una clave dedicada.
+const INCIDENT_LAST_RUN_KEY = "cron:last_run";
+
+export async function recordIncidentRun(): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await getDB()
+    .from("incident_sync_state")
+    .upsert(
+      { source_key: INCIDENT_LAST_RUN_KEY, watermark: now, updated_at: now },
+      { onConflict: "source_key" }
+    );
+  if (error) throw new Error(`recordIncidentRun: ${error.message}`);
+}
+
+export async function getIncidentLastRun(): Promise<string | null> {
+  const { data, error } = await getDB()
+    .from("incident_sync_state")
+    .select("updated_at")
+    .eq("source_key", INCIDENT_LAST_RUN_KEY)
+    .maybeSingle();
+  if (error) throw new Error(`getIncidentLastRun: ${error.message}`);
+  return (data?.updated_at as string | null) ?? null;
+}
+
 export async function getIncident(id: number, storeId?: number): Promise<Incident | null> {
   let query = getDB().from("incidents").select("*").eq("id", id);
   if (storeId) query = query.eq("store_id", storeId);
