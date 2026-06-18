@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  countIncidentsByStatus,
   createIncident,
   getIncident,
   listIncidentEvents,
@@ -66,15 +67,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ incident, events, tracking_events });
     }
 
-    const incidents = await listIncidents({
-      storeId: getStoreFromSearchParams(sp).id,
-      status: asStatus(sp.get("status")),
-      category: asCategory(sp.get("category")),
-      source: asSource(sp.get("source")),
-      search: sp.get("q") ?? undefined,
-      soloReintento: sp.get("reintento") === "1",
-    });
-    return NextResponse.json({ incidents });
+    const storeId = getStoreFromSearchParams(sp).id;
+    const [incidents, counts] = await Promise.all([
+      listIncidents({
+        storeId,
+        status: asStatus(sp.get("status")),
+        category: asCategory(sp.get("category")),
+        source: asSource(sp.get("source")),
+        search: sp.get("q") ?? undefined,
+        soloReintento: sp.get("reintento") === "1",
+      }),
+      countIncidentsByStatus(storeId),
+    ]);
+    return NextResponse.json({ incidents, counts });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer novedades";
     return NextResponse.json({ incidents: [], error: message }, { status: 500 });

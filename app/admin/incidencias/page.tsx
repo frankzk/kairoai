@@ -55,6 +55,7 @@ export default function IncidenciasPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
@@ -79,6 +80,7 @@ export default function IncidenciasPage() {
       const res = await fetch(`/api/incidents?${qs.toString()}`, { cache: "no-store" });
       const json = await res.json();
       setIncidents(json.incidents ?? []);
+      setCounts(json.counts ?? {});
     } catch {
       /* noop */
     } finally {
@@ -145,11 +147,6 @@ export default function IncidenciasPage() {
       setBusy(false);
     }
   }
-
-  const counts = STATUS_ORDER.reduce((acc, s) => {
-    acc[s] = incidents.filter((i) => i.status === s).length;
-    return acc;
-  }, {} as Record<string, number>);
 
   const shown = incidents.slice(0, 120);
 
