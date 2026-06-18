@@ -318,11 +318,37 @@ function DetailModal({
   const showResultView = incident.status === "reprogramada" && !reopened;
   const intentosEntrega = trackingEvents.filter((e) => e.group === "failed").length;
   const trackingOrdenado = [...trackingEvents].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  // Solo se puede reprogramar si la ultima llamada registrada fue "contesto".
+  // Reprogramar requiere que la ultima llamada haya sido "contesto"; o, como
+  // excepcion, 3 "no contesto" en dias distintos (ahi se agenda al finde porque
+  // Moovin no hace un 3er intento de entrega).
   const ultimaLlamada = [...events]
     .filter((e) => e.kind === "llamada")
     .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0];
   const clienteContesto = ultimaLlamada?.metadata?.resultado === "contesto";
+  const diasNoContesta = new Set(
+    events
+      .filter((e) => e.kind === "llamada" && e.metadata?.resultado === "no_contesto")
+      .map((e) => (e.created_at || "").slice(0, 10))
+      .filter(Boolean)
+  ).size;
+  const tresNoContesta = diasNoContesta >= 3;
+  const puedeReprogramar = clienteContesto || tresNoContesta;
+  const soloFinde = !clienteContesto && tresNoContesta;
+  // Proximo viernes y sabado (dias consecutivos): limitan el date picker cuando
+  // se agenda al finde tras 3 intentos sin contestar.
+  const ymd = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const hoyYMD = ymd(new Date());
+  const proxViernes = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7));
+    return ymd(d);
+  })();
+  const proxSabado = (() => {
+    const d = new Date(`${proxViernes}T00:00:00`);
+    d.setDate(d.getDate() + 1);
+    return ymd(d);
+  })();
   const [copiedId, setCopiedId] = useState<number | null>(null);
 
   // Mensaje estructurado para pedir la reprogramacion al equipo del courier.
@@ -452,16 +478,22 @@ function DetailModal({
             </div>
             <p className="text-xs font-medium text-muted-foreground pt-1">Reprogramar entrega</p>
             <div className="flex flex-wrap gap-2 items-center">
-              <Input type="date" className="h-9 w-auto" value={reprogFecha} disabled={!clienteContesto}
+              <Input type="date" className="h-9 w-auto" value={reprogFecha} disabled={!puedeReprogramar}
+                min={soloFinde ? proxViernes : hoyYMD} max={soloFinde ? proxSabado : undefined}
                 onChange={(e) => setReprogFecha(e.target.value)} />
-              <Button variant="outline" size="sm" disabled={busy || !reprogFecha || !clienteContesto} className="gap-2"
+              <Button variant="outline" size="sm" disabled={busy || !reprogFecha || !puedeReprogramar} className="gap-2"
                 onClick={() => onAction("reprogramar", { fecha: reprogFecha })}>
                 <CalendarClock className="h-3.5 w-3.5" /> Reprogramar
               </Button>
             </div>
-            {!clienteContesto && (
+            {!puedeReprogramar && (
               <p className="text-[11px] text-muted-foreground">
-                Registra una llamada con “Contestó” para habilitar la reprogramación.
+                Registra una llamada con “Contestó” (o 3 “No contestó” en días distintos) para habilitar la reprogramación.
+              </p>
+            )}
+            {soloFinde && (
+              <p className="text-[11px] text-muted-foreground">
+                Sin contestar (3 intentos): solo se puede agendar el próximo viernes o sábado.
               </p>
             )}
             <p className="text-xs font-medium text-muted-foreground pt-1">Cierre</p>
