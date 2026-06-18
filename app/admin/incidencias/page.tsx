@@ -409,10 +409,11 @@ function DetailModal({
               value={incident.status} onChange={(e) => onPatch({ status: e.target.value })}>
               {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
             </select>
-            <select className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              value={incident.category} onChange={(e) => onPatch({ category: e.target.value })}>
-              {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
+            <div className="flex h-9 items-center gap-2 rounded-md border border-border bg-muted/40 px-3 text-sm"
+              title="La causa la determina el detalle del courier; no es editable.">
+              <span className="text-xs text-muted-foreground">Causa:</span>
+              <span className="font-medium">{CATEGORY_LABELS[incident.category]}</span>
+            </div>
           </div>
 
           {/* Acciones */}
