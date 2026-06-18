@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory } from "@/lib/incidents-types";
+import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type TrackingEvent } from "@/lib/incidents-types";
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 
@@ -63,6 +63,7 @@ export default function IncidenciasPage() {
 
   const [selected, setSelected] = useState<Incident | null>(null);
   const [events, setEvents] = useState<IncidentEvent[]>([]);
+  const [trackingEvents, setTrackingEvents] = useState<TrackingEvent[]>([]);
   const [reprogFecha, setReprogFecha] = useState("");
   const [showNew, setShowNew] = useState(false);
 
@@ -96,6 +97,7 @@ export default function IncidenciasPage() {
     if (json.incident) {
       setSelected(json.incident);
       setEvents(json.events ?? []);
+      setTrackingEvents(json.tracking_events ?? []);
       setReprogFecha(json.incident.reprogramada_para ?? "");
     }
   }
@@ -290,6 +292,7 @@ export default function IncidenciasPage() {
           key={selected.id}
           incident={selected}
           events={events}
+          trackingEvents={trackingEvents}
           busy={busy}
           reprogFecha={reprogFecha}
           setReprogFecha={setReprogFecha}
@@ -305,9 +308,9 @@ export default function IncidenciasPage() {
 }
 
 function DetailModal({
-  incident, events, busy, reprogFecha, setReprogFecha, onClose, onPatch, onAction,
+  incident, events, trackingEvents, busy, reprogFecha, setReprogFecha, onClose, onPatch, onAction,
 }: {
-  incident: Incident; events: IncidentEvent[]; busy: boolean;
+  incident: Incident; events: IncidentEvent[]; trackingEvents: TrackingEvent[]; busy: boolean;
   reprogFecha: string; setReprogFecha: (v: string) => void;
   onClose: () => void;
   onPatch: (patch: Record<string, unknown>) => void;
@@ -316,6 +319,8 @@ function DetailModal({
   const [notes, setNotes] = useState(incident.notes);
   const [reopened, setReopened] = useState(false);
   const showResultView = incident.status === "reprogramada" && !reopened;
+  const intentosEntrega = trackingEvents.filter((e) => e.group === "failed").length;
+  const trackingOrdenado = [...trackingEvents].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -346,9 +351,35 @@ function DetailModal({
             <div><span className="text-muted-foreground">Courier:</span> {incident.courier || "—"}</div>
             <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount) : "—"}</div>
             <div><span className="text-muted-foreground">Origen:</span> {incident.source}</div>
+            {trackingEvents.length > 0 && (
+              <div><span className="text-muted-foreground">Intentos de entrega:</span> <span className="font-medium">{intentosEntrega}</span></div>
+            )}
           </div>
           {incident.detail && (
             <p className="text-xs bg-muted/40 rounded-md p-2"><span className="text-muted-foreground">Detalle del courier: </span>{incident.detail}</p>
+          )}
+
+          {trackingOrdenado.length > 0 && (
+            <details className="rounded-md border border-border">
+              <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 text-sm font-medium list-none [&::-webkit-details-marker]:hidden">
+                <History className="h-4 w-4 text-muted-foreground" />
+                Historial del courier{incident.courier ? ` · ${incident.courier}` : ""}
+                <Badge variant="muted" className="ml-auto">{trackingOrdenado.length}</Badge>
+              </summary>
+              <ol className="border-t border-border divide-y divide-border max-h-64 overflow-y-auto">
+                {trackingOrdenado.map((ev, i) => (
+                  <li key={i} className="px-3 py-2 text-xs space-y-0.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="font-medium">{ev.title || ev.code || "Evento"}</span>
+                      <span className="text-muted-foreground whitespace-nowrap">{fmtDate(ev.date)}</span>
+                    </div>
+                    {(ev.description || ev.note) && (
+                      <p className="text-muted-foreground">{ev.description || ev.note}</p>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </details>
           )}
 
           {showResultView ? (

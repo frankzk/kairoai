@@ -82,6 +82,19 @@ export interface IncidentEvent {
   created_at: string;
 }
 
+// Un evento del historial de tracking del courier (Moovin / Forza). Misma forma
+// que MoovinEvent / ForzaEvent; se expone en el detalle de la novedad para
+// mostrar el historial completo de la guia y contar los intentos de entrega
+// (eventos con group "failed").
+export interface TrackingEvent {
+  code: string;
+  group: string;
+  title: string;
+  description: string;
+  date: string | null;
+  note: string;
+}
+
 // Candidata producida por la deteccion automatica (lib/incidents-detect.ts).
 export interface DetectedIncident {
   store_id: number;

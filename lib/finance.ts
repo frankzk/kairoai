@@ -1143,6 +1143,21 @@ export async function upsertMoovinTracking(
   if (error) throw new Error(`upsertMoovinTracking: ${error.message}`);
 }
 
+// Una fila de tracking de Moovin por su id_package (= la guia de la novedad).
+// Para el detalle de una novedad: trae el historial completo (columna events).
+export async function getMoovinTrackingByPackage(
+  idPackage: string
+): Promise<MoovinTrackingRow | null> {
+  if (!idPackage) return null;
+  const { data, error } = await getDB()
+    .from("moovin_tracking")
+    .select("*")
+    .eq("id_package", idPackage)
+    .limit(1);
+  if (error) throw new Error(`getMoovinTrackingByPackage: ${error.message}`);
+  return ((data ?? []) as MoovinTrackingRow[])[0] ?? null;
+}
+
 // Guias ya consultadas dentro de la ventana fresca (no hace falta reconsultar).
 export async function getRecentlyCheckedMoovinPackages(maxAgeMinutes: number): Promise<Set<string>> {
   const since = new Date(Date.now() - maxAgeMinutes * 60 * 1000).toISOString();
@@ -1246,6 +1261,23 @@ export async function upsertForzaTracking(
     .from("forza_tracking")
     .upsert(payload, { onConflict: "store_id,guide_number" });
   if (error) throw new Error(`upsertForzaTracking: ${error.message}`);
+}
+
+// Una fila de tracking de Forza por (store_id, guide_number). Para el detalle de
+// una novedad: trae el historial completo (columna events).
+export async function getForzaTrackingByGuide(
+  storeId: number,
+  guideNumber: string
+): Promise<ForzaTrackingRow | null> {
+  if (!guideNumber) return null;
+  const { data, error } = await getDB()
+    .from("forza_tracking")
+    .select("*")
+    .eq("store_id", storeId)
+    .eq("guide_number", guideNumber)
+    .limit(1);
+  if (error) throw new Error(`getForzaTrackingByGuide: ${error.message}`);
+  return ((data ?? []) as ForzaTrackingRow[])[0] ?? null;
 }
 
 export async function getRecentlyCheckedForzaGuides(
