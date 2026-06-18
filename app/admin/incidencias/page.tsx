@@ -321,6 +321,11 @@ function DetailModal({
   const showResultView = incident.status === "reprogramada" && !reopened;
   const intentosEntrega = trackingEvents.filter((e) => e.group === "failed").length;
   const trackingOrdenado = [...trackingEvents].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  // Solo se puede reprogramar si la ultima llamada registrada fue "contesto".
+  const ultimaLlamada = [...events]
+    .filter((e) => e.kind === "llamada")
+    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0];
+  const clienteContesto = ultimaLlamada?.metadata?.resultado === "contesto";
   const [copiedId, setCopiedId] = useState<number | null>(null);
 
   // Mensaje estructurado para pedir la reprogramacion al equipo del courier.
@@ -450,12 +455,18 @@ function DetailModal({
             </div>
             <p className="text-xs font-medium text-muted-foreground pt-1">Reprogramar entrega</p>
             <div className="flex flex-wrap gap-2 items-center">
-              <Input type="date" className="h-9 w-auto" value={reprogFecha} onChange={(e) => setReprogFecha(e.target.value)} />
-              <Button variant="outline" size="sm" disabled={busy || !reprogFecha} className="gap-2"
+              <Input type="date" className="h-9 w-auto" value={reprogFecha} disabled={!clienteContesto}
+                onChange={(e) => setReprogFecha(e.target.value)} />
+              <Button variant="outline" size="sm" disabled={busy || !reprogFecha || !clienteContesto} className="gap-2"
                 onClick={() => onAction("reprogramar", { fecha: reprogFecha })}>
                 <CalendarClock className="h-3.5 w-3.5" /> Reprogramar
               </Button>
             </div>
+            {!clienteContesto && (
+              <p className="text-[11px] text-muted-foreground">
+                Registra una llamada con “Contestó” para habilitar la reprogramación.
+              </p>
+            )}
             <p className="text-xs font-medium text-muted-foreground pt-1">Cierre</p>
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" size="sm" disabled={busy} className="gap-2" onClick={() => onAction("no_llamar")}>
