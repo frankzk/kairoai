@@ -130,13 +130,11 @@ export interface IncidentTimeStats {
   nuevas: IncidentWindowStats;    // novedades dadas de alta (cayeron en novedad)
 }
 
-// Capa de metricas ejecutivas (Fase 1). Todo se calcula para un periodo
-// seleccionable; los limites de dia van en hora local CR/HN (UTC-6).
-export type IncidentPeriod = "hoy" | "ayer" | "7d" | "30d";
-
+// Capa de metricas ejecutivas: TODOS los periodos a la vez (sin selector). Los
+// limites de dia van en hora local CR/HN (UTC-6).
 export interface IncidentCausaStat {
   category: IncidentCategory;
-  total: number;        // incidencias del periodo con esta causa
+  total: number;        // incidencias (ultimos 30d) con esta causa
   resueltas: number;    // de esas, cuantas estan resueltas (estado actual)
   pct: number;          // % sobre el total de incidencias del periodo
   recuperacion: number; // resueltas / total * 100 (recuperacion por motivo)
@@ -148,19 +146,33 @@ export interface IncidentTrendPoint {
   resueltas: number; // resoluciones ese dia
 }
 
-export interface IncidentExecutiveStats {
-  period: IncidentPeriod;
-  nuevas: number;                // incidencias creadas en el periodo
-  total_periodo: number;         // = nuevas (denominador de la cohorte)
-  resueltas_periodo: number;     // resueltas DENTRO del periodo (por fecha de resolucion)
-  tasa_resolucion: number;       // % de las creadas en el periodo que ya estan resueltas
-  monto_recuperado: number;      // suma de cod_amount de las resueltas en el periodo
-  abiertas: number;              // snapshot: estados no terminales
-  edad_promedio_dias: number;    // snapshot: edad media de las abiertas (dias)
+// Una celda de la matriz de desempeño (un periodo).
+export interface IncidentMatrixCell {
+  nuevas: number;    // creadas en el periodo
+  resueltas: number; // resueltas dentro del periodo (flujo)
+  tasa: number;      // cohorte: creadas-en-periodo ya resueltas / creadas-en-periodo (%)
+  monto: number;     // cod de las resueltas en el periodo
+}
+
+export type IncidentMatrixKey = "hoy" | "ayer" | "d7" | "d30";
+
+// Snapshot "Estado actual".
+export interface IncidentEstadoActual {
+  abiertas: number;              // estados no terminales
+  abiertas_48h: number;          // abiertas con mas de 48 horas
+  edad_promedio_dias: number;    // edad media de las abiertas
   mas_antigua: { dias: number; order_name: string; guide_number: string } | null;
-  primera_gestion_horas: number | null; // promedio creacion -> primera llamada (cohorte)
-  causas: IncidentCausaStat[];
-  trend: IncidentTrendPoint[];
+  primera_gestion_horas: number | null; // promedio creacion -> primer llamado (ultimos 30d)
+}
+
+// Resumen ejecutivo completo: matriz (4 metricas x 4 periodos) + estado actual +
+// tendencia 30d + causas 30d. Todo se carga de una sola vez.
+export interface IncidentExecutiveStats {
+  matriz: Record<IncidentMatrixKey, IncidentMatrixCell>;
+  estado: IncidentEstadoActual;
+  trend: IncidentTrendPoint[]; // ultimos 30 dias
+  trend_totales: { generadas: number; resueltas: number; balance: number };
+  causas: IncidentCausaStat[]; // ultimos 30 dias, ordenadas desc (UI: top 5 + "ver todos")
 }
 
 // El filtro por tienda usa el catalogo multi-tienda de produccion

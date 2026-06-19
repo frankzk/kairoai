@@ -13,10 +13,12 @@ import type {
   IncidentStatus,
   IncidentTimeStats,
   IncidentWindowStats,
-  IncidentPeriod,
   IncidentExecutiveStats,
   IncidentCausaStat,
   IncidentTrendPoint,
+  IncidentMatrixCell,
+  IncidentMatrixKey,
+  IncidentEstadoActual,
 } from "./incidents-types";
 
 export interface IncidentFilters {
@@ -130,99 +132,89 @@ export async function incidentTimeStats(storeId: number): Promise<IncidentTimeSt
   };
 }
 
-// Capa de metricas ejecutivas (Fase 1) para un periodo seleccionable. Todo se
-// calcula en hora local de Centroamerica (UTC-6, CR/HN). Lee 4 consultas acotadas:
-// incidencias creadas (cohorte + causas + tendencia), eventos de resolucion (flujo,
-// monto, tendencia), abiertas (snapshot: edad / mas antigua) y llamadas (primera
-// gestion). El embed incidents!inner permite filtrar eventos por tienda y traer el
-// cod / fecha de alta de la incidencia padre.
-export async function incidentExecutiveStats(
-  storeId: number,
-  period: IncidentPeriod
-): Promise<IncidentExecutiveStats> {
+// Capa de metricas ejecutivas: TODOS los periodos a la vez (sin selector). Calcula
+// en hora local de Centroamerica (UTC-6, CR/HN). Lee 4 consultas acotadas a 30 dias:
+// incidencias creadas (matriz + causas + tendencia), eventos de resolucion (flujo,
+// monto, tendencia), abiertas (snapshot: edad / >48h / mas antigua) y llamadas
+// (primera gestion 30d). El embed incidents!inner filtra eventos por tienda y trae
+// el cod / fecha de alta de la incidencia padre.
+export async function incidentExecutiveStats(storeId: number): Promise<IncidentExecutiveStats> {
   const DAY = 86_400_000;
   const TZ_OFFSET = 6 * 60 * 60 * 1000; // UTC-6 (Costa Rica / Honduras)
   const nowMs = Date.now();
   const startToday = Math.floor((nowMs - TZ_OFFSET) / DAY) * DAY + TZ_OFFSET;
   const END = nowMs + DAY;
-  const ranges: Record<IncidentPeriod, { from: number; to: number }> = {
-    hoy: { from: startToday, to: END },
-    ayer: { from: startToday - DAY, to: startToday },
-    "7d": { from: startToday - 6 * DAY, to: END },
-    "30d": { from: startToday - 29 * DAY, to: END },
-  };
-  const { from, to } = ranges[period];
-  // Piso comun de fetch: 30 dias o el largo de la tendencia, lo que sea mayor.
-  const trendDays = period === "30d" ? 30 : period === "7d" ? 7 : 14;
-  const floorMs = Math.min(startToday - 29 * DAY, startToday - (trendDays - 1) * DAY);
-  const sinceIso = new Date(floorMs).toISOString();
+  const since30 = new Date(startToday - 29 * DAY).toISOString();
   const caDayKey = (ms: number) => new Date(ms - TZ_OFFSET).toISOString().slice(0, 10);
 
   const db = getDB();
   const [createdRes, resolvedRes, openRes, callRes] = await Promise.all([
     db.from("incidents").select("id, created_at, status, category, cod_amount")
-      .eq("store_id", storeId).gte("created_at", sinceIso).limit(8000),
+      .eq("store_id", storeId).gte("created_at", since30).limit(8000),
     db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, cod_amount)")
-      .eq("incidents.store_id", storeId).eq("to_status", "resuelta").gte("created_at", sinceIso).limit(8000),
+      .eq("incidents.store_id", storeId).eq("to_status", "resuelta").gte("created_at", since30).limit(8000),
     db.from("incidents").select("order_name, guide_number, created_at")
       .eq("store_id", storeId).not("status", "in", "(resuelta,perdida,descartada)").limit(8000),
     db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, created_at)")
-      .eq("incidents.store_id", storeId).eq("kind", "llamada").gte("created_at", sinceIso).limit(8000),
+      .eq("incidents.store_id", storeId).eq("kind", "llamada").gte("created_at", since30).limit(8000),
   ]);
   for (const r of [createdRes, resolvedRes, openRes, callRes]) {
     if (r.error) throw new Error(`incidentExecutiveStats: ${r.error.message}`);
   }
 
-  // El embed a-uno puede venir como objeto o como array de 1 segun la version; se
-  // normaliza a un solo registro.
+  // El embed a-uno puede venir como objeto o como array de 1 segun la version.
   type Embedded<T> = T | T[] | null;
   const one = <T,>(e: Embedded<T>): T | null => (Array.isArray(e) ? e[0] ?? null : e);
-
   type CreatedRow = { id: number; created_at: string; status: string; category: IncidentCategory; cod_amount: number };
   type ResolvedRow = { incident_id: number; created_at: string; incidents: Embedded<{ cod_amount: number }> };
   type OpenRow = { order_name: string; guide_number: string; created_at: string };
   type CallRow = { incident_id: number; created_at: string; incidents: Embedded<{ created_at: string }> };
-
   const created = (createdRes.data ?? []) as unknown as CreatedRow[];
   const resolved = (resolvedRes.data ?? []) as unknown as ResolvedRow[];
   const open = (openRes.data ?? []) as unknown as OpenRow[];
   const calls = (callRes.data ?? []) as unknown as CallRow[];
 
-  const inPeriod = (iso: string) => { const t = Date.parse(iso); return t >= from && t < to; };
+  // ----- Matriz de desempeño: una celda por periodo (nuevas, resueltas, tasa, monto).
+  const ranges: Record<IncidentMatrixKey, { from: number; to: number }> = {
+    hoy: { from: startToday, to: END },
+    ayer: { from: startToday - DAY, to: startToday },
+    d7: { from: startToday - 6 * DAY, to: END },
+    d30: { from: startToday - 29 * DAY, to: END },
+  };
+  const cell = (from: number, to: number): IncidentMatrixCell => {
+    const cohorte = created.filter((r) => { const t = Date.parse(r.created_at); return t >= from && t < to; });
+    const nuevas = cohorte.length;
+    const resCohorte = cohorte.filter((r) => r.status === "resuelta").length;
+    const ids = new Set<number>();
+    let monto = 0;
+    for (const r of resolved) {
+      const t = Date.parse(r.created_at);
+      if (t < from || t >= to || ids.has(r.incident_id)) continue;
+      ids.add(r.incident_id);
+      monto += Number(one(r.incidents)?.cod_amount ?? 0);
+    }
+    return { nuevas, resueltas: ids.size, tasa: nuevas ? (resCohorte / nuevas) * 100 : 0, monto };
+  };
+  const matriz: Record<IncidentMatrixKey, IncidentMatrixCell> = {
+    hoy: cell(ranges.hoy.from, ranges.hoy.to),
+    ayer: cell(ranges.ayer.from, ranges.ayer.to),
+    d7: cell(ranges.d7.from, ranges.d7.to),
+    d30: cell(ranges.d30.from, ranges.d30.to),
+  };
 
-  // Cohorte: incidencias creadas en el periodo (tasa de resolucion + causas).
-  const cohorte = created.filter((r) => inPeriod(r.created_at));
-  const nuevas = cohorte.length;
-  const resueltasCohorte = cohorte.filter((r) => r.status === "resuelta").length;
-  const tasa = nuevas ? (resueltasCohorte / nuevas) * 100 : 0;
-
-  // Flujo: resueltas distintas dentro del periodo + monto recuperado (cod).
-  const resueltasIds = new Set<number>();
-  let monto = 0;
-  for (const r of resolved) {
-    if (!inPeriod(r.created_at) || resueltasIds.has(r.incident_id)) continue;
-    resueltasIds.add(r.incident_id);
-    monto += Number(one(r.incidents)?.cod_amount ?? 0);
-  }
-
-  // Snapshot de abiertas: edad promedio + la mas antigua.
+  // ----- Estado actual (snapshot): abiertas, >48h, edad media, mas antigua.
+  const H48 = 48 * 3_600_000;
   let edadSum = 0;
+  let abiertas48 = 0;
   let oldest: OpenRow | null = null;
   for (const o of open) {
     const t = Date.parse(o.created_at);
-    edadSum += nowMs - t;
+    const age = nowMs - t;
+    edadSum += age;
+    if (age > H48) abiertas48 += 1;
     if (!oldest || t < Date.parse(oldest.created_at)) oldest = o;
   }
-  const edadProm = open.length ? edadSum / open.length / DAY : 0;
-  const masAntigua = oldest
-    ? {
-        dias: Math.floor((nowMs - Date.parse(oldest.created_at)) / DAY),
-        order_name: oldest.order_name,
-        guide_number: oldest.guide_number,
-      }
-    : null;
-
-  // Primera gestion: por incidencia (creada en el periodo), creacion -> 1a llamada.
+  // Primera gestion (ultimos 30d): creacion -> primer llamado.
   const firstCall = new Map<number, number>();
   const createdAtOf = new Map<number, number>();
   for (const c of calls) {
@@ -236,60 +228,62 @@ export async function incidentExecutiveStats(
   let pgN = 0;
   for (const [id, callMs] of Array.from(firstCall.entries())) {
     const createdMs = createdAtOf.get(id);
-    if (createdMs === undefined || createdMs < from || createdMs >= to) continue;
+    if (createdMs === undefined) continue;
     const diff = callMs - createdMs;
     if (diff >= 0) { pgSum += diff; pgN += 1; }
   }
-  const primeraGestionHoras = pgN ? pgSum / pgN / 3_600_000 : null;
+  const estado: IncidentEstadoActual = {
+    abiertas: open.length,
+    abiertas_48h: abiertas48,
+    edad_promedio_dias: open.length ? edadSum / open.length / DAY : 0,
+    mas_antigua: oldest
+      ? { dias: Math.floor((nowMs - Date.parse(oldest.created_at)) / DAY), order_name: oldest.order_name, guide_number: oldest.guide_number }
+      : null,
+    primera_gestion_horas: pgN ? pgSum / pgN / 3_600_000 : null,
+  };
 
-  // Causas (cohorte) + recuperacion por motivo.
+  // ----- Causas (ultimos 30d) + recuperacion por motivo.
   const causasMap = new Map<IncidentCategory, { total: number; resueltas: number }>();
-  for (const r of cohorte) {
+  for (const r of created) {
     const e = causasMap.get(r.category) ?? { total: 0, resueltas: 0 };
     e.total += 1;
     if (r.status === "resuelta") e.resueltas += 1;
     causasMap.set(r.category, e);
   }
+  const total30 = created.length;
   const causas: IncidentCausaStat[] = Array.from(causasMap.entries())
     .map(([category, v]) => ({
       category,
       total: v.total,
       resueltas: v.resueltas,
-      pct: nuevas ? (v.total / nuevas) * 100 : 0,
+      pct: total30 ? (v.total / total30) * 100 : 0,
       recuperacion: v.total ? (v.resueltas / v.total) * 100 : 0,
     }))
     .sort((a, b) => b.total - a.total);
 
-  // Tendencia diaria: generadas vs resueltas.
+  // ----- Tendencia (ultimos 30 dias) + totales / balance.
   const genByDay = new Map<string, number>();
-  for (const r of created) {
-    const k = caDayKey(Date.parse(r.created_at));
-    genByDay.set(k, (genByDay.get(k) ?? 0) + 1);
-  }
+  for (const r of created) { const k = caDayKey(Date.parse(r.created_at)); genByDay.set(k, (genByDay.get(k) ?? 0) + 1); }
   const resByDay = new Map<string, number>();
-  for (const r of resolved) {
-    const k = caDayKey(Date.parse(r.created_at));
-    resByDay.set(k, (resByDay.get(k) ?? 0) + 1);
-  }
+  for (const r of resolved) { const k = caDayKey(Date.parse(r.created_at)); resByDay.set(k, (resByDay.get(k) ?? 0) + 1); }
   const trend: IncidentTrendPoint[] = [];
-  for (let i = trendDays - 1; i >= 0; i--) {
+  let genTot = 0;
+  let resTot = 0;
+  for (let i = 29; i >= 0; i--) {
     const k = caDayKey(startToday - i * DAY);
-    trend.push({ date: k, generadas: genByDay.get(k) ?? 0, resueltas: resByDay.get(k) ?? 0 });
+    const g = genByDay.get(k) ?? 0;
+    const rr = resByDay.get(k) ?? 0;
+    genTot += g;
+    resTot += rr;
+    trend.push({ date: k, generadas: g, resueltas: rr });
   }
 
   return {
-    period,
-    nuevas,
-    total_periodo: nuevas,
-    resueltas_periodo: resueltasIds.size,
-    tasa_resolucion: tasa,
-    monto_recuperado: monto,
-    abiertas: open.length,
-    edad_promedio_dias: edadProm,
-    mas_antigua: masAntigua,
-    primera_gestion_horas: primeraGestionHoras,
-    causas,
+    matriz,
+    estado,
     trend,
+    trend_totales: { generadas: genTot, resueltas: resTot, balance: resTot - genTot },
+    causas,
   };
 }
 
