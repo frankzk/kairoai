@@ -392,6 +392,35 @@ export async function getIncidentLastRun(): Promise<string | null> {
   return (data?.updated_at as string | null) ?? null;
 }
 
+// Ultima sincronizacion del courier (max checked_at del tracking): Moovin es
+// global; Forza es por tienda. La deteccion de novedades depende de que el
+// tracking este fresco, asi que la UI lo muestra para avisar si quedo viejo.
+export async function getCourierLastSync(
+  provider: "moovin" | "forza",
+  storeId: number
+): Promise<string | null> {
+  const db = getDB();
+  if (provider === "forza") {
+    const { data, error } = await db
+      .from("forza_tracking")
+      .select("checked_at")
+      .eq("store_id", storeId)
+      .order("checked_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(`getCourierLastSync(forza): ${error.message}`);
+    return (data?.checked_at as string | null) ?? null;
+  }
+  const { data, error } = await db
+    .from("moovin_tracking")
+    .select("checked_at")
+    .order("checked_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`getCourierLastSync(moovin): ${error.message}`);
+  return (data?.checked_at as string | null) ?? null;
+}
+
 export async function getIncident(id: number, storeId?: number): Promise<Incident | null> {
   let query = getDB().from("incidents").select("*").eq("id", id);
   if (storeId) query = query.eq("store_id", storeId);

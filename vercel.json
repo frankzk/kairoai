@@ -35,7 +35,7 @@
       "maxDuration": 25
     },
     "app/api/cron/moovin/route.ts": {
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "app/api/cron/shopify-refresh/route.ts": {
       "maxDuration": 60
