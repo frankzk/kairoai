@@ -11,7 +11,7 @@ import {
 } from "@/lib/incidents";
 import { getForzaTrackingByGuide, getMoovinTrackingByPackage } from "@/lib/finance";
 import { getStoreFromSearchParams } from "@/lib/stores";
-import type { Incident, IncidentCategory, IncidentPeriod, IncidentSource, IncidentStatus, TrackingEvent } from "@/lib/incidents-types";
+import type { Incident, IncidentCategory, IncidentSource, IncidentStatus, TrackingEvent } from "@/lib/incidents-types";
 
 export const runtime = "nodejs";
 
@@ -32,11 +32,6 @@ function asCategory(v: string | null): IncidentCategory | undefined {
 }
 function asSource(v: string | null): IncidentSource | undefined {
   return v && SOURCES.has(v) ? (v as IncidentSource) : undefined;
-}
-
-const PERIODS = new Set(["hoy", "ayer", "7d", "30d"]);
-function asPeriod(v: string | null): IncidentPeriod {
-  return v && PERIODS.has(v) ? (v as IncidentPeriod) : "7d";
 }
 
 // El historial de tracking del courier vive en moovin_tracking / forza_tracking
@@ -75,7 +70,6 @@ export async function GET(req: NextRequest) {
     }
 
     const storeId = getStoreFromSearchParams(sp).id;
-    const period = asPeriod(sp.get("period"));
     const [incidents, counts, exec] = await Promise.all([
       listIncidents({
         storeId,
@@ -86,8 +80,8 @@ export async function GET(req: NextRequest) {
         soloReintento: sp.get("reintento") === "1",
       }),
       countIncidentsByStatus(storeId),
-      // Metricas ejecutivas del periodo; auxiliar, no debe romper el listado.
-      incidentExecutiveStats(storeId, period).catch(() => null),
+      // Metricas ejecutivas; auxiliar, no debe romper el listado.
+      incidentExecutiveStats(storeId).catch(() => null),
     ]);
     // "Ultima actualizacion" para la UI; opcional, no debe romper el listado.
     let last_run: string | null = null;

@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
-  AlertTriangle, ArrowLeft, CalendarClock, Check, Clock, Copy, Gauge, History, Pencil, Phone, PhoneOff,
-  Plus, RefreshCw, Search, Timer, TrendingUp, Undo2, Wallet, X,
+  AlertTriangle, ArrowLeft, CalendarClock, Check, Copy, History, Pencil, Phone, PhoneOff,
+  Plus, RefreshCw, Search, Undo2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentPeriod, type TrackingEvent } from "@/lib/incidents-types";
+import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentCausaStat, type IncidentMatrixKey, type IncidentMatrixCell, type TrackingEvent } from "@/lib/incidents-types";
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 
@@ -65,45 +65,82 @@ const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString("es-CR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDay = (s: string | null) => (s ? s.slice(0, 10).split("-").reverse().join("/") : "—");
 
-const PERIOD_OPTS: { value: IncidentPeriod; label: string }[] = [
-  { value: "hoy", label: "Hoy" },
-  { value: "ayer", label: "Ayer" },
-  { value: "7d", label: "7 días" },
-  { value: "30d", label: "30 días" },
+const META_RESOLUCION = 50; // meta configurada de tasa de resolucion (%)
+
+// Abrevia montos grandes: ₡39.8 mil, ₡1.2 M.
+const fmtMoneyShort = (n: number): string => {
+  const v = Math.round(Number(n) || 0);
+  if (v >= 1_000_000) return `₡${(v / 1_000_000).toFixed(1)} M`;
+  if (v >= 1_000) return `₡${(v / 1_000).toFixed(1)} mil`;
+  return `₡${v}`;
+};
+
+// Semaforo contra la meta: rojo por debajo, amarillo cerca, verde al alcanzarla.
+function goalTone(pct: number): { text: string; dot: string } {
+  if (pct >= META_RESOLUCION) return { text: "text-emerald-500", dot: "bg-emerald-500" };
+  if (pct >= META_RESOLUCION - 10) return { text: "text-amber-500", dot: "bg-amber-500" };
+  return { text: "text-rose-500", dot: "bg-rose-500" };
+}
+
+// Color del balance del flujo: + (backlog bajando) verde, - (subiendo) rojo.
+function balanceTone(b: number): string {
+  return b > 0 ? "text-emerald-500" : b < 0 ? "text-rose-500" : "text-muted-foreground";
+}
+
+const MATRIX_PERIODS: { key: IncidentMatrixKey; short: string; long: string }[] = [
+  { key: "hoy", short: "H", long: "Hoy" },
+  { key: "ayer", short: "A", long: "Ayer" },
+  { key: "d7", short: "7D", long: "7 días" },
+  { key: "d30", short: "30D", long: "30 días" },
 ];
+const EMPTY_CELL: IncidentMatrixCell = { nuevas: 0, resueltas: 0, tasa: 0, monto: 0 };
+const mcell = (exec: IncidentExecutiveStats | null, k: IncidentMatrixKey): IncidentMatrixCell =>
+  exec?.matriz[k] ?? EMPTY_CELL;
 
-// Semaforo de la tasa de resolucion: <30% rojo, 30-45% amarillo, >45% verde.
-function tasaTone(pct: number): { dot: string; text: string } {
-  if (pct > 45) return { dot: "bg-emerald-500", text: "text-emerald-500" };
-  if (pct >= 30) return { dot: "bg-amber-500", text: "text-amber-500" };
-  return { dot: "bg-rose-500", text: "text-rose-500" };
-}
-
-// Color del % de recuperacion por motivo (mismo semaforo que la tasa).
-function recColor(pct: number): string {
-  if (pct > 45) return "text-emerald-500";
-  if (pct >= 30) return "text-amber-500";
-  return "text-rose-500";
-}
-
-// Tarjeta de KPI ejecutivo.
-function ExecKpi({ icon, label, value, sub, accent }: {
-  icon: ReactNode; label: string; value: ReactNode; sub?: ReactNode; accent?: string;
+// Bloque pequeño de "Estado actual" (sin tarjeta propia).
+function MetricBlock({ label, value, sub, accent, title }: {
+  label: string; value: ReactNode; sub?: ReactNode; accent?: string; title?: string;
 }) {
   return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">{icon}<span>{label}</span></div>
-        <div className={`mt-1 text-2xl font-bold leading-none tabular-nums ${accent ?? ""}`}>{value}</div>
-        {sub != null && <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{sub}</p>}
-      </CardContent>
-    </Card>
+    <div title={title}>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className={`text-2xl font-bold leading-none tabular-nums ${accent ?? ""}`}>{value}</div>
+      {sub != null && <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground">{sub}</div>}
+    </div>
+  );
+}
+
+// Encabezado de columnas de la tabla de causas.
+function CausasHeader() {
+  return (
+    <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+      <span className="w-28 shrink-0 sm:w-32">Motivo</span>
+      <span className="flex-1">Distribución</span>
+      <span className="w-7 text-right">Cant</span>
+      <span className="w-9 text-right">%</span>
+      <span className="w-9 text-right">Rec.</span>
+    </div>
+  );
+}
+
+// Una fila de causa (reutilizada en el top 5 y en el modal "Ver todos").
+function CausaRow({ c }: { c: IncidentCausaStat }) {
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-28 shrink-0 truncate sm:w-32" title={CATEGORY_LABELS[c.category]}>{CATEGORY_LABELS[c.category]}</span>
+      <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+        <div className="h-full bg-primary" style={{ width: `${Math.min(100, c.pct)}%` }} />
+      </div>
+      <span className="w-7 text-right tabular-nums">{c.total}</span>
+      <span className="w-9 text-right tabular-nums text-muted-foreground">{Math.round(c.pct)}%</span>
+      <span className={`w-9 text-right tabular-nums ${goalTone(c.recuperacion).text}`}>{Math.round(c.recuperacion)}%</span>
+    </div>
   );
 }
 
 // Grafico de tendencia (SVG, sin dependencias): generadas vs resueltas por dia.
 function TrendChart({ data }: { data: { date: string; generadas: number; resueltas: number }[] }) {
-  const W = 720, H = 128, P = 8;
+  const W = 720, H = 120, P = 6;
   const n = data.length;
   const max = Math.max(1, ...data.map((d) => Math.max(d.generadas, d.resueltas)));
   const x = (i: number) => (n <= 1 ? W / 2 : P + (i * (W - 2 * P)) / (n - 1));
@@ -111,11 +148,39 @@ function TrendChart({ data }: { data: { date: string; generadas: number; resuelt
   const pts = (k: "generadas" | "resueltas") =>
     data.map((d, i) => `${x(i).toFixed(1)},${y(d[k]).toFixed(1)}`).join(" ");
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-32 w-full" preserveAspectRatio="none">
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-28 w-full" preserveAspectRatio="none">
       <line x1={P} y1={H - P} x2={W - P} y2={H - P} className="stroke-muted-foreground/30" strokeWidth={1} />
       <polyline fill="none" className="stroke-rose-500" strokeWidth={2} points={pts("generadas")} />
       <polyline fill="none" className="stroke-emerald-500" strokeWidth={2} points={pts("resueltas")} />
     </svg>
+  );
+}
+
+// Modal "Ver todos": detalle completo de causas.
+function CausasModal({ causas, onClose }: { causas: IncidentCausaStat[]; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <Card className="my-8 w-full max-w-lg">
+        <div className="flex items-center justify-between border-b border-border p-4">
+          <span className="font-semibold">Causas · últimos 30 días</span>
+          <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
+        </div>
+        <CardContent className="space-y-1.5 p-4">
+          {causas.length > 0 ? (
+            <>
+              <CausasHeader />
+              {causas.map((c) => <CausaRow key={c.category} c={c} />)}
+            </>
+          ) : <p className="text-xs text-muted-foreground">Sin incidencias en el período.</p>}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -130,8 +195,8 @@ export default function IncidenciasPage() {
   const [soloReintento, setSoloReintento] = useState(false);
   const [search, setSearch] = useState("");
   const [lastRun, setLastRun] = useState<string | null>(null);
-  const [period, setPeriod] = useState<IncidentPeriod>("7d");
   const [exec, setExec] = useState<IncidentExecutiveStats | null>(null);
+  const [showCausas, setShowCausas] = useState(false);
 
   const [selected, setSelected] = useState<Incident | null>(null);
   const [events, setEvents] = useState<IncidentEvent[]>([]);
@@ -146,7 +211,6 @@ export default function IncidenciasPage() {
     else if (statusFilter) qs.set("status", statusFilter);
     if (categoryFilter) qs.set("category", categoryFilter);
     qs.set("store", selectedStoreCode);
-    qs.set("period", period);
     if (search.trim()) qs.set("q", search.trim());
     try {
       const res = await fetch(`/api/incidents?${qs.toString()}`, { cache: "no-store" });
@@ -160,7 +224,7 @@ export default function IncidenciasPage() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, categoryFilter, soloReintento, search, selectedStoreCode, period]);
+  }, [statusFilter, categoryFilter, soloReintento, search, selectedStoreCode]);
 
   useEffect(() => {
     const t = setTimeout(fetchData, 250);
@@ -293,95 +357,120 @@ export default function IncidenciasPage() {
       </header>
 
       <main className="container mx-auto px-4 py-6 space-y-4">
-        {/* ===== Resumen ejecutivo (Fase 1) ===== */}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold">Resumen ejecutivo</h2>
-          <div className="flex gap-1">
-            {PERIOD_OPTS.map((p) => (
-              <Button key={p.value} size="sm" variant={period === p.value ? "default" : "outline"}
-                className="h-8 px-3" onClick={() => setPeriod(p.value)}>{p.label}</Button>
-            ))}
-          </div>
-        </div>
-
-        {/* 4 KPIs principales para dirección/gerencia */}
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-          <ExecKpi icon={<TrendingUp className="h-3.5 w-3.5" />} label="Incidencias nuevas"
-            value={exec?.nuevas ?? 0}
-            sub={`Resueltas en el período: ${exec?.resueltas_periodo ?? 0}`} />
-          <ExecKpi icon={<Gauge className="h-3.5 w-3.5" />} label="Tasa de resolución"
-            accent={tasaTone(exec?.tasa_resolucion ?? 0).text}
-            value={
-              <span className="inline-flex items-center gap-2">
-                <span className={`inline-block h-2.5 w-2.5 rounded-full ${tasaTone(exec?.tasa_resolucion ?? 0).dot}`} />
-                {Math.round(exec?.tasa_resolucion ?? 0)}%
-              </span>
-            }
-            sub={`${exec?.total_periodo ?? 0} incidencias del período`} />
-          <ExecKpi icon={<Wallet className="h-3.5 w-3.5" />} label="Monto recuperado"
-            value={currency(exec?.monto_recuperado ?? 0)} sub="Pedidos recuperados por gestión" />
-          <ExecKpi icon={<AlertTriangle className="h-3.5 w-3.5" />} label="Incidencias abiertas"
-            value={exec?.abiertas ?? 0}
-            sub={exec?.mas_antigua ? `Más antigua: ${exec.mas_antigua.dias} días` : "Sin abiertas"} />
-        </div>
-
-        {/* KPIs secundarios */}
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <ExecKpi icon={<Clock className="h-3.5 w-3.5" />} label="Edad promedio de abiertas"
-            value={`${(exec?.edad_promedio_dias ?? 0).toFixed(1)} días`}
-            sub={exec?.mas_antigua
-              ? `Más antigua: ${exec.mas_antigua.order_name || exec.mas_antigua.guide_number || "—"} · ${exec.mas_antigua.dias} días`
-              : "Sin incidencias abiertas"} />
-          <ExecKpi icon={<Timer className="h-3.5 w-3.5" />} label="Tiempo prom. de 1ª gestión"
-            value={exec?.primera_gestion_horas != null ? `${exec.primera_gestion_horas.toFixed(1)} h` : "—"}
-            sub="Desde la creación hasta el primer llamado" />
-        </div>
-
-        {/* Tendencia: incidencias generadas vs resueltas */}
-        <Card>
-          <CardContent className="p-3">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm font-semibold">Tendencia · generadas vs resueltas</span>
-              <span className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-rose-500" /> Generadas</span>
-                <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-emerald-500" /> Resueltas</span>
-              </span>
-            </div>
-            {exec && exec.trend.length > 0
-              ? <TrendChart data={exec.trend} />
-              : <p className="py-8 text-center text-xs text-muted-foreground">Sin datos para el período.</p>}
-          </CardContent>
-        </Card>
-
-        {/* Análisis de causas + recuperación por motivo */}
-        <Card>
-          <CardContent className="p-3">
-            <span className="text-sm font-semibold">Causas y recuperación por motivo</span>
-            <div className="mt-2 space-y-1.5">
-              <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-                <span className="w-36 shrink-0">Motivo</span>
-                <span className="flex-1">Distribución</span>
-                <span className="w-8 text-right">Cant</span>
-                <span className="w-10 text-right">%</span>
-                <span className="w-24 text-right">Recuperación</span>
+        {/* ===== Resumen ejecutivo: vista fija, todos los periodos a la vez ===== */}
+        {/* Fila 1: Matriz de desempeño (~65%) + Estado actual (~35%) */}
+        <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-[65fr_35fr]">
+          <Card>
+            <CardContent className="p-3">
+              <div className="mb-2 text-[13px] font-semibold">Matriz de desempeño</div>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-right">
+                  <thead>
+                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      <th className="py-1 text-left font-medium">&nbsp;</th>
+                      {MATRIX_PERIODS.map((p) => (
+                        <th key={p.key} className="border-l border-border/40 px-1.5 py-1 font-medium">
+                          <span className="sm:hidden">{p.short}</span><span className="hidden sm:inline">{p.long}</span>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-border/60" title="Incidencias creadas en el período">
+                      <td className="py-1.5 text-left text-[11px] text-muted-foreground">Nuevas</td>
+                      {MATRIX_PERIODS.map((p) => (
+                        <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-[15px] font-semibold tabular-nums">{mcell(exec, p.key).nuevas}</td>
+                      ))}
+                    </tr>
+                    <tr className="border-t border-border/60" title="Incidencias que pasaron a resuelta dentro del período (gestión o entrega confirmada)">
+                      <td className="py-1.5 text-left text-[11px] text-muted-foreground">Resueltas</td>
+                      {MATRIX_PERIODS.map((p) => (
+                        <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-[15px] font-semibold tabular-nums">{mcell(exec, p.key).resueltas}</td>
+                      ))}
+                    </tr>
+                    <tr className="border-t border-border/60" title="Tasa de resolución (cohorte): de las creadas en el período, % que ya están resueltas">
+                      <td className="py-1.5 text-left text-[11px] text-muted-foreground">Tasa resol.</td>
+                      {MATRIX_PERIODS.map((p) => {
+                        const t = mcell(exec, p.key).tasa;
+                        return p.key === "d30" ? (
+                          <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-right tabular-nums whitespace-nowrap">
+                            <span className={`text-[15px] font-bold ${goalTone(t).text}`}>{Math.round(t)}%</span>
+                            <span className="block text-[9px] leading-none text-muted-foreground">meta {META_RESOLUCION}%</span>
+                          </td>
+                        ) : (
+                          <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-[15px] tabular-nums text-muted-foreground">{Math.round(t)}%</td>
+                        );
+                      })}
+                    </tr>
+                    <tr className="border-t border-border/60" title="Monto recuperado: ₡ (COD) de las incidencias resueltas en el período">
+                      <td className="py-1.5 text-left text-[11px] text-muted-foreground">Monto rec.</td>
+                      {MATRIX_PERIODS.map((p) => (
+                        <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-[13px] font-semibold tabular-nums">{fmtMoneyShort(mcell(exec, p.key).monto)}</td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
               </div>
-              {exec && exec.causas.length > 0 ? exec.causas.map((c) => (
-                <div key={c.category} className="flex items-center gap-2 text-xs">
-                  <span className="w-36 shrink-0 truncate">{CATEGORY_LABELS[c.category]}</span>
-                  <div className="h-2 flex-1 overflow-hidden rounded bg-muted">
-                    <div className="h-full bg-primary" style={{ width: `${Math.min(100, c.pct)}%` }} />
-                  </div>
-                  <span className="w-8 text-right tabular-nums">{c.total}</span>
-                  <span className="w-10 text-right tabular-nums text-muted-foreground">{Math.round(c.pct)}%</span>
-                  <span className="w-24 text-right tabular-nums">
-                    <span className={recColor(c.recuperacion)}>{Math.round(c.recuperacion)}%</span>
-                    <span className="text-muted-foreground"> ({c.resueltas}/{c.total})</span>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-3">
+              <div className="mb-2 text-[13px] font-semibold">Estado actual</div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                <MetricBlock label="Abiertas" value={exec?.estado.abiertas ?? 0}
+                  title="Incidencias en estados no terminales (sin resolver, perder ni descartar)" />
+                <MetricBlock label="Abiertas > 48 h" value={exec?.estado.abiertas_48h ?? 0}
+                  accent={(exec?.estado.abiertas_48h ?? 0) > 0 ? "text-amber-500" : undefined}
+                  title="Incidencias abiertas con más de 48 horas de antigüedad" />
+                <MetricBlock label="Edad promedio" value={`${(exec?.estado.edad_promedio_dias ?? 0).toFixed(1)}d`}
+                  sub={exec?.estado.mas_antigua ? `Más antigua: ${exec.estado.mas_antigua.dias}d` : undefined}
+                  title="Edad media de las incidencias abiertas; la más antigua como subtítulo" />
+                <MetricBlock label="1ª gestión (30d)" value={exec?.estado.primera_gestion_horas != null ? `${exec.estado.primera_gestion_horas.toFixed(1)}h` : "—"}
+                  title="Tiempo promedio desde la creación hasta el primer llamado (últimos 30 días)" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Fila 2: Flujo (~60%) + Principales causas (~40%) */}
+        <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-[60fr_40fr]">
+          <Card>
+            <CardContent className="p-3">
+              <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                <span className="text-[13px] font-semibold">Flujo de novedades · últimos 30 días</span>
+                <span className="text-[11px] text-muted-foreground">
+                  <span className="text-rose-500">Generadas: {exec?.trend_totales.generadas ?? 0}</span>
+                  {" · "}
+                  <span className="text-emerald-500">Resueltas: {exec?.trend_totales.resueltas ?? 0}</span>
+                  {" · "}
+                  <span title="Resueltas − Generadas (positivo = el backlog está bajando)">
+                    Balance: <span className={balanceTone(exec?.trend_totales.balance ?? 0)}>{(exec?.trend_totales.balance ?? 0) > 0 ? "+" : ""}{exec?.trend_totales.balance ?? 0}</span>
                   </span>
-                </div>
-              )) : <p className="py-4 text-center text-xs text-muted-foreground">Sin incidencias en el período.</p>}
-            </div>
-          </CardContent>
-        </Card>
+                </span>
+              </div>
+              {exec && exec.trend.length > 0
+                ? <TrendChart data={exec.trend} />
+                : <p className="py-8 text-center text-xs text-muted-foreground">Sin datos.</p>}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-3">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-[13px] font-semibold">Principales causas · 30 días</span>
+                <button type="button" className="text-[11px] font-medium text-primary hover:underline"
+                  onClick={() => setShowCausas(true)}>Ver todos</button>
+              </div>
+              <div className="space-y-1.5">
+                <CausasHeader />
+                {exec && exec.causas.length > 0
+                  ? exec.causas.slice(0, 5).map((c) => <CausaRow key={c.category} c={c} />)
+                  : <p className="py-2 text-center text-xs text-muted-foreground">Sin incidencias en el período.</p>}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         {/* KPIs por estado (colorimetria) */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
@@ -498,6 +587,7 @@ export default function IncidenciasPage() {
       )}
 
       {showNew && <NewModal storeCode={selectedStoreCode} onClose={() => setShowNew(false)} onCreated={() => { setShowNew(false); fetchData(); }} />}
+      {showCausas && <CausasModal causas={exec?.causas ?? []} onClose={() => setShowCausas(false)} />}
     </div>
   );
 }
