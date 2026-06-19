@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type TrackingEvent } from "@/lib/incidents-types";
+import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentTimeStats, type TrackingEvent } from "@/lib/incidents-types";
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 
@@ -65,6 +65,29 @@ const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString("es-CR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDay = (s: string | null) => (s ? s.slice(0, 10).split("-").reverse().join("/") : "—");
 
+// Fila compacta de stats de flujo: etiqueta + 4 rectangulos (Hoy / Ayer / 7d / 30d).
+function StatRow({ label, w }: { label: string; w?: { hoy: number; ayer: number; d7: number; d30: number } }) {
+  const cells: Array<[string, number]> = [
+    ["Hoy", w?.hoy ?? 0],
+    ["Ayer", w?.ayer ?? 0],
+    ["7 días", w?.d7 ?? 0],
+    ["30 días", w?.d30 ?? 0],
+  ];
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-16 shrink-0 text-xs font-semibold text-muted-foreground sm:w-20">{label}</span>
+      <div className="grid flex-1 grid-cols-4 gap-2">
+        {cells.map(([l, v]) => (
+          <div key={l} className="rounded-md border border-border bg-muted/30 px-2 py-1 text-center">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{l}</div>
+            <div className="text-lg font-bold leading-tight tabular-nums">{v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function IncidenciasPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,6 +99,7 @@ export default function IncidenciasPage() {
   const [soloReintento, setSoloReintento] = useState(false);
   const [search, setSearch] = useState("");
   const [lastRun, setLastRun] = useState<string | null>(null);
+  const [stats, setStats] = useState<IncidentTimeStats | null>(null);
 
   const [selected, setSelected] = useState<Incident | null>(null);
   const [events, setEvents] = useState<IncidentEvent[]>([]);
@@ -97,6 +121,7 @@ export default function IncidenciasPage() {
       setIncidents(json.incidents ?? []);
       setCounts(json.counts ?? {});
       setLastRun(json.last_run ?? null);
+      setStats(json.stats ?? null);
     } catch {
       /* noop */
     } finally {
@@ -235,6 +260,14 @@ export default function IncidenciasPage() {
       </header>
 
       <main className="container mx-auto px-4 py-6 space-y-4">
+        {/* Flujo de novedades: resueltas / nuevas por ventana de tiempo */}
+        <Card>
+          <CardContent className="p-3 space-y-2">
+            <StatRow label="Resueltas" w={stats?.resueltas} />
+            <StatRow label="Nuevas" w={stats?.nuevas} />
+          </CardContent>
+        </Card>
+
         {/* KPIs por estado (colorimetria) */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
           {STATUS_ORDER.map((s) => (

@@ -4,6 +4,7 @@ import {
   createIncident,
   getIncident,
   getIncidentLastRun,
+  incidentTimeStats,
   listIncidentEvents,
   listIncidents,
   updateIncident,
@@ -69,7 +70,7 @@ export async function GET(req: NextRequest) {
     }
 
     const storeId = getStoreFromSearchParams(sp).id;
-    const [incidents, counts] = await Promise.all([
+    const [incidents, counts, stats] = await Promise.all([
       listIncidents({
         storeId,
         status: asStatus(sp.get("status")),
@@ -79,11 +80,13 @@ export async function GET(req: NextRequest) {
         soloReintento: sp.get("reintento") === "1",
       }),
       countIncidentsByStatus(storeId),
+      // Stats de flujo (resueltas/nuevas por ventana); auxiliar, no debe romper el listado.
+      incidentTimeStats(storeId).catch(() => null),
     ]);
     // "Ultima actualizacion" para la UI; opcional, no debe romper el listado.
     let last_run: string | null = null;
     try { last_run = await getIncidentLastRun(); } catch { /* opcional */ }
-    return NextResponse.json({ incidents, counts, last_run });
+    return NextResponse.json({ incidents, counts, stats, last_run });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer novedades";
     return NextResponse.json({ incidents: [], error: message }, { status: 500 });
