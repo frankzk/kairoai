@@ -148,10 +148,11 @@ export interface IncidentTrendPoint {
 
 // Una celda de la matriz de desempeño (un periodo).
 export interface IncidentMatrixCell {
-  nuevas: number;    // creadas en el periodo
-  resueltas: number; // resueltas dentro del periodo (flujo)
-  tasa: number;      // cohorte: creadas-en-periodo ya resueltas / creadas-en-periodo (%)
-  monto: number;     // cod de las resueltas en el periodo
+  nuevas: number;      // creadas en el periodo
+  resueltas: number;   // resueltas dentro del periodo (flujo)
+  tasa: number;        // cohorte: creadas-en-periodo ya resueltas / creadas-en-periodo (%)
+  monto: number;       // cod de las resueltas en el periodo
+  despachados: number; // pedidos despachados (con guia) por fecha de pedido en el periodo
 }
 
 export type IncidentMatrixKey = "hoy" | "ayer" | "d7" | "d30";
