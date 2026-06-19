@@ -15,7 +15,7 @@
     },
     {
       "path": "/api/cron/incidencias",
-      "schedule": "15 8,12,16,20 * * *"
+      "schedule": "15 * * * *"
     }
   ],
   "functions": {

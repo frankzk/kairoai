@@ -75,6 +75,7 @@ export default function IncidenciasPage() {
   const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
   const [soloReintento, setSoloReintento] = useState(false);
   const [search, setSearch] = useState("");
+  const [lastRun, setLastRun] = useState<string | null>(null);
 
   const [selected, setSelected] = useState<Incident | null>(null);
   const [events, setEvents] = useState<IncidentEvent[]>([]);
@@ -95,6 +96,7 @@ export default function IncidenciasPage() {
       const json = await res.json();
       setIncidents(json.incidents ?? []);
       setCounts(json.counts ?? {});
+      setLastRun(json.last_run ?? null);
     } catch {
       /* noop */
     } finally {
@@ -215,9 +217,16 @@ export default function IncidenciasPage() {
             <Button variant="outline" size="sm" onClick={() => fetchData()} className="gap-2">
               <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Actualizar</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={detectar} disabled={busy} className="gap-2">
-              <Search className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Detectar novedades</span>
-            </Button>
+            <div className="flex flex-col items-center">
+              <Button variant="outline" size="sm" onClick={detectar} disabled={busy} className="gap-2">
+                <Search className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Detectar novedades</span>
+              </Button>
+              {lastRun && (
+                <span className="text-[10px] leading-tight text-muted-foreground mt-0.5">
+                  Actualizado {fmtDate(lastRun)}
+                </span>
+              )}
+            </div>
             <Button size="sm" onClick={() => setShowNew(true)} className="gap-2">
               <Plus className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Nueva</span>
             </Button>
@@ -451,7 +460,7 @@ function DetailModal({
       className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center overflow-y-auto p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <Card className="w-full max-w-2xl my-8">
+      <Card className="w-full max-w-2xl lg:max-w-4xl my-8">
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2">
             <Badge variant={STATUS_META[incident.status].variant}>{STATUS_META[incident.status].label}</Badge>
@@ -460,22 +469,22 @@ function DetailModal({
           <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
         </div>
 
-        <CardContent className="p-4 space-y-4">
+        <CardContent className="p-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+          {/* Columna izquierda: datos y contexto de la novedad */}
+          <div className="space-y-3">
           {/* Datos */}
-          <div className="grid grid-cols-2 gap-2 text-sm">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
             <div><span className="text-muted-foreground">Cliente:</span> {incident.customer_name || "—"}</div>
             <div><span className="text-muted-foreground">Telefono:</span> {incident.customer_phone || "—"}</div>
             <div><span className="text-muted-foreground">Guia:</span> <span className="font-mono text-xs">{incident.guide_number || "—"}</span></div>
             <div><span className="text-muted-foreground">Courier:</span> {incident.courier || "—"}</div>
             <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount) : "—"}</div>
-            <div><span className="text-muted-foreground">Origen:</span> {incident.source}</div>
-          </div>
-          {trackingEvents.length > 0 && (
-            <div className="flex items-baseline gap-2">
-              <span className="text-sm text-muted-foreground">Intentos de entrega:</span>
-              <span className="text-2xl font-bold leading-none tabular-nums">{intentosEntrega}</span>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-muted-foreground">Intentos:</span>
+              <span className="text-base font-bold tabular-nums">{trackingEvents.length > 0 ? intentosEntrega : "—"}</span>
             </div>
-          )}
+          </div>
           {intentosEntrega >= 2 && (
             <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
               <p className="text-sm font-medium flex items-center gap-2">
@@ -527,6 +536,9 @@ function DetailModal({
               </ol>
             </details>
           )}
+          </div>
+          {/* Columna derecha: gestion, notas e historial */}
+          <div className="space-y-3">
 
           {showResultView ? (
             <div className="space-y-3">
@@ -564,8 +576,8 @@ function DetailModal({
 
           {/* Acciones */}
           <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground">Llamada</p>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Llamada</span>
               <Button variant="outline" size="sm" disabled={busy} className="gap-2"
                 onClick={() => onAction("registrar_llamada", { resultado: "contesto" })}>
                 <Phone className="h-3.5 w-3.5" /> Contesto
@@ -575,8 +587,8 @@ function DetailModal({
                 <PhoneOff className="h-3.5 w-3.5" /> No contesto
               </Button>
             </div>
-            <p className="text-xs font-medium text-muted-foreground pt-1">Reprogramar entrega</p>
             <div className="flex flex-wrap gap-2 items-center">
+              <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Reprogramar</span>
               <Input type="date" className="h-9 w-auto" value={reprogFecha} disabled={!puedeReprogramar}
                 min={soloFinde ? proxViernes : hoyYMD} max={soloFinde ? proxSabado : undefined}
                 onChange={(e) => setReprogFecha(e.target.value)} />
@@ -595,15 +607,22 @@ function DetailModal({
                 Sin contestar (3 intentos): solo se puede agendar el próximo viernes o sábado.
               </p>
             )}
-            <p className="text-xs font-medium text-muted-foreground pt-1">Cierre</p>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" disabled={busy} className="gap-2" onClick={() => onAction("rts")}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Cierre</span>
+              <Button variant="outline" size="sm" disabled={busy || incident.status !== "descartada"} className="gap-2"
+                title={incident.status === "descartada" ? undefined : "Pon el estado en “Descartada” para habilitar la devolución (RTS)."}
+                onClick={() => onAction("rts")}>
                 <Undo2 className="h-3.5 w-3.5" /> Devolucion (RTS)
               </Button>
               <Button variant="ghost" size="sm" disabled={busy} className="gap-2" onClick={() => onAction("descartar")}>
                 Descartar
               </Button>
             </div>
+            {incident.status !== "descartada" && (
+              <p className="text-[11px] text-muted-foreground">
+                La devolución (RTS) se habilita al poner el estado en “Descartada”.
+              </p>
+            )}
           </div>
           </>
           )}
@@ -629,7 +648,7 @@ function DetailModal({
             <p className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1">
               <History className="h-3.5 w-3.5" /> Historial
             </p>
-            <div className="space-y-1 max-h-48 overflow-y-auto">
+            <div className="space-y-1 max-h-72 overflow-y-auto">
               {events.length === 0 ? (
                 <p className="text-xs text-muted-foreground">Sin movimientos.</p>
               ) : (
@@ -682,6 +701,8 @@ function DetailModal({
                 ))
               )}
             </div>
+          </div>
+          </div>
           </div>
         </CardContent>
       </Card>

@@ -90,6 +90,37 @@ export async function listIncidentKeys(storeId: number): Promise<Set<string>> {
   return keys;
 }
 
+// Novedades de Moovin/Forza con nombre o telefono vacio (y que no son gestion
+// manual), para que el cron las re-enriquezca desde el pedido de Shopify
+// matcheado por guia.
+export async function listIncidentsMissingContact(storeId: number): Promise<Incident[]> {
+  const { data, error } = await getDB()
+    .from("incidents")
+    .select("*")
+    .eq("store_id", storeId)
+    .eq("manual_override", false)
+    .neq("guide_number", "")
+    .or("customer_name.is.null,customer_name.eq.,customer_phone.is.null,customer_phone.eq.")
+    .limit(2000);
+  if (error) throw new Error(`listIncidentsMissingContact: ${error.message}`);
+  return (data ?? []) as Incident[];
+}
+
+// Rellena nombre/telefono vacios SIN marcar manual_override (lo hace el cron de
+// deteccion, no el operador): asi la novedad sigue abierta a futuras
+// actualizaciones automaticas.
+export async function backfillIncidentContact(
+  id: number,
+  patch: { customer_name?: string; customer_phone?: string }
+): Promise<void> {
+  if (!patch.customer_name && !patch.customer_phone) return;
+  const { error } = await getDB()
+    .from("incidents")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw new Error(`backfillIncidentContact: ${error.message}`);
+}
+
 // Watermark incremental por fuente de tracking ("moovin" global; "forza:<id>"
 // por tienda): el cron procesa solo el tracking con checked_at posterior al
 // guardado, en vez de reescanear todo el historico en cada corrida.
@@ -111,6 +142,32 @@ export async function setIncidentWatermark(sourceKey: string, watermark: string)
       { onConflict: "source_key" }
     );
   if (error) throw new Error(`setIncidentWatermark: ${error.message}`);
+}
+
+// Marca de tiempo de la ultima corrida de deteccion (cron incremental o boton
+// "Detectar novedades"), para mostrar en la UI cuando se actualizaron las
+// novedades por ultima vez. Reusa incident_sync_state con una clave dedicada.
+const INCIDENT_LAST_RUN_KEY = "cron:last_run";
+
+export async function recordIncidentRun(): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await getDB()
+    .from("incident_sync_state")
+    .upsert(
+      { source_key: INCIDENT_LAST_RUN_KEY, watermark: now, updated_at: now },
+      { onConflict: "source_key" }
+    );
+  if (error) throw new Error(`recordIncidentRun: ${error.message}`);
+}
+
+export async function getIncidentLastRun(): Promise<string | null> {
+  const { data, error } = await getDB()
+    .from("incident_sync_state")
+    .select("updated_at")
+    .eq("source_key", INCIDENT_LAST_RUN_KEY)
+    .maybeSingle();
+  if (error) throw new Error(`getIncidentLastRun: ${error.message}`);
+  return (data?.updated_at as string | null) ?? null;
 }
 
 export async function getIncident(id: number, storeId?: number): Promise<Incident | null> {
