@@ -93,7 +93,7 @@ const MATRIX_PERIODS: { key: IncidentMatrixKey; short: string; long: string }[] 
   { key: "d7", short: "7D", long: "7 días" },
   { key: "d30", short: "30D", long: "30 días" },
 ];
-const EMPTY_CELL: IncidentMatrixCell = { nuevas: 0, resueltas: 0, tasa: 0, monto: 0 };
+const EMPTY_CELL: IncidentMatrixCell = { nuevas: 0, resueltas: 0, tasa: 0, monto: 0, despachados: 0 };
 const mcell = (exec: IncidentExecutiveStats | null, k: IncidentMatrixKey): IncidentMatrixCell =>
   exec?.matriz[k] ?? EMPTY_CELL;
 
@@ -407,6 +407,18 @@ export default function IncidenciasPage() {
                       {MATRIX_PERIODS.map((p) => (
                         <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-[13px] font-semibold tabular-nums">{fmtMoneyShort(mcell(exec, p.key).monto)}</td>
                       ))}
+                    </tr>
+                    <tr className="border-t border-border/60" title="Incidencias ÷ pedidos despachados (con guía, por fecha de pedido) en el período. Menor = mejor calidad operativa.">
+                      <td className="py-1.5 text-left text-[11px] text-muted-foreground">Inc./Desp.</td>
+                      {MATRIX_PERIODS.map((p) => {
+                        const c = mcell(exec, p.key);
+                        return (
+                          <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-[15px] tabular-nums text-muted-foreground"
+                            title={c.despachados > 0 ? `${c.nuevas} inc. / ${c.despachados} despachados` : "Sin pedidos despachados en el período"}>
+                            {c.despachados > 0 ? `${((c.nuevas / c.despachados) * 100).toFixed(1)}%` : "—"}
+                          </td>
+                        );
+                      })}
                     </tr>
                   </tbody>
                 </table>

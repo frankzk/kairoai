@@ -148,7 +148,7 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
   const caDayKey = (ms: number) => new Date(ms - TZ_OFFSET).toISOString().slice(0, 10);
 
   const db = getDB();
-  const [createdRes, resolvedRes, openRes, callRes] = await Promise.all([
+  const [createdRes, resolvedRes, openRes, callRes, dispatchedRes] = await Promise.all([
     db.from("incidents").select("id, created_at, status, category, cod_amount")
       .eq("store_id", storeId).gte("created_at", since30).limit(8000),
     db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, cod_amount)")
@@ -157,10 +157,20 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
       .eq("store_id", storeId).not("status", "in", "(resuelta,perdida,descartada)").limit(8000),
     db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, created_at)")
       .eq("incidents.store_id", storeId).eq("kind", "llamada").gte("created_at", since30).limit(8000),
+    // Pedidos despachados (con guia) por fecha de pedido, para la tasa Inc./Despachados.
+    db.from("shopify_orders").select("shopify_created_at")
+      .eq("store_id", storeId).neq("tracking_number", "").gte("shopify_created_at", since30).limit(50000),
   ]);
   for (const r of [createdRes, resolvedRes, openRes, callRes]) {
     if (r.error) throw new Error(`incidentExecutiveStats: ${r.error.message}`);
   }
+  // Despachados es auxiliar: si la consulta falla (p.ej. falta la columna tracking),
+  // el resto del resumen sigue y la tasa Inc./Despachados sale "—".
+  const dispatchedAt: number[] = dispatchedRes.error
+    ? []
+    : ((dispatchedRes.data ?? []) as Array<{ shopify_created_at: string }>)
+        .map((r) => Date.parse(r.shopify_created_at))
+        .filter((n) => !Number.isNaN(n));
 
   // El embed a-uno puede venir como objeto o como array de 1 segun la version.
   type Embedded<T> = T | T[] | null;
@@ -193,7 +203,8 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
       ids.add(r.incident_id);
       monto += Number(one(r.incidents)?.cod_amount ?? 0);
     }
-    return { nuevas, resueltas: ids.size, tasa: nuevas ? (resCohorte / nuevas) * 100 : 0, monto };
+    const despachados = dispatchedAt.filter((t) => t >= from && t < to).length;
+    return { nuevas, resueltas: ids.size, tasa: nuevas ? (resCohorte / nuevas) * 100 : 0, monto, despachados };
   };
   const matriz: Record<IncidentMatrixKey, IncidentMatrixCell> = {
     hoy: cell(ranges.hoy.from, ranges.hoy.to),
