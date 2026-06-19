@@ -90,6 +90,37 @@ export async function listIncidentKeys(storeId: number): Promise<Set<string>> {
   return keys;
 }
 
+// Novedades de Moovin/Forza con nombre o telefono vacio (y que no son gestion
+// manual), para que el cron las re-enriquezca desde el pedido de Shopify
+// matcheado por guia.
+export async function listIncidentsMissingContact(storeId: number): Promise<Incident[]> {
+  const { data, error } = await getDB()
+    .from("incidents")
+    .select("*")
+    .eq("store_id", storeId)
+    .eq("manual_override", false)
+    .neq("guide_number", "")
+    .or("customer_name.is.null,customer_name.eq.,customer_phone.is.null,customer_phone.eq.")
+    .limit(2000);
+  if (error) throw new Error(`listIncidentsMissingContact: ${error.message}`);
+  return (data ?? []) as Incident[];
+}
+
+// Rellena nombre/telefono vacios SIN marcar manual_override (lo hace el cron de
+// deteccion, no el operador): asi la novedad sigue abierta a futuras
+// actualizaciones automaticas.
+export async function backfillIncidentContact(
+  id: number,
+  patch: { customer_name?: string; customer_phone?: string }
+): Promise<void> {
+  if (!patch.customer_name && !patch.customer_phone) return;
+  const { error } = await getDB()
+    .from("incidents")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw new Error(`backfillIncidentContact: ${error.message}`);
+}
+
 // Watermark incremental por fuente de tracking ("moovin" global; "forza:<id>"
 // por tienda): el cron procesa solo el tracking con checked_at posterior al
 // guardado, en vez de reescanear todo el historico en cada corrida.
@@ -245,7 +276,7 @@ export async function patchIncident(
 export async function updateIncident(
   id: number,
   updates: Partial<
-    Pick<Incident, "status" | "category" | "notes" | "customer_phone" | "detail" | "reprogramada_para">
+    Pick<Incident, "status" | "category" | "notes" | "customer_name" | "customer_phone" | "detail" | "reprogramada_para">
   >,
   storeId?: number
 ): Promise<Incident> {

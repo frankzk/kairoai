@@ -10,8 +10,10 @@ import type { LogisticsRow } from "@/lib/finance-types";
 import { persistedOrderToSummary, type ShopifyOrderSummary } from "@/lib/finance-orders";
 import { detectForzaIncident, detectMoovinIncident } from "@/lib/incidents-detect";
 import {
+  backfillIncidentContact,
   getIncidentWatermark,
   listIncidentKeys,
+  listIncidentsMissingContact,
   recordIncidentRun,
   setIncidentWatermark,
   upsertDetectedIncident,
@@ -77,6 +79,35 @@ async function loadShopifyByGuide(storeId: number): Promise<Map<string, ShopifyO
 // que el maximo lexicografico coincide con el maximo temporal.
 function maxChecked(rows: Array<{ checked_at: string }>, seed: string): string {
   return rows.reduce((m, r) => (r.checked_at && r.checked_at > m ? r.checked_at : m), seed);
+}
+
+// Repaso de relleno: novedades con nombre/telefono vacio se completan desde el
+// pedido de Shopify matcheado por guia. Corre en cada corrida del cron (no solo
+// sobre el tracking que cambio), asi se sanan novedades viejas a medida que sus
+// pedidos se sincronizan. No pisa la gestion manual (filtra manual_override) ni
+// sobreescribe campos ya presentes.
+async function backfillMissingContact(): Promise<number> {
+  let filled = 0;
+  for (const store of FINANCE_STORES) {
+    const incompletes = await listIncidentsMissingContact(store.id);
+    if (!incompletes.length) continue;
+    const shopifyByGuide = await loadShopifyByGuide(store.id);
+    for (const inc of incompletes) {
+      const shopify = inc.guide_number ? lookupShopify(shopifyByGuide, inc.guide_number) : undefined;
+      if (!shopify) continue;
+      const patch: { customer_name?: string; customer_phone?: string } = {};
+      if (!inc.customer_name) {
+        const name = (shopify.customer_name || "").trim();
+        if (name && name.toLowerCase() !== "sin nombre") patch.customer_name = name;
+      }
+      if (!inc.customer_phone && shopify.phone) patch.customer_phone = shopify.phone;
+      if (patch.customer_name || patch.customer_phone) {
+        await backfillIncidentContact(inc.id, patch);
+        filled += 1;
+      }
+    }
+  }
+  return filled;
 }
 
 // Arma/actualiza la bandeja de novedades POR TIENDA. Cruza el tracking del
@@ -173,11 +204,15 @@ async function run(full: boolean) {
     return NextResponse.json({ error: friendly }, { status: 500 });
   }
 
+  // Repaso de relleno de nombre/telefono faltantes (best-effort).
+  let filled = 0;
+  try { filled = await backfillMissingContact(); } catch { /* backfill best-effort */ }
+
   // Marca la ultima corrida exitosa para la UI ("ultima actualizacion").
   // Best-effort: que un fallo al escribir el timestamp no tumbe el resultado.
   try { await recordIncidentRun(); } catch { /* timestamp opcional */ }
 
-  return NextResponse.json({ scanned, created, updated, skipped });
+  return NextResponse.json({ scanned, created, updated, skipped, filled });
 }
 
 // El cron programado de Vercel (GET) corre en modo incremental.

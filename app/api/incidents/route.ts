@@ -139,7 +139,7 @@ export async function PATCH(req: NextRequest) {
   }
 
   const updates: Partial<Incident> = {};
-  for (const key of ["status", "category", "notes", "customer_phone", "detail", "reprogramada_para"] as const) {
+  for (const key of ["status", "category", "notes", "customer_name", "customer_phone", "detail", "reprogramada_para"] as const) {
     if (key in body) (updates as Record<string, unknown>)[key] = body[key];
   }
 

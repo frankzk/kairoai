@@ -370,6 +370,9 @@ function DetailModal({
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [editNoteText, setEditNoteText] = useState("");
   const [reopened, setReopened] = useState(false);
+  const [editingContact, setEditingContact] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
   const showResultView = incident.status === "reprogramada" && !reopened;
   const intentosEntrega = trackingEvents.filter((e) => e.group === "failed").length;
   const trackingOrdenado = [...trackingEvents].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -474,16 +477,42 @@ function DetailModal({
           {/* Columna izquierda: datos y contexto de la novedad */}
           <div className="space-y-3">
           {/* Datos */}
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-            <div><span className="text-muted-foreground">Cliente:</span> {incident.customer_name || "—"}</div>
-            <div><span className="text-muted-foreground">Telefono:</span> {incident.customer_phone || "—"}</div>
-            <div><span className="text-muted-foreground">Guia:</span> <span className="font-mono text-xs">{incident.guide_number || "—"}</span></div>
-            <div><span className="text-muted-foreground">Courier:</span> {incident.courier || "—"}</div>
-            <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount) : "—"}</div>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-muted-foreground">Intentos:</span>
-              <span className="text-base font-bold tabular-nums">{trackingEvents.length > 0 ? intentosEntrega : "—"}</span>
+          <div className="space-y-2">
+            <div className="flex items-start gap-2">
+              <div className="grid flex-1 grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+                <div><span className="text-muted-foreground">Cliente:</span> {incident.customer_name || "—"}</div>
+                <div><span className="text-muted-foreground">Telefono:</span> {incident.customer_phone || "—"}</div>
+                <div><span className="text-muted-foreground">Guia:</span> <span className="font-mono text-xs">{incident.guide_number || "—"}</span></div>
+                <div><span className="text-muted-foreground">Courier:</span> {incident.courier || "—"}</div>
+                <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount) : "—"}</div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-muted-foreground">Intentos:</span>
+                  <span className="text-base font-bold tabular-nums">{trackingEvents.length > 0 ? intentosEntrega : "—"}</span>
+                </div>
+              </div>
+              {!editingContact && (
+                <button type="button" title="Editar cliente y teléfono"
+                  onClick={() => { setEditName(incident.customer_name || ""); setEditPhone(incident.customer_phone || ""); setEditingContact(true); }}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
+                  <Pencil className="h-3 w-3" /> Editar
+                </button>
+              )}
             </div>
+            {editingContact && (
+              <div className="rounded-md border border-border bg-muted/30 p-2 space-y-2">
+                <div className="flex flex-col gap-1.5 sm:flex-row">
+                  <Input className="h-8" placeholder="Cliente" value={editName} onChange={(e) => setEditName(e.target.value)} />
+                  <Input className="h-8" placeholder="Teléfono" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} />
+                </div>
+                <div className="flex justify-end gap-1.5">
+                  <Button variant="ghost" size="sm" onClick={() => setEditingContact(false)}>Cancelar</Button>
+                  <Button variant="outline" size="sm" disabled={busy} className="gap-1"
+                    onClick={async () => { await onPatch({ customer_name: editName.trim(), customer_phone: editPhone.trim() }); setEditingContact(false); }}>
+                    <Check className="h-3.5 w-3.5" /> Guardar
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
           {intentosEntrega >= 2 && (
             <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
