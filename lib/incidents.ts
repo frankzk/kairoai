@@ -276,7 +276,7 @@ export async function patchIncident(
 export async function updateIncident(
   id: number,
   updates: Partial<
-    Pick<Incident, "status" | "category" | "notes" | "customer_name" | "customer_phone" | "detail" | "reprogramada_para">
+    Pick<Incident, "status" | "category" | "notes" | "customer_phone" | "detail" | "reprogramada_para">
   >,
   storeId?: number
 ): Promise<Incident> {
