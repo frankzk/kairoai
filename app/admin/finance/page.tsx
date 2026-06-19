@@ -27,6 +27,8 @@ import {
 } from "lucide-react";
 import { normalizeSearchText } from "@/lib/order-matching";
 import {
+  type CustomerBehavior,
+  type CustomerBehaviorLevel,
   type FinanceControlCenter,
   type FinancialAnomaly,
   type MonthlyCloseRow,
@@ -82,6 +84,7 @@ type ProductAnalysisFilter =
   | "delivered"
   | "not_delivered";
 type OrderSettlementFilter = "all" | "settled" | "unsettled" | "to_claim" | "duplicate";
+type OrderBehaviorFilter = "all" | "problem" | "risk" | "good";
 type OrderPeriodMode = "all" | "month" | "range";
 type MonthlyOrderFilter =
   | "all"
@@ -146,6 +149,9 @@ interface TrackableOrderRow {
   order_name: string;
   customer_name: string;
   last_name?: string;
+  // Semáforo cliente: resumen del historial del cliente, ya clasificado
+  // server-side (solo en filas de clientes recurrentes). Render-only.
+  customer_behavior?: CustomerBehavior;
   boxful_status: string;
   internal_status: string;
   match_status: string;
@@ -286,6 +292,29 @@ const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
   { value: "range", label: "Rango" },
 ];
 
+// Filtro del semáforo cliente (comportamiento del cliente segun su historial).
+const ORDER_BEHAVIOR_FILTERS: Array<{ value: OrderBehaviorFilter; label: string }> = [
+  { value: "all", label: "Todos" },
+  { value: "problem", label: "Problema" },
+  { value: "risk", label: "Observacion" },
+  { value: "good", label: "Buenos" },
+];
+
+// Punto de color del semáforo cliente (rojo/ámbar/verde).
+const BEHAVIOR_DOT_COLORS: Record<OrderBehaviorFilter, string> = {
+  all: "bg-muted-foreground/40",
+  problem: "bg-red-400",
+  risk: "bg-amber-400",
+  good: "bg-emerald-400",
+};
+
+// Etiquetas del semáforo cliente para el tooltip/aria del badge.
+const CUSTOMER_BEHAVIOR_LABELS: Record<CustomerBehaviorLevel, string> = {
+  good: "Buen cliente",
+  risk: "En observacion",
+  problem: "Cliente problema",
+};
+
 // --- Tabla de pedidos server-side (Carril 2 inc.2) -------------------------
 // Las filas que devuelve /api/finance/orders ya traen las trazas de liquidacion
 // resueltas server-side, asi la tabla no necesita el settlementTraceByKey en
@@ -311,6 +340,13 @@ const EMPTY_SETTLEMENT_COUNTS: Record<OrderSettlementFilter, number> = {
   unsettled: 0,
   to_claim: 0,
   duplicate: 0,
+};
+
+const EMPTY_BEHAVIOR_COUNTS: Record<OrderBehaviorFilter, number> = {
+  all: 0,
+  problem: 0,
+  risk: 0,
+  good: 0,
 };
 
 // Meses disponibles para el selector, derivados del rango de cobertura Shopify
@@ -1579,6 +1615,7 @@ function OrdersTab({
   const [rangeEnd, setRangeEnd] = useState("");
   const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>("all");
   const [settlementFilter, setSettlementFilter] = useState<OrderSettlementFilter>("all");
+  const [behaviorFilter, setBehaviorFilter] = useState<OrderBehaviorFilter>("all");
   // En mobile los filtros (periodo/estado/liquidacion) se colapsan detras de un
   // boton para no saturar la vista; en desktop siempre se muestran.
   const [showFilters, setShowFilters] = useState(false);
@@ -1599,6 +1636,9 @@ function OrdersTab({
   const [trackingCounts, setTrackingCounts] = useState<Record<OrderTrackingFilter, number>>(EMPTY_TRACKING_COUNTS);
   const [settlementCounts, setSettlementCounts] = useState<Record<OrderSettlementFilter, number>>(
     EMPTY_SETTLEMENT_COUNTS
+  );
+  const [behaviorCounts, setBehaviorCounts] = useState<Record<OrderBehaviorFilter, number>>(
+    EMPTY_BEHAVIOR_COUNTS
   );
   const [enRouteGuides, setEnRouteGuides] = useState<{
     moovin: Array<{ idPackage: string; lastName: string }>;
@@ -1625,7 +1665,7 @@ function OrdersTab({
   // Cualquier cambio de filtro vuelve a la primera pagina.
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, trackingFilter, settlementFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code]);
+  }, [debouncedSearch, trackingFilter, settlementFilter, behaviorFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code]);
 
   // Query params compartidos por el fetch de la tabla y por el export.
   const buildOrdersQuery = useCallback(
@@ -1640,10 +1680,11 @@ function OrdersTab({
       if (debouncedSearch) params.set("q", debouncedSearch);
       if (trackingFilter !== "all") params.set("status", trackingFilter);
       if (settlementFilter !== "all") params.set("settlement", settlementFilter);
+      if (behaviorFilter !== "all") params.set("behavior", behaviorFilter);
       for (const [key, value] of Object.entries(extra)) params.set(key, value);
       return params.toString();
     },
-    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter]
+    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter, behaviorFilter]
   );
 
   useEffect(() => {
@@ -1665,6 +1706,7 @@ function OrdersTab({
         setSearchedCount(Number(json.searchedCount ?? 0));
         setTrackingCounts((json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS);
         setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
+        setBehaviorCounts((json.behaviorCounts as Record<OrderBehaviorFilter, number>) ?? EMPTY_BEHAVIOR_COUNTS);
       } catch (err) {
         if (controller.signal.aborted) return;
         setServerRows([]);
@@ -2104,6 +2146,24 @@ function OrdersTab({
                 )}
               </div>
             </div>
+
+            <div className="h-px bg-border/60" />
+
+            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground sm:w-[4.5rem] sm:shrink-0">Semaforo</span>
+              <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [&>button]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+                {ORDER_BEHAVIOR_FILTERS.map((filter) => (
+                  <FilterChip
+                    key={filter.value}
+                    label={filter.label}
+                    count={behaviorCounts[filter.value]}
+                    active={behaviorFilter === filter.value}
+                    onClick={() => setBehaviorFilter(filter.value)}
+                    dotClass={filter.value === "all" ? undefined : BEHAVIOR_DOT_COLORS[filter.value]}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
 
           <p className="text-[11px] text-muted-foreground">
@@ -2284,6 +2344,7 @@ function OrdersTable({
                     {row.customer_name || "Sin nombre"}
                     {row.shopify_created_at ? ` · ${formatDate(row.shopify_created_at)}` : ""}
                   </p>
+                  <CustomerBehaviorBadge behavior={row.customer_behavior} />
                 </div>
                 <StatusBadge status={trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
               </div>
@@ -2405,6 +2466,7 @@ function OrdersTable({
                       Apellido: {row.last_name}
                     </span>
                   )}
+                  <CustomerBehaviorBadge behavior={row.customer_behavior} />
                 </td>
                 <td className="px-2 py-1.5">
                   <StatusBadge
@@ -7917,6 +7979,37 @@ function TabButton({
       {icon && <span className="[&_svg]:h-4 [&_svg]:w-4">{icon}</span>}
       {children}
     </button>
+  );
+}
+
+// Semáforo cliente: badge rojo/ámbar/verde con el resumen del historial del
+// cliente (ya clasificado server-side). Solo aparece en clientes recurrentes.
+function CustomerBehaviorBadge({ behavior }: { behavior?: CustomerBehavior }) {
+  if (!behavior) return null;
+  const variant =
+    behavior.level === "problem" ? "destructive" : behavior.level === "good" ? "success" : "warning";
+  const parts = [
+    `${behavior.total} pedidos`,
+    behavior.delivered ? `${behavior.delivered} entregados` : null,
+    behavior.not_delivered ? `${behavior.not_delivered} devueltos` : null,
+    behavior.annulled ? `${behavior.annulled} anulados` : null,
+    behavior.en_curso ? `${behavior.en_curso} en curso` : null,
+  ].filter(Boolean);
+  const detail = parts.join(" · ");
+  const compact = behavior.not_delivered
+    ? `${behavior.total} ped · ${behavior.not_delivered} dev`
+    : behavior.annulled
+      ? `${behavior.total} ped · ${behavior.annulled} anul`
+      : `${behavior.total} ped`;
+  return (
+    <Badge
+      variant={variant}
+      className="mt-1 px-1.5 py-0 text-[10px] font-medium"
+      title={`Semaforo cliente — ${CUSTOMER_BEHAVIOR_LABELS[behavior.level]}\n${detail}`}
+      aria-label={`Semaforo cliente: ${CUSTOMER_BEHAVIOR_LABELS[behavior.level]}. ${detail}`}
+    >
+      {compact}
+    </Badge>
   );
 }
 

@@ -57,6 +57,9 @@ export interface ShopifyOrderSummary {
   customer_name: string;
   last_name?: string;
   phone: string | null;
+  // Email del cliente (Shopify). Opcional: se usa para agrupar el historial por
+  // cliente en el semáforo (teléfono O email); no todos los constructores lo setean.
+  email?: string | null;
   products: string;
   total: string;
   total_price: number;
@@ -85,6 +88,12 @@ export interface TrackableOrderRow {
   order_name: string;
   customer_name: string;
   last_name?: string;
+  // Semáforo cliente: contacto para agrupar el historial por cliente
+  // (teléfono/email) y el resumen ya clasificado. Se calculan server-side en
+  // buildDataset; /api/finance/orders NO envía phone/email al navegador.
+  customer_phone?: string;
+  customer_email?: string;
+  customer_behavior?: CustomerBehavior;
   boxful_status: string;
   internal_status: string;
   match_status: string;
@@ -443,6 +452,8 @@ export function buildVisibleOrderRows(
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
+      customer_phone: shopify?.phone ?? undefined,
+      customer_email: shopify?.email ?? undefined,
       match_status: shopify ? "matched" : row.match_status,
       cod_amount: row.cod_amount || Number(shopify?.total_price || parseMoneyText(shopify?.total ?? "")),
       shopify_order_name: shopify?.name ?? row.shopify_order_name,
@@ -497,6 +508,8 @@ export function buildVisibleOrderRows(
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
+      customer_phone: order.phone ?? undefined,
+      customer_email: order.email ?? undefined,
       boxful_status: "",
       internal_status:
         order.cancelled_at || order.financial_status === "voided" ? "annulled" : "pending",
@@ -700,6 +713,150 @@ export function isFinalTrackingStatus(status: string): boolean {
   return status === "delivered" || status === "not_delivered" || status === "returned";
 }
 
+// ---------------------------------------------------------------------------
+// Semáforo cliente — comportamiento por cliente (tab Pedidos)
+// ---------------------------------------------------------------------------
+// Agrupa TODO el historial de cada cliente (uniendo pedidos por teléfono O
+// email) y lo clasifica en un semáforo según su tasa de fallas, para alertar en
+// la tabla de Pedidos sobre clientes que devuelven/anulan vs buenos clientes.
+// Se calcula server-side en buildDataset (una vez por build de cache).
+
+export type CustomerBehaviorLevel = "good" | "risk" | "problem";
+
+export interface CustomerBehavior {
+  total: number;
+  delivered: number;
+  not_delivered: number;
+  annulled: number;
+  en_curso: number;
+  level: CustomerBehaviorLevel;
+}
+
+// Umbrales del semáforo (único lugar para tunear). La tasa de fallas se mide
+// sobre los pedidos RESUELTOS (entregados + no entregados + anulados); los
+// en-curso no son resultado todavía y no entran al denominador. Devolución y
+// anulado pesan igual como falla.
+const CUSTOMER_BEHAVIOR_THRESHOLDS = {
+  // <2 pedidos: no es recurrente, no lleva badge.
+  minOrders: 2,
+  // Hacen falta >=2 pedidos resueltos para declarar verde/rojo; con menos queda
+  // en ámbar (sin historial suficiente para juzgar).
+  minResolved: 2,
+  // >=40% de los resueltos fallidos -> rojo (problema).
+  problemRate: 0.4,
+  // <=15% fallidos (>=85% de entrega) -> verde (buen cliente).
+  goodRate: 0.15,
+} as const;
+
+// Clave de teléfono para agrupar: solo dígitos, los últimos 8 (número local),
+// así agrupa al mismo cliente con o sin código de país (504/506), espacios o
+// guiones. Vacío si no hay suficientes dígitos para ser confiable.
+export function customerPhoneKey(phone: string | null | undefined): string {
+  const digits = String(phone ?? "").replace(/\D/g, "");
+  return digits.length >= 8 ? digits.slice(-8) : "";
+}
+
+// Clave de email para agrupar: minúsculas y sin espacios. Vacío si no hay email.
+export function customerEmailKey(email: string | null | undefined): string {
+  return String(email ?? "").trim().toLowerCase();
+}
+
+// Clasifica a un cliente por su tasa de fallas sobre pedidos resueltos.
+export function classifyCustomerLevel(stats: {
+  delivered: number;
+  not_delivered: number;
+  annulled: number;
+}): CustomerBehaviorLevel {
+  const resolved = stats.delivered + stats.not_delivered + stats.annulled;
+  if (resolved < CUSTOMER_BEHAVIOR_THRESHOLDS.minResolved) return "risk";
+  const failureRate = (stats.not_delivered + stats.annulled) / resolved;
+  if (failureRate >= CUSTOMER_BEHAVIOR_THRESHOLDS.problemRate) return "problem";
+  if (failureRate <= CUSTOMER_BEHAVIOR_THRESHOLDS.goodRate) return "good";
+  return "risk";
+}
+
+// Une dos pedidos en el mismo cliente si comparten teléfono O email (union-find,
+// con transitividad: A~B por teléfono y B~C por email => A,B,C es un cliente),
+// acumula sus estados en cubetas y devuelve, por cada fila de un cliente
+// recurrente (>=2 pedidos), su CustomerBehavior ya clasificado. Las filas de
+// clientes con un solo pedido (o sin teléfono/email) no aparecen en el mapa.
+export function buildCustomerBehaviorIndex(
+  rows: TrackableOrderRow[],
+  settlementTraceByKey: Map<string, SettlementTrace[]>
+): Map<string, CustomerBehavior> {
+  const parent = rows.map((_, index) => index);
+  const find = (i: number): number => {
+    let root = i;
+    while (parent[root] !== root) root = parent[root];
+    while (parent[i] !== root) {
+      const next = parent[i];
+      parent[i] = root;
+      i = next;
+    }
+    return root;
+  };
+  const union = (a: number, b: number): void => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  };
+
+  // Enlaza cada fila con la primera fila que vio la misma clave (teléfono/email).
+  const firstByPhone = new Map<string, number>();
+  const firstByEmail = new Map<string, number>();
+  rows.forEach((row, index) => {
+    const phoneKey = customerPhoneKey(row.customer_phone);
+    if (phoneKey) {
+      const prev = firstByPhone.get(phoneKey);
+      if (prev === undefined) firstByPhone.set(phoneKey, index);
+      else union(prev, index);
+    }
+    const emailKey = customerEmailKey(row.customer_email);
+    if (emailKey) {
+      const prev = firstByEmail.get(emailKey);
+      if (prev === undefined) firstByEmail.set(emailKey, index);
+      else union(prev, index);
+    }
+  });
+
+  interface Bucket {
+    total: number;
+    delivered: number;
+    not_delivered: number;
+    annulled: number;
+    en_curso: number;
+  }
+  const bucketByRoot = new Map<number, Bucket>();
+  rows.forEach((row, index) => {
+    const root = find(index);
+    let bucket = bucketByRoot.get(root);
+    if (!bucket) {
+      bucket = { total: 0, delivered: 0, not_delivered: 0, annulled: 0, en_curso: 0 };
+      bucketByRoot.set(root, bucket);
+    }
+    bucket.total += 1;
+    const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
+    const status = getTrackingFilterFromStatus(getEffectiveTrackingStatus(row, traces));
+    if (status === "delivered") bucket.delivered += 1;
+    else if (status === "not_delivered") bucket.not_delivered += 1;
+    else if (status === "annulled") bucket.annulled += 1;
+    else bucket.en_curso += 1; // en_route, en_route_retry, incident, pending
+  });
+
+  const behaviorByRoot = new Map<number, CustomerBehavior>();
+  bucketByRoot.forEach((bucket, root) => {
+    if (bucket.total < CUSTOMER_BEHAVIOR_THRESHOLDS.minOrders) return;
+    behaviorByRoot.set(root, { ...bucket, level: classifyCustomerLevel(bucket) });
+  });
+
+  const behaviorByRowKey = new Map<string, CustomerBehavior>();
+  rows.forEach((row, index) => {
+    const behavior = behaviorByRoot.get(find(index));
+    if (behavior) behaviorByRowKey.set(row.row_key, behavior);
+  });
+  return behaviorByRowKey;
+}
+
 // Mapea el ultimo grupo de Moovin al estado de seguimiento. Vacio si no hay
 // dato de Moovin (cae a la logica de Boxful/sistema).
 export function moovinGroupToStatus(group: string | undefined): string {
@@ -875,6 +1032,7 @@ export function persistedOrderToSummary(order: Record<string, unknown>): Shopify
     customer_name: String(order.customer_name ?? "Sin nombre"),
     last_name: String(order.last_name ?? ""),
     phone: (order.phone as string | null) ?? null,
+    email: (order.email as string | null) ?? null,
     products: lineItems.map((item) => `${item.quantity}x ${item.title}`).join(", "),
     total: `${order.total_price ?? 0} ${order.currency ?? "CRC"}`,
     total_price: Number(order.total_price ?? 0),

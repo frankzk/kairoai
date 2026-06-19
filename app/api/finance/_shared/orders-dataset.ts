@@ -16,6 +16,7 @@ import {
   listSettlementRows,
 } from "@/lib/finance";
 import {
+  buildCustomerBehaviorIndex,
   buildForzaTrackingMap,
   buildSettlementTraceMap,
   buildVisibleOrderRows,
@@ -205,6 +206,15 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   const settlementTraceByKey = buildSettlementTraceMap(enrichedSettlementRows, imports);
 
   const rows = buildVisibleOrderRows(logisticsRows, shopifyOrders, store, moovinByPackage, forzaByGuide);
+
+  // Semáforo cliente: agrupa el historial completo por cliente (teléfono/email)
+  // y adjunta el resumen clasificado a las filas de clientes recurrentes (>=2
+  // pedidos). Se hace aquí (build de cache) para no recalcularlo en cada request.
+  const behaviorByRowKey = buildCustomerBehaviorIndex(rows, settlementTraceByKey);
+  for (const row of rows) {
+    const behavior = behaviorByRowKey.get(row.row_key);
+    if (behavior) row.customer_behavior = behavior;
+  }
 
   // Alertas del tab Liquidaciones (mismas operaciones que los useMemo de page.tsx):
   //  - "por reclamar": entregados sin liquidar, sobre las filas de liquidacion

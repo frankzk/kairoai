@@ -60,6 +60,13 @@ function parseSettlementFilter(value: string | null): SettlementFilter {
   return SETTLEMENT_FILTERS.includes(value as SettlementFilter) ? (value as SettlementFilter) : "all";
 }
 
+// Filtro del semáforo cliente (nivel de comportamiento), independiente del estado.
+type BehaviorFilter = "all" | "problem" | "risk" | "good";
+const BEHAVIOR_FILTERS: BehaviorFilter[] = ["all", "problem", "risk", "good"];
+function parseBehaviorFilter(value: string | null): BehaviorFilter {
+  return BEHAVIOR_FILTERS.includes(value as BehaviorFilter) ? (value as BehaviorFilter) : "all";
+}
+
 function parsePositiveInt(value: string | null, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
@@ -136,6 +143,7 @@ export async function GET(req: NextRequest) {
   const q = (params.get("q") || "").trim();
   const trackingFilter = parseTrackingFilter(params.get("status"));
   const settlementFilter = parseSettlementFilter(params.get("settlement"));
+  const behaviorFilter = parseBehaviorFilter(params.get("behavior"));
   const period = parsePeriod(params.get("period"));
   const month = (params.get("month") || "").trim();
   const startDate = (params.get("start") || "").trim();
@@ -182,20 +190,38 @@ export async function GET(req: NextRequest) {
       trackingCounts[getTrackingFilterFromStatus(item.status)] += 1;
     }
 
-    // 3) Filtro de estado -> sobre este conjunto se miden los settlementCounts.
+    // Conteos del semáforo cliente (sobre searchedRows, como trackingCounts).
+    // Solo cuentan las filas de clientes recurrentes (las que traen nivel).
+    const behaviorCounts: Record<BehaviorFilter, number> = {
+      all: withMeta.length,
+      problem: 0,
+      risk: 0,
+      good: 0,
+    };
+    for (const item of withMeta) {
+      const level = item.row.customer_behavior?.level;
+      if (level) behaviorCounts[level] += 1;
+    }
+
+    // 3) Filtro de estado + semáforo cliente -> sobre este conjunto se miden los
+    //    settlementCounts.
     const trackingFiltered =
       trackingFilter === "all"
         ? withMeta
         : withMeta.filter((item) => getTrackingFilterFromStatus(item.status) === trackingFilter);
+    const behaviorFiltered =
+      behaviorFilter === "all"
+        ? trackingFiltered
+        : trackingFiltered.filter((item) => item.row.customer_behavior?.level === behaviorFilter);
 
     const settlementCounts: Record<SettlementFilter, number> = {
-      all: trackingFiltered.length,
+      all: behaviorFiltered.length,
       settled: 0,
       unsettled: 0,
       to_claim: 0,
       duplicate: 0,
     };
-    for (const item of trackingFiltered) {
+    for (const item of behaviorFiltered) {
       if (item.traces.length === 1) settlementCounts.settled += 1;
       if (item.traces.length === 0) settlementCounts.unsettled += 1;
       if (item.traces.length === 0 && item.status === "delivered") settlementCounts.to_claim += 1;
@@ -203,21 +229,25 @@ export async function GET(req: NextRequest) {
     }
 
     // 4) Filtro de liquidacion -> conjunto final mostrado.
-    const finalFiltered = trackingFiltered.filter((item) =>
+    const finalFiltered = behaviorFiltered.filter((item) =>
       matchesSettlement(settlementFilter, item.traces, item.status)
     );
 
     const total = finalFiltered.length;
-    const attachTraces = (item: { row: TrackableOrderRow; traces: SettlementTrace[] }): RowWithTraces => ({
-      ...item.row,
-      traces: item.traces,
-    });
+    // Las filas NO envían teléfono/email del cliente al navegador (PII + peso):
+    // esos campos solo se usan server-side para agrupar el semáforo. Se quitan aquí.
+    const attachTraces = (item: { row: TrackableOrderRow; traces: SettlementTrace[] }): RowWithTraces => {
+      const row: RowWithTraces = { ...item.row, traces: item.traces };
+      delete row.customer_phone;
+      delete row.customer_email;
+      return row;
+    };
 
     if (exportAll) {
       // Export: todas las filas filtradas (con trazas para reconstruir las
       // columnas de liquidacion), con tope de seguridad.
       const allRows = finalFiltered.slice(0, MAX_EXPORT_ROWS).map(attachTraces);
-      return NextResponse.json({ rows: allRows, total, trackingCounts, settlementCounts });
+      return NextResponse.json({ rows: allRows, total, trackingCounts, settlementCounts, behaviorCounts });
     }
 
     const startIdx = (page - 1) * pageSize;
@@ -239,6 +269,7 @@ export async function GET(req: NextRequest) {
       searchedCount: searchedRows.length,
       trackingCounts,
       settlementCounts,
+      behaviorCounts,
       ...(enRouteGuides ? { enRouteGuides } : {}),
     });
   } catch (err) {
