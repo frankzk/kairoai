@@ -195,6 +195,7 @@ export default function IncidenciasPage() {
   const [soloReintento, setSoloReintento] = useState(false);
   const [search, setSearch] = useState("");
   const [lastRun, setLastRun] = useState<string | null>(null);
+  const [trackingSync, setTrackingSync] = useState<string | null>(null);
   const [exec, setExec] = useState<IncidentExecutiveStats | null>(null);
   const [showCausas, setShowCausas] = useState(false);
 
@@ -218,6 +219,7 @@ export default function IncidenciasPage() {
       setIncidents(json.incidents ?? []);
       setCounts(json.counts ?? {});
       setLastRun(json.last_run ?? null);
+      setTrackingSync(json.tracking_last_sync ?? null);
       setExec(json.exec ?? null);
     } catch {
       /* noop */
@@ -245,6 +247,13 @@ export default function IncidenciasPage() {
   async function detectar() {
     setBusy(true);
     try {
+      // Primero refresca el tracking del courier para no detectar sobre datos
+      // viejos (la causa tipica de "no jala incidencias nuevas"). Moovin tiene
+      // sync por servidor; Forza se refresca desde Gestion de pedidos.
+      const provider = FINANCE_STORES.find((s) => s.code === selectedStoreCode)?.logisticsProvider;
+      if (provider === "moovin") {
+        try { await fetch("/api/cron/moovin", { method: "POST" }); } catch { /* si falla, igual detecta */ }
+      }
       const res = await fetch("/api/cron/incidencias?full=1", { method: "POST" });
       const json = await res.json();
       if (json.error) alert(json.error);
@@ -312,6 +321,16 @@ export default function IncidenciasPage() {
 
   const shown = incidents.slice(0, 120);
 
+  // Frescura del tracking del courier de la tienda seleccionada (para avisar si
+  // quedo viejo: ahi la deteccion puede no traer novedades nuevas).
+  const courierName =
+    FINANCE_STORES.find((s) => s.code === selectedStoreCode)?.logisticsProvider === "forza" ? "Forza" : "Moovin";
+  const trackingAgeH = trackingSync ? (Date.now() - Date.parse(trackingSync)) / 3_600_000 : null;
+  const trackingTone =
+    trackingAgeH != null && trackingAgeH > 8 ? "text-rose-500"
+    : trackingAgeH != null && trackingAgeH > 3 ? "text-amber-500"
+    : "text-muted-foreground";
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -340,12 +359,22 @@ export default function IncidenciasPage() {
               <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Actualizar</span>
             </Button>
             <div className="flex flex-col items-center">
-              <Button variant="outline" size="sm" onClick={detectar} disabled={busy} className="gap-2">
-                <Search className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Detectar novedades</span>
+              <Button variant="outline" size="sm" onClick={detectar} disabled={busy} className="gap-2"
+                title="Actualiza el tracking del courier y luego detecta novedades">
+                {busy
+                  ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  : <Search className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{busy ? "Actualizando…" : "Detectar novedades"}</span>
               </Button>
               {lastRun && (
                 <span className="text-[10px] leading-tight text-muted-foreground mt-0.5">
                   Actualizado {fmtDate(lastRun)}
+                </span>
+              )}
+              {trackingSync && (
+                <span className={`text-[10px] leading-tight ${trackingTone}`}
+                  title="Última sincronización del tracking del courier. Si está vieja, la detección puede no traer novedades nuevas.">
+                  {courierName} {fmtDate(trackingSync)}
                 </span>
               )}
             </div>
