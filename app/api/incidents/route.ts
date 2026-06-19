@@ -4,14 +4,14 @@ import {
   createIncident,
   getIncident,
   getIncidentLastRun,
-  incidentTimeStats,
+  incidentExecutiveStats,
   listIncidentEvents,
   listIncidents,
   updateIncident,
 } from "@/lib/incidents";
 import { getForzaTrackingByGuide, getMoovinTrackingByPackage } from "@/lib/finance";
 import { getStoreFromSearchParams } from "@/lib/stores";
-import type { Incident, IncidentCategory, IncidentSource, IncidentStatus, TrackingEvent } from "@/lib/incidents-types";
+import type { Incident, IncidentCategory, IncidentPeriod, IncidentSource, IncidentStatus, TrackingEvent } from "@/lib/incidents-types";
 
 export const runtime = "nodejs";
 
@@ -32,6 +32,11 @@ function asCategory(v: string | null): IncidentCategory | undefined {
 }
 function asSource(v: string | null): IncidentSource | undefined {
   return v && SOURCES.has(v) ? (v as IncidentSource) : undefined;
+}
+
+const PERIODS = new Set(["hoy", "ayer", "7d", "30d"]);
+function asPeriod(v: string | null): IncidentPeriod {
+  return v && PERIODS.has(v) ? (v as IncidentPeriod) : "7d";
 }
 
 // El historial de tracking del courier vive en moovin_tracking / forza_tracking
@@ -70,7 +75,8 @@ export async function GET(req: NextRequest) {
     }
 
     const storeId = getStoreFromSearchParams(sp).id;
-    const [incidents, counts, stats] = await Promise.all([
+    const period = asPeriod(sp.get("period"));
+    const [incidents, counts, exec] = await Promise.all([
       listIncidents({
         storeId,
         status: asStatus(sp.get("status")),
@@ -80,13 +86,13 @@ export async function GET(req: NextRequest) {
         soloReintento: sp.get("reintento") === "1",
       }),
       countIncidentsByStatus(storeId),
-      // Stats de flujo (resueltas/nuevas por ventana); auxiliar, no debe romper el listado.
-      incidentTimeStats(storeId).catch(() => null),
+      // Metricas ejecutivas del periodo; auxiliar, no debe romper el listado.
+      incidentExecutiveStats(storeId, period).catch(() => null),
     ]);
     // "Ultima actualizacion" para la UI; opcional, no debe romper el listado.
     let last_run: string | null = null;
     try { last_run = await getIncidentLastRun(); } catch { /* opcional */ }
-    return NextResponse.json({ incidents, counts, stats, last_run });
+    return NextResponse.json({ incidents, counts, exec, last_run });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer novedades";
     return NextResponse.json({ incidents: [], error: message }, { status: 500 });

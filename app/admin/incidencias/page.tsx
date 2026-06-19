@@ -1,16 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
-  AlertTriangle, ArrowLeft, CalendarClock, Check, Copy, History, Pencil, Phone, PhoneOff,
-  Plus, RefreshCw, Search, Undo2, X,
+  AlertTriangle, ArrowLeft, CalendarClock, Check, Clock, Copy, Gauge, History, Pencil, Phone, PhoneOff,
+  Plus, RefreshCw, Search, Timer, TrendingUp, Undo2, Wallet, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentTimeStats, type TrackingEvent } from "@/lib/incidents-types";
+import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentPeriod, type TrackingEvent } from "@/lib/incidents-types";
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 
@@ -65,26 +65,57 @@ const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString("es-CR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDay = (s: string | null) => (s ? s.slice(0, 10).split("-").reverse().join("/") : "—");
 
-// Fila compacta de stats de flujo: etiqueta + 4 rectangulos (Hoy / Ayer / 7d / 30d).
-function StatRow({ label, w }: { label: string; w?: { hoy: number; ayer: number; d7: number; d30: number } }) {
-  const cells: Array<[string, number]> = [
-    ["Hoy", w?.hoy ?? 0],
-    ["Ayer", w?.ayer ?? 0],
-    ["7 días", w?.d7 ?? 0],
-    ["30 días", w?.d30 ?? 0],
-  ];
+const PERIOD_OPTS: { value: IncidentPeriod; label: string }[] = [
+  { value: "hoy", label: "Hoy" },
+  { value: "ayer", label: "Ayer" },
+  { value: "7d", label: "7 días" },
+  { value: "30d", label: "30 días" },
+];
+
+// Semaforo de la tasa de resolucion: <30% rojo, 30-45% amarillo, >45% verde.
+function tasaTone(pct: number): { dot: string; text: string } {
+  if (pct > 45) return { dot: "bg-emerald-500", text: "text-emerald-500" };
+  if (pct >= 30) return { dot: "bg-amber-500", text: "text-amber-500" };
+  return { dot: "bg-rose-500", text: "text-rose-500" };
+}
+
+// Color del % de recuperacion por motivo (mismo semaforo que la tasa).
+function recColor(pct: number): string {
+  if (pct > 45) return "text-emerald-500";
+  if (pct >= 30) return "text-amber-500";
+  return "text-rose-500";
+}
+
+// Tarjeta de KPI ejecutivo.
+function ExecKpi({ icon, label, value, sub, accent }: {
+  icon: ReactNode; label: string; value: ReactNode; sub?: ReactNode; accent?: string;
+}) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-16 shrink-0 text-xs font-semibold text-muted-foreground sm:w-20">{label}</span>
-      <div className="grid flex-1 grid-cols-4 gap-2">
-        {cells.map(([l, v]) => (
-          <div key={l} className="rounded-md border border-border bg-muted/30 px-2 py-1 text-center">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{l}</div>
-            <div className="text-lg font-bold leading-tight tabular-nums">{v}</div>
-          </div>
-        ))}
-      </div>
-    </div>
+    <Card>
+      <CardContent className="p-3">
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">{icon}<span>{label}</span></div>
+        <div className={`mt-1 text-2xl font-bold leading-none tabular-nums ${accent ?? ""}`}>{value}</div>
+        {sub != null && <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{sub}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Grafico de tendencia (SVG, sin dependencias): generadas vs resueltas por dia.
+function TrendChart({ data }: { data: { date: string; generadas: number; resueltas: number }[] }) {
+  const W = 720, H = 128, P = 8;
+  const n = data.length;
+  const max = Math.max(1, ...data.map((d) => Math.max(d.generadas, d.resueltas)));
+  const x = (i: number) => (n <= 1 ? W / 2 : P + (i * (W - 2 * P)) / (n - 1));
+  const y = (v: number) => H - P - (v / max) * (H - 2 * P);
+  const pts = (k: "generadas" | "resueltas") =>
+    data.map((d, i) => `${x(i).toFixed(1)},${y(d[k]).toFixed(1)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-32 w-full" preserveAspectRatio="none">
+      <line x1={P} y1={H - P} x2={W - P} y2={H - P} className="stroke-muted-foreground/30" strokeWidth={1} />
+      <polyline fill="none" className="stroke-rose-500" strokeWidth={2} points={pts("generadas")} />
+      <polyline fill="none" className="stroke-emerald-500" strokeWidth={2} points={pts("resueltas")} />
+    </svg>
   );
 }
 
@@ -99,7 +130,8 @@ export default function IncidenciasPage() {
   const [soloReintento, setSoloReintento] = useState(false);
   const [search, setSearch] = useState("");
   const [lastRun, setLastRun] = useState<string | null>(null);
-  const [stats, setStats] = useState<IncidentTimeStats | null>(null);
+  const [period, setPeriod] = useState<IncidentPeriod>("7d");
+  const [exec, setExec] = useState<IncidentExecutiveStats | null>(null);
 
   const [selected, setSelected] = useState<Incident | null>(null);
   const [events, setEvents] = useState<IncidentEvent[]>([]);
@@ -114,6 +146,7 @@ export default function IncidenciasPage() {
     else if (statusFilter) qs.set("status", statusFilter);
     if (categoryFilter) qs.set("category", categoryFilter);
     qs.set("store", selectedStoreCode);
+    qs.set("period", period);
     if (search.trim()) qs.set("q", search.trim());
     try {
       const res = await fetch(`/api/incidents?${qs.toString()}`, { cache: "no-store" });
@@ -121,13 +154,13 @@ export default function IncidenciasPage() {
       setIncidents(json.incidents ?? []);
       setCounts(json.counts ?? {});
       setLastRun(json.last_run ?? null);
-      setStats(json.stats ?? null);
+      setExec(json.exec ?? null);
     } catch {
       /* noop */
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, categoryFilter, soloReintento, search, selectedStoreCode]);
+  }, [statusFilter, categoryFilter, soloReintento, search, selectedStoreCode, period]);
 
   useEffect(() => {
     const t = setTimeout(fetchData, 250);
@@ -260,11 +293,93 @@ export default function IncidenciasPage() {
       </header>
 
       <main className="container mx-auto px-4 py-6 space-y-4">
-        {/* Flujo de novedades: resueltas / nuevas por ventana de tiempo */}
+        {/* ===== Resumen ejecutivo (Fase 1) ===== */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">Resumen ejecutivo</h2>
+          <div className="flex gap-1">
+            {PERIOD_OPTS.map((p) => (
+              <Button key={p.value} size="sm" variant={period === p.value ? "default" : "outline"}
+                className="h-8 px-3" onClick={() => setPeriod(p.value)}>{p.label}</Button>
+            ))}
+          </div>
+        </div>
+
+        {/* 4 KPIs principales para dirección/gerencia */}
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <ExecKpi icon={<TrendingUp className="h-3.5 w-3.5" />} label="Incidencias nuevas"
+            value={exec?.nuevas ?? 0}
+            sub={`Resueltas en el período: ${exec?.resueltas_periodo ?? 0}`} />
+          <ExecKpi icon={<Gauge className="h-3.5 w-3.5" />} label="Tasa de resolución"
+            accent={tasaTone(exec?.tasa_resolucion ?? 0).text}
+            value={
+              <span className="inline-flex items-center gap-2">
+                <span className={`inline-block h-2.5 w-2.5 rounded-full ${tasaTone(exec?.tasa_resolucion ?? 0).dot}`} />
+                {Math.round(exec?.tasa_resolucion ?? 0)}%
+              </span>
+            }
+            sub={`${exec?.total_periodo ?? 0} incidencias del período`} />
+          <ExecKpi icon={<Wallet className="h-3.5 w-3.5" />} label="Monto recuperado"
+            value={currency(exec?.monto_recuperado ?? 0)} sub="Pedidos recuperados por gestión" />
+          <ExecKpi icon={<AlertTriangle className="h-3.5 w-3.5" />} label="Incidencias abiertas"
+            value={exec?.abiertas ?? 0}
+            sub={exec?.mas_antigua ? `Más antigua: ${exec.mas_antigua.dias} días` : "Sin abiertas"} />
+        </div>
+
+        {/* KPIs secundarios */}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <ExecKpi icon={<Clock className="h-3.5 w-3.5" />} label="Edad promedio de abiertas"
+            value={`${(exec?.edad_promedio_dias ?? 0).toFixed(1)} días`}
+            sub={exec?.mas_antigua
+              ? `Más antigua: ${exec.mas_antigua.order_name || exec.mas_antigua.guide_number || "—"} · ${exec.mas_antigua.dias} días`
+              : "Sin incidencias abiertas"} />
+          <ExecKpi icon={<Timer className="h-3.5 w-3.5" />} label="Tiempo prom. de 1ª gestión"
+            value={exec?.primera_gestion_horas != null ? `${exec.primera_gestion_horas.toFixed(1)} h` : "—"}
+            sub="Desde la creación hasta el primer llamado" />
+        </div>
+
+        {/* Tendencia: incidencias generadas vs resueltas */}
         <Card>
-          <CardContent className="p-3 space-y-2">
-            <StatRow label="Resueltas" w={stats?.resueltas} />
-            <StatRow label="Nuevas" w={stats?.nuevas} />
+          <CardContent className="p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-semibold">Tendencia · generadas vs resueltas</span>
+              <span className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-rose-500" /> Generadas</span>
+                <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-emerald-500" /> Resueltas</span>
+              </span>
+            </div>
+            {exec && exec.trend.length > 0
+              ? <TrendChart data={exec.trend} />
+              : <p className="py-8 text-center text-xs text-muted-foreground">Sin datos para el período.</p>}
+          </CardContent>
+        </Card>
+
+        {/* Análisis de causas + recuperación por motivo */}
+        <Card>
+          <CardContent className="p-3">
+            <span className="text-sm font-semibold">Causas y recuperación por motivo</span>
+            <div className="mt-2 space-y-1.5">
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                <span className="w-36 shrink-0">Motivo</span>
+                <span className="flex-1">Distribución</span>
+                <span className="w-8 text-right">Cant</span>
+                <span className="w-10 text-right">%</span>
+                <span className="w-24 text-right">Recuperación</span>
+              </div>
+              {exec && exec.causas.length > 0 ? exec.causas.map((c) => (
+                <div key={c.category} className="flex items-center gap-2 text-xs">
+                  <span className="w-36 shrink-0 truncate">{CATEGORY_LABELS[c.category]}</span>
+                  <div className="h-2 flex-1 overflow-hidden rounded bg-muted">
+                    <div className="h-full bg-primary" style={{ width: `${Math.min(100, c.pct)}%` }} />
+                  </div>
+                  <span className="w-8 text-right tabular-nums">{c.total}</span>
+                  <span className="w-10 text-right tabular-nums text-muted-foreground">{Math.round(c.pct)}%</span>
+                  <span className="w-24 text-right tabular-nums">
+                    <span className={recColor(c.recuperacion)}>{Math.round(c.recuperacion)}%</span>
+                    <span className="text-muted-foreground"> ({c.resueltas}/{c.total})</span>
+                  </span>
+                </div>
+              )) : <p className="py-4 text-center text-xs text-muted-foreground">Sin incidencias en el período.</p>}
+            </div>
           </CardContent>
         </Card>
 

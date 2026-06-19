@@ -130,6 +130,39 @@ export interface IncidentTimeStats {
   nuevas: IncidentWindowStats;    // novedades dadas de alta (cayeron en novedad)
 }
 
+// Capa de metricas ejecutivas (Fase 1). Todo se calcula para un periodo
+// seleccionable; los limites de dia van en hora local CR/HN (UTC-6).
+export type IncidentPeriod = "hoy" | "ayer" | "7d" | "30d";
+
+export interface IncidentCausaStat {
+  category: IncidentCategory;
+  total: number;        // incidencias del periodo con esta causa
+  resueltas: number;    // de esas, cuantas estan resueltas (estado actual)
+  pct: number;          // % sobre el total de incidencias del periodo
+  recuperacion: number; // resueltas / total * 100 (recuperacion por motivo)
+}
+
+export interface IncidentTrendPoint {
+  date: string;      // YYYY-MM-DD (dia local CR/HN)
+  generadas: number; // incidencias creadas ese dia
+  resueltas: number; // resoluciones ese dia
+}
+
+export interface IncidentExecutiveStats {
+  period: IncidentPeriod;
+  nuevas: number;                // incidencias creadas en el periodo
+  total_periodo: number;         // = nuevas (denominador de la cohorte)
+  resueltas_periodo: number;     // resueltas DENTRO del periodo (por fecha de resolucion)
+  tasa_resolucion: number;       // % de las creadas en el periodo que ya estan resueltas
+  monto_recuperado: number;      // suma de cod_amount de las resueltas en el periodo
+  abiertas: number;              // snapshot: estados no terminales
+  edad_promedio_dias: number;    // snapshot: edad media de las abiertas (dias)
+  mas_antigua: { dias: number; order_name: string; guide_number: string } | null;
+  primera_gestion_horas: number | null; // promedio creacion -> primera llamada (cohorte)
+  causas: IncidentCausaStat[];
+  trend: IncidentTrendPoint[];
+}
+
 // El filtro por tienda usa el catalogo multi-tienda de produccion
 // (lib/store-config.ts: FINANCE_STORES) a traves de ?store=<code>. Cada novedad
 // queda asociada a una tienda por store_id.
