@@ -11,6 +11,8 @@ import type {
   IncidentEventKind,
   IncidentSource,
   IncidentStatus,
+  IncidentTimeStats,
+  IncidentWindowStats,
 } from "./incidents-types";
 
 export interface IncidentFilters {
@@ -74,6 +76,54 @@ export async function countIncidentsByStatus(storeId: number): Promise<Record<st
     })
   );
   return Object.fromEntries(pairs);
+}
+
+// Estadistica temporal de flujo (hoy / ayer / ultimos 7 / ultimos 30 dias) para la
+// tienda. "resueltas" cuenta novedades DISTINTAS con una transicion a 'resuelta'
+// (manual o auto por entrega) en la ventana, leyendo el historial (incident_events).
+// "nuevas" usa la fecha de alta (incidents.created_at). Los limites de dia se calculan
+// en hora local de Centroamerica (UTC-6, sin horario de verano en CR/HN), porque el
+// runtime corre en UTC y "hoy" debe cuadrar con el dia del operador.
+export async function incidentTimeStats(storeId: number): Promise<IncidentTimeStats> {
+  const DAY = 86_400_000;
+  const TZ_OFFSET = 6 * 60 * 60 * 1000; // UTC-6 (Costa Rica / Honduras)
+  const nowMs = Date.now();
+  const startToday = Math.floor((nowMs - TZ_OFFSET) / DAY) * DAY + TZ_OFFSET;
+  const startYesterday = startToday - DAY;
+  const start7 = startToday - 6 * DAY;
+  const start30 = startToday - 29 * DAY;
+  const sinceIso = new Date(start30).toISOString();
+
+  const db = getDB();
+  const [nuevasRes, resueltasRes] = await Promise.all([
+    db.from("incidents").select("id, created_at")
+      .eq("store_id", storeId).gte("created_at", sinceIso).limit(5000),
+    db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id)")
+      .eq("incidents.store_id", storeId).eq("to_status", "resuelta").gte("created_at", sinceIso).limit(5000),
+  ]);
+  if (nuevasRes.error) throw new Error(`incidentTimeStats(nuevas): ${nuevasRes.error.message}`);
+  if (resueltasRes.error) throw new Error(`incidentTimeStats(resueltas): ${resueltasRes.error.message}`);
+
+  const nuevasRows = (nuevasRes.data ?? []) as Array<{ id: number; created_at: string }>;
+  const resueltaRows = (resueltasRes.data ?? []) as Array<{ incident_id: number; created_at: string }>;
+
+  const END = nowMs + DAY; // cota superior holgada (no hay eventos en el futuro)
+  const distinct = (rows: Array<{ id: number; at: number }>, from: number, to: number): number => {
+    const seen = new Set<number>();
+    for (const r of rows) if (r.at >= from && r.at < to) seen.add(r.id);
+    return seen.size;
+  };
+  const windows = (rows: Array<{ id: number; at: number }>): IncidentWindowStats => ({
+    hoy: distinct(rows, startToday, END),
+    ayer: distinct(rows, startYesterday, startToday),
+    d7: distinct(rows, start7, END),
+    d30: distinct(rows, start30, END),
+  });
+
+  return {
+    nuevas: windows(nuevasRows.map((r) => ({ id: r.id, at: Date.parse(r.created_at) }))),
+    resueltas: windows(resueltaRows.map((r) => ({ id: r.incident_id, at: Date.parse(r.created_at) }))),
+  };
 }
 
 // Conjunto de claves existentes, para que la deteccion automatica descarte

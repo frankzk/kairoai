@@ -116,6 +116,20 @@ export interface DetectedIncident {
 // Estados terminales: la deteccion automatica no los reabre.
 export const TERMINAL_STATUSES: IncidentStatus[] = ["resuelta", "perdida", "descartada"];
 
+// Estadistica temporal de flujo de novedades. No es el snapshot por estado (esos
+// son los chips de la cabecera), sino cuantas se movieron en cada ventana de tiempo.
+export interface IncidentWindowStats {
+  hoy: number;  // dia de hoy (hora local CR/HN)
+  ayer: number; // dia de ayer
+  d7: number;   // ultimos 7 dias (incluye hoy)
+  d30: number;  // ultimos 30 dias (incluye hoy)
+}
+
+export interface IncidentTimeStats {
+  resueltas: IncidentWindowStats; // transiciones a 'resuelta' (manual o auto por entrega)
+  nuevas: IncidentWindowStats;    // novedades dadas de alta (cayeron en novedad)
+}
+
 // El filtro por tienda usa el catalogo multi-tienda de produccion
 // (lib/store-config.ts: FINANCE_STORES) a traves de ?store=<code>. Cada novedad
 // queda asociada a una tienda por store_id.
