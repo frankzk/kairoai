@@ -141,6 +141,7 @@ interface TrackableOrderRow {
   order_name: string;
   customer_name: string;
   last_name?: string;
+  phone?: string | null;
   boxful_status: string;
   internal_status: string;
   match_status: string;
@@ -1886,8 +1887,16 @@ function OrdersTable({
                     {row.customer_name || "Sin nombre"}
                   </span>
                   {row.last_name && (
-                    <span className="mt-0.5 block max-w-[150px] truncate text-[10px] text-muted-foreground">
+                    <span className="mt-0.5 block max-w-[150px] truncate text-[9px] text-muted-foreground">
                       Apellido: {row.last_name}
+                    </span>
+                  )}
+                  {row.phone && (
+                    <span
+                      className="block max-w-[150px] truncate font-mono text-[10px] text-muted-foreground"
+                      title={row.phone}
+                    >
+                      {row.phone}
                     </span>
                   )}
                 </td>
@@ -7517,6 +7526,7 @@ function buildVisibleOrderRows(
         : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
+      phone: shopify?.phone || row.customer_phone || null,
       match_status: shopify ? "matched" : row.match_status,
       cod_amount: row.cod_amount || Number(shopify?.total_price || parseMoneyText(shopify?.total ?? "")),
       shopify_order_name: shopify?.name ?? row.shopify_order_name,
@@ -7566,6 +7576,7 @@ function buildVisibleOrderRows(
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
+      phone: order.phone || null,
       boxful_status: "",
       internal_status:
         order.cancelled_at || order.financial_status === "voided" ? "annulled" : "pending",
