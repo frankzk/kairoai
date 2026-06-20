@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
-  AlertTriangle, ArrowLeft, CalendarClock, Check, Copy, Download, History, Pencil, Phone, PhoneOff,
-  Plus, RefreshCw, Search, Undo2, X,
+  Activity, AlertTriangle, ArrowLeft, CalendarClock, Check, Copy, Download, History, Pencil, Percent, Phone, PhoneOff,
+  Plus, RefreshCw, Search, Truck, Undo2, Wallet, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -194,6 +194,46 @@ function CausasModal({ causas, onClose }: { causas: IncidentCausaStat[]; onClose
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// Tarjeta resumen de un periodo (reemplaza una columna de la matriz): nuevas
+// (hero) + monto recuperado + resueltas + tasa + razon Inc./Despachados.
+function PeriodCard({ label, cell }: { label: string; cell: IncidentMatrixCell }) {
+  const desp = cell.despachados > 0 ? `${((cell.nuevas / cell.despachados) * 100).toFixed(1)}%` : "—";
+  return (
+    <Card>
+      <CardContent className="space-y-2 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> {label} · Incidencias
+          </span>
+          <span className="rounded-md bg-primary/15 p-1 text-primary"><Activity className="h-3.5 w-3.5" /></span>
+        </div>
+        <div className="flex items-baseline gap-2">
+          <span className="text-3xl font-bold leading-none tabular-nums">{cell.nuevas}</span>
+          <span className="text-[11px] leading-tight text-muted-foreground">nuevas</span>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-500">
+            <Wallet className="h-3 w-3" /> {fmtMoneyShort(cell.monto)} rec.
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-500">
+            <Check className="h-3 w-3" /> {cell.resueltas} resuelta{cell.resueltas === 1 ? "" : "s"}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5"
+            title="Tasa de resolución (cohorte) del período">
+            <Percent className="h-3 w-3" /> {Math.round(cell.tasa)}% tasa
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5"
+            title="Incidencias ÷ pedidos despachados (con guía) en el período">
+            <Truck className="h-3 w-3" /> {desp} despacho
+          </span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -463,73 +503,13 @@ export default function IncidenciasPage() {
 
       <main className="container mx-auto px-4 py-6 space-y-4">
         {/* ===== Resumen ejecutivo: vista fija, todos los periodos a la vez ===== */}
-        {/* Fila 1: Matriz de desempeño (~65%) + Estado actual (~35%) */}
+        {/* Fila 1: 4 tarjetas por periodo (~65%) + Estado actual (~35%) */}
         <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-[65fr_35fr]">
-          <Card>
-            <CardContent className="p-3">
-              <div className="mb-2 text-[13px] font-semibold">Matriz de desempeño</div>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-right">
-                  <thead>
-                    <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      <th className="py-1 text-left font-medium">&nbsp;</th>
-                      {MATRIX_PERIODS.map((p) => (
-                        <th key={p.key} className="border-l border-border/40 px-1.5 py-1 font-medium">
-                          <span className="sm:hidden">{p.short}</span><span className="hidden sm:inline">{p.long}</span>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-t border-border/60" title="Incidencias creadas en el período">
-                      <td className="py-1.5 text-left text-[11px] text-muted-foreground">Nuevas</td>
-                      {MATRIX_PERIODS.map((p) => (
-                        <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-[15px] font-semibold tabular-nums">{mcell(exec, p.key).nuevas}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-t border-border/60" title="Incidencias que pasaron a resuelta dentro del período (gestión o entrega confirmada)">
-                      <td className="py-1.5 text-left text-[11px] text-muted-foreground">Resueltas</td>
-                      {MATRIX_PERIODS.map((p) => (
-                        <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-[15px] font-semibold tabular-nums">{mcell(exec, p.key).resueltas}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-t border-border/60" title="Tasa de resolución (cohorte): de las creadas en el período, % que ya están resueltas">
-                      <td className="py-1.5 text-left text-[11px] text-muted-foreground">Tasa resol.</td>
-                      {MATRIX_PERIODS.map((p) => {
-                        const t = mcell(exec, p.key).tasa;
-                        return p.key === "d30" ? (
-                          <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-right tabular-nums whitespace-nowrap">
-                            <span className={`text-[15px] font-bold ${goalTone(t).text}`}>{Math.round(t)}%</span>
-                            <span className="block text-[9px] leading-none text-muted-foreground">meta {META_RESOLUCION}%</span>
-                          </td>
-                        ) : (
-                          <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-[15px] tabular-nums text-muted-foreground">{Math.round(t)}%</td>
-                        );
-                      })}
-                    </tr>
-                    <tr className="border-t border-border/60" title="Monto recuperado: ₡ (COD) de las incidencias resueltas en el período">
-                      <td className="py-1.5 text-left text-[11px] text-muted-foreground">Monto rec.</td>
-                      {MATRIX_PERIODS.map((p) => (
-                        <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-[13px] font-semibold tabular-nums">{fmtMoneyShort(mcell(exec, p.key).monto)}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-t border-border/60" title="Incidencias ÷ pedidos despachados (con guía, por fecha de pedido) en el período. Menor = mejor calidad operativa.">
-                      <td className="py-1.5 text-left text-[11px] text-muted-foreground">Inc./Desp.</td>
-                      {MATRIX_PERIODS.map((p) => {
-                        const c = mcell(exec, p.key);
-                        return (
-                          <td key={p.key} className="border-l border-border/40 px-1.5 py-1.5 text-[15px] tabular-nums text-muted-foreground"
-                            title={c.despachados > 0 ? `${c.nuevas} inc. / ${c.despachados} despachados` : "Sin pedidos despachados en el período"}>
-                            {c.despachados > 0 ? `${((c.nuevas / c.despachados) * 100).toFixed(1)}%` : "—"}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="grid grid-cols-2 gap-2.5">
+            {MATRIX_PERIODS.map((p) => (
+              <PeriodCard key={p.key} label={p.long} cell={mcell(exec, p.key)} />
+            ))}
+          </div>
 
           <Card>
             <CardContent className="p-3">
