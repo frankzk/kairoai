@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
-  Activity, AlertTriangle, ArrowLeft, Ban, CalendarClock, Check, Copy, Download, HelpCircle, History, MapPin,
-  PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Undo2, X, type LucideIcon,
+  Activity, AlertTriangle, ArrowLeft, Ban, CalendarClock, Check, ChevronDown, ChevronsUpDown, ChevronUp, Copy,
+  Download, HelpCircle, History, MapPin, PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Undo2, X,
+  type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -98,7 +99,7 @@ function incidentAge(createdAt: string): { label: string; tone: string } {
 
 const META_RESOLUCION = 50; // meta configurada de tasa de resolucion (%)
 
-// Abrevia montos en miles: ₡248 mil.
+// Formatea horas con 1 decimal: 4.2h; null -> guion.
 const fmtH = (h: number | null): string => (h != null ? `${h.toFixed(1)}h` : "—");
 
 // Etiqueta de dia para la tendencia: "lun." -> "Lun"; el ultimo dia -> "Hoy".
@@ -357,6 +358,59 @@ function CausasModal({ causas, onClose }: { causas: IncidentCausaStat[]; onClose
   );
 }
 
+// ----- Orden de la tabla: columnas ordenables al hacer click en el encabezado.
+type SortKey =
+  | "estado" | "cliente" | "telefono" | "pedido" | "guia"
+  | "causa" | "cod" | "intentos" | "edad" | "reprog";
+type SortDir = "asc" | "desc";
+
+// Valor comparable de una novedad para una columna. Numerico cuando aplica (COD,
+// intentos, edad) y texto en el resto (orden alfabetico/locale). En "edad" se usa
+// la antiguedad en ms (mayor = mas vieja), asi asc = mas recientes primero.
+function sortValue(i: Incident, key: SortKey): string | number {
+  switch (key) {
+    case "estado": return STATUS_ORDER.indexOf(i.status);
+    case "cliente": return (i.customer_name || "").toLowerCase();
+    case "telefono": return i.customer_phone || "";
+    case "pedido": return (i.order_name || "").toLowerCase();
+    case "guia": return i.guide_number || "";
+    case "causa": return CATEGORY_LABELS[i.category] ?? i.category;
+    case "cod": return Number(i.cod_amount || 0);
+    case "intentos": return i.intentos_llamada || 0;
+    case "edad": { const t = Date.parse(i.created_at); return Number.isNaN(t) ? 0 : Date.now() - t; }
+    case "reprog": return i.reprogramada_para || "";
+  }
+}
+
+// ----- Filtro por cantidad de intentos de llamada.
+type IntentosFilter = "todos" | "1" | "2mas";
+function matchIntentos(n: number, f: IntentosFilter): boolean {
+  if (f === "1") return n === 1;
+  if (f === "2mas") return n >= 2;
+  return true;
+}
+
+// Encabezado de columna ordenable: click alterna asc/desc; muestra el sentido con
+// una flecha (gris doble cuando la columna no es la activa).
+function SortTh({ label, sortK, active, dir, onSort, align = "left" }: {
+  label: string; sortK: SortKey; active: boolean; dir: SortDir;
+  onSort: (k: SortKey) => void; align?: "left" | "right" | "center";
+}) {
+  const alignCls = align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left";
+  const Icon = !active ? ChevronsUpDown : dir === "asc" ? ChevronUp : ChevronDown;
+  return (
+    <th className={`px-3 py-2 font-medium ${alignCls}`}>
+      <button type="button" onClick={() => onSort(sortK)} title="Ordenar"
+        className={`group inline-flex items-center gap-1 ${align === "right" ? "flex-row-reverse" : ""} ${
+          active ? "text-foreground" : "hover:text-foreground"
+        }`}>
+        {label}
+        <Icon className={`h-3 w-3 ${active ? "opacity-90" : "opacity-30 group-hover:opacity-60"}`} />
+      </button>
+    </th>
+  );
+}
+
 // Una opcion de un control segmentado (va dentro de un track hundido). Activa =
 // capsula rellena; inactiva = texto muted que se aclara al hover. Soporta color
 // por estado (dot inactivo + activeClass) y conteo inline.
@@ -393,6 +447,9 @@ export default function IncidenciasPage() {
   const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
   const [soloReintento, setSoloReintento] = useState(false);
   const [search, setSearch] = useState("");
+  const [intentosFilter, setIntentosFilter] = useState<IntentosFilter>("todos");
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [visibleCount, setVisibleCount] = useState(120);
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [trackingSync, setTrackingSync] = useState<string | null>(null);
@@ -473,10 +530,11 @@ export default function IncidenciasPage() {
   // tabla: estado/causa/busqueda/reintento/tienda). Dinamico: si no hay filtro,
   // baja todo lo cargado.
   async function exportarExcel() {
-    if (!incidents.length) { alert("No hay novedades para exportar."); return; }
+    const list = incidents.filter((i) => matchIntentos(i.intentos_llamada || 0, intentosFilter));
+    if (!list.length) { alert("No hay novedades para exportar."); return; }
     setExporting(true);
     try {
-      const rows = incidents.map((i) => ({
+      const rows = list.map((i) => ({
         Estado: STATUS_META[i.status]?.label ?? i.status,
         Cliente: i.customer_name || "",
         Teléfono: i.customer_phone || "",
@@ -554,8 +612,40 @@ export default function IncidenciasPage() {
     await openDetail(selected.id);
   }
 
-  const shown = incidents.slice(0, visibleCount);
+  // Conteo por opcion del filtro de intentos (sobre el set cargado, ya filtrado
+  // por estado/causa/busqueda en el servidor).
+  const intentosCounts = {
+    todos: incidents.length,
+    uno: incidents.reduce((n, i) => n + ((i.intentos_llamada || 0) === 1 ? 1 : 0), 0),
+    dosMas: incidents.reduce((n, i) => n + ((i.intentos_llamada || 0) >= 2 ? 1 : 0), 0),
+  };
+  // Filtro de intentos (cliente) -> orden por columna -> recorte visible.
+  const filtered = useMemo(
+    () => (intentosFilter === "todos"
+      ? incidents
+      : incidents.filter((i) => matchIntentos(i.intentos_llamada || 0, intentosFilter))),
+    [incidents, intentosFilter],
+  );
+  const sorted = useMemo(() => {
+    if (!sortKey) return filtered;
+    const arr = [...filtered];
+    arr.sort((a, b) => {
+      const va = sortValue(a, sortKey);
+      const vb = sortValue(b, sortKey);
+      const cmp = typeof va === "number" && typeof vb === "number"
+        ? va - vb
+        : String(va).localeCompare(String(vb), "es", { numeric: true });
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return arr;
+  }, [filtered, sortKey, sortDir]);
+  const shown = sorted.slice(0, visibleCount);
   const totalCount = Object.values(counts).reduce((a, b) => a + b, 0);
+  // Click en encabezado: misma columna alterna sentido; otra columna arranca asc.
+  const toggleSort = (k: SortKey) => {
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(k); setSortDir("asc"); }
+  };
 
   // Frescura del tracking del courier de la tienda seleccionada (para avisar si
   // quedo viejo: ahi la deteccion puede no traer novedades nuevas).
@@ -661,6 +751,19 @@ export default function IncidenciasPage() {
               </div>
             </div>
 
+            {/* Intentos de llamada (control segmentado, con conteo) */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Intentos</span>
+              <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
+                <FilterPill active={intentosFilter === "todos"} count={intentosCounts.todos}
+                  onClick={() => setIntentosFilter("todos")}>Todos</FilterPill>
+                <FilterPill active={intentosFilter === "1"} count={intentosCounts.uno}
+                  onClick={() => setIntentosFilter("1")}>1 intento</FilterPill>
+                <FilterPill active={intentosFilter === "2mas"} count={intentosCounts.dosMas}
+                  onClick={() => setIntentosFilter("2mas")}>2+ intentos</FilterPill>
+              </div>
+            </div>
+
             {/* Busqueda + exportar */}
             <div className="flex flex-wrap items-center gap-2 pt-0.5">
               <div className="relative min-w-[180px] flex-1">
@@ -673,10 +776,10 @@ export default function IncidenciasPage() {
                 <CalendarClock className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Reintento fin del día</span>
               </Button>
               <Button variant="outline" size="sm" className="gap-2 h-9"
-                disabled={exporting || loading || !incidents.length} onClick={exportarExcel}
+                disabled={exporting || loading || !filtered.length} onClick={exportarExcel}
                 title="Descarga en Excel las novedades del filtro actual">
                 <Download className="h-3.5 w-3.5" />
-                {exporting ? "Exportando…" : `Exportar (${incidents.length})`}
+                {exporting ? "Exportando…" : `Exportar (${filtered.length})`}
               </Button>
             </div>
           </CardContent>
@@ -688,16 +791,16 @@ export default function IncidenciasPage() {
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
                 <tr>
-                  <th className="px-3 py-2 font-medium">Estado</th>
-                  <th className="px-3 py-2 font-medium">Cliente</th>
-                  <th className="px-3 py-2 font-medium">Telefono</th>
-                  <th className="px-3 py-2 font-medium">Pedido</th>
-                  <th className="px-3 py-2 font-medium">Guia</th>
-                  <th className="px-3 py-2 font-medium">Causa</th>
-                  <th className="px-3 py-2 font-medium text-right">COD</th>
-                  <th className="px-3 py-2 font-medium text-center">Int.</th>
-                  <th className="px-3 py-2 font-medium text-center">Edad</th>
-                  <th className="px-3 py-2 font-medium">Reprog.</th>
+                  <SortTh label="Estado" sortK="estado" active={sortKey === "estado"} dir={sortDir} onSort={toggleSort} />
+                  <SortTh label="Cliente" sortK="cliente" active={sortKey === "cliente"} dir={sortDir} onSort={toggleSort} />
+                  <SortTh label="Telefono" sortK="telefono" active={sortKey === "telefono"} dir={sortDir} onSort={toggleSort} />
+                  <SortTh label="Pedido" sortK="pedido" active={sortKey === "pedido"} dir={sortDir} onSort={toggleSort} />
+                  <SortTh label="Guia" sortK="guia" active={sortKey === "guia"} dir={sortDir} onSort={toggleSort} />
+                  <SortTh label="Causa" sortK="causa" active={sortKey === "causa"} dir={sortDir} onSort={toggleSort} />
+                  <SortTh label="COD" sortK="cod" active={sortKey === "cod"} dir={sortDir} onSort={toggleSort} align="right" />
+                  <SortTh label="Int." sortK="intentos" active={sortKey === "intentos"} dir={sortDir} onSort={toggleSort} align="center" />
+                  <SortTh label="Edad" sortK="edad" active={sortKey === "edad"} dir={sortDir} onSort={toggleSort} align="center" />
+                  <SortTh label="Reprog." sortK="reprog" active={sortKey === "reprog"} dir={sortDir} onSort={toggleSort} />
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
@@ -743,15 +846,15 @@ export default function IncidenciasPage() {
               </tbody>
             </table>
           </div>
-          {incidents.length > 0 && (
+          {filtered.length > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 px-3 py-2 text-xs text-muted-foreground">
-              <span>Mostrando {shown.length} de {incidents.length}</span>
-              {incidents.length > shown.length && (
+              <span>Mostrando {shown.length} de {filtered.length}</span>
+              {filtered.length > shown.length && (
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" className="h-8" onClick={() => setVisibleCount((n) => n + 120)}>
                     Cargar más
                   </Button>
-                  <Button variant="ghost" size="sm" className="h-8" onClick={() => setVisibleCount(incidents.length)}>
+                  <Button variant="ghost" size="sm" className="h-8" onClick={() => setVisibleCount(filtered.length)}>
                     Mostrar todas
                   </Button>
                 </div>
