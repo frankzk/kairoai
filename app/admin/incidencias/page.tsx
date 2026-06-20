@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
-  Activity, AlertTriangle, ArrowLeft, CalendarClock, Check, Copy, Download, History, Pencil, Percent, Phone, PhoneOff,
-  Plus, RefreshCw, Search, Truck, Undo2, Wallet, X,
+  Activity, AlertTriangle, ArrowLeft, Ban, CalendarClock, Check, Copy, Download, HelpCircle, History, MapPin,
+  PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Undo2, X, type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentCausaStat, type IncidentMatrixKey, type IncidentMatrixCell, type TrackingEvent } from "@/lib/incidents-types";
+import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentCausaStat, type IncidentPeriodTotal, type TrackingEvent } from "@/lib/incidents-types";
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import { exportXlsx } from "@/lib/export-xlsx";
@@ -35,6 +35,17 @@ const CATEGORY_LABELS: Record<IncidentCategory, string> = {
   devuelto_origen: "Devuelto al origen",
   dano_paquete: "Paquete dañado",
   otro: "Otro",
+};
+
+// Icono (Lucide) por causa, para el ranking del panel de causas.
+const CATEGORY_ICONS: Record<IncidentCategory, LucideIcon> = {
+  fallo_entrega: PackageX,
+  direccion_incorrecta: MapPin,
+  cliente_no_responde: PhoneOff,
+  cliente_rechaza: Ban,
+  devuelto_origen: Undo2,
+  dano_paquete: AlertTriangle,
+  otro: HelpCircle,
 };
 
 const EVENT_LABELS: Record<string, string> = {
@@ -80,13 +91,22 @@ const fmtDay = (s: string | null) => (s ? s.slice(0, 10).split("-").reverse().jo
 
 const META_RESOLUCION = 50; // meta configurada de tasa de resolucion (%)
 
-// Abrevia montos grandes: ₡39.8 mil, ₡1.2 M.
-const fmtMoneyShort = (n: number): string => {
-  const v = Math.round(Number(n) || 0);
-  if (v >= 1_000_000) return `₡${(v / 1_000_000).toFixed(1)} M`;
-  if (v >= 1_000) return `₡${(v / 1_000).toFixed(1)} mil`;
-  return `₡${v}`;
-};
+// Abrevia montos en miles: ₡248 mil.
+const fmtMil = (n: number): string => `₡${Math.round((Number(n) || 0) / 1000)} mil`;
+
+// Etiqueta de dia para la tendencia: "lun." -> "Lun"; el ultimo dia -> "Hoy".
+function diaLabel(date: string, isHoy: boolean): string {
+  if (isHoy) return "Hoy";
+  const s = new Date(`${date}T12:00:00`).toLocaleDateString("es-CR", { weekday: "short" }).replace(".", "");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Color semaforo del % de resolucion: verde >=100, ambar >=60, rojo <60.
+function pctTone(pct: number): string {
+  if (pct >= 100) return "text-emerald-400";
+  if (pct >= 60) return "text-amber-400";
+  return "text-red-400";
+}
 
 // Semaforo contra la meta: rojo por debajo, amarillo cerca, verde al alcanzarla.
 function goalTone(pct: number): { text: string; dot: string } {
@@ -95,31 +115,111 @@ function goalTone(pct: number): { text: string; dot: string } {
   return { text: "text-rose-500", dot: "bg-rose-500" };
 }
 
-// Color del balance del flujo: + (backlog bajando) verde, - (subiendo) rojo.
-function balanceTone(b: number): string {
-  return b > 0 ? "text-emerald-500" : b < 0 ? "text-rose-500" : "text-muted-foreground";
-}
-
-const MATRIX_PERIODS: { key: IncidentMatrixKey; short: string; long: string }[] = [
-  { key: "hoy", short: "H", long: "Hoy" },
-  { key: "ayer", short: "A", long: "Ayer" },
-  { key: "d7", short: "7D", long: "7 días" },
-  { key: "d30", short: "30D", long: "30 días" },
-];
-const EMPTY_CELL: IncidentMatrixCell = { nuevas: 0, resueltas: 0, tasa: 0, monto: 0, despachados: 0 };
-const mcell = (exec: IncidentExecutiveStats | null, k: IncidentMatrixKey): IncidentMatrixCell =>
-  exec?.matriz[k] ?? EMPTY_CELL;
-
-// Bloque pequeño de "Estado actual" (sin tarjeta propia).
-function MetricBlock({ label, value, sub, accent, title }: {
-  label: string; value: ReactNode; sub?: ReactNode; accent?: string; title?: string;
-}) {
+// Panel combinado (columna derecha): "Estado actual" (gauge >48h + mini-stats) y
+// "Principales causas" (barra de share + ranking), en una sola tarjeta partida.
+function EstadoCausasPanel({ exec, onVerTodas }: { exec: IncidentExecutiveStats | null; onVerTodas: () => void }) {
+  const est = exec?.estado;
+  const abiertas = est?.abiertas ?? 0;
+  const over48 = est?.abiertas_48h ?? 0;
+  const over48Pct = abiertas ? Math.round((over48 / abiertas) * 100) : 0;
+  const causas = exec?.causas ?? [];
+  const total30 = causas.reduce((a, c) => a + c.total, 0);
+  const maxCant = Math.max(1, ...causas.map((c) => c.total));
+  const top = causas.slice(0, 5);
   return (
-    <div title={title}>
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className={`text-2xl font-bold leading-none tabular-nums ${accent ?? ""}`}>{value}</div>
-      {sub != null && <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground">{sub}</div>}
-    </div>
+    <Card className="overflow-hidden">
+      {/* Seccion 1: Estado actual */}
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="text-sm font-bold">Estado actual</div>
+            <div className="text-[11px] text-muted-foreground">Salud de la cola en este momento</div>
+          </div>
+          <span className="rounded-md bg-primary/15 p-1.5 text-primary"><Activity className="h-4 w-4" /></span>
+        </div>
+        <div className="mt-4 flex items-center gap-4">
+          <div className="relative h-[104px] w-[104px] shrink-0 rounded-full"
+            style={{ background: `conic-gradient(#f87171 0% ${over48Pct}%, #334155 ${over48Pct}% 100%)` }}>
+            <div className="absolute inset-[11px] flex flex-col items-center justify-center rounded-full bg-card">
+              <span className="font-mono text-2xl font-bold leading-none text-red-400">{over48}</span>
+              <span className="mt-0.5 text-[10px] text-muted-foreground">&gt; 48 h</span>
+            </div>
+          </div>
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex items-start gap-1.5 text-xs">
+              <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-red-400" />
+              <span><span className="font-semibold text-foreground">{over48Pct}%</span> de las abiertas llevan <span className="font-semibold">+48 h</span> sin resolver</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-md border border-border px-2.5 py-1.5">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Edad promedio</div>
+                <div className="font-mono text-xl font-bold leading-tight">{(est?.edad_promedio_dias ?? 0).toFixed(1)}<span className="text-xs font-normal text-muted-foreground">d</span></div>
+                {est?.mas_antigua && <div className="text-[10px] text-muted-foreground">más antigua: {est.mas_antigua.dias}d</div>}
+              </div>
+              <div className="rounded-md border border-border px-2.5 py-1.5">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">1ª gestión</div>
+                <div className="font-mono text-xl font-bold leading-tight">{est?.primera_gestion_horas != null ? est.primera_gestion_horas.toFixed(1) : "—"}<span className="text-xs font-normal text-muted-foreground">h</span></div>
+                <div className="text-[10px] text-muted-foreground">creación → 1er llamado</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+
+      {/* Seccion 2: Principales causas */}
+      <CardContent className="border-t border-border p-5">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="text-sm font-bold">Principales causas</div>
+            <div className="text-[11px] text-muted-foreground">Últimos 30 días · % share y recuperación</div>
+          </div>
+          <button type="button" className="text-[11px] font-medium text-primary hover:underline" onClick={onVerTodas}>Ver todas</button>
+        </div>
+        {causas.length > 0 ? (
+          <>
+            <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-muted">
+              {causas.map((c, i) => (
+                <div key={c.category} style={{ width: `${c.pct}%`, backgroundColor: `hsl(263 70% 50% / ${Math.max(0.25, 1 - i * 0.18)})` }} />
+              ))}
+            </div>
+            <div className="mt-1 text-[11px] text-muted-foreground">{total30} incidencias · {causas.length} causa{causas.length === 1 ? "" : "s"}</div>
+
+            <div className="mt-3 flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+              <span className="flex-1">Motivo</span>
+              <span className="w-10 text-right">Cant</span>
+              <span className="w-10 text-right">Share</span>
+              <span className="w-16 text-right">Recuper.</span>
+            </div>
+            <div className="mt-1.5 space-y-2.5">
+              {top.map((c) => {
+                const Icon = CATEGORY_ICONS[c.category] ?? HelpCircle;
+                const recTone = c.recuperacion >= 50 ? "bg-emerald-500/15 text-emerald-400"
+                  : c.recuperacion >= 25 ? "bg-amber-500/15 text-amber-400"
+                  : "bg-red-500/15 text-red-400";
+                return (
+                  <div key={c.category} className="flex items-center gap-2 text-xs">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate font-medium">{CATEGORY_LABELS[c.category]}</span>
+                      </div>
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full rounded-full bg-primary" style={{ width: `${(c.total / maxCant) * 100}%` }} />
+                      </div>
+                    </div>
+                    <span className="w-10 text-right font-mono text-sm font-bold tabular-nums">{c.total}</span>
+                    <span className="w-10 text-right font-mono text-xs tabular-nums text-muted-foreground">{Math.round(c.pct)}%</span>
+                    <span className="w-16 text-right">
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${recTone}`}>{Math.round(c.recuperacion)}% rec.</span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        ) : <p className="mt-3 text-center text-xs text-muted-foreground">Sin incidencias en el período.</p>}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -151,21 +251,83 @@ function CausaRow({ c }: { c: IncidentCausaStat }) {
   );
 }
 
-// Grafico de tendencia (SVG, sin dependencias): generadas vs resueltas por dia.
-function TrendChart({ data }: { data: { date: string; generadas: number; resueltas: number }[] }) {
-  const W = 720, H = 120, P = 6;
-  const n = data.length;
-  const max = Math.max(1, ...data.map((d) => Math.max(d.generadas, d.resueltas)));
-  const x = (i: number) => (n <= 1 ? W / 2 : P + (i * (W - 2 * P)) / (n - 1));
-  const y = (v: number) => H - P - (v / max) * (H - 2 * P);
-  const pts = (k: "generadas" | "resueltas") =>
-    data.map((d, i) => `${x(i).toFixed(1)},${y(d[k]).toFixed(1)}`).join(" ");
+// Tabla "Tendencia de 7 días": por día nuevas vs. resueltas (barra + cifras) y
+// pie de totales (7d / 30d / mes actual / mes pasado).
+function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
+  const dias = (exec?.trend ?? []).slice(-7);
+  const maxNuevas = Math.max(1, ...dias.map((d) => d.generadas));
+  const totales: { label: string; t: IncidentPeriodTotal }[] = exec
+    ? [
+        { label: "Total 7 días", t: exec.totales.d7 },
+        { label: "Total 30 días", t: exec.totales.d30 },
+        { label: "Mes actual", t: exec.totales.mesActual },
+        { label: "Mes pasado", t: exec.totales.mesPasado },
+      ]
+    : [];
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-28 w-full" preserveAspectRatio="none">
-      <line x1={P} y1={H - P} x2={W - P} y2={H - P} className="stroke-muted-foreground/30" strokeWidth={1} />
-      <polyline fill="none" className="stroke-rose-500" strokeWidth={2} points={pts("generadas")} />
-      <polyline fill="none" className="stroke-emerald-500" strokeWidth={2} points={pts("resueltas")} />
-    </svg>
+    <Card>
+      <CardContent className="p-5">
+        <div className="text-sm font-semibold">Tendencia de 7 días</div>
+        <div className="mb-3 text-xs text-muted-foreground">Nuevas vs. resueltas por día</div>
+
+        <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.05em] text-muted-foreground">
+          <span className="w-10 shrink-0">Día</span>
+          <span className="flex-1">Resuelto vs. nuevas</span>
+          <span className="w-12 shrink-0 text-right text-primary">Nuevas</span>
+          <span className="w-12 shrink-0 text-right text-emerald-400">Resuel.</span>
+          <span className="w-10 shrink-0 text-right">%</span>
+          <span className="w-16 shrink-0 text-right text-amber-400">Recuper.</span>
+        </div>
+
+        <div className="mt-1.5 space-y-1.5">
+          {dias.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">Sin datos.</p>}
+          {dias.map((d, i) => {
+            const isHoy = i === dias.length - 1;
+            const pct = d.generadas ? Math.round((d.resueltas / d.generadas) * 100) : 0;
+            return (
+              <div key={d.date} className="flex items-center gap-3 text-xs">
+                <span className={`w-10 shrink-0 ${isHoy ? "font-bold text-foreground" : "text-muted-foreground"}`}>
+                  {diaLabel(d.date, isHoy)}
+                </span>
+                <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                  <div className="absolute inset-y-0 left-0 rounded-full bg-primary/35"
+                    style={{ width: `${Math.min(100, (d.generadas / maxNuevas) * 100)}%` }} />
+                  <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-400"
+                    style={{ width: `${Math.min(100, (d.resueltas / maxNuevas) * 100)}%` }} />
+                </div>
+                <span className="w-12 shrink-0 text-right font-mono font-bold tabular-nums text-primary">{d.generadas}</span>
+                <span className="w-12 shrink-0 text-right font-mono font-bold tabular-nums text-emerald-400">{d.resueltas}</span>
+                <span className={`w-10 shrink-0 text-right font-mono tabular-nums ${pctTone(pct)}`}>{pct}%</span>
+                <span className="w-16 shrink-0 text-right font-mono tabular-nums text-amber-400">{fmtMil(d.recuperado)}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        {totales.length > 0 && (
+          <div className="mt-3 space-y-1.5 border-t border-border pt-3">
+            {totales.map((row) => {
+              const pct = row.t.nuevas ? Math.round((row.t.resueltas / row.t.nuevas) * 100) : 0;
+              return (
+                <div key={row.label} className="flex items-center gap-3 text-xs">
+                  <span className="flex-1 text-muted-foreground">{row.label}</span>
+                  <span className="w-20 shrink-0 text-right font-mono tabular-nums">
+                    <span className="font-bold text-primary">{row.t.nuevas}</span>
+                    <span className="ml-1 text-[10px] text-muted-foreground">nuevas</span>
+                  </span>
+                  <span className="w-24 shrink-0 text-right font-mono tabular-nums">
+                    <span className="font-bold text-emerald-400">{row.t.resueltas}</span>
+                    <span className="ml-1 text-[10px] text-muted-foreground">resueltas</span>
+                  </span>
+                  <span className={`w-10 shrink-0 text-right font-mono tabular-nums ${pctTone(pct)}`}>{pct}%</span>
+                  <span className="w-16 shrink-0 text-right font-mono tabular-nums text-amber-400">{fmtMil(row.t.recuperado)}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -194,46 +356,6 @@ function CausasModal({ causas, onClose }: { causas: IncidentCausaStat[]; onClose
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-// Tarjeta resumen de un periodo (reemplaza una columna de la matriz): nuevas
-// (hero) + monto recuperado + resueltas + tasa + razon Inc./Despachados.
-function PeriodCard({ label, cell }: { label: string; cell: IncidentMatrixCell }) {
-  const desp = cell.despachados > 0 ? `${((cell.nuevas / cell.despachados) * 100).toFixed(1)}%` : "—";
-  return (
-    <Card>
-      <CardContent className="space-y-2 p-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> {label} · Incidencias
-          </span>
-          <span className="rounded-md bg-primary/15 p-1 text-primary"><Activity className="h-3.5 w-3.5" /></span>
-        </div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-3xl font-bold leading-none tabular-nums">{cell.nuevas}</span>
-          <span className="text-[11px] leading-tight text-muted-foreground">nuevas</span>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-500">
-            <Wallet className="h-3 w-3" /> {fmtMoneyShort(cell.monto)} rec.
-          </span>
-          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-500">
-            <Check className="h-3 w-3" /> {cell.resueltas} resuelta{cell.resueltas === 1 ? "" : "s"}
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5"
-            title="Tasa de resolución (cohorte) del período">
-            <Percent className="h-3 w-3" /> {Math.round(cell.tasa)}% tasa
-          </span>
-          <span className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5"
-            title="Incidencias ÷ pedidos despachados (con guía) en el período">
-            <Truck className="h-3 w-3" /> {desp} despacho
-          </span>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -503,70 +625,10 @@ export default function IncidenciasPage() {
 
       <main className="container mx-auto px-4 py-6 space-y-4">
         {/* ===== Resumen ejecutivo: vista fija, todos los periodos a la vez ===== */}
-        {/* Fila 1: 4 tarjetas por periodo (~65%) + Estado actual (~35%) */}
-        <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-[65fr_35fr]">
-          <div className="grid grid-cols-2 gap-2.5">
-            {MATRIX_PERIODS.map((p) => (
-              <PeriodCard key={p.key} label={p.long} cell={mcell(exec, p.key)} />
-            ))}
-          </div>
-
-          <Card>
-            <CardContent className="p-3">
-              <div className="mb-2 text-[13px] font-semibold">Estado actual</div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
-                <MetricBlock label="Abiertas" value={exec?.estado.abiertas ?? 0}
-                  title="Incidencias en estados no terminales (sin resolver, perder ni descartar)" />
-                <MetricBlock label="Abiertas > 48 h" value={exec?.estado.abiertas_48h ?? 0}
-                  accent={(exec?.estado.abiertas_48h ?? 0) > 0 ? "text-amber-500" : undefined}
-                  title="Incidencias abiertas con más de 48 horas de antigüedad" />
-                <MetricBlock label="Edad promedio" value={`${(exec?.estado.edad_promedio_dias ?? 0).toFixed(1)}d`}
-                  sub={exec?.estado.mas_antigua ? `Más antigua: ${exec.estado.mas_antigua.dias}d` : undefined}
-                  title="Edad media de las incidencias abiertas; la más antigua como subtítulo" />
-                <MetricBlock label="1ª gestión (30d)" value={exec?.estado.primera_gestion_horas != null ? `${exec.estado.primera_gestion_horas.toFixed(1)}h` : "—"}
-                  title="Tiempo promedio desde la creación hasta el primer llamado (últimos 30 días)" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Fila 2: Flujo (~60%) + Principales causas (~40%) */}
-        <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-[60fr_40fr]">
-          <Card>
-            <CardContent className="p-3">
-              <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                <span className="text-[13px] font-semibold">Flujo de novedades · últimos 30 días</span>
-                <span className="text-[11px] text-muted-foreground">
-                  <span className="text-rose-500">Generadas: {exec?.trend_totales.generadas ?? 0}</span>
-                  {" · "}
-                  <span className="text-emerald-500">Resueltas: {exec?.trend_totales.resueltas ?? 0}</span>
-                  {" · "}
-                  <span title="Resueltas − Generadas (positivo = el backlog está bajando)">
-                    Balance: <span className={balanceTone(exec?.trend_totales.balance ?? 0)}>{(exec?.trend_totales.balance ?? 0) > 0 ? "+" : ""}{exec?.trend_totales.balance ?? 0}</span>
-                  </span>
-                </span>
-              </div>
-              {exec && exec.trend.length > 0
-                ? <TrendChart data={exec.trend} />
-                : <p className="py-8 text-center text-xs text-muted-foreground">Sin datos.</p>}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-3">
-              <div className="mb-1.5 flex items-center justify-between">
-                <span className="text-[13px] font-semibold">Principales causas · 30 días</span>
-                <button type="button" className="text-[11px] font-medium text-primary hover:underline"
-                  onClick={() => setShowCausas(true)}>Ver todos</button>
-              </div>
-              <div className="space-y-1.5">
-                <CausasHeader />
-                {exec && exec.causas.length > 0
-                  ? exec.causas.slice(0, 5).map((c) => <CausaRow key={c.category} c={c} />)
-                  : <p className="py-2 text-center text-xs text-muted-foreground">Sin incidencias en el período.</p>}
-              </div>
-            </CardContent>
-          </Card>
+        {/* Tendencia (izquierda) + panel Estado actual / Causas (derecha, ~420px) */}
+        <div className="grid grid-cols-1 items-start gap-2.5 lg:grid-cols-[minmax(0,1fr)_420px]">
+          <Tendencia exec={exec} />
+          <EstadoCausasPanel exec={exec} onVerTodas={() => setShowCausas(true)} />
         </div>
 
         {/* Filtros: pildoras de estado (con conteo) + causa + busqueda */}
