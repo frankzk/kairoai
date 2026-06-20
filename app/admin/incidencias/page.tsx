@@ -724,6 +724,7 @@ export default function IncidenciasPage() {
                 ) : (
                   shown.map((i) => {
                     const age = incidentAge(i.created_at);
+                    const CausaIcon = CATEGORY_ICONS[i.category] ?? HelpCircle;
                     return (
                     <tr key={i.id} className="border-t border-border/50 hover:bg-muted/20">
                       <td className="px-3 py-2"><span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[i.status].badge}`}>{STATUS_META[i.status].label}</span></td>
@@ -731,7 +732,12 @@ export default function IncidenciasPage() {
                       <td className="px-3 py-2">{i.customer_phone || "—"}</td>
                       <td className="px-3 py-2 font-mono text-xs">{i.order_name || "—"}</td>
                       <td className="px-3 py-2 font-mono text-xs">{i.guide_number || "—"}</td>
-                      <td className="px-3 py-2 text-xs">{CATEGORY_LABELS[i.category]}</td>
+                      <td className="px-3 py-2 text-xs">
+                        <span className="inline-flex items-center gap-1.5">
+                          <CausaIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          {CATEGORY_LABELS[i.category]}
+                        </span>
+                      </td>
                       <td className="px-3 py-2 text-right">{i.cod_amount ? currency(i.cod_amount) : "—"}</td>
                       <td className="px-3 py-2 text-center">{i.intentos_llamada || 0}</td>
                       <td className="px-3 py-2 text-center"><span className={`tabular-nums ${age.tone}`}>{age.label}</span></td>
