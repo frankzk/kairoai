@@ -1024,11 +1024,11 @@ function DetailModal({
               <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Llamada</span>
               <Button variant="outline" size="sm" disabled={busy} className="gap-2"
                 onClick={() => onAction("registrar_llamada", { resultado: "contesto" })}>
-                <Phone className="h-3.5 w-3.5" /> Contesto
+                <Phone className="h-3.5 w-3.5 text-emerald-500" /> Contesto
               </Button>
               <Button variant="outline" size="sm" disabled={busy} className="gap-2"
                 onClick={() => onAction("registrar_llamada", { resultado: "no_contesto" })}>
-                <PhoneOff className="h-3.5 w-3.5" /> No contesto
+                <PhoneOff className="h-3.5 w-3.5 text-rose-500" /> No contesto
               </Button>
             </div>
             <div className="flex flex-wrap gap-2 items-center">
