@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  countIncidentsByCategory,
   countIncidentsByStatus,
   createIncident,
   getCourierLastSync,
@@ -72,7 +73,7 @@ export async function GET(req: NextRequest) {
 
     const store = getStoreFromSearchParams(sp);
     const storeId = store.id;
-    const [incidents, counts, exec] = await Promise.all([
+    const [incidents, counts, category_counts, exec] = await Promise.all([
       listIncidents({
         storeId,
         status: asStatus(sp.get("status")),
@@ -82,6 +83,7 @@ export async function GET(req: NextRequest) {
         soloReintento: sp.get("reintento") === "1",
       }),
       countIncidentsByStatus(storeId),
+      countIncidentsByCategory(storeId),
       // Metricas ejecutivas; auxiliar, no debe romper el listado.
       incidentExecutiveStats(storeId).catch(() => null),
     ]);
@@ -90,7 +92,7 @@ export async function GET(req: NextRequest) {
     try { last_run = await getIncidentLastRun(); } catch { /* opcional */ }
     let tracking_last_sync: string | null = null;
     try { tracking_last_sync = await getCourierLastSync(store.logisticsProvider, store.id); } catch { /* opcional */ }
-    return NextResponse.json({ incidents, counts, exec, last_run, tracking_last_sync });
+    return NextResponse.json({ incidents, counts, category_counts, exec, last_run, tracking_last_sync });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer novedades";
     return NextResponse.json({ incidents: [], error: message }, { status: 500 });
