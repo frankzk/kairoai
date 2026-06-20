@@ -177,7 +177,7 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
   const caDayKey = (ms: number) => new Date(ms - TZ_OFFSET).toISOString().slice(0, 10);
 
   const db = getDB();
-  const [createdRes, resolvedRes, openRes, callRes, dispatchedRes] = await Promise.all([
+  const [createdRes, resolvedRes, openRes, callRes, reprogRes, dispatchedRes] = await Promise.all([
     db.from("incidents").select("id, created_at, status, category, cod_amount")
       .eq("store_id", storeId).gte("created_at", sinceIso).limit(8000),
     db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, cod_amount)")
@@ -185,7 +185,9 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
     db.from("incidents").select("order_name, guide_number, created_at")
       .eq("store_id", storeId).not("status", "in", "(resuelta,perdida,descartada)").limit(8000),
     db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, created_at)")
-      .eq("incidents.store_id", storeId).eq("kind", "llamada").gte("created_at", since30).limit(8000),
+      .eq("incidents.store_id", storeId).eq("kind", "llamada").gte("created_at", sinceIso).limit(8000),
+    db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id)")
+      .eq("incidents.store_id", storeId).eq("to_status", "reprogramada").gte("created_at", sinceIso).limit(8000),
     // Pedidos despachados (con guia) por fecha de pedido, para la tasa Inc./Despachados.
     db.from("shopify_orders").select("shopify_created_at")
       .eq("store_id", storeId).neq("tracking_number", "").gte("shopify_created_at", since30).limit(50000),
@@ -212,6 +214,10 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
   const resolved = (resolvedRes.data ?? []) as unknown as ResolvedRow[];
   const open = (openRes.data ?? []) as unknown as OpenRow[];
   const calls = (callRes.data ?? []) as unknown as CallRow[];
+  // Reprogramaciones (eventos to_status='reprogramada'); tolerante a fallo.
+  const reprog = reprogRes.error
+    ? []
+    : ((reprogRes.data ?? []) as unknown as Array<{ incident_id: number; created_at: string }>);
 
   // ----- Matriz de desempeño: una celda por periodo (nuevas, resueltas, tasa, monto).
   const ranges: Record<IncidentMatrixKey, { from: number; to: number }> = {
@@ -254,7 +260,7 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
     if (age > H48) abiertas48 += 1;
     if (!oldest || t < Date.parse(oldest.created_at)) oldest = o;
   }
-  // Primera gestion (ultimos 30d): creacion -> primer llamado.
+  // Primera gestion: creacion -> primer llamado, por incidencia.
   const firstCall = new Map<number, number>();
   const createdAtOf = new Map<number, number>();
   for (const c of calls) {
@@ -264,14 +270,20 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
     const inc = one(c.incidents);
     if (inc?.created_at) createdAtOf.set(c.incident_id, Date.parse(inc.created_at));
   }
-  let pgSum = 0;
-  let pgN = 0;
+  const firstMgmt: Array<{ createdMs: number; diffMs: number }> = [];
   for (const [id, callMs] of Array.from(firstCall.entries())) {
     const createdMs = createdAtOf.get(id);
     if (createdMs === undefined) continue;
     const diff = callMs - createdMs;
-    if (diff >= 0) { pgSum += diff; pgN += 1; }
+    if (diff >= 0) firstMgmt.push({ createdMs, diffMs: diff });
   }
+  // Promedio de 1a gestion (horas) para incidencias creadas en [from,to); null si ninguna.
+  const avgPrimeraGestion = (from: number, to: number): number | null => {
+    let sum = 0;
+    let n = 0;
+    for (const m of firstMgmt) { if (m.createdMs >= from && m.createdMs < to) { sum += m.diffMs; n += 1; } }
+    return n ? sum / n / 3_600_000 : null;
+  };
   const estado: IncidentEstadoActual = {
     abiertas: open.length,
     abiertas_48h: abiertas48,
@@ -279,7 +291,7 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
     mas_antigua: oldest
       ? { dias: Math.floor((nowMs - Date.parse(oldest.created_at)) / DAY), order_name: oldest.order_name, guide_number: oldest.guide_number }
       : null,
-    primera_gestion_horas: pgN ? pgSum / pgN / 3_600_000 : null,
+    primera_gestion_horas: avgPrimeraGestion(startToday - 29 * DAY, END),
   };
 
   // ----- Causas (ultimos 30d) + recuperacion por motivo. created puede traer mas
@@ -304,15 +316,21 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
     }))
     .sort((a, b) => b.total - a.total);
 
-  // ----- Tendencia diaria (generadas / resueltas / recuperado) + totales.
+  // ----- Tendencia diaria (generadas / resueltas / reprogramadas / 1a gestion) + totales.
   const genByDay = new Map<string, number>();
   for (const r of created) { const k = caDayKey(Date.parse(r.created_at)); genByDay.set(k, (genByDay.get(k) ?? 0) + 1); }
   const resByDay = new Map<string, number>();
-  const montoByDay = new Map<string, number>();
-  for (const r of resolved) {
-    const k = caDayKey(Date.parse(r.created_at));
-    resByDay.set(k, (resByDay.get(k) ?? 0) + 1);
-    montoByDay.set(k, (montoByDay.get(k) ?? 0) + Number(one(r.incidents)?.cod_amount ?? 0));
+  for (const r of resolved) { const k = caDayKey(Date.parse(r.created_at)); resByDay.set(k, (resByDay.get(k) ?? 0) + 1); }
+  const reprogByDay = new Map<string, number>();
+  for (const r of reprog) { const k = caDayKey(Date.parse(r.created_at)); reprogByDay.set(k, (reprogByDay.get(k) ?? 0) + 1); }
+  // 1a gestion promedio por dia, segun el dia de creacion de la incidencia.
+  const pgByDay = new Map<string, { sum: number; n: number }>();
+  for (const m of firstMgmt) {
+    const k = caDayKey(m.createdMs);
+    const e = pgByDay.get(k) ?? { sum: 0, n: 0 };
+    e.sum += m.diffMs;
+    e.n += 1;
+    pgByDay.set(k, e);
   }
   const trend: IncidentTrendPoint[] = [];
   let genTot = 0;
@@ -321,25 +339,31 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
     const k = caDayKey(startToday - i * DAY);
     const g = genByDay.get(k) ?? 0;
     const rr = resByDay.get(k) ?? 0;
+    const pg = pgByDay.get(k);
     genTot += g;
     resTot += rr;
-    trend.push({ date: k, generadas: g, resueltas: rr, recuperado: montoByDay.get(k) ?? 0 });
+    trend.push({
+      date: k,
+      generadas: g,
+      resueltas: rr,
+      reprogramadas: reprogByDay.get(k) ?? 0,
+      primera_gestion_horas: pg && pg.n ? pg.sum / pg.n / 3_600_000 : null,
+    });
   }
 
-  // Totales por periodo: nuevas (creadas), resueltas (por evento) y monto recuperado.
-  const periodTotal = (from: number, to: number): IncidentPeriodTotal => {
-    let nuevas = 0;
-    for (const r of created) { const t = Date.parse(r.created_at); if (t >= from && t < to) nuevas += 1; }
-    let resueltas = 0;
-    let recuperado = 0;
-    for (const r of resolved) {
-      const t = Date.parse(r.created_at);
-      if (t < from || t >= to) continue;
-      resueltas += 1;
-      recuperado += Number(one(r.incidents)?.cod_amount ?? 0);
-    }
-    return { nuevas, resueltas, recuperado };
+  // Totales por periodo: nuevas (creadas), resueltas y reprogramadas (por evento)
+  // y promedio de 1a gestion.
+  const countIn = (rows: Array<{ created_at: string }>, from: number, to: number): number => {
+    let n = 0;
+    for (const r of rows) { const t = Date.parse(r.created_at); if (t >= from && t < to) n += 1; }
+    return n;
   };
+  const periodTotal = (from: number, to: number): IncidentPeriodTotal => ({
+    nuevas: countIn(created, from, to),
+    resueltas: countIn(resolved, from, to),
+    reprogramadas: countIn(reprog, from, to),
+    primera_gestion_horas: avgPrimeraGestion(from, to),
+  });
 
   return {
     matriz,

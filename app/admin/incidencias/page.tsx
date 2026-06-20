@@ -99,7 +99,7 @@ function incidentAge(createdAt: string): { label: string; tone: string } {
 const META_RESOLUCION = 50; // meta configurada de tasa de resolucion (%)
 
 // Abrevia montos en miles: ₡248 mil.
-const fmtMil = (n: number): string => `₡${Math.round((Number(n) || 0) / 1000)} mil`;
+const fmtH = (h: number | null): string => (h != null ? `${h.toFixed(1)}h` : "—");
 
 // Etiqueta de dia para la tendencia: "lun." -> "Lun"; el ultimo dia -> "Hoy".
 function diaLabel(date: string, isHoy: boolean): string {
@@ -262,42 +262,46 @@ function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
         { label: "Mes pasado", t: exec.totales.mesPasado },
       ]
     : [];
+  const pctGestion = (res: number, reprog: number, nuevas: number) =>
+    nuevas ? Math.round(((res + reprog) / nuevas) * 100) : 0;
   return (
     <Card>
       <CardContent className="p-4 sm:p-5">
         <div className="text-sm font-semibold">Tendencia de 7 días</div>
-        <div className="mb-3 text-xs text-muted-foreground">Nuevas vs. resueltas por día</div>
+        <div className="mb-3 text-xs text-muted-foreground">Nuevas vs. gestionadas por día</div>
 
-        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.05em] text-muted-foreground sm:gap-3">
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.05em] text-muted-foreground sm:gap-3">
           <span className="flex-1 sm:w-10 sm:flex-none">Día</span>
-          <span className="hidden flex-1 sm:block">Resuelto vs. nuevas</span>
-          <span className="w-12 shrink-0 text-right text-primary">Nuevas</span>
-          <span className="w-12 shrink-0 text-right text-emerald-400">Resuel.</span>
-          <span className="w-10 shrink-0 text-right">%</span>
-          <span className="w-16 shrink-0 text-right text-amber-400">Recuper.</span>
+          <span className="hidden flex-1 sm:block">Gestión vs. nuevas</span>
+          <span className="w-10 shrink-0 text-right text-primary sm:w-12">Nuevas</span>
+          <span className="w-10 shrink-0 text-right text-emerald-400 sm:w-12">Resuel.</span>
+          <span className="w-10 shrink-0 text-right text-cyan-400 sm:w-12">Reprog.</span>
+          <span className="w-9 shrink-0 text-right sm:w-10">%</span>
+          <span className="w-12 shrink-0 text-right sm:w-14">1ª gest.</span>
         </div>
 
         <div className="mt-1.5 space-y-1.5">
           {dias.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">Sin datos.</p>}
           {dias.map((d, i) => {
             const isHoy = i === dias.length - 1;
-            const pct = d.generadas ? Math.round((d.resueltas / d.generadas) * 100) : 0;
+            const pct = pctGestion(d.resueltas, d.reprogramadas, d.generadas);
+            const greenW = d.generadas ? Math.min(100, (d.resueltas / d.generadas) * 100) : 0;
+            const cyanW = d.generadas ? Math.min(100 - greenW, (d.reprogramadas / d.generadas) * 100) : 0;
             return (
-              <div key={d.date} className="flex items-center gap-2 text-xs sm:gap-3">
+              <div key={d.date} className="flex items-center gap-1.5 text-xs sm:gap-3">
                 <span className={`flex-1 sm:w-10 sm:flex-none ${isHoy ? "font-bold text-foreground" : "text-muted-foreground"}`}>
                   {diaLabel(d.date, isHoy)}
                 </span>
                 <div className="relative hidden h-1.5 flex-1 overflow-hidden rounded-full bg-muted sm:block"
-                  title="Verde = % resuelto del día; violeta = pendiente">
-                  <div className="absolute inset-y-0 left-0 rounded-full bg-primary/35"
-                    style={{ width: d.generadas > 0 ? "100%" : "0%" }} />
-                  <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-400"
-                    style={{ width: `${d.generadas > 0 ? Math.min(100, (d.resueltas / d.generadas) * 100) : 0}%` }} />
+                  title="Verde = resueltas, cian = reprogramadas, resto = pendiente">
+                  <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-400" style={{ width: `${greenW}%` }} />
+                  <div className="absolute inset-y-0 rounded-full bg-cyan-500" style={{ left: `${greenW}%`, width: `${cyanW}%` }} />
                 </div>
-                <span className="w-12 shrink-0 text-right font-mono font-bold tabular-nums text-primary">{d.generadas}</span>
-                <span className="w-12 shrink-0 text-right font-mono font-bold tabular-nums text-emerald-400">{d.resueltas}</span>
-                <span className={`w-10 shrink-0 text-right font-mono tabular-nums ${pctTone(pct)}`}>{pct}%</span>
-                <span className="w-16 shrink-0 text-right font-mono tabular-nums text-amber-400">{fmtMil(d.recuperado)}</span>
+                <span className="w-10 shrink-0 text-right font-mono font-bold tabular-nums text-primary sm:w-12">{d.generadas}</span>
+                <span className="w-10 shrink-0 text-right font-mono font-bold tabular-nums text-emerald-400 sm:w-12">{d.resueltas}</span>
+                <span className="w-10 shrink-0 text-right font-mono font-bold tabular-nums text-cyan-400 sm:w-12">{d.reprogramadas}</span>
+                <span className={`w-9 shrink-0 text-right font-mono tabular-nums sm:w-10 ${pctTone(pct)}`}>{pct}%</span>
+                <span className="w-12 shrink-0 text-right font-mono tabular-nums text-muted-foreground sm:w-14">{fmtH(d.primera_gestion_horas)}</span>
               </div>
             );
           })}
@@ -306,20 +310,15 @@ function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
         {totales.length > 0 && (
           <div className="mt-3 space-y-1.5 border-t border-border pt-3">
             {totales.map((row) => {
-              const pct = row.t.nuevas ? Math.round((row.t.resueltas / row.t.nuevas) * 100) : 0;
+              const pct = pctGestion(row.t.resueltas, row.t.reprogramadas, row.t.nuevas);
               return (
-                <div key={row.label} className="flex items-center gap-2 text-xs sm:gap-3">
+                <div key={row.label} className="flex items-center gap-1.5 text-xs sm:gap-3">
                   <span className="flex-1 text-muted-foreground">{row.label}</span>
-                  <span className="w-12 shrink-0 text-right font-mono tabular-nums sm:w-20">
-                    <span className="font-bold text-primary">{row.t.nuevas}</span>
-                    <span className="ml-1 hidden text-[10px] text-muted-foreground sm:inline">nuevas</span>
-                  </span>
-                  <span className="w-12 shrink-0 text-right font-mono tabular-nums sm:w-24">
-                    <span className="font-bold text-emerald-400">{row.t.resueltas}</span>
-                    <span className="ml-1 hidden text-[10px] text-muted-foreground sm:inline">resueltas</span>
-                  </span>
-                  <span className={`w-10 shrink-0 text-right font-mono tabular-nums ${pctTone(pct)}`}>{pct}%</span>
-                  <span className="w-16 shrink-0 text-right font-mono tabular-nums text-amber-400">{fmtMil(row.t.recuperado)}</span>
+                  <span className="w-10 shrink-0 text-right font-mono font-bold tabular-nums text-primary sm:w-12">{row.t.nuevas}</span>
+                  <span className="w-10 shrink-0 text-right font-mono font-bold tabular-nums text-emerald-400 sm:w-12">{row.t.resueltas}</span>
+                  <span className="w-10 shrink-0 text-right font-mono font-bold tabular-nums text-cyan-400 sm:w-12">{row.t.reprogramadas}</span>
+                  <span className={`w-9 shrink-0 text-right font-mono tabular-nums sm:w-10 ${pctTone(pct)}`}>{pct}%</span>
+                  <span className="w-12 shrink-0 text-right font-mono tabular-nums text-muted-foreground sm:w-14">{fmtH(row.t.primera_gestion_horas)}</span>
                 </div>
               );
             })}
