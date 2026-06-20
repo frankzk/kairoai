@@ -141,10 +141,11 @@ export interface IncidentCausaStat {
 }
 
 export interface IncidentTrendPoint {
-  date: string;       // YYYY-MM-DD (dia local CR/HN)
-  generadas: number;  // incidencias creadas ese dia
-  resueltas: number;  // resoluciones ese dia
-  recuperado: number; // ₡ (COD) recuperado ese dia
+  date: string;                         // YYYY-MM-DD (dia local CR/HN)
+  generadas: number;                    // incidencias creadas ese dia
+  resueltas: number;                    // resoluciones ese dia
+  reprogramadas: number;                // reprogramaciones ese dia
+  primera_gestion_horas: number | null; // promedio creacion -> 1er llamado (creadas ese dia)
 }
 
 // Una celda de la matriz de desempeño (un periodo).
@@ -173,13 +174,14 @@ export interface IncidentEstadoActual {
 export interface IncidentPeriodTotal {
   nuevas: number;
   resueltas: number;
-  recuperado: number; // ₡ (COD)
+  reprogramadas: number;
+  primera_gestion_horas: number | null;
 }
 
 export interface IncidentExecutiveStats {
   matriz: Record<IncidentMatrixKey, IncidentMatrixCell>;
   estado: IncidentEstadoActual;
-  trend: IncidentTrendPoint[]; // ultimos 30 dias (dia: generadas / resueltas / recuperado)
+  trend: IncidentTrendPoint[]; // ultimos 30 dias (dia: generadas / resueltas / reprogramadas / 1a gestion)
   trend_totales: { generadas: number; resueltas: number; balance: number };
   totales: {
     d7: IncidentPeriodTotal;
