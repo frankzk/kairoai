@@ -443,6 +443,32 @@ export async function getCourierLastSync(
   return (data?.checked_at as string | null) ?? null;
 }
 
+// Producto(s) del pedido de la novedad, para el detalle. Busca el pedido de
+// Shopify por shopify_order_id (si lo tiene) o por la guia (tracking_number) y
+// arma "Nx Titulo, ...". Best-effort: devuelve "" si no hay match.
+export async function getIncidentOrderProducts(
+  storeId: number,
+  shopifyOrderId: string,
+  guide: string
+): Promise<string> {
+  if (!shopifyOrderId && !guide) return "";
+  const base = getDB().from("shopify_orders").select("line_items, raw_order").eq("store_id", storeId);
+  const { data, error } = shopifyOrderId
+    ? await base.eq("shopify_order_id", shopifyOrderId).limit(1).maybeSingle()
+    : await base.eq("tracking_number", guide).limit(1).maybeSingle();
+  if (error || !data) return "";
+  const row = data as { line_items?: unknown; raw_order?: { line_items?: unknown } | null };
+  const rawItems = row.raw_order && Array.isArray(row.raw_order.line_items) ? row.raw_order.line_items : [];
+  const items = (Array.isArray(row.line_items) && row.line_items.length ? row.line_items : rawItems) as Array<{
+    title?: unknown;
+    quantity?: unknown;
+  }>;
+  return items
+    .map((i) => `${Number(i.quantity ?? 0)}x ${String(i.title ?? "").trim()}`)
+    .filter((s) => !s.startsWith("0x ") && s.length > 3)
+    .join(", ");
+}
+
 export async function getIncident(id: number, storeId?: number): Promise<Incident | null> {
   let query = getDB().from("incidents").select("*").eq("id", id);
   if (storeId) query = query.eq("store_id", storeId);
