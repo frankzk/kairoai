@@ -16,6 +16,7 @@ import type {
   IncidentExecutiveStats,
   IncidentCausaStat,
   IncidentTrendPoint,
+  IncidentPeriodTotal,
   IncidentMatrixCell,
   IncidentMatrixKey,
   IncidentEstadoActual,
@@ -167,14 +168,20 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
   const startToday = Math.floor((nowMs - TZ_OFFSET) / DAY) * DAY + TZ_OFFSET;
   const END = nowMs + DAY;
   const since30 = new Date(startToday - 29 * DAY).toISOString();
+  // Limites de mes en hora local CR/HN, para "Mes actual" / "Mes pasado".
+  const localNow = new Date(nowMs - TZ_OFFSET);
+  const startOfMonth = Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), 1) + TZ_OFFSET;
+  const startOfPrevMonth = Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth() - 1, 1) + TZ_OFFSET;
+  // Piso de fetch para creadas/resueltas: cubre 30d y el mes pasado completo.
+  const sinceIso = new Date(Math.min(startToday - 29 * DAY, startOfPrevMonth)).toISOString();
   const caDayKey = (ms: number) => new Date(ms - TZ_OFFSET).toISOString().slice(0, 10);
 
   const db = getDB();
   const [createdRes, resolvedRes, openRes, callRes, dispatchedRes] = await Promise.all([
     db.from("incidents").select("id, created_at, status, category, cod_amount")
-      .eq("store_id", storeId).gte("created_at", since30).limit(8000),
+      .eq("store_id", storeId).gte("created_at", sinceIso).limit(8000),
     db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, cod_amount)")
-      .eq("incidents.store_id", storeId).eq("to_status", "resuelta").gte("created_at", since30).limit(8000),
+      .eq("incidents.store_id", storeId).eq("to_status", "resuelta").gte("created_at", sinceIso).limit(8000),
     db.from("incidents").select("order_name, guide_number, created_at")
       .eq("store_id", storeId).not("status", "in", "(resuelta,perdida,descartada)").limit(8000),
     db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, created_at)")
@@ -275,15 +282,18 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
     primera_gestion_horas: pgN ? pgSum / pgN / 3_600_000 : null,
   };
 
-  // ----- Causas (ultimos 30d) + recuperacion por motivo.
+  // ----- Causas (ultimos 30d) + recuperacion por motivo. created puede traer mas
+  // de 30d (para los totales de mes), asi que se acota aqui a la ventana de 30d.
+  const start30 = startToday - 29 * DAY;
+  const created30 = created.filter((r) => Date.parse(r.created_at) >= start30);
   const causasMap = new Map<IncidentCategory, { total: number; resueltas: number }>();
-  for (const r of created) {
+  for (const r of created30) {
     const e = causasMap.get(r.category) ?? { total: 0, resueltas: 0 };
     e.total += 1;
     if (r.status === "resuelta") e.resueltas += 1;
     causasMap.set(r.category, e);
   }
-  const total30 = created.length;
+  const total30 = created30.length;
   const causas: IncidentCausaStat[] = Array.from(causasMap.entries())
     .map(([category, v]) => ({
       category,
@@ -294,11 +304,16 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
     }))
     .sort((a, b) => b.total - a.total);
 
-  // ----- Tendencia (ultimos 30 dias) + totales / balance.
+  // ----- Tendencia diaria (generadas / resueltas / recuperado) + totales.
   const genByDay = new Map<string, number>();
   for (const r of created) { const k = caDayKey(Date.parse(r.created_at)); genByDay.set(k, (genByDay.get(k) ?? 0) + 1); }
   const resByDay = new Map<string, number>();
-  for (const r of resolved) { const k = caDayKey(Date.parse(r.created_at)); resByDay.set(k, (resByDay.get(k) ?? 0) + 1); }
+  const montoByDay = new Map<string, number>();
+  for (const r of resolved) {
+    const k = caDayKey(Date.parse(r.created_at));
+    resByDay.set(k, (resByDay.get(k) ?? 0) + 1);
+    montoByDay.set(k, (montoByDay.get(k) ?? 0) + Number(one(r.incidents)?.cod_amount ?? 0));
+  }
   const trend: IncidentTrendPoint[] = [];
   let genTot = 0;
   let resTot = 0;
@@ -308,14 +323,35 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
     const rr = resByDay.get(k) ?? 0;
     genTot += g;
     resTot += rr;
-    trend.push({ date: k, generadas: g, resueltas: rr });
+    trend.push({ date: k, generadas: g, resueltas: rr, recuperado: montoByDay.get(k) ?? 0 });
   }
+
+  // Totales por periodo: nuevas (creadas), resueltas (por evento) y monto recuperado.
+  const periodTotal = (from: number, to: number): IncidentPeriodTotal => {
+    let nuevas = 0;
+    for (const r of created) { const t = Date.parse(r.created_at); if (t >= from && t < to) nuevas += 1; }
+    let resueltas = 0;
+    let recuperado = 0;
+    for (const r of resolved) {
+      const t = Date.parse(r.created_at);
+      if (t < from || t >= to) continue;
+      resueltas += 1;
+      recuperado += Number(one(r.incidents)?.cod_amount ?? 0);
+    }
+    return { nuevas, resueltas, recuperado };
+  };
 
   return {
     matriz,
     estado,
     trend,
     trend_totales: { generadas: genTot, resueltas: resTot, balance: resTot - genTot },
+    totales: {
+      d7: periodTotal(startToday - 6 * DAY, END),
+      d30: periodTotal(startToday - 29 * DAY, END),
+      mesActual: periodTotal(startOfMonth, END),
+      mesPasado: periodTotal(startOfPrevMonth, startOfMonth),
+    },
     causas,
   };
 }
