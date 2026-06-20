@@ -130,7 +130,6 @@ function EstadoCausasPanel({ exec, onVerTodas }: { exec: IncidentExecutiveStats 
   const over48 = est?.abiertas_48h ?? 0;
   const over48Pct = abiertas ? Math.round((over48 / abiertas) * 100) : 0;
   const causas = exec?.causas ?? [];
-  const total30 = causas.reduce((a, c) => a + c.total, 0);
   const maxCant = Math.max(1, ...causas.map((c) => c.total));
   const top = causas.slice(0, 5);
   return (
@@ -184,13 +183,6 @@ function EstadoCausasPanel({ exec, onVerTodas }: { exec: IncidentExecutiveStats 
         </div>
         {causas.length > 0 ? (
           <>
-            <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-muted">
-              {causas.map((c, i) => (
-                <div key={c.category} style={{ width: `${c.pct}%`, backgroundColor: `hsl(263 70% 50% / ${Math.max(0.25, 1 - i * 0.18)})` }} />
-              ))}
-            </div>
-            <div className="mt-1 text-[11px] text-muted-foreground">{total30} incidencias · {causas.length} causa{causas.length === 1 ? "" : "s"}</div>
-
             <div className="mt-3 flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
               <span className="flex-1">Motivo</span>
               <span className="w-10 text-right">Cant</span>
@@ -1024,11 +1016,11 @@ function DetailModal({
               <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Llamada</span>
               <Button variant="outline" size="sm" disabled={busy} className="gap-2"
                 onClick={() => onAction("registrar_llamada", { resultado: "contesto" })}>
-                <Phone className="h-3.5 w-3.5" /> Contesto
+                <Phone className="h-3.5 w-3.5 text-emerald-500" /> Contesto
               </Button>
               <Button variant="outline" size="sm" disabled={busy} className="gap-2"
                 onClick={() => onAction("registrar_llamada", { resultado: "no_contesto" })}>
-                <PhoneOff className="h-3.5 w-3.5" /> No contesto
+                <PhoneOff className="h-3.5 w-3.5 text-rose-500" /> No contesto
               </Button>
             </div>
             <div className="flex flex-wrap gap-2 items-center">
