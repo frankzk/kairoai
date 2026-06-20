@@ -58,16 +58,16 @@ const STATUS_ORDER: IncidentStatus[] = [
   "pendiente", "reprogramada", "sin_contestar", "no_llamar", "resuelta", "perdida", "descartada",
 ];
 
-// Color por estado para las pildoras del control segmentado (dot del inactivo +
-// capsula del activo). Sigue la colorimetria de STATUS_META.
-const STATUS_PILL: Record<IncidentStatus, { dot: string; active: string }> = {
-  pendiente:     { dot: "bg-sky-500",     active: "bg-sky-500 text-white shadow-sm" },
-  reprogramada:  { dot: "bg-cyan-500",    active: "bg-cyan-500 text-white shadow-sm" },
-  sin_contestar: { dot: "bg-amber-500",   active: "bg-amber-500 text-white shadow-sm" },
-  no_llamar:     { dot: "bg-rose-500",    active: "bg-rose-500 text-white shadow-sm" },
-  resuelta:      { dot: "bg-emerald-500", active: "bg-emerald-500 text-white shadow-sm" },
-  perdida:       { dot: "bg-slate-500",   active: "bg-slate-500 text-white shadow-sm" },
-  descartada:    { dot: "bg-zinc-500",    active: "bg-zinc-500 text-white shadow-sm" },
+// Color por estado, unificado: dot (pill inactivo) + active (pill activo) + badge
+// (chip suave para la tabla / detalle). Mismos tonos en todos lados.
+const STATUS_COLOR: Record<IncidentStatus, { dot: string; active: string; badge: string }> = {
+  pendiente:     { dot: "bg-sky-500",     active: "bg-sky-500 text-white shadow-sm",     badge: "bg-sky-500/15 text-sky-400" },
+  reprogramada:  { dot: "bg-cyan-500",    active: "bg-cyan-500 text-white shadow-sm",    badge: "bg-cyan-500/15 text-cyan-400" },
+  sin_contestar: { dot: "bg-amber-500",   active: "bg-amber-500 text-white shadow-sm",   badge: "bg-amber-500/15 text-amber-400" },
+  no_llamar:     { dot: "bg-rose-500",    active: "bg-rose-500 text-white shadow-sm",    badge: "bg-rose-500/15 text-rose-400" },
+  resuelta:      { dot: "bg-emerald-500", active: "bg-emerald-500 text-white shadow-sm", badge: "bg-emerald-500/15 text-emerald-400" },
+  perdida:       { dot: "bg-slate-500",   active: "bg-slate-500 text-white shadow-sm",   badge: "bg-slate-500/15 text-slate-300" },
+  descartada:    { dot: "bg-zinc-500",    active: "bg-zinc-500 text-white shadow-sm",    badge: "bg-zinc-500/15 text-zinc-300" },
 };
 
 // Cuenta para cobrar el nuevo envio por adelantado cuando el courier ya no
@@ -88,6 +88,13 @@ const currency = (n: number) => "₡" + Math.round(Number(n) || 0).toLocaleStrin
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString("es-CR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDay = (s: string | null) => (s ? s.slice(0, 10).split("-").reverse().join("/") : "—");
+
+// Edad de la novedad en horas + color: <3h normal, >=3h ambar, >=5h rojo.
+function incidentAge(createdAt: string): { label: string; tone: string } {
+  const h = (Date.now() - Date.parse(createdAt)) / 3_600_000;
+  const tone = h >= 5 ? "text-red-400" : h >= 3 ? "text-amber-400" : "text-muted-foreground";
+  return { label: `${Math.round(h)}h`, tone };
+}
 
 const META_RESOLUCION = 50; // meta configurada de tasa de resolucion (%)
 
@@ -255,7 +262,6 @@ function CausaRow({ c }: { c: IncidentCausaStat }) {
 // pie de totales (7d / 30d / mes actual / mes pasado).
 function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
   const dias = (exec?.trend ?? []).slice(-7);
-  const maxNuevas = Math.max(1, ...dias.map((d) => d.generadas));
   const totales: { label: string; t: IncidentPeriodTotal }[] = exec
     ? [
         { label: "Total 7 días", t: exec.totales.d7 },
@@ -289,11 +295,12 @@ function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
                 <span className={`flex-1 sm:w-10 sm:flex-none ${isHoy ? "font-bold text-foreground" : "text-muted-foreground"}`}>
                   {diaLabel(d.date, isHoy)}
                 </span>
-                <div className="relative hidden h-1.5 flex-1 overflow-hidden rounded-full bg-muted sm:block">
+                <div className="relative hidden h-1.5 flex-1 overflow-hidden rounded-full bg-muted sm:block"
+                  title="Verde = % resuelto del día; violeta = pendiente">
                   <div className="absolute inset-y-0 left-0 rounded-full bg-primary/35"
-                    style={{ width: `${Math.min(100, (d.generadas / maxNuevas) * 100)}%` }} />
+                    style={{ width: d.generadas > 0 ? "100%" : "0%" }} />
                   <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-400"
-                    style={{ width: `${Math.min(100, (d.resueltas / maxNuevas) * 100)}%` }} />
+                    style={{ width: `${d.generadas > 0 ? Math.min(100, (d.resueltas / d.generadas) * 100) : 0}%` }} />
                 </div>
                 <span className="w-12 shrink-0 text-right font-mono font-bold tabular-nums text-primary">{d.generadas}</span>
                 <span className="w-12 shrink-0 text-right font-mono font-bold tabular-nums text-emerald-400">{d.resueltas}</span>
@@ -626,7 +633,7 @@ export default function IncidenciasPage() {
       <main className="container mx-auto px-4 py-6 space-y-4">
         {/* ===== Resumen ejecutivo: vista fija, todos los periodos a la vez ===== */}
         {/* Tendencia (izquierda) + panel Estado actual / Causas (derecha, ~420px) */}
-        <div className="grid grid-cols-1 items-start gap-2.5 lg:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-[minmax(0,1fr)_420px]">
           <Tendencia exec={exec} />
           <EstadoCausasPanel exec={exec} onVerTodas={() => setShowCausas(true)} />
         </div>
@@ -642,16 +649,12 @@ export default function IncidenciasPage() {
                   onClick={() => { setSoloReintento(false); setStatusFilter(""); }}>Todas</FilterPill>
                 {STATUS_ORDER.map((s) => (
                   <FilterPill key={s} active={!soloReintento && statusFilter === s} count={counts[s] ?? 0}
-                    dot={STATUS_PILL[s].dot} activeClass={STATUS_PILL[s].active}
+                    dot={STATUS_COLOR[s].dot} activeClass={STATUS_COLOR[s].active}
                     onClick={() => { setSoloReintento(false); setStatusFilter(statusFilter === s ? "" : s); }}>
                     {STATUS_META[s].label}
                   </FilterPill>
                 ))}
               </div>
-              <FilterPill active={soloReintento}
-                onClick={() => { setStatusFilter(""); setSoloReintento(!soloReintento); }}>
-                <CalendarClock className="h-3 w-3" /> Reintento fin del día
-              </FilterPill>
             </div>
 
             {/* Causa (control segmentado, con conteo) */}
@@ -674,6 +677,10 @@ export default function IncidenciasPage() {
                 <Input className="pl-8 h-9" placeholder="Buscar pedido, guía o cliente…"
                   value={search} onChange={(e) => setSearch(e.target.value)} />
               </div>
+              <Button variant={soloReintento ? "default" : "outline"} size="sm" className="gap-2 h-9"
+                onClick={() => { setStatusFilter(""); setSoloReintento(!soloReintento); }}>
+                <CalendarClock className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Reintento fin del día</span>
+              </Button>
               <Button variant="outline" size="sm" className="gap-2 h-9"
                 disabled={exporting || loading || !incidents.length} onClick={exportarExcel}
                 title="Descarga en Excel las novedades del filtro actual">
@@ -698,25 +705,28 @@ export default function IncidenciasPage() {
                   <th className="px-3 py-2 font-medium">Causa</th>
                   <th className="px-3 py-2 font-medium text-right">COD</th>
                   <th className="px-3 py-2 font-medium text-center">Int.</th>
+                  <th className="px-3 py-2 font-medium text-center">Edad</th>
                   <th className="px-3 py-2 font-medium">Reprog.</th>
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">
+                  <tr><td colSpan={11} className="px-3 py-10 text-center text-muted-foreground">
                     <span className="inline-flex items-center gap-2">
                       <RefreshCw className="h-4 w-4 animate-spin" /> Cargando novedades…
                     </span>
                   </td></tr>
                 ) : shown.length === 0 ? (
-                  <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">
+                  <tr><td colSpan={11} className="px-3 py-10 text-center text-muted-foreground">
                     No hay novedades. Usa “Detectar novedades” o crea una manual.
                   </td></tr>
                 ) : (
-                  shown.map((i) => (
+                  shown.map((i) => {
+                    const age = incidentAge(i.created_at);
+                    return (
                     <tr key={i.id} className="border-t border-border/50 hover:bg-muted/20">
-                      <td className="px-3 py-2"><Badge variant={STATUS_META[i.status].variant}>{STATUS_META[i.status].label}</Badge></td>
+                      <td className="px-3 py-2"><span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[i.status].badge}`}>{STATUS_META[i.status].label}</span></td>
                       <td className="px-3 py-2">{i.customer_name || "—"}</td>
                       <td className="px-3 py-2">{i.customer_phone || "—"}</td>
                       <td className="px-3 py-2 font-mono text-xs">{i.order_name || "—"}</td>
@@ -724,12 +734,14 @@ export default function IncidenciasPage() {
                       <td className="px-3 py-2 text-xs">{CATEGORY_LABELS[i.category]}</td>
                       <td className="px-3 py-2 text-right">{i.cod_amount ? currency(i.cod_amount) : "—"}</td>
                       <td className="px-3 py-2 text-center">{i.intentos_llamada || 0}</td>
+                      <td className="px-3 py-2 text-center"><span className={`tabular-nums ${age.tone}`}>{age.label}</span></td>
                       <td className="px-3 py-2 text-xs">{i.reprogramada_para || "—"}</td>
                       <td className="px-3 py-2 text-right">
                         <Button variant="outline" size="sm" onClick={() => openDetail(i.id)}>Gestionar</Button>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -886,7 +898,7 @@ function DetailModal({
       <Card className="w-full max-w-2xl lg:max-w-4xl my-8">
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2">
-            <Badge variant={STATUS_META[incident.status].variant}>{STATUS_META[incident.status].label}</Badge>
+            <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[incident.status].badge}`}>{STATUS_META[incident.status].label}</span>
             <span className="font-semibold">{incident.order_name || incident.guide_number || "Novedad"}</span>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
