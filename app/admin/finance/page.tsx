@@ -1603,6 +1603,7 @@ function OrdersTab({
                         "Incidencia Moovin": moovin?.has_incident ? "si" : "",
                         Cliente: row.customer_name,
                         Apellido: row.last_name ?? "",
+                        Celular: row.phone ?? "",
                         "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
                         Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
                         Fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
