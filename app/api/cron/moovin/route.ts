@@ -8,10 +8,21 @@ export const maxDuration = 60;
 // ~2 req/s a Moovin.
 const PER_REQUEST_DELAY_MS = 400;
 // Tope por corrida para no exceder maxDuration; el resto se cubre en la
-// siguiente ejecucion del cron.
-const MAX_PER_RUN = 120;
-// No reconsultar guias vistas en las ultimas 6h.
-const FRESH_WINDOW_MINUTES = 6 * 60;
+// siguiente ejecucion del cron. Configurable por env para afinar segun el plan
+// (en Vercel Pro se puede subir maxDuration y este tope para cubrir mas guias).
+const MAX_PER_RUN = Number(process.env.MOOVIN_MAX_PER_RUN ?? 130);
+// No reconsultar guias vistas dentro de esta ventana. Por defecto 20 min para
+// que el cron de 15 min mantenga el tracking fresco sin re-consultar de mas.
+const FRESH_WINDOW_MINUTES = Number(process.env.MOOVIN_FRESH_WINDOW_MIN ?? 20);
+
+// Si CRON_SECRET esta configurado, exigirlo (Vercel cron y el workflow de
+// GitHub mandan "Authorization: Bearer <CRON_SECRET>"). Si no esta, se permite
+// (compatibilidad con el comportamiento actual).
+function authorized(req: Request): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return true;
+  return req.headers.get("authorization") === `Bearer ${secret}`;
+}
 
 async function run() {
   let candidates;
@@ -70,11 +81,13 @@ async function run() {
   });
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   return run();
 }
 
-export async function POST() {
+export async function POST(req: Request) {
+  if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   return run();
 }
 
