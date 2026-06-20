@@ -185,6 +185,26 @@ function CausasModal({ causas, onClose }: { causas: IncidentCausaStat[]; onClose
   );
 }
 
+// Pildora de filtro estilo "tab" (con conteo opcional); activa en morado.
+function FilterPill({ active, onClick, count, children }: {
+  active: boolean; onClick: () => void; count?: number; children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
+        active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      }`}
+    >
+      {children}
+      {count != null && (
+        <span className={`tabular-nums text-[10px] ${active ? "opacity-80" : "opacity-60"}`}>{count}</span>
+      )}
+    </button>
+  );
+}
+
 export default function IncidenciasPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
@@ -352,6 +372,7 @@ export default function IncidenciasPage() {
   }
 
   const shown = incidents.slice(0, 120);
+  const totalCount = Object.values(counts).reduce((a, b) => a + b, 0);
 
   // Frescura del tracking del courier de la tienda seleccionada (para avisar si
   // quedo viejo: ahi la deteccion puede no traer novedades nuevas).
@@ -545,47 +566,51 @@ export default function IncidenciasPage() {
           </Card>
         </div>
 
-        {/* KPIs por estado (colorimetria) */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
-          {STATUS_ORDER.map((s) => (
-            <Card key={s} className="cursor-pointer hover:border-primary/40 transition-colors"
-              onClick={() => { setSoloReintento(false); setStatusFilter(statusFilter === s ? "" : s); }}>
-              <CardContent className="p-3">
-                <Badge variant={STATUS_META[s].variant}>{STATUS_META[s].label}</Badge>
-                <p className="text-2xl font-bold mt-2">{counts[s] ?? 0}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-
-        {/* Filtros */}
+        {/* Filtros: pildoras de estado (con conteo) + causa + busqueda */}
         <Card>
-          <CardContent className="p-3 flex flex-wrap items-center gap-2">
-            <div className="relative flex-1 min-w-[180px]">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input className="pl-8 h-9" placeholder="Buscar pedido, guia o cliente…"
-                value={search} onChange={(e) => setSearch(e.target.value)} />
+          <CardContent className="p-3 space-y-2">
+            {/* Estado */}
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Estado</span>
+              <FilterPill active={!soloReintento && statusFilter === ""} count={totalCount}
+                onClick={() => { setSoloReintento(false); setStatusFilter(""); }}>Todas</FilterPill>
+              {STATUS_ORDER.map((s) => (
+                <FilterPill key={s} active={!soloReintento && statusFilter === s} count={counts[s] ?? 0}
+                  onClick={() => { setSoloReintento(false); setStatusFilter(statusFilter === s ? "" : s); }}>
+                  {STATUS_META[s].label}
+                </FilterPill>
+              ))}
+              <span className="mx-1 h-4 w-px bg-border" />
+              <FilterPill active={soloReintento}
+                onClick={() => { setStatusFilter(""); setSoloReintento(!soloReintento); }}>
+                <CalendarClock className="h-3 w-3" /> Reintento fin del día
+              </FilterPill>
             </div>
-            <select className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              value={statusFilter} onChange={(e) => { setSoloReintento(false); setStatusFilter(e.target.value); }}>
-              <option value="">Todos los estados</option>
-              {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
-            </select>
-            <select className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
-              <option value="">Todas las causas</option>
-              {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-            <Button variant={soloReintento ? "default" : "outline"} size="sm" className="gap-2 h-9"
-              onClick={() => { setStatusFilter(""); setSoloReintento(!soloReintento); }}>
-              <CalendarClock className="h-3.5 w-3.5" /> Reintento fin del dia
-            </Button>
-            <Button variant="outline" size="sm" className="gap-2 h-9 ml-auto"
-              disabled={exporting || loading || !incidents.length} onClick={exportarExcel}
-              title="Descarga en Excel las novedades del filtro actual">
-              <Download className="h-3.5 w-3.5" />
-              {exporting ? "Exportando…" : `Exportar (${incidents.length})`}
-            </Button>
+
+            {/* Causa */}
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Causa</span>
+              <FilterPill active={categoryFilter === ""} onClick={() => setCategoryFilter("")}>Todas</FilterPill>
+              {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
+                <FilterPill key={k} active={categoryFilter === k}
+                  onClick={() => setCategoryFilter(categoryFilter === k ? "" : k)}>{v}</FilterPill>
+              ))}
+            </div>
+
+            {/* Busqueda + exportar */}
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              <div className="relative min-w-[180px] flex-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input className="pl-8 h-9" placeholder="Buscar pedido, guía o cliente…"
+                  value={search} onChange={(e) => setSearch(e.target.value)} />
+              </div>
+              <Button variant="outline" size="sm" className="gap-2 h-9"
+                disabled={exporting || loading || !incidents.length} onClick={exportarExcel}
+                title="Descarga en Excel las novedades del filtro actual">
+                <Download className="h-3.5 w-3.5" />
+                {exporting ? "Exportando…" : `Exportar (${incidents.length})`}
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
