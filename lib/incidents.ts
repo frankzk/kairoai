@@ -84,6 +84,28 @@ export async function countIncidentsByStatus(storeId: number): Promise<Record<st
   return Object.fromEntries(pairs);
 }
 
+// Conteo de novedades por causa para TODA la tienda (sin los filtros de la
+// bandeja), en paralelo a countIncidentsByStatus. Alimenta el conteo de las
+// pildoras de causa.
+export async function countIncidentsByCategory(storeId: number): Promise<Record<string, number>> {
+  const categories: IncidentCategory[] = [
+    "fallo_entrega", "direccion_incorrecta", "cliente_no_responde", "cliente_rechaza",
+    "devuelto_origen", "dano_paquete", "otro",
+  ];
+  const pairs = await Promise.all(
+    categories.map(async (c) => {
+      const { count, error } = await getDB()
+        .from("incidents")
+        .select("id", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .eq("category", c);
+      if (error) throw new Error(`countIncidentsByCategory(${c}): ${error.message}`);
+      return [c, count ?? 0] as const;
+    })
+  );
+  return Object.fromEntries(pairs);
+}
+
 // Estadistica temporal de flujo (hoy / ayer / ultimos 7 / ultimos 30 dias) para la
 // tienda. "resueltas" cuenta novedades DISTINTAS con una transicion a 'resuelta'
 // (manual o auto por entrega) en la ventana, leyendo el historial (incident_events).

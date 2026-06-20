@@ -47,6 +47,18 @@ const STATUS_ORDER: IncidentStatus[] = [
   "pendiente", "reprogramada", "sin_contestar", "no_llamar", "resuelta", "perdida", "descartada",
 ];
 
+// Color por estado para las pildoras del control segmentado (dot del inactivo +
+// capsula del activo). Sigue la colorimetria de STATUS_META.
+const STATUS_PILL: Record<IncidentStatus, { dot: string; active: string }> = {
+  pendiente:     { dot: "bg-sky-500",     active: "bg-sky-500 text-white shadow-sm" },
+  reprogramada:  { dot: "bg-cyan-500",    active: "bg-cyan-500 text-white shadow-sm" },
+  sin_contestar: { dot: "bg-amber-500",   active: "bg-amber-500 text-white shadow-sm" },
+  no_llamar:     { dot: "bg-rose-500",    active: "bg-rose-500 text-white shadow-sm" },
+  resuelta:      { dot: "bg-emerald-500", active: "bg-emerald-500 text-white shadow-sm" },
+  perdida:       { dot: "bg-slate-500",   active: "bg-slate-500 text-white shadow-sm" },
+  descartada:    { dot: "bg-zinc-500",    active: "bg-zinc-500 text-white shadow-sm" },
+};
+
 // Cuenta para cobrar el nuevo envio por adelantado cuando el courier ya no
 // reintenta (>=2 intentos de entrega fallidos). Es por tienda/pais: CR cobra en
 // colones; HN queda pendiente de definir (su cuenta sera en lempiras).
@@ -185,18 +197,23 @@ function CausasModal({ causas, onClose }: { causas: IncidentCausaStat[]; onClose
   );
 }
 
-// Pildora de filtro estilo "tab" (con conteo opcional); activa en morado.
-function FilterPill({ active, onClick, count, children }: {
-  active: boolean; onClick: () => void; count?: number; children: ReactNode;
+// Una opcion de un control segmentado (va dentro de un track hundido). Activa =
+// capsula rellena; inactiva = texto muted que se aclara al hover. Soporta color
+// por estado (dot inactivo + activeClass) y conteo inline.
+function FilterPill({ active, onClick, count, dot, activeClass, children }: {
+  active: boolean; onClick: () => void; count?: number; dot?: string; activeClass?: string; children: ReactNode;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
-        active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+        active
+          ? (activeClass ?? "bg-primary text-primary-foreground shadow-sm")
+          : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
       }`}
     >
+      {dot && !active && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />}
       {children}
       {count != null && (
         <span className={`tabular-nums text-[10px] ${active ? "opacity-80" : "opacity-60"}`}>{count}</span>
@@ -210,6 +227,7 @@ export default function IncidenciasPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
@@ -240,6 +258,7 @@ export default function IncidenciasPage() {
       const json = await res.json();
       setIncidents(json.incidents ?? []);
       setCounts(json.counts ?? {});
+      setCategoryCounts(json.category_counts ?? {});
       setLastRun(json.last_run ?? null);
       setTrackingSync(json.tracking_last_sync ?? null);
       setExec(json.exec ?? null);
@@ -569,32 +588,37 @@ export default function IncidenciasPage() {
         {/* Filtros: pildoras de estado (con conteo) + causa + busqueda */}
         <Card>
           <CardContent className="p-3 space-y-2">
-            {/* Estado */}
-            <div className="flex flex-wrap items-center gap-1">
-              <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Estado</span>
-              <FilterPill active={!soloReintento && statusFilter === ""} count={totalCount}
-                onClick={() => { setSoloReintento(false); setStatusFilter(""); }}>Todas</FilterPill>
-              {STATUS_ORDER.map((s) => (
-                <FilterPill key={s} active={!soloReintento && statusFilter === s} count={counts[s] ?? 0}
-                  onClick={() => { setSoloReintento(false); setStatusFilter(statusFilter === s ? "" : s); }}>
-                  {STATUS_META[s].label}
-                </FilterPill>
-              ))}
-              <span className="mx-1 h-4 w-px bg-border" />
+            {/* Estado (control segmentado, color por estado) */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Estado</span>
+              <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
+                <FilterPill active={!soloReintento && statusFilter === ""} count={totalCount}
+                  onClick={() => { setSoloReintento(false); setStatusFilter(""); }}>Todas</FilterPill>
+                {STATUS_ORDER.map((s) => (
+                  <FilterPill key={s} active={!soloReintento && statusFilter === s} count={counts[s] ?? 0}
+                    dot={STATUS_PILL[s].dot} activeClass={STATUS_PILL[s].active}
+                    onClick={() => { setSoloReintento(false); setStatusFilter(statusFilter === s ? "" : s); }}>
+                    {STATUS_META[s].label}
+                  </FilterPill>
+                ))}
+              </div>
               <FilterPill active={soloReintento}
                 onClick={() => { setStatusFilter(""); setSoloReintento(!soloReintento); }}>
                 <CalendarClock className="h-3 w-3" /> Reintento fin del día
               </FilterPill>
             </div>
 
-            {/* Causa */}
-            <div className="flex flex-wrap items-center gap-1">
-              <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Causa</span>
-              <FilterPill active={categoryFilter === ""} onClick={() => setCategoryFilter("")}>Todas</FilterPill>
-              {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
-                <FilterPill key={k} active={categoryFilter === k}
-                  onClick={() => setCategoryFilter(categoryFilter === k ? "" : k)}>{v}</FilterPill>
-              ))}
+            {/* Causa (control segmentado, con conteo) */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Causa</span>
+              <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
+                <FilterPill active={categoryFilter === ""} count={totalCount}
+                  onClick={() => setCategoryFilter("")}>Todas</FilterPill>
+                {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
+                  <FilterPill key={k} active={categoryFilter === k} count={categoryCounts[k] ?? 0}
+                    onClick={() => setCategoryFilter(categoryFilter === k ? "" : k)}>{v}</FilterPill>
+                ))}
+              </div>
             </div>
 
             {/* Busqueda + exportar */}
