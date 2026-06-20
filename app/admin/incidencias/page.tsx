@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
-  AlertTriangle, ArrowLeft, CalendarClock, Check, Copy, History, Pencil, Phone, PhoneOff,
+  AlertTriangle, ArrowLeft, CalendarClock, Check, Copy, Download, History, Pencil, Phone, PhoneOff,
   Plus, RefreshCw, Search, Undo2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentCausaStat, type IncidentMatrixKey, type IncidentMatrixCell, type TrackingEvent } from "@/lib/incidents-types";
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
+import { exportXlsx } from "@/lib/export-xlsx";
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "muted";
 
@@ -198,6 +199,7 @@ export default function IncidenciasPage() {
   const [trackingSync, setTrackingSync] = useState<string | null>(null);
   const [exec, setExec] = useState<IncidentExecutiveStats | null>(null);
   const [showCausas, setShowCausas] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const [selected, setSelected] = useState<Incident | null>(null);
   const [events, setEvents] = useState<IncidentEvent[]>([]);
@@ -261,6 +263,36 @@ export default function IncidenciasPage() {
       await fetchData();
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Exporta a Excel las novedades del filtro actual (lo que tiene cargado la
+  // tabla: estado/causa/busqueda/reintento/tienda). Dinamico: si no hay filtro,
+  // baja todo lo cargado.
+  async function exportarExcel() {
+    if (!incidents.length) { alert("No hay novedades para exportar."); return; }
+    setExporting(true);
+    try {
+      const rows = incidents.map((i) => ({
+        Estado: STATUS_META[i.status]?.label ?? i.status,
+        Cliente: i.customer_name || "",
+        Teléfono: i.customer_phone || "",
+        Pedido: i.order_name || "",
+        Guía: i.guide_number || "",
+        Causa: CATEGORY_LABELS[i.category] ?? i.category,
+        Courier: i.courier || "",
+        COD: Number(i.cod_amount || 0),
+        "Intentos de llamada": i.intentos_llamada || 0,
+        "Reprogramada para": i.reprogramada_para || "",
+        Origen: i.source,
+        Detalle: i.detail || "",
+        Creada: i.created_at ? new Date(i.created_at).toLocaleString("es-CR") : "",
+        Actualizada: i.updated_at ? new Date(i.updated_at).toLocaleString("es-CR") : "",
+      }));
+      const fecha = new Date().toISOString().slice(0, 10);
+      await exportXlsx(`novedades-${selectedStoreCode}-${fecha}.xlsx`, rows, "Novedades");
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -547,6 +579,12 @@ export default function IncidenciasPage() {
             <Button variant={soloReintento ? "default" : "outline"} size="sm" className="gap-2 h-9"
               onClick={() => { setStatusFilter(""); setSoloReintento(!soloReintento); }}>
               <CalendarClock className="h-3.5 w-3.5" /> Reintento fin del dia
+            </Button>
+            <Button variant="outline" size="sm" className="gap-2 h-9 ml-auto"
+              disabled={exporting || loading || !incidents.length} onClick={exportarExcel}
+              title="Descarga en Excel las novedades del filtro actual">
+              <Download className="h-3.5 w-3.5" />
+              {exporting ? "Exportando…" : `Exportar (${incidents.length})`}
             </Button>
           </CardContent>
         </Card>
