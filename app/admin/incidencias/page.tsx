@@ -233,6 +233,7 @@ export default function IncidenciasPage() {
   const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
   const [soloReintento, setSoloReintento] = useState(false);
   const [search, setSearch] = useState("");
+  const [visibleCount, setVisibleCount] = useState(120);
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [trackingSync, setTrackingSync] = useState<string | null>(null);
   const [exec, setExec] = useState<IncidentExecutiveStats | null>(null);
@@ -258,6 +259,7 @@ export default function IncidenciasPage() {
       const res = await fetch(`/api/incidents?${qs.toString()}`, { cache: "no-store" });
       const json = await res.json();
       setIncidents(json.incidents ?? []);
+      setVisibleCount(120);
       setCounts(json.counts ?? {});
       setCategoryCounts(json.category_counts ?? {});
       setLastRun(json.last_run ?? null);
@@ -392,7 +394,7 @@ export default function IncidenciasPage() {
     await openDetail(selected.id);
   }
 
-  const shown = incidents.slice(0, 120);
+  const shown = incidents.slice(0, visibleCount);
   const totalCount = Object.values(counts).reduce((a, b) => a + b, 0);
 
   // Frescura del tracking del courier de la tienda seleccionada (para avisar si
@@ -690,9 +692,19 @@ export default function IncidenciasPage() {
               </tbody>
             </table>
           </div>
-          {incidents.length > shown.length && (
-            <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border/50">
-              Mostrando {shown.length} de {incidents.length}
+          {incidents.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 px-3 py-2 text-xs text-muted-foreground">
+              <span>Mostrando {shown.length} de {incidents.length}</span>
+              {incidents.length > shown.length && (
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" className="h-8" onClick={() => setVisibleCount((n) => n + 120)}>
+                    Cargar más
+                  </Button>
+                  <Button variant="ghost" size="sm" className="h-8" onClick={() => setVisibleCount(incidents.length)}>
+                    Mostrar todas
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </Card>
