@@ -8811,12 +8811,21 @@ function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): 
 
 // Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"
 // (p.ej. supera intentos de entrega) quedaba como en ruta y debe ser No
-// entregado. Los demas estados conservan su grupo ya calculado.
+// entregado; una incidencia de entrega activa (codigo FAILED) debe ser
+// Incidencia aunque el latest_group cacheado haya quedado viejo. Los demas
+// estados conservan su grupo ya calculado.
 function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
   if (!row) return "";
   const code = String(row.latest_code ?? "").toUpperCase();
   const title = String(row.latest_status ?? "").toLowerCase();
   if (code.startsWith("CANCEL") || title.includes("cancelado")) return "returned";
+  // Incidencia activa: el ultimo evento es una incidencia de entrega. Se rescata
+  // por has_incident/codigo/titulo por si el latest_group cacheado se sincronizo
+  // antes de la incidencia y aun dice "en ruta" (o quedo vacio), para que la fila
+  // se clasifique como Incidencia y no como En ruta.
+  if (row.has_incident || code === "FAILED" || title.includes("incidencia en la entrega")) {
+    return "failed";
+  }
   return row.latest_group ?? "";
 }
 
