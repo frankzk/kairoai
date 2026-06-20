@@ -266,13 +266,13 @@ function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
     : [];
   return (
     <Card>
-      <CardContent className="p-5">
+      <CardContent className="p-4 sm:p-5">
         <div className="text-sm font-semibold">Tendencia de 7 días</div>
         <div className="mb-3 text-xs text-muted-foreground">Nuevas vs. resueltas por día</div>
 
-        <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.05em] text-muted-foreground">
-          <span className="w-10 shrink-0">Día</span>
-          <span className="flex-1">Resuelto vs. nuevas</span>
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.05em] text-muted-foreground sm:gap-3">
+          <span className="flex-1 sm:w-10 sm:flex-none">Día</span>
+          <span className="hidden flex-1 sm:block">Resuelto vs. nuevas</span>
           <span className="w-12 shrink-0 text-right text-primary">Nuevas</span>
           <span className="w-12 shrink-0 text-right text-emerald-400">Resuel.</span>
           <span className="w-10 shrink-0 text-right">%</span>
@@ -285,11 +285,11 @@ function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
             const isHoy = i === dias.length - 1;
             const pct = d.generadas ? Math.round((d.resueltas / d.generadas) * 100) : 0;
             return (
-              <div key={d.date} className="flex items-center gap-3 text-xs">
-                <span className={`w-10 shrink-0 ${isHoy ? "font-bold text-foreground" : "text-muted-foreground"}`}>
+              <div key={d.date} className="flex items-center gap-2 text-xs sm:gap-3">
+                <span className={`flex-1 sm:w-10 sm:flex-none ${isHoy ? "font-bold text-foreground" : "text-muted-foreground"}`}>
                   {diaLabel(d.date, isHoy)}
                 </span>
-                <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                <div className="relative hidden h-1.5 flex-1 overflow-hidden rounded-full bg-muted sm:block">
                   <div className="absolute inset-y-0 left-0 rounded-full bg-primary/35"
                     style={{ width: `${Math.min(100, (d.generadas / maxNuevas) * 100)}%` }} />
                   <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-400"
@@ -309,15 +309,15 @@ function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
             {totales.map((row) => {
               const pct = row.t.nuevas ? Math.round((row.t.resueltas / row.t.nuevas) * 100) : 0;
               return (
-                <div key={row.label} className="flex items-center gap-3 text-xs">
+                <div key={row.label} className="flex items-center gap-2 text-xs sm:gap-3">
                   <span className="flex-1 text-muted-foreground">{row.label}</span>
-                  <span className="w-20 shrink-0 text-right font-mono tabular-nums">
+                  <span className="w-12 shrink-0 text-right font-mono tabular-nums sm:w-20">
                     <span className="font-bold text-primary">{row.t.nuevas}</span>
-                    <span className="ml-1 text-[10px] text-muted-foreground">nuevas</span>
+                    <span className="ml-1 hidden text-[10px] text-muted-foreground sm:inline">nuevas</span>
                   </span>
-                  <span className="w-24 shrink-0 text-right font-mono tabular-nums">
+                  <span className="w-12 shrink-0 text-right font-mono tabular-nums sm:w-24">
                     <span className="font-bold text-emerald-400">{row.t.resueltas}</span>
-                    <span className="ml-1 text-[10px] text-muted-foreground">resueltas</span>
+                    <span className="ml-1 hidden text-[10px] text-muted-foreground sm:inline">resueltas</span>
                   </span>
                   <span className={`w-10 shrink-0 text-right font-mono tabular-nums ${pctTone(pct)}`}>{pct}%</span>
                   <span className="w-16 shrink-0 text-right font-mono tabular-nums text-amber-400">{fmtMil(row.t.recuperado)}</span>
