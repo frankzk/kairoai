@@ -6,6 +6,7 @@ import {
   getCourierLastSync,
   getIncident,
   getIncidentLastRun,
+  getIncidentOrderProducts,
   incidentExecutiveStats,
   listIncidentEvents,
   listIncidents,
@@ -68,7 +69,11 @@ export async function GET(req: NextRequest) {
       if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
       const events = await listIncidentEvents(id);
       const tracking_events = await trackingEventsFor(incident);
-      return NextResponse.json({ incident, events, tracking_events });
+      let order_products = "";
+      try {
+        order_products = await getIncidentOrderProducts(incident.store_id, incident.shopify_order_id, incident.guide_number);
+      } catch { /* opcional */ }
+      return NextResponse.json({ incident, events, tracking_events, order_products });
     }
 
     const store = getStoreFromSearchParams(sp);

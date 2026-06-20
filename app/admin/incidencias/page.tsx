@@ -242,6 +242,7 @@ export default function IncidenciasPage() {
   const [selected, setSelected] = useState<Incident | null>(null);
   const [events, setEvents] = useState<IncidentEvent[]>([]);
   const [trackingEvents, setTrackingEvents] = useState<TrackingEvent[]>([]);
+  const [orderProducts, setOrderProducts] = useState("");
   const [reprogFecha, setReprogFecha] = useState("");
   const [showNew, setShowNew] = useState(false);
 
@@ -281,6 +282,7 @@ export default function IncidenciasPage() {
       setSelected(json.incident);
       setEvents(json.events ?? []);
       setTrackingEvents(json.tracking_events ?? []);
+      setOrderProducts(json.order_products ?? "");
       setReprogFecha(json.incident.reprogramada_para ?? "");
     }
   }
@@ -703,6 +705,7 @@ export default function IncidenciasPage() {
           incident={selected}
           events={events}
           trackingEvents={trackingEvents}
+          orderProducts={orderProducts}
           busy={busy}
           reprogFecha={reprogFecha}
           setReprogFecha={setReprogFecha}
@@ -721,10 +724,10 @@ export default function IncidenciasPage() {
 }
 
 function DetailModal({
-  storeCode, incident, events, trackingEvents, busy, reprogFecha, setReprogFecha, onClose, onPatch, onAction, onAddNote, onEditNote,
+  storeCode, incident, events, trackingEvents, orderProducts, busy, reprogFecha, setReprogFecha, onClose, onPatch, onAction, onAddNote, onEditNote,
 }: {
   storeCode: FinanceStoreCode;
-  incident: Incident; events: IncidentEvent[]; trackingEvents: TrackingEvent[]; busy: boolean;
+  incident: Incident; events: IncidentEvent[]; trackingEvents: TrackingEvent[]; orderProducts: string; busy: boolean;
   reprogFecha: string; setReprogFecha: (v: string) => void;
   onClose: () => void;
   onPatch: (patch: Record<string, unknown>) => void;
@@ -851,6 +854,9 @@ function DetailModal({
               <span className="text-base font-bold tabular-nums">{trackingEvents.length > 0 ? intentosEntrega : "—"}</span>
             </div>
           </div>
+          {orderProducts && (
+            <div className="text-sm"><span className="text-muted-foreground">Producto:</span> {orderProducts}</div>
+          )}
           {intentosEntrega >= 2 && (
             <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
               <p className="text-sm font-medium flex items-center gap-2">
