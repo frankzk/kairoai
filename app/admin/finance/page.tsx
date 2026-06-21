@@ -59,7 +59,7 @@ import { Input } from "@/components/ui/input";
 
 type Tab = "orders" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
-type OrderTrackingFilter = "all" | "pending" | "en_route" | "en_route_retry" | "incident" | "annulled" | "delivered" | "not_delivered";
+type OrderTrackingFilter = "all" | "pending" | "en_route" | "en_route_retry" | "incident_solvable" | "incident_unsolvable" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
   | "all"
   | "no_cost"
@@ -138,6 +138,7 @@ interface TrackableOrderRow {
   courier?: string;
   moovin_group?: string;
   moovin_incidents?: number;
+  moovin_route_attempts?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -187,6 +188,10 @@ interface OrderProfitabilityRow {
   shopify_cancelled_at: string | null;
   shopify_financial_status: string;
   tracking_status: string;
+  // Estado a nivel de filtro para el badge (separa incidencia solucionable / no
+  // solucionable). tracking_status conserva "incident" para la logica de
+  // agregacion (pendientes, caja, etc.).
+  tracking_badge_status: string;
   tracking_label: string;
   settlement_status: string;
   settlement_files: string[];
@@ -318,7 +323,8 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "pending", label: "Pendientes" },
   { value: "en_route", label: "En ruta" },
   { value: "en_route_retry", label: "Reintento" },
-  { value: "incident", label: "Incidencia" },
+  { value: "incident_solvable", label: "Inc. solucionable" },
+  { value: "incident_unsolvable", label: "Inc. no solucionable" },
   { value: "annulled", label: "Anulados" },
   { value: "delivered", label: "Entregados" },
   { value: "not_delivered", label: "No entregados" },
@@ -330,7 +336,10 @@ const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   pending: "bg-slate-400",
   en_route: "bg-cyan-400",
   en_route_retry: "bg-orange-500",
-  incident: "bg-amber-400",
+  // Solucionable (incidencia leve) en ambar; no solucionable (fallos repetidos)
+  // en rojo para reflejar la gravedad.
+  incident_solvable: "bg-amber-400",
+  incident_unsolvable: "bg-red-500",
   annulled: "bg-zinc-500",
   delivered: "bg-emerald-400",
   not_delivered: "bg-red-400",
@@ -1366,7 +1375,8 @@ function OrdersTab({
       pending: 0,
       en_route: 0,
       en_route_retry: 0,
-      incident: 0,
+      incident_solvable: 0,
+      incident_unsolvable: 0,
       annulled: 0,
       delivered: 0,
       not_delivered: 0,
@@ -1374,7 +1384,7 @@ function OrdersTab({
 
     for (const row of searchedRows) {
       const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      counts[getTrackingFilterFromStatus(status)] += 1;
+      counts[getTrackingFilterFromStatus(status, row)] += 1;
     }
 
     return counts;
@@ -1384,7 +1394,7 @@ function OrdersTab({
       searchedRows.filter((row) => {
         if (trackingFilter === "all") return true;
         const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-        return getTrackingFilterFromStatus(status) === trackingFilter;
+        return getTrackingFilterFromStatus(status, row) === trackingFilter;
       }),
     [searchedRows, settlementTraceByKey, trackingFilter]
   );
@@ -1903,7 +1913,7 @@ function OrdersTable({
                 </td>
                 <td className="px-2 py-1.5">
                   <StatusBadge
-                    status={trackingStatus}
+                    status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus}
                     label={getTrackingStatusLabel(row, traces, trackingStatus)}
                   />
                 </td>
@@ -6467,7 +6477,7 @@ function MonthlyOrdersTable({ rows }: { rows: OrderProfitabilityRow[] }) {
                 </td>
                 <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
                 <td className="px-3 py-2">
-                  <StatusBadge status={row.tracking_status} label={row.tracking_label} />
+                  <StatusBadge status={row.tracking_badge_status || row.tracking_status} label={row.tracking_label} />
                 </td>
                 <td className="px-3 py-2">
                   <Badge variant={settlementVariant}>{settlementLabel}</Badge>
@@ -7036,6 +7046,14 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
         {label || "Reintento"}
       </Badge>
     );
+  if (status === "incident_solvable")
+    return (
+      <Badge variant="warning" className="border-amber-500/40 bg-amber-500/20 text-amber-300">
+        {label || "Incidencia solucionable"}
+      </Badge>
+    );
+  if (status === "incident_unsolvable")
+    return <Badge variant="destructive">{label || "Incidencia no solucionable"}</Badge>;
   if (status === "incident") return <Badge variant="destructive">{label || "Incidencia"}</Badge>;
   return <Badge variant="muted">{label || "Pendiente"}</Badge>;
 }
@@ -7525,6 +7543,9 @@ function buildVisibleOrderRows(
       moovin_incidents: row.guide_number
         ? countMoovinIncidents(moovinByPackage.get(row.guide_number)?.events)
         : undefined,
+      moovin_route_attempts: row.guide_number
+        ? countMoovinRouteAttempts(moovinByPackage.get(row.guide_number)?.events)
+        : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
       phone: shopify?.phone || row.customer_phone || null,
@@ -7574,6 +7595,7 @@ function buildVisibleOrderRows(
       courier: shopifyCourier,
       moovin_group: deriveMoovinGroup(moovinHit),
       moovin_incidents: moovinHit ? countMoovinIncidents(moovinHit.events) : undefined,
+      moovin_route_attempts: moovinHit ? countMoovinRouteAttempts(moovinHit.events) : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
@@ -7731,6 +7753,7 @@ function buildFinanceControlCenter(
 
     const traces = getSettlementTracesForLogisticsRow(order, settlementTraceByKey);
     const trackingStatus = getEffectiveTrackingStatus(order, traces);
+    const trackingBadgeStatus = getTrackingFilterFromStatus(trackingStatus, order);
     const trackingLabel = getTrackingStatusLabel(order, traces, trackingStatus);
     const financialRow = buildOrderProfitabilityRow({
       order,
@@ -7738,6 +7761,7 @@ function buildFinanceControlCenter(
       fileByImportId,
       costVersionsBySku,
       trackingStatus,
+      trackingBadgeStatus,
       trackingLabel,
     });
 
@@ -8234,6 +8258,7 @@ function buildOrderProfitabilityRow({
   fileByImportId,
   costVersionsBySku,
   trackingStatus,
+  trackingBadgeStatus,
   trackingLabel,
 }: {
   order: TrackableOrderRow;
@@ -8241,6 +8266,7 @@ function buildOrderProfitabilityRow({
   fileByImportId: Map<number, string>;
   costVersionsBySku: Map<string, ProductCostVersion[]>;
   trackingStatus: string;
+  trackingBadgeStatus: string;
   trackingLabel: string;
 }): OrderProfitabilityRow {
   const settlementFiles = uniqueKeys(
@@ -8286,6 +8312,7 @@ function buildOrderProfitabilityRow({
     shopify_cancelled_at: order.shopify_cancelled_at,
     shopify_financial_status: order.shopify_financial_status,
     tracking_status: trackingStatus,
+    tracking_badge_status: trackingBadgeStatus,
     tracking_label: trackingLabel,
     settlement_status: settlementStatuses.join(", ") || "Sin liquidacion",
     settlement_files: settlementFiles,
@@ -8828,18 +8855,35 @@ function inferTrackingStatusFromText(status: string): string {
   return "pending";
 }
 
-function getTrackingFilterFromStatus(status: string): Exclude<OrderTrackingFilter, "all"> {
+function getTrackingFilterFromStatus(
+  status: string,
+  row?: Pick<TrackableOrderRow, "moovin_incidents" | "moovin_route_attempts">
+): Exclude<OrderTrackingFilter, "all"> {
   if (status === "annulled") return "annulled";
   if (status === "delivered") return "delivered";
   if (status === "not_delivered" || status === "returned") return "not_delivered";
   if (status === "en_route") return "en_route";
   if (status === "en_route_retry") return "en_route_retry";
-  if (status === "incident") return "incident";
+  if (status === "incident") return classifyIncident(row);
   return "pending";
 }
 
+// Divide las incidencias en dos clasificaciones:
+// - Solucionable: a lo sumo una "Incidencia en la entrega"; aun se puede
+//   reagendar/corregir la entrega.
+// - No solucionable: dos o mas "Incidencia en la entrega" y dos o mas eventos
+//   "En ruta para entregar a lo largo del dia"; el courier salio a entregar
+//   varias veces y fallo de forma repetida.
+function classifyIncident(
+  row?: Pick<TrackableOrderRow, "moovin_incidents" | "moovin_route_attempts">
+): "incident_solvable" | "incident_unsolvable" {
+  const incidents = row?.moovin_incidents ?? 0;
+  const routeAttempts = row?.moovin_route_attempts ?? 0;
+  return incidents >= 2 && routeAttempts >= 2 ? "incident_unsolvable" : "incident_solvable";
+}
+
 function getTrackingStatusLabel(
-  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents">,
+  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents" | "moovin_route_attempts">,
   traces: SettlementTrace[],
   status: string
 ): string {
@@ -8855,7 +8899,10 @@ function getTrackingStatusLabel(
   if (status === "en_route") return row.boxful_status || "En ruta";
   if (status === "en_route_retry")
     return (row.moovin_incidents ?? 1) > 1 ? `Reintento (${row.moovin_incidents})` : "Reintento";
-  if (status === "incident") return "Incidencia";
+  if (status === "incident")
+    return classifyIncident(row) === "incident_unsolvable"
+      ? "Incidencia no solucionable"
+      : "Incidencia solucionable";
   return "Pendiente";
 }
 
@@ -8889,6 +8936,18 @@ function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): 
       String(event.code ?? "").toUpperCase() === "FAILED" ||
       String(event.title ?? "").toLowerCase().includes("incidencia en la entrega")
   ).length;
+}
+
+// Cuenta las salidas a reparto de Moovin ("En ruta para entregar a lo largo del
+// dia"). Varias salidas indican intentos de entrega repetidos. Se hace match por
+// la frase distintiva "a lo largo del" para tolerar variaciones de Moovin
+// (entregar/la entrega, con o sin tilde en "dia").
+function countMoovinRouteAttempts(events: MoovinTrackingRow["events"] | undefined): number {
+  if (!events?.length) return 0;
+  return events.filter((event) => {
+    const title = String(event.title ?? "").toLowerCase();
+    return title.includes("en ruta para") && title.includes("a lo largo del");
+  }).length;
 }
 
 // Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"
