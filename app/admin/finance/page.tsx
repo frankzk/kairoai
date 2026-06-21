@@ -141,6 +141,7 @@ interface TrackableOrderRow {
   order_name: string;
   customer_name: string;
   last_name?: string;
+  phone?: string | null;
   boxful_status: string;
   internal_status: string;
   match_status: string;
@@ -435,6 +436,8 @@ const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 4000;
 // Ventana de "pedidos actualizados recientemente" leida en vivo de Shopify.
 const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
 const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
+// Cadencia del auto-refresco del dashboard (KPIs, Shopify y tracking Moovin).
+const FINANCE_AUTO_REFRESH_MS = 15 * 60 * 1000;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
@@ -471,7 +474,16 @@ export default function FinancePage() {
   });
   const [syncMessage, setSyncMessage] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const refreshRunRef = useRef(0);
+  // Espejos del estado para que el auto-refresco (effect con deps vacias) lea
+  // siempre el valor actual sin re-suscribirse.
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
+  const shopifyHistoryLoadingRef = useRef(shopifyHistoryLoading);
+  shopifyHistoryLoadingRef.current = shopifyHistoryLoading;
+  const lastRefreshedAtRef = useRef(lastRefreshedAt);
+  lastRefreshedAtRef.current = lastRefreshedAt;
 
   const latestLogisticsImport = logisticsImports[0];
   const liquidationAlertRows = useMemo(
@@ -511,14 +523,21 @@ export default function FinancePage() {
     [financeControl.orders, expenses]
   );
 
-  async function refresh() {
+  // background: auto-refresco periodico (sin spinner de pantalla completa y sin
+  // re-bajar todo el historico Shopify). Solo refresca la data viva y mezcla los
+  // pedidos recientes sobre el historico ya cargado, para mantener KPIs y estados
+  // al dia sin interrumpir al usuario.
+  async function refresh(opts: { background?: boolean } = {}) {
+    const background = opts.background === true;
     const refreshRun = refreshRunRef.current + 1;
     refreshRunRef.current = refreshRun;
     const isCurrentRun = () => refreshRunRef.current === refreshRun;
-    setLoading(true);
+    if (!background) {
+      setLoading(true);
+      setShopifyHistoryLoading(false);
+      setShopifyHistoryProgress({ loaded: 0, total: null });
+    }
     setError("");
-    setShopifyHistoryLoading(false);
-    setShopifyHistoryProgress({ loaded: 0, total: null });
     try {
       const [settlementsRes, logisticsRes, costsRes, expensesRes, summaryRes] =
         await Promise.all([
@@ -565,8 +584,13 @@ export default function FinancePage() {
       setLogisticsImports(logisticsJson.imports ?? []);
       setLogisticsRows(logisticsJson.rows ?? []);
       const liveShopifyOrders = Array.isArray(shopifyOrdersJson.orders) ? shopifyOrdersJson.orders as ShopifyOrderSummary[] : [];
-      setShopifyOrders(mergeShopifyOrderSummaries(liveShopifyOrders));
-      setShopifyCoverage(null);
+      if (background) {
+        // Conservar el historico ya cargado; solo superponer los pedidos recientes.
+        setShopifyOrders((prev) => mergeShopifyOrderSummaries(prev, liveShopifyOrders));
+      } else {
+        setShopifyOrders(mergeShopifyOrderSummaries(liveShopifyOrders));
+        setShopifyCoverage(null);
+      }
       setCosts(costsJson.costs ?? []);
       setCostVersions(Array.isArray(costsJson.versions) ? costsJson.versions as ProductCostVersion[] : []);
       setExpenses(expensesJson.expenses ?? []);
@@ -581,7 +605,13 @@ export default function FinancePage() {
         expensesJson.error ??
         summaryJson.error;
       if (firstError) setError(firstError);
-      setLoading(false);
+      if (!background) setLoading(false);
+      setLastRefreshedAt(new Date());
+
+      // El historico completo de Shopify se baja por lotes solo en la carga
+      // normal; en el auto-refresco se conserva el ya cargado para no repetir
+      // un pull pesado cada pocos minutos.
+      if (background) return;
 
       setShopifyHistoryLoading(true);
       try {
@@ -627,9 +657,9 @@ export default function FinancePage() {
         if (isCurrentRun()) setShopifyHistoryLoading(false);
       }
     } catch (err) {
-      if (isCurrentRun()) setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
+      if (isCurrentRun() && !background) setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
     } finally {
-      if (isCurrentRun()) setLoading(false);
+      if (isCurrentRun() && !background) setLoading(false);
     }
   }
 
@@ -637,6 +667,39 @@ export default function FinancePage() {
     refresh();
     loadShopifyProducts();
     reloadMoovin();
+  }, []);
+
+  // Auto-refresco continuo: mantiene KPIs, pedidos Shopify y tracking Moovin al
+  // dia sin intervencion. Corre cada FINANCE_AUTO_REFRESH_MS y tambien al volver
+  // a la pestana si el dato ya quedo viejo. El cron del servidor mantiene fresco
+  // el cache de Moovin; aqui solo se re-lee (reloadMoovin) y se refresca la data
+  // viva en segundo plano (sin spinner ni re-bajar el historico).
+  useEffect(() => {
+    const backgroundRefresh = () => {
+      // No solaparse con una carga normal en curso ni con el historico Shopify.
+      if (loadingRef.current || shopifyHistoryLoadingRef.current) return;
+      refresh({ background: true });
+      reloadMoovin();
+    };
+
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      backgroundRefresh();
+    }, FINANCE_AUTO_REFRESH_MS);
+
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      const last = lastRefreshedAtRef.current;
+      // Evita refrescar en cada cambio de foco: solo si el dato ya esta viejo.
+      if (last && Date.now() - last.getTime() < FINANCE_AUTO_REFRESH_MS) return;
+      backgroundRefresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   async function loadShopifyProducts() {
@@ -968,17 +1031,25 @@ export default function FinancePage() {
               Liquidaciones, costos por SKU, gastos y utilidad neta
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              refresh();
-              loadShopifyProducts();
-            }}
-            className="ml-auto gap-2"
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Actualizar
-          </Button>
+          <div className="ml-auto flex items-center gap-3">
+            {lastRefreshedAt && (
+              <span className="hidden text-xs text-muted-foreground sm:inline">
+                Actualizado{" "}
+                {lastRefreshedAt.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                refresh();
+                loadShopifyProducts();
+              }}
+              className="gap-2"
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Actualizar
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -1532,6 +1603,7 @@ function OrdersTab({
                         "Incidencia Moovin": moovin?.has_incident ? "si" : "",
                         Cliente: row.customer_name,
                         Apellido: row.last_name ?? "",
+                        Celular: row.phone ?? "",
                         "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
                         Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
                         Fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
@@ -1816,8 +1888,16 @@ function OrdersTable({
                     {row.customer_name || "Sin nombre"}
                   </span>
                   {row.last_name && (
-                    <span className="mt-0.5 block max-w-[150px] truncate text-[10px] text-muted-foreground">
+                    <span className="mt-0.5 block max-w-[150px] truncate text-[9px] text-muted-foreground">
                       Apellido: {row.last_name}
+                    </span>
+                  )}
+                  {row.phone && (
+                    <span
+                      className="block max-w-[150px] truncate font-mono text-[10px] text-muted-foreground"
+                      title={row.phone}
+                    >
+                      {row.phone}
                     </span>
                   )}
                 </td>
@@ -7447,6 +7527,7 @@ function buildVisibleOrderRows(
         : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
+      phone: shopify?.phone || row.customer_phone || null,
       match_status: shopify ? "matched" : row.match_status,
       cod_amount: row.cod_amount || Number(shopify?.total_price || parseMoneyText(shopify?.total ?? "")),
       shopify_order_name: shopify?.name ?? row.shopify_order_name,
@@ -7496,6 +7577,7 @@ function buildVisibleOrderRows(
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
+      phone: order.phone || null,
       boxful_status: "",
       internal_status:
         order.cancelled_at || order.financial_status === "voided" ? "annulled" : "pending",
@@ -8811,12 +8893,21 @@ function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): 
 
 // Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"
 // (p.ej. supera intentos de entrega) quedaba como en ruta y debe ser No
-// entregado. Los demas estados conservan su grupo ya calculado.
+// entregado; una incidencia de entrega activa (codigo FAILED) debe ser
+// Incidencia aunque el latest_group cacheado haya quedado viejo. Los demas
+// estados conservan su grupo ya calculado.
 function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
   if (!row) return "";
   const code = String(row.latest_code ?? "").toUpperCase();
   const title = String(row.latest_status ?? "").toLowerCase();
   if (code.startsWith("CANCEL") || title.includes("cancelado")) return "returned";
+  // Incidencia activa: el ultimo evento es una incidencia de entrega. Se rescata
+  // por has_incident/codigo/titulo por si el latest_group cacheado se sincronizo
+  // antes de la incidencia y aun dice "en ruta" (o quedo vacio), para que la fila
+  // se clasifique como Incidencia y no como En ruta.
+  if (row.has_incident || code === "FAILED" || title.includes("incidencia en la entrega")) {
+    return "failed";
+  }
   return row.latest_group ?? "";
 }
 

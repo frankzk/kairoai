@@ -12,8 +12,9 @@ export const maxDuration = 60;
 // ~2 req/s a Moovin para no saturar; el cliente envia lotes y reintenta.
 const PER_REQUEST_DELAY_MS = 400;
 const MAX_PACKAGES_PER_CALL = 60;
-// No reconsultar guias vistas en las ultimas 6h salvo force.
-const FRESH_WINDOW_MINUTES = 6 * 60;
+// No reconsultar guias vistas dentro de esta ventana salvo force. Por defecto
+// 20 min, alineado con el cron y el auto-refresco de 15 min.
+const FRESH_WINDOW_MINUTES = Number(process.env.MOOVIN_FRESH_WINDOW_MIN ?? 20);
 
 interface RequestedPackage {
   idPackage: string;

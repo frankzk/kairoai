@@ -1,0 +1,38 @@
+name: Refrescar tracking Moovin
+
+# Mantiene fresco el cache de Moovin tambien cuando nadie tiene el dashboard
+# abierto. Complementa al cron nativo de Vercel (que solo corre frecuente en
+# Pro/Enterprise) golpeando el endpoint publico /api/cron/moovin cada ~15 min.
+#
+# Configuracion (Settings del repo):
+#   - Variable  CRON_TARGET_URL : URL base del deploy (sin slash final).
+#                                  Si no se define, usa el default de abajo.
+#   - Secret    CRON_SECRET     : si esta seteado en Vercel, ponerlo igual aqui
+#                                  para autenticar la llamada.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: cron-moovin
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disparar /api/cron/moovin
+        env:
+          BASE_URL: ${{ vars.CRON_TARGET_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          URL="${BASE_URL:-https://kairoai-pearl.vercel.app}"
+          echo "POST $URL/api/cron/moovin"
+          code=$(curl -sS --max-time 120 -o /tmp/out.json -w "%{http_code}" -X POST \
+            ${CRON_SECRET:+-H "Authorization: Bearer $CRON_SECRET"} \
+            "$URL/api/cron/moovin")
+          echo "HTTP $code"
+          cat /tmp/out.json || true
+          echo
+          test "$code" = "200"
