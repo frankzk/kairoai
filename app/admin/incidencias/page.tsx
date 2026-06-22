@@ -452,6 +452,19 @@ function FilterPill({ active, onClick, count, dot, activeClass, children }: {
   );
 }
 
+// Fetch con timeout (AbortController). En conexiones malas evita que un pedido
+// quede colgado indefinidamente: aborta a los `ms` indicados y lanza, para que
+// el caller pueda mostrar un error y ofrecer reintentar.
+async function fetchWithTimeout(url: string, ms: number, init?: RequestInit): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { cache: "no-store", signal: ctrl.signal, ...init });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default function IncidenciasPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
@@ -479,6 +492,8 @@ export default function IncidenciasPage() {
   const [trackingEvents, setTrackingEvents] = useState<TrackingEvent[]>([]);
   const [orderProducts, setOrderProducts] = useState("");
   const [reprogFecha, setReprogFecha] = useState("");
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState(false);
   const [showNew, setShowNew] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -511,15 +526,39 @@ export default function IncidenciasPage() {
     return () => clearTimeout(t);
   }, [fetchData]);
 
-  async function openDetail(id: number) {
-    const res = await fetch(`/api/incidents?id=${id}&store=${selectedStoreCode}`, { cache: "no-store" });
-    const json = await res.json();
-    if (json.incident) {
+  // Abre el popup al instante con los datos que ya tiene la lista (sin esperar
+  // red) y carga el detalle pesado (historial + tracking + producto) en segundo
+  // plano. Clave para conexiones lentas: la gestion funciona aunque el detalle
+  // tarde o falle.
+  function openDetail(incident: Incident) {
+    setSelected(incident);
+    setEvents([]);
+    setTrackingEvents([]);
+    setOrderProducts("");
+    setReprogFecha(incident.reprogramada_para ?? "");
+    void loadDetail(incident.id);
+  }
+
+  // Trae eventos + tracking del courier + productos y refresca el incidente.
+  // Tolerante a fallos: marca detailError para que el popup ofrezca "Reintentar"
+  // en vez de quedar en blanco. No resetea los datos previos (sirve para
+  // refrescar tras una accion sin parpadeo).
+  async function loadDetail(id: number) {
+    setDetailLoading(true);
+    setDetailError(false);
+    try {
+      const res = await fetchWithTimeout(`/api/incidents?id=${id}&store=${selectedStoreCode}`, 12000);
+      const json = await res.json();
+      if (!json.incident) { setDetailError(true); return; }
       setSelected(json.incident);
       setEvents(json.events ?? []);
       setTrackingEvents(json.tracking_events ?? []);
       setOrderProducts(json.order_products ?? "");
       setReprogFecha(json.incident.reprogramada_para ?? "");
+    } catch {
+      setDetailError(true);
+    } finally {
+      setDetailLoading(false);
     }
   }
 
@@ -584,7 +623,7 @@ export default function IncidenciasPage() {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) return alert(json.error || "Error al actualizar");
-    await openDetail(selected.id);
+    await loadDetail(selected.id);
     fetchData();
   }
 
@@ -599,7 +638,7 @@ export default function IncidenciasPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) return alert(json.error || "Error en la accion");
-      await openDetail(selected.id);
+      await loadDetail(selected.id);
       fetchData();
     } finally {
       setBusy(false);
@@ -615,7 +654,7 @@ export default function IncidenciasPage() {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) return alert(json.error || "Error al guardar la nota");
-    await openDetail(selected.id);
+    await loadDetail(selected.id);
   }
 
   async function editNote(eventId: number, text: string) {
@@ -627,7 +666,7 @@ export default function IncidenciasPage() {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) return alert(json.error || "Error al editar la nota");
-    await openDetail(selected.id);
+    await loadDetail(selected.id);
   }
 
   // Conteo por opcion de los filtros cliente (intentos, edad), sobre el set ya
@@ -879,7 +918,7 @@ export default function IncidenciasPage() {
                       <td className="px-3 py-2 text-center"><span className={`tabular-nums ${age.tone}`}>{age.label}</span></td>
                       <td className="px-3 py-2 text-xs">{i.reprogramada_para || "—"}</td>
                       <td className="px-3 py-2 text-right">
-                        <Button variant="outline" size="sm" onClick={() => openDetail(i.id)}>Gestionar</Button>
+                        <Button variant="outline" size="sm" onClick={() => openDetail(i)}>Gestionar</Button>
                       </td>
                     </tr>
                     );
@@ -915,6 +954,9 @@ export default function IncidenciasPage() {
           trackingEvents={trackingEvents}
           orderProducts={orderProducts}
           busy={busy}
+          detailLoading={detailLoading}
+          detailError={detailError}
+          onRetry={() => loadDetail(selected.id)}
           reprogFecha={reprogFecha}
           setReprogFecha={setReprogFecha}
           onClose={() => setSelected(null)}
@@ -932,10 +974,11 @@ export default function IncidenciasPage() {
 }
 
 function DetailModal({
-  storeCode, incident, events, trackingEvents, orderProducts, busy, reprogFecha, setReprogFecha, onClose, onPatch, onAction, onAddNote, onEditNote,
+  storeCode, incident, events, trackingEvents, orderProducts, busy, detailLoading, detailError, onRetry, reprogFecha, setReprogFecha, onClose, onPatch, onAction, onAddNote, onEditNote,
 }: {
   storeCode: FinanceStoreCode;
   incident: Incident; events: IncidentEvent[]; trackingEvents: TrackingEvent[]; orderProducts: string; busy: boolean;
+  detailLoading: boolean; detailError: boolean; onRetry: () => void;
   reprogFecha: string; setReprogFecha: (v: string) => void;
   onClose: () => void;
   onPatch: (patch: Record<string, unknown>) => void;
@@ -1059,7 +1102,9 @@ function DetailModal({
             <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount) : "—"}</div>
             <div className="flex items-baseline gap-1.5">
               <span className="text-muted-foreground">Intentos:</span>
-              <span className="text-base font-bold tabular-nums">{trackingEvents.length > 0 ? intentosEntrega : "—"}</span>
+              <span className="text-base font-bold tabular-nums">
+                {trackingEvents.length > 0 ? intentosEntrega : detailLoading ? "…" : "—"}
+              </span>
             </div>
           </div>
           {orderProducts && (
@@ -1115,6 +1160,11 @@ function DetailModal({
                 ))}
               </ol>
             </details>
+          )}
+          {trackingOrdenado.length === 0 && detailLoading && (
+            <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <RefreshCw className="h-3 w-3 animate-spin" /> Cargando historial del courier…
+            </p>
           )}
           </div>
           {/* Columna derecha: gestion, notas e historial */}
@@ -1229,7 +1279,19 @@ function DetailModal({
               <History className="h-3.5 w-3.5" /> Historial
             </p>
             <div className="space-y-1 max-h-72 overflow-y-auto">
-              {events.length === 0 ? (
+              {detailError && events.length === 0 ? (
+                <div className="space-y-1 text-xs">
+                  <p className="text-rose-400">No se pudo cargar el historial (revisa la conexión).</p>
+                  <button type="button" onClick={onRetry}
+                    className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
+                    <RefreshCw className="h-3 w-3" /> Reintentar
+                  </button>
+                </div>
+              ) : detailLoading && events.length === 0 ? (
+                <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <RefreshCw className="h-3 w-3 animate-spin" /> Cargando historial…
+                </p>
+              ) : events.length === 0 ? (
                 <p className="text-xs text-muted-foreground">Sin movimientos.</p>
               ) : (
                 events.map((ev) => (
