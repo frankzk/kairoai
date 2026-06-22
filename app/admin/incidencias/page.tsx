@@ -382,9 +382,11 @@ function sortValue(i: Incident, key: SortKey): string | number {
   }
 }
 
-// ----- Filtro por cantidad de intentos de llamada.
-type IntentosFilter = "todos" | "1" | "2mas";
+// ----- Filtro por cantidad de intentos de llamada. Las opciones 0/1/2+ parten
+// el total (Todos): por eso se incluye "Sin intentos" para las aun no llamadas.
+type IntentosFilter = "todos" | "0" | "1" | "2mas";
 function matchIntentos(n: number, f: IntentosFilter): boolean {
+  if (f === "0") return n === 0;
   if (f === "1") return n === 1;
   if (f === "2mas") return n >= 2;
   return true;
@@ -632,6 +634,7 @@ export default function IncidenciasPage() {
   // filtrado por estado/causa/busqueda en el servidor.
   const intentosCounts = {
     todos: incidents.length,
+    cero: incidents.reduce((n, i) => n + ((i.intentos_llamada || 0) === 0 ? 1 : 0), 0),
     uno: incidents.reduce((n, i) => n + ((i.intentos_llamada || 0) === 1 ? 1 : 0), 0),
     dosMas: incidents.reduce((n, i) => n + ((i.intentos_llamada || 0) >= 2 ? 1 : 0), 0),
   };
@@ -765,6 +768,8 @@ export default function IncidenciasPage() {
                 <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
                   <FilterPill active={intentosFilter === "todos"} count={intentosCounts.todos}
                     onClick={() => setIntentosFilter("todos")}>Todos</FilterPill>
+                  <FilterPill active={intentosFilter === "0"} count={intentosCounts.cero}
+                    onClick={() => setIntentosFilter("0")}>Sin intentos</FilterPill>
                   <FilterPill active={intentosFilter === "1"} count={intentosCounts.uno}
                     onClick={() => setIntentosFilter("1")}>1 intento</FilterPill>
                   <FilterPill active={intentosFilter === "2mas"} count={intentosCounts.dosMas}
