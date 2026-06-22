@@ -406,6 +406,17 @@ function matchEdad(createdAt: string, f: EdadFilter): boolean {
   return h >= 6; // "6mas"
 }
 
+// ----- Facetas Estado / Causa / Busqueda (cliente). "" = sin filtro (Todas).
+const matchEstado = (i: Incident, f: string): boolean => f === "" || i.status === f;
+const matchCausa = (i: Incident, f: string): boolean => f === "" || i.category === f;
+// Busqueda: equivalente cliente del ilike del servidor (order_name / guide_number
+// / customer_name / customer_phone). qLower ya viene en minuscula.
+function matchSearch(i: Incident, qLower: string): boolean {
+  if (!qLower) return true;
+  return [i.order_name, i.guide_number, i.customer_name, i.customer_phone]
+    .some((v) => (v || "").toLowerCase().includes(qLower));
+}
+
 // Encabezado de columna ordenable: click alterna asc/desc; muestra el sentido con
 // una flecha (gris doble cuando la columna no es la activa).
 function SortTh({ label, sortK, active, dir, onSort, align = "left" }: {
@@ -430,23 +441,29 @@ function SortTh({ label, sortK, active, dir, onSort, align = "left" }: {
 // Una opcion de un control segmentado (va dentro de un track hundido). Activa =
 // capsula rellena; inactiva = texto muted que se aclara al hover. Soporta color
 // por estado (dot inactivo + activeClass) y conteo inline.
-function FilterPill({ active, onClick, count, dot, activeClass, children }: {
-  active: boolean; onClick: () => void; count?: number; dot?: string; activeClass?: string; children: ReactNode;
+function FilterPill({ active, onClick, count, dot, activeClass, disabled, children }: {
+  active: boolean; onClick: () => void; count?: number; dot?: string; activeClass?: string; disabled?: boolean; children: ReactNode;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
       className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
         active
           ? (activeClass ?? "bg-primary text-primary-foreground shadow-sm")
-          : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+          : disabled
+            ? "text-muted-foreground/40 cursor-not-allowed"
+            : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
       }`}
     >
-      {dot && !active && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />}
+      {dot && !active && <span className={`h-1.5 w-1.5 rounded-full ${dot} ${disabled ? "opacity-40" : ""}`} />}
       {children}
       {count != null && (
-        <span className={`tabular-nums text-[10px] ${active ? "opacity-80" : "opacity-60"}`}>{count}</span>
+        <span className={`inline-block min-w-[2.25ch] text-right tabular-nums text-[10px] ${
+          active ? "opacity-80" : disabled ? "opacity-40" : "opacity-60"
+        }`}>{count}</span>
       )}
     </button>
   );
@@ -469,12 +486,9 @@ export default function IncidenciasPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [counts, setCounts] = useState<Record<string, number>>({});
-  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
-  const [soloReintento, setSoloReintento] = useState(false);
   const [search, setSearch] = useState("");
   const [intentosFilter, setIntentosFilter] = useState<IntentosFilter>("todos");
   const [edadFilter, setEdadFilter] = useState<EdadFilter>("todos");
@@ -496,21 +510,18 @@ export default function IncidenciasPage() {
   const [detailError, setDetailError] = useState(false);
   const [showNew, setShowNew] = useState(false);
 
+  // Carga el set completo de la tienda una sola vez (no por filtro): todo el
+  // filtrado y el conteo se hacen en el cliente, asi los numeros son faceted y
+  // el filtrado es instantaneo. exec/timestamps siguen viniendo del servidor.
   const fetchData = useCallback(async () => {
     setLoading(true);
     const qs = new URLSearchParams();
-    if (soloReintento) qs.set("reintento", "1");
-    else if (statusFilter) qs.set("status", statusFilter);
-    if (categoryFilter) qs.set("category", categoryFilter);
     qs.set("store", selectedStoreCode);
-    if (search.trim()) qs.set("q", search.trim());
     try {
       const res = await fetch(`/api/incidents?${qs.toString()}`, { cache: "no-store" });
       const json = await res.json();
       setIncidents(json.incidents ?? []);
       setVisibleCount(120);
-      setCounts(json.counts ?? {});
-      setCategoryCounts(json.category_counts ?? {});
       setLastRun(json.last_run ?? null);
       setTrackingSync(json.tracking_last_sync ?? null);
       setExec(json.exec ?? null);
@@ -519,12 +530,14 @@ export default function IncidenciasPage() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, categoryFilter, soloReintento, search, selectedStoreCode]);
+  }, [selectedStoreCode]);
 
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Al cambiar cualquier filtro/busqueda, vuelve a mostrar desde el inicio.
   useEffect(() => {
-    const t = setTimeout(fetchData, 250);
-    return () => clearTimeout(t);
-  }, [fetchData]);
+    setVisibleCount(120);
+  }, [statusFilter, categoryFilter, intentosFilter, edadFilter, search]);
 
   // Abre el popup al instante con los datos que ya tiene la lista (sin esperar
   // red) y carga el detalle pesado (historial + tracking + producto) en segundo
@@ -582,16 +595,13 @@ export default function IncidenciasPage() {
     }
   }
 
-  // Exporta a Excel las novedades del filtro actual (lo que tiene cargado la
-  // tabla: estado/causa/busqueda/reintento/tienda). Dinamico: si no hay filtro,
-  // baja todo lo cargado.
+  // Exporta a Excel las novedades del filtro actual (todas las facetas activas +
+  // busqueda). Si no hay filtro, baja todo lo cargado de la tienda.
   async function exportarExcel() {
-    const list = incidents.filter((i) =>
-      matchIntentos(i.intentos_llamada || 0, intentosFilter) && matchEdad(i.created_at, edadFilter));
-    if (!list.length) { alert("No hay novedades para exportar."); return; }
+    if (!filtered.length) { alert("No hay novedades para exportar."); return; }
     setExporting(true);
     try {
-      const rows = list.map((i) => ({
+      const rows = filtered.map((i) => ({
         Estado: STATUS_META[i.status]?.label ?? i.status,
         Cliente: i.customer_name || "",
         Teléfono: i.customer_phone || "",
@@ -669,27 +679,46 @@ export default function IncidenciasPage() {
     await loadDetail(selected.id);
   }
 
-  // Conteo por opcion de los filtros cliente (intentos, edad), sobre el set ya
-  // filtrado por estado/causa/busqueda en el servidor.
-  const intentosCounts = {
-    todos: incidents.length,
-    cero: incidents.reduce((n, i) => n + ((i.intentos_llamada || 0) === 0 ? 1 : 0), 0),
-    uno: incidents.reduce((n, i) => n + ((i.intentos_llamada || 0) === 1 ? 1 : 0), 0),
-    dosMas: incidents.reduce((n, i) => n + ((i.intentos_llamada || 0) >= 2 ? 1 : 0), 0),
-  };
-  const edadCounts = {
-    todos: incidents.length,
-    c0a3: incidents.reduce((n, i) => n + (matchEdad(i.created_at, "0a3") ? 1 : 0), 0),
-    c3a6: incidents.reduce((n, i) => n + (matchEdad(i.created_at, "3a6") ? 1 : 0), 0),
-    c6mas: incidents.reduce((n, i) => n + (matchEdad(i.created_at, "6mas") ? 1 : 0), 0),
-  };
-  // Filtros cliente (intentos + edad) -> orden por columna -> recorte visible.
+  // Conteos faceted: para cada faceta, su conteo refleja las OTRAS facetas + la
+  // busqueda (se excluye la propia seleccion), asi los numeros cuadran con la
+  // tabla. Todo en un useMemo para compartir el mismo Date.now() con la edad.
+  const facetCounts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const baseEstado = incidents.filter((i) =>
+      matchCausa(i, categoryFilter) && matchIntentos(i.intentos_llamada || 0, intentosFilter) && matchEdad(i.created_at, edadFilter) && matchSearch(i, q));
+    const baseCausa = incidents.filter((i) =>
+      matchEstado(i, statusFilter) && matchIntentos(i.intentos_llamada || 0, intentosFilter) && matchEdad(i.created_at, edadFilter) && matchSearch(i, q));
+    const baseIntentos = incidents.filter((i) =>
+      matchEstado(i, statusFilter) && matchCausa(i, categoryFilter) && matchEdad(i.created_at, edadFilter) && matchSearch(i, q));
+    const baseEdad = incidents.filter((i) =>
+      matchEstado(i, statusFilter) && matchCausa(i, categoryFilter) && matchIntentos(i.intentos_llamada || 0, intentosFilter) && matchSearch(i, q));
+
+    const byStatus = Object.fromEntries(STATUS_ORDER.map((s) => [s, 0])) as Record<IncidentStatus, number>;
+    for (const i of baseEstado) byStatus[i.status] = (byStatus[i.status] ?? 0) + 1;
+    const byCategory = Object.fromEntries((Object.keys(CATEGORY_LABELS) as IncidentCategory[]).map((c) => [c, 0])) as Record<IncidentCategory, number>;
+    for (const i of baseCausa) byCategory[i.category] = (byCategory[i.category] ?? 0) + 1;
+
+    let i0 = 0, i1 = 0, i2 = 0;
+    for (const i of baseIntentos) { const n = i.intentos_llamada || 0; if (n === 0) i0++; else if (n === 1) i1++; else i2++; }
+    let e1 = 0, e2 = 0, e3 = 0;
+    for (const i of baseEdad) { const h = ageHours(i.created_at); if (h < 3) e1++; else if (h < 6) e2++; else e3++; }
+
+    return {
+      estado: { all: baseEstado.length, byStatus },
+      causa: { all: baseCausa.length, byCategory },
+      intentos: { todos: baseIntentos.length, cero: i0, uno: i1, dosMas: i2 },
+      edad: { todos: baseEdad.length, c0a3: e1, c3a6: e2, c6mas: e3 },
+    };
+  }, [incidents, statusFilter, categoryFilter, intentosFilter, edadFilter, search]);
+
+  // Tabla: aplica TODAS las facetas + busqueda -> orden por columna -> recorte.
   const filtered = useMemo(() => {
-    let arr = incidents;
-    if (intentosFilter !== "todos") arr = arr.filter((i) => matchIntentos(i.intentos_llamada || 0, intentosFilter));
-    if (edadFilter !== "todos") arr = arr.filter((i) => matchEdad(i.created_at, edadFilter));
-    return arr;
-  }, [incidents, intentosFilter, edadFilter]);
+    const q = search.trim().toLowerCase();
+    return incidents.filter((i) =>
+      matchEstado(i, statusFilter) && matchCausa(i, categoryFilter) &&
+      matchIntentos(i.intentos_llamada || 0, intentosFilter) && matchEdad(i.created_at, edadFilter) &&
+      matchSearch(i, q));
+  }, [incidents, statusFilter, categoryFilter, intentosFilter, edadFilter, search]);
   const sorted = useMemo(() => {
     if (!sortKey) return filtered;
     const arr = [...filtered];
@@ -704,7 +733,6 @@ export default function IncidenciasPage() {
     return arr;
   }, [filtered, sortKey, sortDir]);
   const shown = sorted.slice(0, visibleCount);
-  const totalCount = Object.values(counts).reduce((a, b) => a + b, 0);
   // Click en encabezado: misma columna alterna sentido; otra columna arranca asc.
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -788,30 +816,37 @@ export default function IncidenciasPage() {
           <CardContent className="p-3 space-y-2">
             {/* Fila 1: Estado (color por estado) + Intentos */}
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Estado</span>
                 <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
-                  <FilterPill active={!soloReintento && statusFilter === ""} count={totalCount}
-                    onClick={() => { setSoloReintento(false); setStatusFilter(""); }}>Todas</FilterPill>
-                  {STATUS_ORDER.map((s) => (
-                    <FilterPill key={s} active={!soloReintento && statusFilter === s} count={counts[s] ?? 0}
-                      dot={STATUS_COLOR[s].dot} activeClass={STATUS_COLOR[s].active}
-                      onClick={() => { setSoloReintento(false); setStatusFilter(statusFilter === s ? "" : s); }}>
-                      {STATUS_META[s].label}
-                    </FilterPill>
-                  ))}
+                  <FilterPill active={statusFilter === ""} count={facetCounts.estado.all}
+                    onClick={() => setStatusFilter("")}>Todas</FilterPill>
+                  {STATUS_ORDER.map((s) => {
+                    const c = facetCounts.estado.byStatus[s] ?? 0;
+                    return (
+                      <FilterPill key={s} active={statusFilter === s} count={c}
+                        disabled={c === 0 && statusFilter !== s}
+                        dot={STATUS_COLOR[s].dot} activeClass={STATUS_COLOR[s].active}
+                        onClick={() => setStatusFilter(statusFilter === s ? "" : s)}>
+                        {STATUS_META[s].label}
+                      </FilterPill>
+                    );
+                  })}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Intentos</span>
                 <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
-                  <FilterPill active={intentosFilter === "todos"} count={intentosCounts.todos}
+                  <FilterPill active={intentosFilter === "todos"} count={facetCounts.intentos.todos}
                     onClick={() => setIntentosFilter("todos")}>Todos</FilterPill>
-                  <FilterPill active={intentosFilter === "0"} count={intentosCounts.cero}
+                  <FilterPill active={intentosFilter === "0"} count={facetCounts.intentos.cero}
+                    disabled={facetCounts.intentos.cero === 0 && intentosFilter !== "0"}
                     onClick={() => setIntentosFilter("0")}>Sin intentos</FilterPill>
-                  <FilterPill active={intentosFilter === "1"} count={intentosCounts.uno}
+                  <FilterPill active={intentosFilter === "1"} count={facetCounts.intentos.uno}
+                    disabled={facetCounts.intentos.uno === 0 && intentosFilter !== "1"}
                     onClick={() => setIntentosFilter("1")}>1 intento</FilterPill>
-                  <FilterPill active={intentosFilter === "2mas"} count={intentosCounts.dosMas}
+                  <FilterPill active={intentosFilter === "2mas"} count={facetCounts.intentos.dosMas}
+                    disabled={facetCounts.intentos.dosMas === 0 && intentosFilter !== "2mas"}
                     onClick={() => setIntentosFilter("2mas")}>2+ intentos</FilterPill>
                 </div>
               </div>
@@ -819,27 +854,34 @@ export default function IncidenciasPage() {
 
             {/* Fila 2: Causa + Edad */}
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Causa</span>
                 <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
-                  <FilterPill active={categoryFilter === ""} count={totalCount}
+                  <FilterPill active={categoryFilter === ""} count={facetCounts.causa.all}
                     onClick={() => setCategoryFilter("")}>Todas</FilterPill>
-                  {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
-                    <FilterPill key={k} active={categoryFilter === k} count={categoryCounts[k] ?? 0}
-                      onClick={() => setCategoryFilter(categoryFilter === k ? "" : k)}>{v}</FilterPill>
-                  ))}
+                  {Object.entries(CATEGORY_LABELS).map(([k, v]) => {
+                    const c = facetCounts.causa.byCategory[k as IncidentCategory] ?? 0;
+                    return (
+                      <FilterPill key={k} active={categoryFilter === k} count={c}
+                        disabled={c === 0 && categoryFilter !== k}
+                        onClick={() => setCategoryFilter(categoryFilter === k ? "" : k)}>{v}</FilterPill>
+                    );
+                  })}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Edad</span>
                 <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
-                  <FilterPill active={edadFilter === "todos"} count={edadCounts.todos}
+                  <FilterPill active={edadFilter === "todos"} count={facetCounts.edad.todos}
                     onClick={() => setEdadFilter("todos")}>Todos</FilterPill>
-                  <FilterPill active={edadFilter === "0a3"} count={edadCounts.c0a3}
+                  <FilterPill active={edadFilter === "0a3"} count={facetCounts.edad.c0a3}
+                    disabled={facetCounts.edad.c0a3 === 0 && edadFilter !== "0a3"}
                     onClick={() => setEdadFilter("0a3")}>0 a 3 h</FilterPill>
-                  <FilterPill active={edadFilter === "3a6"} count={edadCounts.c3a6}
+                  <FilterPill active={edadFilter === "3a6"} count={facetCounts.edad.c3a6}
+                    disabled={facetCounts.edad.c3a6 === 0 && edadFilter !== "3a6"}
                     onClick={() => setEdadFilter("3a6")}>3 a 6 h</FilterPill>
-                  <FilterPill active={edadFilter === "6mas"} count={edadCounts.c6mas}
+                  <FilterPill active={edadFilter === "6mas"} count={facetCounts.edad.c6mas}
+                    disabled={facetCounts.edad.c6mas === 0 && edadFilter !== "6mas"}
                     onClick={() => setEdadFilter("6mas")}>6+ h</FilterPill>
                 </div>
               </div>
@@ -852,8 +894,8 @@ export default function IncidenciasPage() {
                 <Input className="pl-8 h-9" placeholder="Buscar pedido, guía o cliente…"
                   value={search} onChange={(e) => setSearch(e.target.value)} />
               </div>
-              <Button variant={soloReintento ? "default" : "outline"} size="sm" className="gap-2 h-9"
-                onClick={() => { setStatusFilter(""); setSoloReintento(!soloReintento); }}>
+              <Button variant={statusFilter === "sin_contestar" ? "default" : "outline"} size="sm" className="gap-2 h-9"
+                onClick={() => setStatusFilter(statusFilter === "sin_contestar" ? "" : "sin_contestar")}>
                 <CalendarClock className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Reintento fin del día</span>
               </Button>
               <Button variant="outline" size="sm" className="gap-2 h-9"
@@ -894,7 +936,16 @@ export default function IncidenciasPage() {
                   </td></tr>
                 ) : shown.length === 0 ? (
                   <tr><td colSpan={11} className="px-3 py-10 text-center text-muted-foreground">
-                    No hay novedades. Usa “Detectar novedades” o crea una manual.
+                    {incidents.length === 0 ? (
+                      "No hay novedades. Usa “Detectar novedades” o crea una manual."
+                    ) : (
+                      <span className="inline-flex flex-col items-center gap-2">
+                        No hay novedades que coincidan con los filtros.
+                        <Button variant="outline" size="sm" onClick={() => {
+                          setStatusFilter(""); setCategoryFilter(""); setIntentosFilter("todos"); setEdadFilter("todos"); setSearch("");
+                        }}>Limpiar filtros</Button>
+                      </span>
+                    )}
                   </td></tr>
                 ) : (
                   shown.map((i) => {
@@ -929,7 +980,7 @@ export default function IncidenciasPage() {
           </div>
           {filtered.length > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 px-3 py-2 text-xs text-muted-foreground">
-              <span>Mostrando {shown.length} de {filtered.length}</span>
+              <span>Mostrando {shown.length} de {filtered.length}{incidents.length >= 2000 ? " · tope 2000" : ""}</span>
               {filtered.length > shown.length && (
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" className="h-8" onClick={() => setVisibleCount((n) => n + 120)}>
