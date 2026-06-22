@@ -251,8 +251,51 @@ export interface PayrollStaff {
   name: string;
   role: string;
   active: boolean;
+  // Enlace con la identidad de iComfly (migracion 0010). Nullable: una persona
+  // de la planilla puede no tener todavia su match con iComfly.
+  email?: string | null;
+  icomfly_user_id?: number | null;
   created_at: string;
   updated_at: string;
+}
+
+// Pedido de iComfly persistido con su estado de despacho y atribucion (0010).
+export interface IcomflyOrderRecord {
+  store_id: number;
+  icomfly_order_id: string;
+  order_number: string;
+  shopify_display_number: string;
+  status: string;
+  carrier_name: string;
+  tracking_number: string;
+  shipped_at: string | null;
+  icomfly_created_at: string | null;
+  dispatch_state: "pendiente" | "despacho_solicitado" | "despachado";
+  is_standby: boolean;
+  confirmed_by_user_id: number | null;
+  confirmed_by_name: string;
+  confirmed_by_email: string;
+  confirmed_at: string | null;
+  confirmed_by_staff_id: number | null;
+  requested_by_user_id: number | null;
+  requested_by_name: string;
+  requested_by_email: string;
+  requested_at: string | null;
+  requested_by_staff_id: number | null;
+  guide_final_at: string | null;
+  guide_final_source: string;
+  raw_attribution: Record<string, unknown>;
+  synced_at: string;
+}
+
+export interface IcomflyAgentRecord {
+  store_id: number;
+  user_id: number;
+  name: string;
+  email: string;
+  staff_id: number | null;
+  metrics: Record<string, unknown>;
+  synced_at: string;
 }
 
 export interface MoovinTrackingRow {

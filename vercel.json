@@ -16,6 +16,10 @@
     {
       "path": "/api/cron/incidencias",
       "schedule": "15 * * * *"
+    },
+    {
+      "path": "/api/cron/icomfly",
+      "schedule": "*/30 * * * *"
     }
   ],
   "functions": {
@@ -42,6 +46,12 @@
     },
     "app/api/cron/finance-index/route.ts": {
       "maxDuration": 300
+    },
+    "app/api/cron/icomfly/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/icomfly/sync/route.ts": {
+      "maxDuration": 60
     },
     "app/api/finance/settlements/route.ts": {
       "maxDuration": 60
