@@ -37,6 +37,21 @@ import {
   type OrderMatchKeySource,
 } from "@/lib/order-matching";
 import { reconcileMoovin, type MoovinDiscrepancy } from "@/lib/moovin-reconcile";
+import {
+  classifyIncident,
+  countMoovinIncidents,
+  countMoovinRouteAttempts,
+  deriveMoovinGroup,
+  getEffectiveTrackingStatus,
+  getTrackingFilterFromStatus,
+  getTrackingStatusLabel,
+  inferTrackingStatusFromText,
+  isFinalTrackingStatus,
+  isPendingLike,
+  isShopifyCancelled,
+  moovinGroupToStatus,
+  type OrderTrackingFilter,
+} from "@/lib/order-tracking";
 import type {
   BoxfulFileControl,
   BusinessExpense,
@@ -59,7 +74,6 @@ import { Input } from "@/components/ui/input";
 
 type Tab = "orders" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
-type OrderTrackingFilter = "all" | "pending" | "en_route" | "en_route_retry" | "incident_solvable" | "incident_unsolvable" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
   | "all"
   | "no_cost"
@@ -8808,170 +8822,8 @@ function getOrderDateKey(row: Pick<TrackableOrderRow, "shopify_created_at">): st
   return row.shopify_created_at ? row.shopify_created_at.slice(0, 10) : "";
 }
 
-function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "guide_number">,
-  traces: SettlementTrace[]
-): string {
-  // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
-  const moovinStatus = moovinGroupToStatus(row.moovin_group);
-  if (moovinStatus) {
-    // En ruta tras fallar la entrega (1+ incidencia) = reintento a presionar.
-    if (moovinStatus === "en_route" && (row.moovin_incidents ?? 0) >= 1) return "en_route_retry";
-    return moovinStatus;
-  }
-
-  if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
-
-  const boxfulStatus = inferTrackingStatusFromText(row.boxful_status);
-  if (isFinalTrackingStatus(boxfulStatus)) return boxfulStatus;
-
-  const settlementStatus = traces.find((trace) => isFinalTrackingStatus(trace.internal_status));
-  if (settlementStatus) return settlementStatus.internal_status;
-
-  // Tiene guia (Boxful, liquidacion o el fulfillment de Shopify) = despachado.
-  const hasOperationalMovement = row.source !== "shopify" || traces.length > 0 || Boolean(row.guide_number);
-  if (isShopifyCancelled(row) && !hasOperationalMovement) return "annulled";
-  // Con guia/courier (movimiento logistico) y sin estado final = en reparto.
-  if (hasOperationalMovement) return "en_route";
-
-  return "pending";
-}
-
-// "Pendiente operativo" para agregaciones: incluye en ruta (despachado pero
-// aun sin entregar) y pendiente (sin despachar).
-function isPendingLike(status: string): boolean {
-  return (
-    status === "pending" ||
-    status === "en_route" ||
-    status === "en_route_retry" ||
-    status === "incident"
-  );
-}
-
-function inferTrackingStatusFromText(status: string): string {
-  const lower = status.toLowerCase();
-  if (lower.includes("no entregado") || lower.includes("devuelto")) return "not_delivered";
-  if (lower.includes("entregado")) return "delivered";
-  return "pending";
-}
-
-function getTrackingFilterFromStatus(
-  status: string,
-  row?: Pick<TrackableOrderRow, "moovin_incidents" | "moovin_route_attempts">
-): Exclude<OrderTrackingFilter, "all"> {
-  if (status === "annulled") return "annulled";
-  if (status === "delivered") return "delivered";
-  if (status === "not_delivered" || status === "returned") return "not_delivered";
-  if (status === "en_route") return "en_route";
-  if (status === "en_route_retry") return "en_route_retry";
-  if (status === "incident") return classifyIncident(row);
-  return "pending";
-}
-
-// Divide las incidencias en dos clasificaciones:
-// - Solucionable: a lo sumo una "Incidencia en la entrega"; aun se puede
-//   reagendar/corregir la entrega.
-// - No solucionable: dos o mas "Incidencia en la entrega" y dos o mas eventos
-//   "En ruta para entregar a lo largo del dia"; el courier salio a entregar
-//   varias veces y fallo de forma repetida.
-function classifyIncident(
-  row?: Pick<TrackableOrderRow, "moovin_incidents" | "moovin_route_attempts">
-): "incident_solvable" | "incident_unsolvable" {
-  const incidents = row?.moovin_incidents ?? 0;
-  const routeAttempts = row?.moovin_route_attempts ?? 0;
-  return incidents >= 2 && routeAttempts >= 2 ? "incident_unsolvable" : "incident_solvable";
-}
-
-function getTrackingStatusLabel(
-  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents" | "moovin_route_attempts">,
-  traces: SettlementTrace[],
-  status: string
-): string {
-  if (status === "annulled") return "Anulado";
-  if (isFinalTrackingStatus(row.internal_status)) {
-    return status === "not_delivered" || status === "returned" ? "No entregado" : row.boxful_status || "Entregado";
-  }
-
-  const settlementTrace = traces.find((trace) => trace.internal_status === status);
-  if (settlementTrace?.settlement_status) return settlementTrace.settlement_status;
-  if (status === "delivered") return "Entregado";
-  if (status === "not_delivered" || status === "returned") return "No entregado";
-  if (status === "en_route") return row.boxful_status || "En ruta";
-  if (status === "en_route_retry")
-    return (row.moovin_incidents ?? 1) > 1 ? `Reintento (${row.moovin_incidents})` : "Reintento";
-  if (status === "incident")
-    return classifyIncident(row) === "incident_unsolvable"
-      ? "Incidencia no solucionable"
-      : "Incidencia solucionable";
-  return "Pendiente";
-}
-
-function isFinalTrackingStatus(status: string): boolean {
-  return status === "delivered" || status === "not_delivered" || status === "returned";
-}
-
-// Mapea el ultimo grupo de Moovin al estado de seguimiento. Vacio si no hay
-// dato de Moovin (cae a la logica de Boxful/sistema).
-function moovinGroupToStatus(group: string | undefined): string {
-  switch (group) {
-    case "delivered":
-      return "delivered";
-    case "returned":
-      return "not_delivered";
-    case "failed":
-      return "incident";
-    case "in_progress":
-      return "en_route";
-    default:
-      return "";
-  }
-}
-
-// Cuenta las incidencias de entrega ("Incidencia en la entrega", codigo FAILED)
-// de Moovin. Un envio en ruta con 1+ incidencia es un reintento tras fallar.
-function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): number {
-  if (!events?.length) return 0;
-  return events.filter(
-    (event) =>
-      String(event.code ?? "").toUpperCase() === "FAILED" ||
-      String(event.title ?? "").toLowerCase().includes("incidencia en la entrega")
-  ).length;
-}
-
-// Cuenta las salidas a reparto de Moovin ("En ruta para entregar a lo largo del
-// dia"). Varias salidas indican intentos de entrega repetidos. Se hace match por
-// la frase distintiva "a lo largo del" para tolerar variaciones de Moovin
-// (entregar/la entrega, con o sin tilde en "dia").
-function countMoovinRouteAttempts(events: MoovinTrackingRow["events"] | undefined): number {
-  if (!events?.length) return 0;
-  return events.filter((event) => {
-    const title = String(event.title ?? "").toLowerCase();
-    return title.includes("en ruta para") && title.includes("a lo largo del");
-  }).length;
-}
-
-// Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"
-// (p.ej. supera intentos de entrega) quedaba como en ruta y debe ser No
-// entregado; una incidencia de entrega activa (codigo FAILED) debe ser
-// Incidencia aunque el latest_group cacheado haya quedado viejo. Los demas
-// estados conservan su grupo ya calculado.
-function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
-  if (!row) return "";
-  const code = String(row.latest_code ?? "").toUpperCase();
-  const title = String(row.latest_status ?? "").toLowerCase();
-  if (code.startsWith("CANCEL") || title.includes("cancelado")) return "returned";
-  // Incidencia activa: el ultimo evento es una incidencia de entrega. Se rescata
-  // por has_incident/codigo/titulo por si el latest_group cacheado se sincronizo
-  // antes de la incidencia y aun dice "en ruta" (o quedo vacio), para que la fila
-  // se clasifique como Incidencia y no como En ruta.
-  if (row.has_incident || code === "FAILED" || title.includes("incidencia en la entrega")) {
-    return "failed";
-  }
-  return row.latest_group ?? "";
-}
-
-function isShopifyCancelled(
-  row: Pick<TrackableOrderRow, "shopify_cancelled_at" | "shopify_financial_status"> | Pick<OrderProfitabilityRow, "shopify_cancelled_at" | "shopify_financial_status">
-): boolean {
-  return Boolean(row.shopify_cancelled_at || row.shopify_financial_status === "voided");
-}
+// La maquina de estados de seguimiento (getEffectiveTrackingStatus,
+// moovinGroupToStatus, isFinalTrackingStatus, isPendingLike, ...) y la
+// clasificacion de incidencias (countMoovinIncidents, countMoovinRouteAttempts,
+// classifyIncident, getTrackingFilterFromStatus, getTrackingStatusLabel) viven
+// en lib/order-tracking.ts (fuente unica, testeable). Se importan al inicio.
