@@ -37,6 +37,21 @@ import {
   type OrderMatchKeySource,
 } from "@/lib/order-matching";
 import { reconcileMoovin, type MoovinDiscrepancy } from "@/lib/moovin-reconcile";
+import {
+  classifyIncident,
+  countMoovinIncidents,
+  countMoovinRouteAttempts,
+  deriveMoovinGroup,
+  getEffectiveTrackingStatus,
+  getTrackingFilterFromStatus,
+  getTrackingStatusLabel,
+  inferTrackingStatusFromText,
+  isFinalTrackingStatus,
+  isPendingLike,
+  isShopifyCancelled,
+  moovinGroupToStatus,
+  type OrderTrackingFilter,
+} from "@/lib/order-tracking";
 import type {
   BoxfulFileControl,
   BusinessExpense,
@@ -59,7 +74,6 @@ import { Input } from "@/components/ui/input";
 
 type Tab = "orders" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
-type OrderTrackingFilter = "all" | "pending" | "en_route" | "en_route_retry" | "incident" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
   | "all"
   | "no_cost"
@@ -138,6 +152,7 @@ interface TrackableOrderRow {
   courier?: string;
   moovin_group?: string;
   moovin_incidents?: number;
+  moovin_route_attempts?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -187,6 +202,10 @@ interface OrderProfitabilityRow {
   shopify_cancelled_at: string | null;
   shopify_financial_status: string;
   tracking_status: string;
+  // Estado a nivel de filtro para el badge (separa incidencia solucionable / no
+  // solucionable). tracking_status conserva "incident" para la logica de
+  // agregacion (pendientes, caja, etc.).
+  tracking_badge_status: string;
   tracking_label: string;
   settlement_status: string;
   settlement_files: string[];
@@ -318,7 +337,8 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "pending", label: "Pendientes" },
   { value: "en_route", label: "En ruta" },
   { value: "en_route_retry", label: "Reintento" },
-  { value: "incident", label: "Incidencia" },
+  { value: "incident_solvable", label: "Inc. solucionable" },
+  { value: "incident_unsolvable", label: "Inc. no solucionable" },
   { value: "annulled", label: "Anulados" },
   { value: "delivered", label: "Entregados" },
   { value: "not_delivered", label: "No entregados" },
@@ -330,7 +350,10 @@ const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   pending: "bg-slate-400",
   en_route: "bg-cyan-400",
   en_route_retry: "bg-orange-500",
-  incident: "bg-amber-400",
+  // Solucionable (incidencia leve) en ambar; no solucionable (fallos repetidos)
+  // en rojo para reflejar la gravedad.
+  incident_solvable: "bg-amber-400",
+  incident_unsolvable: "bg-red-500",
   annulled: "bg-zinc-500",
   delivered: "bg-emerald-400",
   not_delivered: "bg-red-400",
@@ -1366,7 +1389,8 @@ function OrdersTab({
       pending: 0,
       en_route: 0,
       en_route_retry: 0,
-      incident: 0,
+      incident_solvable: 0,
+      incident_unsolvable: 0,
       annulled: 0,
       delivered: 0,
       not_delivered: 0,
@@ -1374,7 +1398,7 @@ function OrdersTab({
 
     for (const row of searchedRows) {
       const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      counts[getTrackingFilterFromStatus(status)] += 1;
+      counts[getTrackingFilterFromStatus(status, row)] += 1;
     }
 
     return counts;
@@ -1384,7 +1408,7 @@ function OrdersTab({
       searchedRows.filter((row) => {
         if (trackingFilter === "all") return true;
         const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-        return getTrackingFilterFromStatus(status) === trackingFilter;
+        return getTrackingFilterFromStatus(status, row) === trackingFilter;
       }),
     [searchedRows, settlementTraceByKey, trackingFilter]
   );
@@ -1892,18 +1916,21 @@ function OrdersTable({
                       Apellido: {row.last_name}
                     </span>
                   )}
-                  {row.phone && (
-                    <span
-                      className="block max-w-[150px] truncate font-mono text-[10px] text-muted-foreground"
-                      title={row.phone}
+                  {row.phone ? (
+                    <a
+                      href={`tel:${row.phone}`}
+                      className="mt-0.5 block max-w-[150px] truncate font-mono text-[10px] text-foreground/80 hover:underline"
+                      title={`Llamar ${row.phone}`}
                     >
-                      {row.phone}
-                    </span>
+                      Cel: {row.phone}
+                    </a>
+                  ) : (
+                    <span className="mt-0.5 block text-[9px] italic text-muted-foreground/50">Sin telefono</span>
                   )}
                 </td>
                 <td className="px-2 py-1.5">
                   <StatusBadge
-                    status={trackingStatus}
+                    status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus}
                     label={getTrackingStatusLabel(row, traces, trackingStatus)}
                   />
                 </td>
@@ -6467,7 +6494,7 @@ function MonthlyOrdersTable({ rows }: { rows: OrderProfitabilityRow[] }) {
                 </td>
                 <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
                 <td className="px-3 py-2">
-                  <StatusBadge status={row.tracking_status} label={row.tracking_label} />
+                  <StatusBadge status={row.tracking_badge_status || row.tracking_status} label={row.tracking_label} />
                 </td>
                 <td className="px-3 py-2">
                   <Badge variant={settlementVariant}>{settlementLabel}</Badge>
@@ -7036,6 +7063,14 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
         {label || "Reintento"}
       </Badge>
     );
+  if (status === "incident_solvable")
+    return (
+      <Badge variant="warning" className="border-amber-500/40 bg-amber-500/20 text-amber-300">
+        {label || "Incidencia solucionable"}
+      </Badge>
+    );
+  if (status === "incident_unsolvable")
+    return <Badge variant="destructive">{label || "Incidencia no solucionable"}</Badge>;
   if (status === "incident") return <Badge variant="destructive">{label || "Incidencia"}</Badge>;
   return <Badge variant="muted">{label || "Pendiente"}</Badge>;
 }
@@ -7219,6 +7254,25 @@ async function fetchPersistedShopifySnapshot(
   return { orders, total: orders.length, coverage };
 }
 
+// Muchos checkouts de Costa Rica (COD) capturan el celular en un campo
+// personalizado del checkout (note_attributes: "Telefono", "Celular",
+// "WhatsApp"...) en vez del campo estandar de Shopify (que suele venir vacio).
+// Se rescata de ahi cuando el telefono plano no esta.
+function phoneFromNoteAttributes(
+  attrs?: Array<{ name?: string | null; value?: string | null }>
+): string | null {
+  if (!attrs?.length) return null;
+  const keyRe = /tel|cel|phone|whats|m[oó]vil/i;
+  for (const attr of attrs) {
+    const name = String(attr.name ?? "");
+    const value = String(attr.value ?? "").trim();
+    if (!value) continue;
+    // Debe parecer un telefono: 8+ digitos (CR son 8, con codigo de pais mas).
+    if (keyRe.test(name) && value.replace(/\D/g, "").length >= 8) return value;
+  }
+  return null;
+}
+
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
   // El endpoint ya resuelve lineas y notas; raw_order queda solo como
   // respaldo por si llega una respuesta vieja cacheada.
@@ -7241,7 +7295,7 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     name: String(order.name ?? ""),
     customer_name: String(order.customer_name ?? "Sin nombre"),
     last_name: String(order.last_name ?? ""),
-    phone: (order.phone as string | null) ?? null,
+    phone: (order.phone as string | null) || phoneFromNoteAttributes(noteAttributes),
     products: lineItems.map((item) => `${item.quantity}x ${item.title}`).join(", "),
     total: `${order.total_price ?? 0} ${order.currency ?? "CRC"}`,
     total_price: Number(order.total_price ?? 0),
@@ -7525,6 +7579,9 @@ function buildVisibleOrderRows(
       moovin_incidents: row.guide_number
         ? countMoovinIncidents(moovinByPackage.get(row.guide_number)?.events)
         : undefined,
+      moovin_route_attempts: row.guide_number
+        ? countMoovinRouteAttempts(moovinByPackage.get(row.guide_number)?.events)
+        : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
       phone: shopify?.phone || row.customer_phone || null,
@@ -7574,6 +7631,7 @@ function buildVisibleOrderRows(
       courier: shopifyCourier,
       moovin_group: deriveMoovinGroup(moovinHit),
       moovin_incidents: moovinHit ? countMoovinIncidents(moovinHit.events) : undefined,
+      moovin_route_attempts: moovinHit ? countMoovinRouteAttempts(moovinHit.events) : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
@@ -7731,6 +7789,7 @@ function buildFinanceControlCenter(
 
     const traces = getSettlementTracesForLogisticsRow(order, settlementTraceByKey);
     const trackingStatus = getEffectiveTrackingStatus(order, traces);
+    const trackingBadgeStatus = getTrackingFilterFromStatus(trackingStatus, order);
     const trackingLabel = getTrackingStatusLabel(order, traces, trackingStatus);
     const financialRow = buildOrderProfitabilityRow({
       order,
@@ -7738,6 +7797,7 @@ function buildFinanceControlCenter(
       fileByImportId,
       costVersionsBySku,
       trackingStatus,
+      trackingBadgeStatus,
       trackingLabel,
     });
 
@@ -8234,6 +8294,7 @@ function buildOrderProfitabilityRow({
   fileByImportId,
   costVersionsBySku,
   trackingStatus,
+  trackingBadgeStatus,
   trackingLabel,
 }: {
   order: TrackableOrderRow;
@@ -8241,6 +8302,7 @@ function buildOrderProfitabilityRow({
   fileByImportId: Map<number, string>;
   costVersionsBySku: Map<string, ProductCostVersion[]>;
   trackingStatus: string;
+  trackingBadgeStatus: string;
   trackingLabel: string;
 }): OrderProfitabilityRow {
   const settlementFiles = uniqueKeys(
@@ -8286,6 +8348,7 @@ function buildOrderProfitabilityRow({
     shopify_cancelled_at: order.shopify_cancelled_at,
     shopify_financial_status: order.shopify_financial_status,
     tracking_status: trackingStatus,
+    tracking_badge_status: trackingBadgeStatus,
     tracking_label: trackingLabel,
     settlement_status: settlementStatuses.join(", ") || "Sin liquidacion",
     settlement_files: settlementFiles,
@@ -8781,138 +8844,8 @@ function getOrderDateKey(row: Pick<TrackableOrderRow, "shopify_created_at">): st
   return row.shopify_created_at ? row.shopify_created_at.slice(0, 10) : "";
 }
 
-function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "guide_number">,
-  traces: SettlementTrace[]
-): string {
-  // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
-  const moovinStatus = moovinGroupToStatus(row.moovin_group);
-  if (moovinStatus) {
-    // En ruta tras fallar la entrega (1+ incidencia) = reintento a presionar.
-    if (moovinStatus === "en_route" && (row.moovin_incidents ?? 0) >= 1) return "en_route_retry";
-    return moovinStatus;
-  }
-
-  if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
-
-  const boxfulStatus = inferTrackingStatusFromText(row.boxful_status);
-  if (isFinalTrackingStatus(boxfulStatus)) return boxfulStatus;
-
-  const settlementStatus = traces.find((trace) => isFinalTrackingStatus(trace.internal_status));
-  if (settlementStatus) return settlementStatus.internal_status;
-
-  // Tiene guia (Boxful, liquidacion o el fulfillment de Shopify) = despachado.
-  const hasOperationalMovement = row.source !== "shopify" || traces.length > 0 || Boolean(row.guide_number);
-  if (isShopifyCancelled(row) && !hasOperationalMovement) return "annulled";
-  // Con guia/courier (movimiento logistico) y sin estado final = en reparto.
-  if (hasOperationalMovement) return "en_route";
-
-  return "pending";
-}
-
-// "Pendiente operativo" para agregaciones: incluye en ruta (despachado pero
-// aun sin entregar) y pendiente (sin despachar).
-function isPendingLike(status: string): boolean {
-  return (
-    status === "pending" ||
-    status === "en_route" ||
-    status === "en_route_retry" ||
-    status === "incident"
-  );
-}
-
-function inferTrackingStatusFromText(status: string): string {
-  const lower = status.toLowerCase();
-  if (lower.includes("no entregado") || lower.includes("devuelto")) return "not_delivered";
-  if (lower.includes("entregado")) return "delivered";
-  return "pending";
-}
-
-function getTrackingFilterFromStatus(status: string): Exclude<OrderTrackingFilter, "all"> {
-  if (status === "annulled") return "annulled";
-  if (status === "delivered") return "delivered";
-  if (status === "not_delivered" || status === "returned") return "not_delivered";
-  if (status === "en_route") return "en_route";
-  if (status === "en_route_retry") return "en_route_retry";
-  if (status === "incident") return "incident";
-  return "pending";
-}
-
-function getTrackingStatusLabel(
-  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents">,
-  traces: SettlementTrace[],
-  status: string
-): string {
-  if (status === "annulled") return "Anulado";
-  if (isFinalTrackingStatus(row.internal_status)) {
-    return status === "not_delivered" || status === "returned" ? "No entregado" : row.boxful_status || "Entregado";
-  }
-
-  const settlementTrace = traces.find((trace) => trace.internal_status === status);
-  if (settlementTrace?.settlement_status) return settlementTrace.settlement_status;
-  if (status === "delivered") return "Entregado";
-  if (status === "not_delivered" || status === "returned") return "No entregado";
-  if (status === "en_route") return row.boxful_status || "En ruta";
-  if (status === "en_route_retry")
-    return (row.moovin_incidents ?? 1) > 1 ? `Reintento (${row.moovin_incidents})` : "Reintento";
-  if (status === "incident") return "Incidencia";
-  return "Pendiente";
-}
-
-function isFinalTrackingStatus(status: string): boolean {
-  return status === "delivered" || status === "not_delivered" || status === "returned";
-}
-
-// Mapea el ultimo grupo de Moovin al estado de seguimiento. Vacio si no hay
-// dato de Moovin (cae a la logica de Boxful/sistema).
-function moovinGroupToStatus(group: string | undefined): string {
-  switch (group) {
-    case "delivered":
-      return "delivered";
-    case "returned":
-      return "not_delivered";
-    case "failed":
-      return "incident";
-    case "in_progress":
-      return "en_route";
-    default:
-      return "";
-  }
-}
-
-// Cuenta las incidencias de entrega ("Incidencia en la entrega", codigo FAILED)
-// de Moovin. Un envio en ruta con 1+ incidencia es un reintento tras fallar.
-function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): number {
-  if (!events?.length) return 0;
-  return events.filter(
-    (event) =>
-      String(event.code ?? "").toUpperCase() === "FAILED" ||
-      String(event.title ?? "").toLowerCase().includes("incidencia en la entrega")
-  ).length;
-}
-
-// Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"
-// (p.ej. supera intentos de entrega) quedaba como en ruta y debe ser No
-// entregado; una incidencia de entrega activa (codigo FAILED) debe ser
-// Incidencia aunque el latest_group cacheado haya quedado viejo. Los demas
-// estados conservan su grupo ya calculado.
-function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
-  if (!row) return "";
-  const code = String(row.latest_code ?? "").toUpperCase();
-  const title = String(row.latest_status ?? "").toLowerCase();
-  if (code.startsWith("CANCEL") || title.includes("cancelado")) return "returned";
-  // Incidencia activa: el ultimo evento es una incidencia de entrega. Se rescata
-  // por has_incident/codigo/titulo por si el latest_group cacheado se sincronizo
-  // antes de la incidencia y aun dice "en ruta" (o quedo vacio), para que la fila
-  // se clasifique como Incidencia y no como En ruta.
-  if (row.has_incident || code === "FAILED" || title.includes("incidencia en la entrega")) {
-    return "failed";
-  }
-  return row.latest_group ?? "";
-}
-
-function isShopifyCancelled(
-  row: Pick<TrackableOrderRow, "shopify_cancelled_at" | "shopify_financial_status"> | Pick<OrderProfitabilityRow, "shopify_cancelled_at" | "shopify_financial_status">
-): boolean {
-  return Boolean(row.shopify_cancelled_at || row.shopify_financial_status === "voided");
-}
+// La maquina de estados de seguimiento (getEffectiveTrackingStatus,
+// moovinGroupToStatus, isFinalTrackingStatus, isPendingLike, ...) y la
+// clasificacion de incidencias (countMoovinIncidents, countMoovinRouteAttempts,
+// classifyIncident, getTrackingFilterFromStatus, getTrackingStatusLabel) viven
+// en lib/order-tracking.ts (fuente unica, testeable). Se importan al inicio.
