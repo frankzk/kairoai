@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/moovin",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/icomfly",
+      "schedule": "*/30 * * * *"
     }
   ],
   "functions": {
@@ -23,6 +27,12 @@
       "maxDuration": 25
     },
     "app/api/cron/moovin/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/cron/icomfly/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/icomfly/sync/route.ts": {
       "maxDuration": 60
     },
     "app/api/finance/settlements/route.ts": {
