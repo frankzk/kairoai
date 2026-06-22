@@ -22,6 +22,7 @@ import {
   Search,
   StickyNote,
   Trash2,
+  Truck,
   Upload,
   X,
 } from "lucide-react";
@@ -56,8 +57,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import DispatchTab from "@/components/DispatchTab";
 
-type Tab = "orders" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
+type Tab = "orders" | "dispatch" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
 type OrderTrackingFilter = "all" | "pending" | "en_route" | "en_route_retry" | "incident" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
@@ -1057,6 +1059,9 @@ export default function FinancePage() {
           <TabButton active={tab === "orders"} onClick={() => setTab("orders")} icon={<FileSpreadsheet />}>
             Pedidos
           </TabButton>
+          <TabButton active={tab === "dispatch"} onClick={() => setTab("dispatch")} icon={<Truck />}>
+            Despacho
+          </TabButton>
           <TabButton active={tab === "products"} onClick={() => setTab("products")} icon={<BarChart3 />}>
             Productos
           </TabButton>
@@ -1103,6 +1108,7 @@ export default function FinancePage() {
                 onLogisticsImport={handleLogisticsImport}
               />
             )}
+            {tab === "dispatch" && <DispatchTab />}
             {tab === "products" && (
               <ProductAnalysisTab
                 rows={productAnalysisRows}
