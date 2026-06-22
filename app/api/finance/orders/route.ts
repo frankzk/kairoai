@@ -28,7 +28,8 @@ type TrackingFilter =
   | "pending"
   | "en_route"
   | "en_route_retry"
-  | "incident"
+  | "incident_solvable"
+  | "incident_unsolvable"
   | "annulled"
   | "delivered"
   | "not_delivered";
@@ -40,7 +41,8 @@ const TRACKING_FILTERS: TrackingFilter[] = [
   "pending",
   "en_route",
   "en_route_retry",
-  "incident",
+  "incident_solvable",
+  "incident_unsolvable",
   "annulled",
   "delivered",
   "not_delivered",
@@ -173,20 +175,21 @@ export async function GET(req: NextRequest) {
       pending: 0,
       en_route: 0,
       en_route_retry: 0,
-      incident: 0,
+      incident_solvable: 0,
+      incident_unsolvable: 0,
       annulled: 0,
       delivered: 0,
       not_delivered: 0,
     };
     for (const item of withMeta) {
-      trackingCounts[getTrackingFilterFromStatus(item.status)] += 1;
+      trackingCounts[getTrackingFilterFromStatus(item.status, item.row)] += 1;
     }
 
     // 3) Filtro de estado -> sobre este conjunto se miden los settlementCounts.
     const trackingFiltered =
       trackingFilter === "all"
         ? withMeta
-        : withMeta.filter((item) => getTrackingFilterFromStatus(item.status) === trackingFilter);
+        : withMeta.filter((item) => getTrackingFilterFromStatus(item.status, item.row) === trackingFilter);
 
     const settlementCounts: Record<SettlementFilter, number> = {
       all: trackingFiltered.length,
