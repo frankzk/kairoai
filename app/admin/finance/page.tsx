@@ -1916,13 +1916,16 @@ function OrdersTable({
                       Apellido: {row.last_name}
                     </span>
                   )}
-                  {row.phone && (
-                    <span
-                      className="block max-w-[150px] truncate font-mono text-[10px] text-muted-foreground"
-                      title={row.phone}
+                  {row.phone ? (
+                    <a
+                      href={`tel:${row.phone}`}
+                      className="mt-0.5 block max-w-[150px] truncate font-mono text-[10px] text-foreground/80 hover:underline"
+                      title={`Llamar ${row.phone}`}
                     >
-                      {row.phone}
-                    </span>
+                      Cel: {row.phone}
+                    </a>
+                  ) : (
+                    <span className="mt-0.5 block text-[9px] italic text-muted-foreground/50">Sin telefono</span>
                   )}
                 </td>
                 <td className="px-2 py-1.5">
@@ -7251,6 +7254,25 @@ async function fetchPersistedShopifySnapshot(
   return { orders, total: orders.length, coverage };
 }
 
+// Muchos checkouts de Costa Rica (COD) capturan el celular en un campo
+// personalizado del checkout (note_attributes: "Telefono", "Celular",
+// "WhatsApp"...) en vez del campo estandar de Shopify (que suele venir vacio).
+// Se rescata de ahi cuando el telefono plano no esta.
+function phoneFromNoteAttributes(
+  attrs?: Array<{ name?: string | null; value?: string | null }>
+): string | null {
+  if (!attrs?.length) return null;
+  const keyRe = /tel|cel|phone|whats|m[oó]vil/i;
+  for (const attr of attrs) {
+    const name = String(attr.name ?? "");
+    const value = String(attr.value ?? "").trim();
+    if (!value) continue;
+    // Debe parecer un telefono: 8+ digitos (CR son 8, con codigo de pais mas).
+    if (keyRe.test(name) && value.replace(/\D/g, "").length >= 8) return value;
+  }
+  return null;
+}
+
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
   // El endpoint ya resuelve lineas y notas; raw_order queda solo como
   // respaldo por si llega una respuesta vieja cacheada.
@@ -7273,7 +7295,7 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     name: String(order.name ?? ""),
     customer_name: String(order.customer_name ?? "Sin nombre"),
     last_name: String(order.last_name ?? ""),
-    phone: (order.phone as string | null) ?? null,
+    phone: (order.phone as string | null) || phoneFromNoteAttributes(noteAttributes),
     products: lineItems.map((item) => `${item.quantity}x ${item.title}`).join(", "),
     total: `${order.total_price ?? 0} ${order.currency ?? "CRC"}`,
     total_price: Number(order.total_price ?? 0),
