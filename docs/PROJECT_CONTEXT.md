@@ -798,6 +798,39 @@ Build in this order:
   incident, system-delivered while Moovin not confirmed) as a clickable alert +
   modal in Pedidos.
 
+### iComfly Estado de Despacho (lib/icomfly.ts, lib/dispatch.ts, migration 0010)
+Supervisa el despacho de pedidos COD en dos momentos atribuibles a personas:
+1. la **asesora** confirma el pedido y luego **solicita el despacho / genera la
+   guía de transporte** en iComfly; 2. el **almacén** (ShipHero/Boxful) genera la
+   **guía final** en su horario (corte 15:00 CR). Entre ambos hay un limbo que se
+   vigila como **standby**.
+
+- **Fuente:** `lib/icomfly.ts` consume la API de iComfly (read-only). Auth por
+  `ICOMFLY_TOKEN` o login `ICOMFLY_EMAIL`/`ICOMFLY_PASSWORD` (POST /auth/login).
+  `GET /orders?withAttribution=1` (atribución `confirmo`/`genero_guia`/`envio` con
+  nombre+correo) y `GET /metrics/agents`. Normalización tolerante de campos.
+- **Lógica pura** en `lib/dispatch.ts` (testeada, `tests/dispatch.test.ts`):
+  sub-estado `pendiente → despacho_solicitado → despachado`; guía final detectada
+  por iComfly (status/tracking/shipped) **y** Boxful (`logistics_rows.guide_number`);
+  standby a las **15:00 CR**; match con la planilla (`payroll_staff`) por
+  `icomfly_user_id` → correo → nombre normalizado.
+  - **Pendiente de confirmar con iComfly:** si `genero_guia` o `envio` es la
+    "solicitud de despacho" → constante `DISPATCH_REQUEST_FIELD` (configurable).
+- **Almacén no atribuible por persona** (ShipHero no se extrae): la guía final se
+  mide "hecha + cuándo", sin nombre. Productividad por persona = solo asesoras.
+- **Migración 0010:** tablas `icomfly_orders` e `icomfly_agents`; enriquece
+  `payroll_staff` con `email` + `icomfly_user_id` (el sync los auto-completa por
+  match de nombre). Diseño multi-tienda/courier/usuario (cada fila lleva
+  `store_id`, `carrier_name`, `*_user_id`).
+- **Sync** (`lib/icomfly-sync.ts`): `POST /api/icomfly/sync` (manual, dashboard) y
+  `GET/POST /api/cron/icomfly` (cron cada 30 min, público como los demás crons).
+  `GET /api/icomfly/sync` lee lo persistido + resumen.
+- **UI:** tab **“Despacho”** en `/admin/finance` (`components/DispatchTab.tsx`):
+  resumen por estado, **alertas de standby**, **tablero diario** (hora CR),
+  **productividad por persona de la planilla** y lista de pedidos con estado +
+  atribución (Confirmó/Solicitó). Marca personas con actividad **no registradas
+  en la planilla**.
+
 ### Pending Supabase migrations (run in SQL Editor, idempotent)
 At the time of writing these were not yet confirmed applied in production — check
 `supabase/migrations/README.md` for current state:
@@ -806,6 +839,8 @@ At the time of writing these were not yet confirmed applied in production — ch
   `last_name`).
 - `0006_moovin_tracking.sql` — Moovin status cache. Until applied, Moovin works
   on-demand but nothing is cached and reconciliation stays empty.
+- `0010_icomfly_dispatch.sql` — Estado de Despacho (icomfly_orders / icomfly_agents
+  + columnas en payroll_staff). Hasta aplicarla, el tab “Despacho” queda vacío.
 
 ## Open Questions
 
