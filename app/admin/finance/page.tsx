@@ -35,6 +35,7 @@ import {
   type ProductAnalysisRow,
   type ShopifyNoteAliasRow,
 } from "@/lib/finance-orders";
+import { type DispatchView, resolveDispatchState } from "@/lib/dispatch";
 import { reconcileMoovin, type MoovinDiscrepancy } from "@/lib/moovin-reconcile";
 import type {
   BoxfulFileControl,
@@ -2296,26 +2297,27 @@ function OrdersTab({
   );
 }
 
-function DispatchBadge({ rec }: { rec: IcomflyOrderRecord }) {
-  const label = rec.is_standby
-    ? "Standby"
-    : rec.dispatch_state === "despachado"
-      ? "Despachado"
-      : rec.dispatch_state === "despacho_solicitado"
-        ? "Solicitado"
-        : "Pendiente";
-  const variant = rec.is_standby
-    ? "destructive"
-    : rec.dispatch_state === "despachado"
-      ? "success"
-      : rec.dispatch_state === "despacho_solicitado"
-        ? "info"
-        : "muted";
-  const who = rec.requested_by_name || rec.confirmed_by_name;
-  const whoLabel = rec.requested_by_name ? "Solicito" : rec.confirmed_by_name ? "Confirmo" : "";
+// Estado físico de despacho (Alt B): el estado lo manda la recolección de
+// Moovin (resolveDispatchState); el "quién" viene de la atribución de iComfly.
+const DISPATCH_LABEL: Record<DispatchView, string> = {
+  despachado: "Despachado",
+  solicitado: "Solicitado",
+  standby: "Standby",
+  pendiente: "Pendiente",
+};
+const DISPATCH_VARIANT: Record<DispatchView, "success" | "warning" | "destructive" | "muted"> = {
+  despachado: "success",
+  solicitado: "warning",
+  standby: "destructive",
+  pendiente: "muted",
+};
+
+function DispatchBadge({ state, rec }: { state: DispatchView; rec?: IcomflyOrderRecord }) {
+  const who = rec ? rec.requested_by_name || rec.confirmed_by_name : "";
+  const whoLabel = rec?.requested_by_name ? "Solicito" : rec?.confirmed_by_name ? "Confirmo" : "";
   return (
     <div className="flex flex-col items-start gap-0.5">
-      <Badge variant={variant}>{label}</Badge>
+      <Badge variant={DISPATCH_VARIANT[state]}>{DISPATCH_LABEL[state]}</Badge>
       {who && (
         <span
           className="max-w-[130px] truncate text-[10px] text-muted-foreground"
@@ -2358,6 +2360,11 @@ function OrdersTable({
           const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
           const itemsText = (row.package_items ?? []).map((item) => item.title).join(", ");
           const dispatch = dispatchByKey.get(normalizeMatchKey(row.shopify_order_name || row.order_name || ""));
+          const dispatchState = resolveDispatchState(
+            dispatch,
+            row.guide_number ? moovinByPackage.get(row.guide_number) : undefined,
+            row.guide_number
+          );
           return (
             <div key={row.row_key} className="rounded-lg border border-border bg-card p-3">
               <div className="flex items-start justify-between gap-2">
@@ -2402,7 +2409,7 @@ function OrdersTable({
                     {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
                   </Badge>
                   <SettlementStatusBadge traces={traces} />
-                  {dispatch && <DispatchBadge rec={dispatch} />}
+                  {dispatchState && <DispatchBadge state={dispatchState} rec={dispatch} />}
                   {traces.length > 0 && (
                     <span className="text-[11px] text-muted-foreground">
                       A liquidar {currency(sum(traces.map((trace) => trace.amount_to_liquidate)))}
@@ -2454,6 +2461,11 @@ function OrdersTable({
             const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
             const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
             const dispatch = dispatchByKey.get(normalizeMatchKey(row.shopify_order_name || row.order_name || ""));
+            const dispatchState = resolveDispatchState(
+              dispatch,
+              row.guide_number ? moovinByPackage.get(row.guide_number) : undefined,
+              row.guide_number
+            );
             return (
               <tr key={row.row_key} className="border-b border-border/50">
                 <td className="px-2 py-1.5 font-mono text-xs">{row.order_name}</td>
@@ -2510,7 +2522,7 @@ function OrdersTable({
                   />
                 </td>
                 <td className="px-2 py-1.5">
-                  {dispatch ? <DispatchBadge rec={dispatch} /> : <span className="text-xs text-muted-foreground">-</span>}
+                  {dispatchState ? <DispatchBadge state={dispatchState} rec={dispatch} /> : <span className="text-xs text-muted-foreground">-</span>}
                 </td>
                 <td className="px-2 py-1.5">
                   <Badge variant={row.match_status === "matched" ? "success" : "warning"}>
