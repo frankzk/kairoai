@@ -26,7 +26,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { normalizeSearchText } from "@/lib/order-matching";
+import { normalizeSearchText, normalizeMatchKey } from "@/lib/order-matching";
 import {
   type FinanceControlCenter,
   type FinancialAnomaly,
@@ -42,6 +42,7 @@ import type {
   ExpenseType,
   FinanceClaim,
   ForzaTrackingRow,
+  IcomflyOrderRecord,
   LogisticsImport,
   LogisticsRow,
   MoovinTrackingRow,
@@ -1619,6 +1620,10 @@ function OrdersTab({
   }>({ moovin: [], forza: [] });
   const [tableLoading, setTableLoading] = useState(true);
   const [tableError, setTableError] = useState("");
+  // Despacho iComfly cruzado por nombre de Shopify (#MCRC...). Se trae una vez
+  // (es opcional: si falla, la tabla sigue sin la columna). Clave = order name
+  // normalizado (normalizeMatchKey, igual que el match de Boxful).
+  const [dispatchByKey, setDispatchByKey] = useState<Map<string, IcomflyOrderRecord>>(new Map());
   const [exporting, setExporting] = useState(false);
   // Busqueda con debounce (~300ms) para no disparar un fetch por tecla.
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -1689,6 +1694,34 @@ function OrdersTab({
     })();
     return () => controller.abort();
   }, [buildOrdersQuery, page, selectedStore.code, refreshKey]);
+
+  // Despacho iComfly: mapa por nombre de Shopify para anotar cada fila de la
+  // tabla con su sub-estado y atribucion. Una sola lectura (independiente de
+  // pagina/filtro). iComfly es store 71 (Costa Rica); en otras tiendas el mapa
+  // queda vacio y la columna muestra "-".
+  useEffect(() => {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch("/api/icomfly/sync", { cache: "no-store", signal: controller.signal });
+        if (!res.ok) return;
+        const json = await res.json();
+        const orders = Array.isArray(json.orders) ? (json.orders as IcomflyOrderRecord[]) : [];
+        const map = new Map<string, IcomflyOrderRecord>();
+        // listIcomflyOrders viene ordenado por requested_at desc, asi que el
+        // primero por clave es el mas reciente (un pedido Shopify puede tener
+        // varias lineas/pedidos en iComfly).
+        for (const o of orders) {
+          const key = normalizeMatchKey(o.shopify_display_number || "");
+          if (key && !map.has(key)) map.set(key, o);
+        }
+        setDispatchByKey(map);
+      } catch {
+        /* despacho es opcional */
+      }
+    })();
+    return () => controller.abort();
+  }, []);
 
   // Guias "en ruta" para los botones Moovin/Forza: dependen de la tienda (no de
   // pagina/filtro), asi que se traen una sola vez por tienda con ?guides=1, en
@@ -2141,6 +2174,7 @@ function OrdersTab({
             rows={serverRows}
             moovinByPackage={moovinByPackage}
             forzaByGuide={forzaByGuide}
+            dispatchByKey={dispatchByKey}
             loading={tableLoading}
             emptyLabel={
               orderSearch
@@ -2262,11 +2296,44 @@ function OrdersTab({
   );
 }
 
+function DispatchBadge({ rec }: { rec: IcomflyOrderRecord }) {
+  const label = rec.is_standby
+    ? "Standby"
+    : rec.dispatch_state === "despachado"
+      ? "Despachado"
+      : rec.dispatch_state === "despacho_solicitado"
+        ? "Solicitado"
+        : "Pendiente";
+  const variant = rec.is_standby
+    ? "destructive"
+    : rec.dispatch_state === "despachado"
+      ? "success"
+      : rec.dispatch_state === "despacho_solicitado"
+        ? "info"
+        : "muted";
+  const who = rec.requested_by_name || rec.confirmed_by_name;
+  const whoLabel = rec.requested_by_name ? "Solicito" : rec.confirmed_by_name ? "Confirmo" : "";
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      <Badge variant={variant}>{label}</Badge>
+      {who && (
+        <span
+          className="max-w-[130px] truncate text-[10px] text-muted-foreground"
+          title={`${whoLabel}: ${who}`}
+        >
+          {whoLabel}: {who}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function OrdersTable({
   selectedStore,
   rows,
   moovinByPackage,
   forzaByGuide,
+  dispatchByKey,
   loading = false,
   emptyLabel = "No hay pedidos para mostrar.",
 }: {
@@ -2276,6 +2343,7 @@ function OrdersTable({
   rows: OrderRowWithTraces[];
   moovinByPackage: Map<string, MoovinTrackingRow>;
   forzaByGuide: Map<string, ForzaTrackingRow>;
+  dispatchByKey: Map<string, IcomflyOrderRecord>;
   loading?: boolean;
   emptyLabel?: string;
 }) {
@@ -2289,6 +2357,7 @@ function OrdersTable({
           const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
           const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
           const itemsText = (row.package_items ?? []).map((item) => item.title).join(", ");
+          const dispatch = dispatchByKey.get(normalizeMatchKey(row.shopify_order_name || row.order_name || ""));
           return (
             <div key={row.row_key} className="rounded-lg border border-border bg-card p-3">
               <div className="flex items-start justify-between gap-2">
@@ -2333,6 +2402,7 @@ function OrdersTable({
                     {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
                   </Badge>
                   <SettlementStatusBadge traces={traces} />
+                  {dispatch && <DispatchBadge rec={dispatch} />}
                   {traces.length > 0 && (
                     <span className="text-[11px] text-muted-foreground">
                       A liquidar {currency(sum(traces.map((trace) => trace.amount_to_liquidate)))}
@@ -2367,6 +2437,7 @@ function OrdersTable({
             <th className="px-2 py-1.5">Transportadora</th>
             <th className="px-2 py-1.5">Cliente</th>
             <th className="px-2 py-1.5">Estado seguimiento</th>
+            <th className="px-2 py-1.5">Despacho</th>
             <th className="px-2 py-1.5">Shopify</th>
             <th className="px-2 py-1.5">Fecha</th>
             <th className="px-2 py-1.5">Liquidacion</th>
@@ -2382,6 +2453,7 @@ function OrdersTable({
             const trackingStatus = getEffectiveTrackingStatus(row, traces);
             const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
             const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
+            const dispatch = dispatchByKey.get(normalizeMatchKey(row.shopify_order_name || row.order_name || ""));
             return (
               <tr key={row.row_key} className="border-b border-border/50">
                 <td className="px-2 py-1.5 font-mono text-xs">{row.order_name}</td>
@@ -2438,6 +2510,9 @@ function OrdersTable({
                   />
                 </td>
                 <td className="px-2 py-1.5">
+                  {dispatch ? <DispatchBadge rec={dispatch} /> : <span className="text-xs text-muted-foreground">-</span>}
+                </td>
+                <td className="px-2 py-1.5">
                   <Badge variant={row.match_status === "matched" ? "success" : "warning"}>
                     {row.match_status === "matched" ? row.shopify_order_name : "sin match"}
                   </Badge>
@@ -2470,7 +2545,7 @@ function OrdersTable({
           })}
           {!rows.length && (
             <tr>
-              <td colSpan={13} className="px-3 py-8 text-center text-sm text-muted-foreground">
+              <td colSpan={14} className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {loading ? (
                   <span className="inline-flex items-center gap-2">
                     <RefreshCw className="h-4 w-4 animate-spin" /> Cargando pedidos...
