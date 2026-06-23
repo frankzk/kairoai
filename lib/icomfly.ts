@@ -187,7 +187,7 @@ export function normalizeIcomflyOrder(
     storeId,
     icomflyOrderId: pickString(raw, ["id", "_id", "orderId", "uuid", "order_id"]),
     orderNumber: pickString(raw, ["order_number", "numero", "number", "code", "codigo", "reference"]),
-    shopifyDisplayNumber: pickString(raw, ["shopify_order_name", "shopify_name", "store_order_number", "external_number"]),
+    shopifyDisplayNumber: pickString(raw, ["shopify_display_number", "shopify_order_name", "shopify_name", "store_order_number", "external_number"]),
     status: pickString(raw, ["status", "estado", "order_status", "state"]),
     carrierName: pickString(raw, ["carrier", "courier", "transportadora", "carrier_name", "shipping_carrier"]),
     trackingNumber: pickString(raw, ["tracking_number", "tracking", "guia", "guide", "waybill", "guide_number"]),
