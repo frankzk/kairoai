@@ -38,6 +38,21 @@ import {
   type OrderMatchKeySource,
 } from "@/lib/order-matching";
 import { reconcileMoovin, type MoovinDiscrepancy } from "@/lib/moovin-reconcile";
+import {
+  classifyIncident,
+  countMoovinIncidents,
+  countMoovinRouteAttempts,
+  deriveMoovinGroup,
+  getEffectiveTrackingStatus,
+  getTrackingFilterFromStatus,
+  getTrackingStatusLabel,
+  inferTrackingStatusFromText,
+  isFinalTrackingStatus,
+  isPendingLike,
+  isShopifyCancelled,
+  moovinGroupToStatus,
+  type OrderTrackingFilter,
+} from "@/lib/order-tracking";
 import type {
   BoxfulFileControl,
   BusinessExpense,
@@ -61,7 +76,6 @@ import DispatchTab from "@/components/DispatchTab";
 
 type Tab = "orders" | "dispatch" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 type FinancialAnomalySeverity = "high" | "medium" | "low";
-type OrderTrackingFilter = "all" | "pending" | "en_route" | "en_route_retry" | "incident" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
   | "all"
   | "no_cost"
@@ -140,9 +154,11 @@ interface TrackableOrderRow {
   courier?: string;
   moovin_group?: string;
   moovin_incidents?: number;
+  moovin_route_attempts?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
+  phone?: string | null;
   boxful_status: string;
   internal_status: string;
   match_status: string;
@@ -188,6 +204,10 @@ interface OrderProfitabilityRow {
   shopify_cancelled_at: string | null;
   shopify_financial_status: string;
   tracking_status: string;
+  // Estado a nivel de filtro para el badge (separa incidencia solucionable / no
+  // solucionable). tracking_status conserva "incident" para la logica de
+  // agregacion (pendientes, caja, etc.).
+  tracking_badge_status: string;
   tracking_label: string;
   settlement_status: string;
   settlement_files: string[];
@@ -319,7 +339,8 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "pending", label: "Pendientes" },
   { value: "en_route", label: "En ruta" },
   { value: "en_route_retry", label: "Reintento" },
-  { value: "incident", label: "Incidencia" },
+  { value: "incident_solvable", label: "Inc. solucionable" },
+  { value: "incident_unsolvable", label: "Inc. no solucionable" },
   { value: "annulled", label: "Anulados" },
   { value: "delivered", label: "Entregados" },
   { value: "not_delivered", label: "No entregados" },
@@ -331,7 +352,10 @@ const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   pending: "bg-slate-400",
   en_route: "bg-cyan-400",
   en_route_retry: "bg-orange-500",
-  incident: "bg-amber-400",
+  // Solucionable (incidencia leve) en ambar; no solucionable (fallos repetidos)
+  // en rojo para reflejar la gravedad.
+  incident_solvable: "bg-amber-400",
+  incident_unsolvable: "bg-red-500",
   annulled: "bg-zinc-500",
   delivered: "bg-emerald-400",
   not_delivered: "bg-red-400",
@@ -437,6 +461,8 @@ const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 4000;
 // Ventana de "pedidos actualizados recientemente" leida en vivo de Shopify.
 const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
 const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
+// Cadencia del auto-refresco del dashboard (KPIs, Shopify y tracking Moovin).
+const FINANCE_AUTO_REFRESH_MS = 15 * 60 * 1000;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
@@ -473,7 +499,16 @@ export default function FinancePage() {
   });
   const [syncMessage, setSyncMessage] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const refreshRunRef = useRef(0);
+  // Espejos del estado para que el auto-refresco (effect con deps vacias) lea
+  // siempre el valor actual sin re-suscribirse.
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
+  const shopifyHistoryLoadingRef = useRef(shopifyHistoryLoading);
+  shopifyHistoryLoadingRef.current = shopifyHistoryLoading;
+  const lastRefreshedAtRef = useRef(lastRefreshedAt);
+  lastRefreshedAtRef.current = lastRefreshedAt;
 
   const latestLogisticsImport = logisticsImports[0];
   const liquidationAlertRows = useMemo(
@@ -513,14 +548,21 @@ export default function FinancePage() {
     [financeControl.orders, expenses]
   );
 
-  async function refresh() {
+  // background: auto-refresco periodico (sin spinner de pantalla completa y sin
+  // re-bajar todo el historico Shopify). Solo refresca la data viva y mezcla los
+  // pedidos recientes sobre el historico ya cargado, para mantener KPIs y estados
+  // al dia sin interrumpir al usuario.
+  async function refresh(opts: { background?: boolean } = {}) {
+    const background = opts.background === true;
     const refreshRun = refreshRunRef.current + 1;
     refreshRunRef.current = refreshRun;
     const isCurrentRun = () => refreshRunRef.current === refreshRun;
-    setLoading(true);
+    if (!background) {
+      setLoading(true);
+      setShopifyHistoryLoading(false);
+      setShopifyHistoryProgress({ loaded: 0, total: null });
+    }
     setError("");
-    setShopifyHistoryLoading(false);
-    setShopifyHistoryProgress({ loaded: 0, total: null });
     try {
       const [settlementsRes, logisticsRes, costsRes, expensesRes, summaryRes] =
         await Promise.all([
@@ -567,8 +609,13 @@ export default function FinancePage() {
       setLogisticsImports(logisticsJson.imports ?? []);
       setLogisticsRows(logisticsJson.rows ?? []);
       const liveShopifyOrders = Array.isArray(shopifyOrdersJson.orders) ? shopifyOrdersJson.orders as ShopifyOrderSummary[] : [];
-      setShopifyOrders(mergeShopifyOrderSummaries(liveShopifyOrders));
-      setShopifyCoverage(null);
+      if (background) {
+        // Conservar el historico ya cargado; solo superponer los pedidos recientes.
+        setShopifyOrders((prev) => mergeShopifyOrderSummaries(prev, liveShopifyOrders));
+      } else {
+        setShopifyOrders(mergeShopifyOrderSummaries(liveShopifyOrders));
+        setShopifyCoverage(null);
+      }
       setCosts(costsJson.costs ?? []);
       setCostVersions(Array.isArray(costsJson.versions) ? costsJson.versions as ProductCostVersion[] : []);
       setExpenses(expensesJson.expenses ?? []);
@@ -583,7 +630,13 @@ export default function FinancePage() {
         expensesJson.error ??
         summaryJson.error;
       if (firstError) setError(firstError);
-      setLoading(false);
+      if (!background) setLoading(false);
+      setLastRefreshedAt(new Date());
+
+      // El historico completo de Shopify se baja por lotes solo en la carga
+      // normal; en el auto-refresco se conserva el ya cargado para no repetir
+      // un pull pesado cada pocos minutos.
+      if (background) return;
 
       setShopifyHistoryLoading(true);
       try {
@@ -629,9 +682,9 @@ export default function FinancePage() {
         if (isCurrentRun()) setShopifyHistoryLoading(false);
       }
     } catch (err) {
-      if (isCurrentRun()) setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
+      if (isCurrentRun() && !background) setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
     } finally {
-      if (isCurrentRun()) setLoading(false);
+      if (isCurrentRun() && !background) setLoading(false);
     }
   }
 
@@ -639,6 +692,39 @@ export default function FinancePage() {
     refresh();
     loadShopifyProducts();
     reloadMoovin();
+  }, []);
+
+  // Auto-refresco continuo: mantiene KPIs, pedidos Shopify y tracking Moovin al
+  // dia sin intervencion. Corre cada FINANCE_AUTO_REFRESH_MS y tambien al volver
+  // a la pestana si el dato ya quedo viejo. El cron del servidor mantiene fresco
+  // el cache de Moovin; aqui solo se re-lee (reloadMoovin) y se refresca la data
+  // viva en segundo plano (sin spinner ni re-bajar el historico).
+  useEffect(() => {
+    const backgroundRefresh = () => {
+      // No solaparse con una carga normal en curso ni con el historico Shopify.
+      if (loadingRef.current || shopifyHistoryLoadingRef.current) return;
+      refresh({ background: true });
+      reloadMoovin();
+    };
+
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      backgroundRefresh();
+    }, FINANCE_AUTO_REFRESH_MS);
+
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      const last = lastRefreshedAtRef.current;
+      // Evita refrescar en cada cambio de foco: solo si el dato ya esta viejo.
+      if (last && Date.now() - last.getTime() < FINANCE_AUTO_REFRESH_MS) return;
+      backgroundRefresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   async function loadShopifyProducts() {
@@ -970,17 +1056,25 @@ export default function FinancePage() {
               Liquidaciones, costos por SKU, gastos y utilidad neta
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              refresh();
-              loadShopifyProducts();
-            }}
-            className="ml-auto gap-2"
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Actualizar
-          </Button>
+          <div className="ml-auto flex items-center gap-3">
+            {lastRefreshedAt && (
+              <span className="hidden text-xs text-muted-foreground sm:inline">
+                Actualizado{" "}
+                {lastRefreshedAt.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                refresh();
+                loadShopifyProducts();
+              }}
+              className="gap-2"
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Actualizar
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -1301,7 +1395,8 @@ function OrdersTab({
       pending: 0,
       en_route: 0,
       en_route_retry: 0,
-      incident: 0,
+      incident_solvable: 0,
+      incident_unsolvable: 0,
       annulled: 0,
       delivered: 0,
       not_delivered: 0,
@@ -1309,7 +1404,7 @@ function OrdersTab({
 
     for (const row of searchedRows) {
       const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      counts[getTrackingFilterFromStatus(status)] += 1;
+      counts[getTrackingFilterFromStatus(status, row)] += 1;
     }
 
     return counts;
@@ -1319,7 +1414,7 @@ function OrdersTab({
       searchedRows.filter((row) => {
         if (trackingFilter === "all") return true;
         const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-        return getTrackingFilterFromStatus(status) === trackingFilter;
+        return getTrackingFilterFromStatus(status, row) === trackingFilter;
       }),
     [searchedRows, settlementTraceByKey, trackingFilter]
   );
@@ -1538,6 +1633,7 @@ function OrdersTab({
                         "Incidencia Moovin": moovin?.has_incident ? "si" : "",
                         Cliente: row.customer_name,
                         Apellido: row.last_name ?? "",
+                        Celular: row.phone ?? "",
                         "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
                         Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
                         Fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
@@ -1822,14 +1918,25 @@ function OrdersTable({
                     {row.customer_name || "Sin nombre"}
                   </span>
                   {row.last_name && (
-                    <span className="mt-0.5 block max-w-[150px] truncate text-[10px] text-muted-foreground">
+                    <span className="mt-0.5 block max-w-[150px] truncate text-[9px] text-muted-foreground">
                       Apellido: {row.last_name}
                     </span>
+                  )}
+                  {row.phone ? (
+                    <a
+                      href={`tel:${row.phone}`}
+                      className="mt-0.5 block max-w-[150px] truncate font-mono text-[10px] text-foreground/80 hover:underline"
+                      title={`Llamar ${row.phone}`}
+                    >
+                      Cel: {row.phone}
+                    </a>
+                  ) : (
+                    <span className="mt-0.5 block text-[9px] italic text-muted-foreground/50">Sin telefono</span>
                   )}
                 </td>
                 <td className="px-2 py-1.5">
                   <StatusBadge
-                    status={trackingStatus}
+                    status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus}
                     label={getTrackingStatusLabel(row, traces, trackingStatus)}
                   />
                 </td>
@@ -6393,7 +6500,7 @@ function MonthlyOrdersTable({ rows }: { rows: OrderProfitabilityRow[] }) {
                 </td>
                 <td className="px-3 py-2">{row.customer_name || "Sin nombre"}</td>
                 <td className="px-3 py-2">
-                  <StatusBadge status={row.tracking_status} label={row.tracking_label} />
+                  <StatusBadge status={row.tracking_badge_status || row.tracking_status} label={row.tracking_label} />
                 </td>
                 <td className="px-3 py-2">
                   <Badge variant={settlementVariant}>{settlementLabel}</Badge>
@@ -6962,6 +7069,14 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
         {label || "Reintento"}
       </Badge>
     );
+  if (status === "incident_solvable")
+    return (
+      <Badge variant="warning" className="border-amber-500/40 bg-amber-500/20 text-amber-300">
+        {label || "Incidencia solucionable"}
+      </Badge>
+    );
+  if (status === "incident_unsolvable")
+    return <Badge variant="destructive">{label || "Incidencia no solucionable"}</Badge>;
   if (status === "incident") return <Badge variant="destructive">{label || "Incidencia"}</Badge>;
   return <Badge variant="muted">{label || "Pendiente"}</Badge>;
 }
@@ -7145,6 +7260,25 @@ async function fetchPersistedShopifySnapshot(
   return { orders, total: orders.length, coverage };
 }
 
+// Muchos checkouts de Costa Rica (COD) capturan el celular en un campo
+// personalizado del checkout (note_attributes: "Telefono", "Celular",
+// "WhatsApp"...) en vez del campo estandar de Shopify (que suele venir vacio).
+// Se rescata de ahi cuando el telefono plano no esta.
+function phoneFromNoteAttributes(
+  attrs?: Array<{ name?: string | null; value?: string | null }>
+): string | null {
+  if (!attrs?.length) return null;
+  const keyRe = /tel|cel|phone|whats|m[oó]vil/i;
+  for (const attr of attrs) {
+    const name = String(attr.name ?? "");
+    const value = String(attr.value ?? "").trim();
+    if (!value) continue;
+    // Debe parecer un telefono: 8+ digitos (CR son 8, con codigo de pais mas).
+    if (keyRe.test(name) && value.replace(/\D/g, "").length >= 8) return value;
+  }
+  return null;
+}
+
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
   // El endpoint ya resuelve lineas y notas; raw_order queda solo como
   // respaldo por si llega una respuesta vieja cacheada.
@@ -7167,7 +7301,7 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     name: String(order.name ?? ""),
     customer_name: String(order.customer_name ?? "Sin nombre"),
     last_name: String(order.last_name ?? ""),
-    phone: (order.phone as string | null) ?? null,
+    phone: (order.phone as string | null) || phoneFromNoteAttributes(noteAttributes),
     products: lineItems.map((item) => `${item.quantity}x ${item.title}`).join(", "),
     total: `${order.total_price ?? 0} ${order.currency ?? "CRC"}`,
     total_price: Number(order.total_price ?? 0),
@@ -7451,8 +7585,12 @@ function buildVisibleOrderRows(
       moovin_incidents: row.guide_number
         ? countMoovinIncidents(moovinByPackage.get(row.guide_number)?.events)
         : undefined,
+      moovin_route_attempts: row.guide_number
+        ? countMoovinRouteAttempts(moovinByPackage.get(row.guide_number)?.events)
+        : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
+      phone: shopify?.phone || row.customer_phone || null,
       match_status: shopify ? "matched" : row.match_status,
       cod_amount: row.cod_amount || Number(shopify?.total_price || parseMoneyText(shopify?.total ?? "")),
       shopify_order_name: shopify?.name ?? row.shopify_order_name,
@@ -7499,9 +7637,11 @@ function buildVisibleOrderRows(
       courier: shopifyCourier,
       moovin_group: deriveMoovinGroup(moovinHit),
       moovin_incidents: moovinHit ? countMoovinIncidents(moovinHit.events) : undefined,
+      moovin_route_attempts: moovinHit ? countMoovinRouteAttempts(moovinHit.events) : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
+      phone: order.phone || null,
       boxful_status: "",
       internal_status:
         order.cancelled_at || order.financial_status === "voided" ? "annulled" : "pending",
@@ -7655,6 +7795,7 @@ function buildFinanceControlCenter(
 
     const traces = getSettlementTracesForLogisticsRow(order, settlementTraceByKey);
     const trackingStatus = getEffectiveTrackingStatus(order, traces);
+    const trackingBadgeStatus = getTrackingFilterFromStatus(trackingStatus, order);
     const trackingLabel = getTrackingStatusLabel(order, traces, trackingStatus);
     const financialRow = buildOrderProfitabilityRow({
       order,
@@ -7662,6 +7803,7 @@ function buildFinanceControlCenter(
       fileByImportId,
       costVersionsBySku,
       trackingStatus,
+      trackingBadgeStatus,
       trackingLabel,
     });
 
@@ -8158,6 +8300,7 @@ function buildOrderProfitabilityRow({
   fileByImportId,
   costVersionsBySku,
   trackingStatus,
+  trackingBadgeStatus,
   trackingLabel,
 }: {
   order: TrackableOrderRow;
@@ -8165,6 +8308,7 @@ function buildOrderProfitabilityRow({
   fileByImportId: Map<number, string>;
   costVersionsBySku: Map<string, ProductCostVersion[]>;
   trackingStatus: string;
+  trackingBadgeStatus: string;
   trackingLabel: string;
 }): OrderProfitabilityRow {
   const settlementFiles = uniqueKeys(
@@ -8210,6 +8354,7 @@ function buildOrderProfitabilityRow({
     shopify_cancelled_at: order.shopify_cancelled_at,
     shopify_financial_status: order.shopify_financial_status,
     tracking_status: trackingStatus,
+    tracking_badge_status: trackingBadgeStatus,
     tracking_label: trackingLabel,
     settlement_status: settlementStatuses.join(", ") || "Sin liquidacion",
     settlement_files: settlementFiles,
@@ -8705,129 +8850,8 @@ function getOrderDateKey(row: Pick<TrackableOrderRow, "shopify_created_at">): st
   return row.shopify_created_at ? row.shopify_created_at.slice(0, 10) : "";
 }
 
-function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "guide_number">,
-  traces: SettlementTrace[]
-): string {
-  // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
-  const moovinStatus = moovinGroupToStatus(row.moovin_group);
-  if (moovinStatus) {
-    // En ruta tras fallar la entrega (1+ incidencia) = reintento a presionar.
-    if (moovinStatus === "en_route" && (row.moovin_incidents ?? 0) >= 1) return "en_route_retry";
-    return moovinStatus;
-  }
-
-  if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
-
-  const boxfulStatus = inferTrackingStatusFromText(row.boxful_status);
-  if (isFinalTrackingStatus(boxfulStatus)) return boxfulStatus;
-
-  const settlementStatus = traces.find((trace) => isFinalTrackingStatus(trace.internal_status));
-  if (settlementStatus) return settlementStatus.internal_status;
-
-  // Tiene guia (Boxful, liquidacion o el fulfillment de Shopify) = despachado.
-  const hasOperationalMovement = row.source !== "shopify" || traces.length > 0 || Boolean(row.guide_number);
-  if (isShopifyCancelled(row) && !hasOperationalMovement) return "annulled";
-  // Con guia/courier (movimiento logistico) y sin estado final = en reparto.
-  if (hasOperationalMovement) return "en_route";
-
-  return "pending";
-}
-
-// "Pendiente operativo" para agregaciones: incluye en ruta (despachado pero
-// aun sin entregar) y pendiente (sin despachar).
-function isPendingLike(status: string): boolean {
-  return (
-    status === "pending" ||
-    status === "en_route" ||
-    status === "en_route_retry" ||
-    status === "incident"
-  );
-}
-
-function inferTrackingStatusFromText(status: string): string {
-  const lower = status.toLowerCase();
-  if (lower.includes("no entregado") || lower.includes("devuelto")) return "not_delivered";
-  if (lower.includes("entregado")) return "delivered";
-  return "pending";
-}
-
-function getTrackingFilterFromStatus(status: string): Exclude<OrderTrackingFilter, "all"> {
-  if (status === "annulled") return "annulled";
-  if (status === "delivered") return "delivered";
-  if (status === "not_delivered" || status === "returned") return "not_delivered";
-  if (status === "en_route") return "en_route";
-  if (status === "en_route_retry") return "en_route_retry";
-  if (status === "incident") return "incident";
-  return "pending";
-}
-
-function getTrackingStatusLabel(
-  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents">,
-  traces: SettlementTrace[],
-  status: string
-): string {
-  if (status === "annulled") return "Anulado";
-  if (isFinalTrackingStatus(row.internal_status)) {
-    return status === "not_delivered" || status === "returned" ? "No entregado" : row.boxful_status || "Entregado";
-  }
-
-  const settlementTrace = traces.find((trace) => trace.internal_status === status);
-  if (settlementTrace?.settlement_status) return settlementTrace.settlement_status;
-  if (status === "delivered") return "Entregado";
-  if (status === "not_delivered" || status === "returned") return "No entregado";
-  if (status === "en_route") return row.boxful_status || "En ruta";
-  if (status === "en_route_retry")
-    return (row.moovin_incidents ?? 1) > 1 ? `Reintento (${row.moovin_incidents})` : "Reintento";
-  if (status === "incident") return "Incidencia";
-  return "Pendiente";
-}
-
-function isFinalTrackingStatus(status: string): boolean {
-  return status === "delivered" || status === "not_delivered" || status === "returned";
-}
-
-// Mapea el ultimo grupo de Moovin al estado de seguimiento. Vacio si no hay
-// dato de Moovin (cae a la logica de Boxful/sistema).
-function moovinGroupToStatus(group: string | undefined): string {
-  switch (group) {
-    case "delivered":
-      return "delivered";
-    case "returned":
-      return "not_delivered";
-    case "failed":
-      return "incident";
-    case "in_progress":
-      return "en_route";
-    default:
-      return "";
-  }
-}
-
-// Cuenta las incidencias de entrega ("Incidencia en la entrega", codigo FAILED)
-// de Moovin. Un envio en ruta con 1+ incidencia es un reintento tras fallar.
-function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): number {
-  if (!events?.length) return 0;
-  return events.filter(
-    (event) =>
-      String(event.code ?? "").toUpperCase() === "FAILED" ||
-      String(event.title ?? "").toLowerCase().includes("incidencia en la entrega")
-  ).length;
-}
-
-// Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"
-// (p.ej. supera intentos de entrega) quedaba como en ruta y debe ser No
-// entregado. Los demas estados conservan su grupo ya calculado.
-function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
-  if (!row) return "";
-  const code = String(row.latest_code ?? "").toUpperCase();
-  const title = String(row.latest_status ?? "").toLowerCase();
-  if (code.startsWith("CANCEL") || title.includes("cancelado")) return "returned";
-  return row.latest_group ?? "";
-}
-
-function isShopifyCancelled(
-  row: Pick<TrackableOrderRow, "shopify_cancelled_at" | "shopify_financial_status"> | Pick<OrderProfitabilityRow, "shopify_cancelled_at" | "shopify_financial_status">
-): boolean {
-  return Boolean(row.shopify_cancelled_at || row.shopify_financial_status === "voided");
-}
+// La maquina de estados de seguimiento (getEffectiveTrackingStatus,
+// moovinGroupToStatus, isFinalTrackingStatus, isPendingLike, ...) y la
+// clasificacion de incidencias (countMoovinIncidents, countMoovinRouteAttempts,
+// classifyIncident, getTrackingFilterFromStatus, getTrackingStatusLabel) viven
+// en lib/order-tracking.ts (fuente unica, testeable). Se importan al inicio.
