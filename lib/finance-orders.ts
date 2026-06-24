@@ -899,22 +899,31 @@ export function buildEnRouteGuides(
 // a ShopifyOrderSummary. Copiado VERBATIM de persistedOrderToSummary (page.tsx
 // ~7840); el unico cambio es exportarlo desde el modulo compartido.
 // Muchos checkouts de Costa Rica (COD) capturan el celular en un campo
-// personalizado del checkout (note_attributes: "Telefono", "Celular",
-// "WhatsApp"...) en vez del campo estandar de Shopify (que suele venir vacio).
-// Se rescata de ahi cuando el telefono plano no esta.
+// personalizado del checkout (note_attributes) en vez del campo estandar de
+// Shopify (que suele venir vacio). Se rescata de ahi cuando el telefono plano no
+// esta. Dos vias, en orden de preferencia:
+//   1) un campo NOMBRADO como telefono (Telefono/Celular/WhatsApp/Movil/Contacto)
+//      con 8+ digitos;
+//   2) si ninguno calza por nombre, cualquier valor con FORMA de telefono CR
+//      (8 digitos que arrancan en 2/6/7/8, u 11 con prefijo 506) en cualquier
+//      campo. La forma evita confundir con cedula (9 digitos) u otros numeros.
 export function phoneFromNoteAttributes(
   attrs?: Array<{ name?: string | null; value?: string | null }>
 ): string | null {
   if (!attrs?.length) return null;
-  const keyRe = /tel|cel|phone|whats|m[oó]vil/i;
+  const keyRe = /tel|cel|phone|whats|m[oó]vil|contacto/i;
+  let shaped: string | null = null;
   for (const attr of attrs) {
     const name = String(attr.name ?? "");
     const value = String(attr.value ?? "").trim();
     if (!value) continue;
-    // Debe parecer un telefono: 8+ digitos (CR son 8, con codigo de pais mas).
-    if (keyRe.test(name) && value.replace(/\D/g, "").length >= 8) return value;
+    const digits = value.replace(/\D/g, "");
+    if (keyRe.test(name) && digits.length >= 8) return value;
+    if (!shaped && (/^[2678]\d{7}$/.test(digits) || /^506[2678]\d{7}$/.test(digits))) {
+      shaped = value;
+    }
   }
-  return null;
+  return shaped;
 }
 
 export function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {

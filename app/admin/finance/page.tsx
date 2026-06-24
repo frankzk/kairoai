@@ -8233,23 +8233,28 @@ function toCsv(rows: unknown[]): string {
   return [headers.join(","), ...records.map((row) => headers.map((header) => escape(row[header])).join(","))].join("\n");
 }
 
-// Muchos checkouts de Costa Rica (COD) capturan el celular en un campo
-// personalizado del checkout (note_attributes: "Telefono", "Celular",
-// "WhatsApp"...) en vez del campo estandar de Shopify (que suele venir vacio).
-// Se rescata de ahi cuando el telefono plano no esta.
+// Rescata el celular de un campo personalizado del checkout (note_attributes)
+// cuando el telefono plano de Shopify viene vacio. Copia de la version en
+// lib/finance-orders.ts (mantener en sync): 1) campo nombrado como telefono con
+// 8+ digitos; 2) si no, cualquier valor con forma de telefono CR (8 digitos
+// 2/6/7/8 u 11 con 506), evitando confundir con cedula (9 digitos).
 function phoneFromNoteAttributes(
   attrs?: Array<{ name?: string | null; value?: string | null }>
 ): string | null {
   if (!attrs?.length) return null;
-  const keyRe = /tel|cel|phone|whats|m[oó]vil/i;
+  const keyRe = /tel|cel|phone|whats|m[oó]vil|contacto/i;
+  let shaped: string | null = null;
   for (const attr of attrs) {
     const name = String(attr.name ?? "");
     const value = String(attr.value ?? "").trim();
     if (!value) continue;
-    // Debe parecer un telefono: 8+ digitos (CR son 8, con codigo de pais mas).
-    if (keyRe.test(name) && value.replace(/\D/g, "").length >= 8) return value;
+    const digits = value.replace(/\D/g, "");
+    if (keyRe.test(name) && digits.length >= 8) return value;
+    if (!shaped && (/^[2678]\d{7}$/.test(digits) || /^506[2678]\d{7}$/.test(digits))) {
+      shaped = value;
+    }
   }
-  return null;
+  return shaped;
 }
 
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
