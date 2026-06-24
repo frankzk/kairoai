@@ -69,7 +69,7 @@ export async function listIncidents(filters: IncidentFilters = {}): Promise<Inci
 // (head: true, sin traer filas).
 export async function countIncidentsByStatus(storeId: number): Promise<Record<string, number>> {
   const statuses: IncidentStatus[] = [
-    "pendiente", "reprogramada", "sin_contestar", "no_llamar", "resuelta", "perdida", "descartada",
+    "pendiente", "reprogramada", "reprog_fallida", "sin_contestar", "no_llamar", "resuelta", "perdida", "descartada",
   ];
   const pairs = await Promise.all(
     statuses.map(async (s) => {

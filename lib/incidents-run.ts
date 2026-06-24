@@ -155,8 +155,12 @@ export async function detectIncidents(full: boolean): Promise<DetectIncidentsRes
             lookupShopify(shopifyByGuide, t.id_package)
           );
           if (!candidate) continue;
-          // Una entrega solo importa si ya existe una novedad para ese envio.
-          if (candidate.last_tracking_group === "delivered" && !existingKeys.has(candidate.incident_key)) {
+          // Un cierre del courier (entrega/devolucion) solo importa si ya existe
+          // una novedad para ese envio: sirve para cerrarla, no para crear una.
+          if (
+            (candidate.last_tracking_group === "delivered" || candidate.last_tracking_group === "returned") &&
+            !existingKeys.has(candidate.incident_key)
+          ) {
             continue;
           }
           scanned += 1;
@@ -190,7 +194,10 @@ export async function detectIncidents(full: boolean): Promise<DetectIncidentsRes
         lookupShopify(shopifyByGuide, t.guide_number)
       );
       if (!candidate) continue;
-      if (candidate.last_tracking_group === "delivered" && !existingKeys.has(candidate.incident_key)) {
+      if (
+        (candidate.last_tracking_group === "delivered" || candidate.last_tracking_group === "returned") &&
+        !existingKeys.has(candidate.incident_key)
+      ) {
         continue;
       }
       scanned += 1;

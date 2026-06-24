@@ -8,6 +8,7 @@ export type IncidentSource = "moovin" | "forza" | "boxful" | "manual";
 export type IncidentStatus =
   | "pendiente"      // nueva, sin gestionar
   | "reprogramada"   // contesto y acordo nueva fecha
+  | "reprog_fallida" // se reprogramo pero vencio la fecha sin entrega o fallo de nuevo
   | "sin_contestar"  // no contesto; cola de reintento "fin del dia"
   | "no_llamar"      // no volver a llamar
   | "resuelta"       // entregada / cerrada con exito
@@ -61,6 +62,9 @@ export interface Incident {
   detail: string;
   notes: string;
   reprogramada_para: string | null;
+  // Momento (timestamp) en que se reprogramo por ultima vez. Sirve para detectar
+  // una falla NUEVA posterior a la reprogramacion (-> reprog_fallida).
+  reprogramada_at: string | null;
   intentos_llamada: number;
   ultimo_intento_at: string | null;
   last_tracking_status: string;
@@ -111,6 +115,9 @@ export interface DetectedIncident {
   detail: string;
   last_tracking_status: string;
   last_tracking_group: string;
+  // Fecha del evento de FALLA mas reciente del courier (group "failed"). Permite
+  // saber si una reprogramada volvio a fallar despues de reprogramarse.
+  last_failure_at: string | null;
 }
 
 // Estados terminales: la deteccion automatica no los reabre.

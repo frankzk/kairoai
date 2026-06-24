@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
         }
         const updated = await patchIncident(
           id,
-          { status: "reprogramada", reprogramada_para: fecha },
+          { status: "reprogramada", reprogramada_para: fecha, reprogramada_at: new Date().toISOString() },
           {
             kind: "reprogramada",
             from_status: incident.status,

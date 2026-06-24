@@ -61,10 +61,24 @@ export function mapBoxfulCategory(boxfulStatus: string): IncidentCategory | null
   return null;
 }
 
+// Fecha del evento de FALLA mas reciente (group "failed"). Sirve para saber si
+// una reprogramada volvio a fallar DESPUES de reprogramarse. Devuelve null si no
+// hay eventos de falla con fecha.
+function lastFailureDate(
+  events: Array<{ group?: string; date?: string | null }> | undefined
+): string | null {
+  if (!events?.length) return null;
+  let latest: string | null = null;
+  for (const ev of events) {
+    if (ev.group === "failed" && ev.date && (!latest || ev.date > latest)) latest = ev.date;
+  }
+  return latest;
+}
+
 // Construye una candidata desde el tracking de Moovin. Devuelve null cuando el
 // envio sigue en progreso (no hay nada que gestionar todavia). Para entregas
-// (delivered) devuelve candidata con grupo 'delivered' para que applyDetection
-// pueda auto-resolver una novedad previa.
+// (delivered) y devoluciones (returned) devuelve candidata con ese grupo para
+// que applyDetection pueda cerrar una novedad previa (resuelta / perdida).
 export function detectMoovinIncident(
   tracking: MoovinTrackingRow,
   row?: LogisticsRow,
@@ -78,7 +92,8 @@ export function detectMoovinIncident(
   // esos son terminales (devuelto / entregado), no novedades a gestionar.
   const isFailure = tracking.has_incident || group === "failed";
   const isDelivered = group === "delivered";
-  if (!isFailure && !isDelivered) return null;
+  const isReturned = group === "returned";
+  if (!isFailure && !isDelivered && !isReturned) return null;
 
   const guide = tracking.id_package || row?.guide_number || "";
   // Datos de cliente/pedido por prioridad: 1) logistica importada, 2) pedido de
@@ -98,10 +113,11 @@ export function detectMoovinIncident(
     customer_phone: row?.customer_phone || shopify?.phone || "",
     courier: row?.courier || "Moovin",
     cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
-    category: isFailure ? mapMoovinCategory(reason, group) : "otro",
+    category: isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
     detail: reason,
     last_tracking_status: tracking.latest_status || "",
     last_tracking_group: group,
+    last_failure_at: lastFailureDate(tracking.events),
   };
 }
 
@@ -117,7 +133,8 @@ export function detectForzaIncident(
   const group = tracking.latest_group || "";
   const isFailure = tracking.has_incident || group === "failed";
   const isDelivered = group === "delivered";
-  if (!isFailure && !isDelivered) return null;
+  const isReturned = group === "returned";
+  if (!isFailure && !isDelivered && !isReturned) return null;
 
   const guide = tracking.guide_number || row?.guide_number || "";
   const orderName = row?.order_name || shopify?.name || "";
@@ -134,10 +151,11 @@ export function detectForzaIncident(
     customer_phone: row?.customer_phone || shopify?.phone || "",
     courier: row?.courier || "Forza",
     cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
-    category: isFailure ? mapMoovinCategory(reason, group) : "otro",
+    category: isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
     detail: reason,
     last_tracking_status: tracking.latest_status || "",
     last_tracking_group: group,
+    last_failure_at: lastFailureDate(tracking.events),
   };
 }
 
@@ -161,6 +179,7 @@ export function detectBoxfulIncident(row: LogisticsRow): DetectedIncident | null
     detail: row.boxful_status || "",
     last_tracking_status: row.boxful_status || "",
     last_tracking_group: row.internal_status || "",
+    last_failure_at: null,
   };
 }
 
@@ -178,18 +197,26 @@ export interface DetectionResult {
   event?: DetectionEvent;
 }
 
-// Decide que hacer con una candidata frente al registro existente. Nunca pisa la
-// gestion manual (manual_override) ni reabre estados terminales. Auto-resuelve
-// cuando el courier confirma la entrega de una novedad abierta.
+// Decide que hacer con una candidata frente al registro existente. Reconcilia el
+// ESTADO de las novedades NO terminales con el outcome del courier:
+//   entregada -> resuelta · devuelta -> perdida · reprogramada que fallo ->
+//   reprog_fallida.
+// Los estados terminales (resuelta/perdida/descartada) nunca se reabren. No pisa
+// lo que edito el operador (notas/categoria/contacto): solo rellena vacios y
+// refresca el snapshot del tracking. `now` (ISO) permite fijar la fecha en tests.
 export function applyDetection(
   existing: Incident | null,
-  candidate: DetectedIncident
+  candidate: DetectedIncident,
+  now: string = new Date().toISOString()
 ): DetectionResult {
-  const delivered = candidate.last_tracking_group === "delivered";
+  const group = candidate.last_tracking_group;
+  const delivered = group === "delivered";
+  const returned = group === "returned";
 
   if (!existing) {
-    // No se crean novedades para entregas confirmadas.
-    if (delivered) return { action: "skip", patch: {} };
+    // No se crean novedades para cierres ya confirmados (entrega/devolucion) sin
+    // gestion previa: no hay nada que gestionar.
+    if (delivered || returned) return { action: "skip", patch: {} };
     return {
       action: "insert",
       patch: {
@@ -234,13 +261,12 @@ export function applyDetection(
   if (!existing.guide_number && candidate.guide_number) patch.guide_number = candidate.guide_number;
   if (!existing.cod_amount && candidate.cod_amount) patch.cod_amount = candidate.cod_amount;
 
-  const isTerminal = TERMINAL_STATUSES.includes(existing.status);
+  // Estados cerrados a mano (resuelta/perdida/descartada): nunca se reabren.
+  if (TERMINAL_STATUSES.includes(existing.status)) return { action: "update", patch };
 
-  // Auto-resolver entrega confirmada (solo si no hay gestion manual ni cierre).
+  // --- No terminales: el estado se reconcilia con el outcome del courier. ---
+  // Entrega confirmada -> Resuelta.
   if (delivered) {
-    if (existing.manual_override || isTerminal) {
-      return { action: "update", patch };
-    }
     patch.status = "resuelta";
     return {
       action: "update",
@@ -255,7 +281,50 @@ export function applyDetection(
     };
   }
 
-  // Falla/devolucion sobre una novedad existente: solo refresca el snapshot.
-  // No reabre terminales ni cambia el estado gestionado por el operador.
+  // Devolucion al origen / no entregado final -> Perdida.
+  if (returned) {
+    patch.status = "perdida";
+    return {
+      action: "update",
+      patch,
+      event: {
+        kind: "estado_cambiado",
+        from_status: existing.status,
+        to_status: "perdida",
+        message: "Devuelto al origen por el courier",
+        result: "info",
+      },
+    };
+  }
+
+  // Reprogramada que no prospero -> Reprogramacion fallida. Dispara cuando vencio
+  // la fecha acordada sin entrega (hoy > reprogramada_para) O cuando hubo una
+  // falla NUEVA posterior a la reprogramacion (last_failure_at > reprogramada_at).
+  if (existing.status === "reprogramada") {
+    const today = now.slice(0, 10);
+    const dateExpired = !!existing.reprogramada_para && today > existing.reprogramada_para;
+    const newFailure =
+      !!existing.reprogramada_at &&
+      !!candidate.last_failure_at &&
+      candidate.last_failure_at > existing.reprogramada_at;
+    if (dateExpired || newFailure) {
+      patch.status = "reprog_fallida";
+      return {
+        action: "update",
+        patch,
+        event: {
+          kind: "estado_cambiado",
+          from_status: "reprogramada",
+          to_status: "reprog_fallida",
+          message: dateExpired
+            ? "Vencio la fecha reprogramada sin entrega"
+            : "Volvio a fallar la entrega despues de reprogramar",
+          result: "info",
+        },
+      };
+    }
+  }
+
+  // Falla activa sin condicion de cambio: solo refresca el snapshot.
   return { action: "update", patch };
 }

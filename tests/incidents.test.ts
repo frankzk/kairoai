@@ -124,6 +124,7 @@ function incident(over: Partial<Incident> = {}): Incident {
     detail: "",
     notes: "",
     reprogramada_para: null,
+    reprogramada_at: null,
     intentos_llamada: 0,
     ultimo_intento_at: null,
     last_tracking_status: "",
@@ -216,8 +217,11 @@ describe("detectMoovinIncident", () => {
     expect(c!.courier).toBe("Moovin");
   });
 
-  it("no genera incidencia activa para devuelto (terminal)", () => {
-    expect(detectMoovinIncident(moovin({ id_package: "G", latest_group: "returned" }))).toBeNull();
+  it("genera candidata de devolucion (returned) para cerrar una novedad previa", () => {
+    const c = detectMoovinIncident(moovin({ id_package: "G", latest_group: "returned" }));
+    expect(c).not.toBeNull();
+    expect(c!.last_tracking_group).toBe("returned");
+    expect(c!.category).toBe("devuelto_origen");
   });
 
   it("asigna store_id desde la fila de logistica o el parametro", () => {
@@ -326,8 +330,17 @@ describe("applyDetection", () => {
     expect(applyDetection(null, delivered).action).toBe("skip");
   });
 
-  it("no pisa el estado cuando hay gestion manual", () => {
-    const r = applyDetection(incident({ status: "reprogramada", manual_override: true }), cand);
+  it("no crea novedad para una devolucion sin novedad previa", () => {
+    const returned = detectMoovinIncident(moovin({ id_package: "G1", latest_group: "returned" }))!;
+    expect(applyDetection(null, returned).action).toBe("skip");
+  });
+
+  it("una reprogramada vigente (sin vencer y sin falla nueva) no cambia de estado", () => {
+    const r = applyDetection(
+      incident({ status: "reprogramada", reprogramada_para: "2999-01-01", reprogramada_at: "2026-01-01T00:00:00Z" }),
+      cand,
+      "2026-06-22T12:00:00Z"
+    );
     expect(r.action).toBe("update");
     expect(r.patch.status).toBeUndefined();
   });
@@ -342,6 +355,46 @@ describe("applyDetection", () => {
     const r = applyDetection(incident({ status: "sin_contestar", manual_override: false }), delivered);
     expect(r.patch.status).toBe("resuelta");
     expect(r.event?.to_status).toBe("resuelta");
+  });
+
+  it("auto-resuelve incluso con gestion manual (manual_override) en no terminal", () => {
+    const delivered = detectMoovinIncident(moovin({ id_package: "G1", latest_group: "delivered" }))!;
+    const r = applyDetection(incident({ status: "reprogramada", manual_override: true }), delivered);
+    expect(r.patch.status).toBe("resuelta");
+  });
+
+  it("auto-pierde cuando el courier devuelve el paquete (no terminal)", () => {
+    const returned = detectMoovinIncident(moovin({ id_package: "G1", latest_group: "returned" }))!;
+    const r = applyDetection(incident({ status: "reprogramada", manual_override: true }), returned);
+    expect(r.patch.status).toBe("perdida");
+    expect(r.event?.to_status).toBe("perdida");
+  });
+
+  it("reprogramada -> reprog_fallida cuando vence la fecha sin entrega", () => {
+    const r = applyDetection(
+      incident({ status: "reprogramada", reprogramada_para: "2026-06-20" }),
+      cand,
+      "2026-06-22T09:00:00Z"
+    );
+    expect(r.patch.status).toBe("reprog_fallida");
+    expect(r.event?.to_status).toBe("reprog_fallida");
+  });
+
+  it("reprogramada -> reprog_fallida cuando hay una falla nueva posterior", () => {
+    const failedAgain = detectMoovinIncident(
+      moovin({
+        id_package: "G1",
+        has_incident: true,
+        latest_group: "failed",
+        events: [{ code: "FAILED", group: "failed", title: "Incidencia en la entrega", description: "", date: "2026-06-22T15:00:00Z", note: "" }],
+      })
+    )!;
+    const r = applyDetection(
+      incident({ status: "reprogramada", reprogramada_para: "2999-01-01", reprogramada_at: "2026-06-21T00:00:00Z" }),
+      failedAgain,
+      "2026-06-22T16:00:00Z"
+    );
+    expect(r.patch.status).toBe("reprog_fallida");
   });
 
   it("rellena datos vacios sin sobrescribir los del operador", () => {

@@ -21,6 +21,7 @@ type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "succe
 const STATUS_META: Record<IncidentStatus, { label: string; variant: BadgeVariant }> = {
   pendiente: { label: "Pendiente", variant: "info" },
   reprogramada: { label: "Reprogramada", variant: "success" },
+  reprog_fallida: { label: "Reprog. fallida", variant: "destructive" },
   sin_contestar: { label: "Sin contestar", variant: "warning" },
   no_llamar: { label: "No llamar", variant: "destructive" },
   resuelta: { label: "Resuelta", variant: "success" },
@@ -56,7 +57,7 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 const STATUS_ORDER: IncidentStatus[] = [
-  "pendiente", "reprogramada", "sin_contestar", "no_llamar", "resuelta", "perdida", "descartada",
+  "pendiente", "reprogramada", "reprog_fallida", "sin_contestar", "no_llamar", "resuelta", "perdida", "descartada",
 ];
 
 // Color por estado, unificado: dot (pill inactivo) + active (pill activo) + badge
@@ -64,6 +65,7 @@ const STATUS_ORDER: IncidentStatus[] = [
 const STATUS_COLOR: Record<IncidentStatus, { dot: string; active: string; badge: string }> = {
   pendiente:     { dot: "bg-sky-500",     active: "bg-sky-500 text-white shadow-sm",     badge: "bg-sky-500/15 text-sky-400" },
   reprogramada:  { dot: "bg-cyan-500",    active: "bg-cyan-500 text-white shadow-sm",    badge: "bg-cyan-500/15 text-cyan-400" },
+  reprog_fallida:{ dot: "bg-orange-500",  active: "bg-orange-500 text-white shadow-sm",  badge: "bg-orange-500/15 text-orange-400" },
   sin_contestar: { dot: "bg-amber-500",   active: "bg-amber-500 text-white shadow-sm",   badge: "bg-amber-500/15 text-amber-400" },
   no_llamar:     { dot: "bg-rose-500",    active: "bg-rose-500 text-white shadow-sm",    badge: "bg-rose-500/15 text-rose-400" },
   resuelta:      { dot: "bg-emerald-500", active: "bg-emerald-500 text-white shadow-sm", badge: "bg-emerald-500/15 text-emerald-400" },
