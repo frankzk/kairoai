@@ -10,6 +10,7 @@ import {
   type SettlementTrace,
   type TrackableOrderRow,
 } from "@/lib/finance-orders";
+import { mergeDispatchIntoTracking } from "@/lib/dispatch";
 import { getOrdersDataset, type OrdersDataset } from "../_shared/orders-dataset";
 
 export const runtime = "nodejs";
@@ -26,6 +27,8 @@ const MAX_EXPORT_ROWS = 25000;
 type TrackingFilter =
   | "all"
   | "pending"
+  | "despacho_solicitado"
+  | "standby"
   | "en_route"
   | "en_route_retry"
   | "incident_solvable"
@@ -39,6 +42,8 @@ type PeriodMode = "all" | "month" | "range" | "today" | "7d" | "30d";
 const TRACKING_FILTERS: TrackingFilter[] = [
   "all",
   "pending",
+  "despacho_solicitado",
+  "standby",
   "en_route",
   "en_route_retry",
   "incident_solvable",
@@ -166,13 +171,20 @@ export async function GET(req: NextRequest) {
     const withMeta: Array<{ row: TrackableOrderRow; traces: SettlementTrace[]; status: string }> =
       searchedRows.map((row) => {
         const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
-        return { row, traces, status: getEffectiveTrackingStatus(row, traces) };
+        const status = mergeDispatchIntoTracking(
+          getEffectiveTrackingStatus(row, traces),
+          row.dispatch_view ?? null,
+          row
+        );
+        return { row, traces, status };
       });
 
     // Conteos por estado (sobre searchedRows), igual que trackingCounts en la UI.
     const trackingCounts: Record<TrackingFilter, number> = {
       all: withMeta.length,
       pending: 0,
+      despacho_solicitado: 0,
+      standby: 0,
       en_route: 0,
       en_route_retry: 0,
       incident_solvable: 0,
