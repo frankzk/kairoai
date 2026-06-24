@@ -124,7 +124,10 @@ export async function fetchForzaTracking(
           continue;
         }
 
-        const latest = detail.events[0] ?? null;
+        // Entrega es terminal: si la guia se entrego, ese estado prevalece sobre
+        // eventos posteriores. No hay reversion de una entrega bajo la misma guia.
+        const delivered = detail.events.find((e) => e.group === "delivered");
+        const latest = delivered ?? detail.events[0] ?? null;
         const latestStatus = latest?.title ?? detail.latestStatus ?? null;
         if (!latestStatus && !detail.events.length) {
           lastError = `Forza no devolvio estado para esta guia (${endpointHost}, ${request.label})`;
@@ -427,6 +430,8 @@ function classifyForzaGroup(status: string): ForzaGroup {
 }
 
 function computeForzaIncident(events: ForzaEvent[]): { active: boolean; reason: string } {
+  // Entrega terminal: una guia con un evento "delivered" nunca tiene incidencia activa.
+  if (events.some((e) => e.group === "delivered")) return { active: false, reason: "" };
   const latest = events[0];
   if (!latest || latest.group !== "failed") return { active: false, reason: "" };
   return { active: true, reason: latest.description || latest.title };

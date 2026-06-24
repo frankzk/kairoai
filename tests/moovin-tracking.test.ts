@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { computeIncident, effectiveLatestMoovin, type MoovinEvent } from "../lib/moovin";
 
 // Replica del parser de app/api/finance/moovin-tracking/route.ts para fijar el
 // comportamiento sobre la estructura RSC real de Moovin (linea "1:{...}").
@@ -127,5 +128,43 @@ describe("clasificacion de cancelaciones", () => {
       '1:{"serialNumber":"x","listStatus":[{"date":"2026-06-13T09:45:00Z","status":"WEIRD","title":"Cancelado"}]}\n';
     const detail = parseMoovinResponse(raw)!;
     expect(detail.events[0].group).toBe("returned");
+  });
+});
+
+// La entrega es terminal: si una guia tiene un evento "delivered", ese estado
+// prevalece sobre eventos posteriores (Moovin re-emite Preccoordinacion/Recolectado
+// con fecha mas nueva bajo la misma guia). No hay reversion de una entrega.
+describe("entrega es terminal (delivered prevails)", () => {
+  // events ordenados desc por fecha (como salen de parseMoovinResponse): el mas
+  // nuevo (Preccoordinacion 01/06) viene primero, pero la entrega fue el 30/05.
+  const entregaRevertida: MoovinEvent[] = [
+    { code: "PRECOORDINATION", group: "in_progress", title: "Preccoordinacion enviada", description: "", date: "2026-06-01T08:48:00Z", note: "" },
+    { code: "DELIVERED", group: "delivered", title: "Entregado por el Moover", description: "Entregado en destino", date: "2026-05-30T15:10:00Z", note: "" },
+    { code: "COORDINATE", group: "in_progress", title: "Coordinado", description: "", date: "2026-05-30T15:08:00Z", note: "" },
+  ];
+
+  it("prevalece Entregado aunque haya un evento posterior con fecha mas nueva", () => {
+    const latest = effectiveLatestMoovin(entregaRevertida)!;
+    expect(latest.group).toBe("delivered");
+    expect(latest.title).toBe("Entregado por el Moover");
+    expect(latest.date).toBe("2026-05-30T15:10:00Z");
+  });
+
+  it("una guia entregada no tiene incidencia activa", () => {
+    expect(computeIncident(entregaRevertida).active).toBe(false);
+  });
+
+  it("sin entrega, toma el evento mas reciente (events[0]) y respeta la incidencia", () => {
+    const sinEntrega: MoovinEvent[] = [
+      { code: "FAILED", group: "failed", title: "Incidencia en la entrega", description: "", date: "2026-06-02T10:00:00Z", note: "Direccion incorrecta" },
+      { code: "INROUTE", group: "in_progress", title: "En ruta", description: "", date: "2026-06-01T09:00:00Z", note: "" },
+    ];
+    expect(effectiveLatestMoovin(sinEntrega)!.code).toBe("FAILED");
+    expect(computeIncident(sinEntrega).active).toBe(true);
+  });
+
+  it("lista vacia -> null y sin incidencia", () => {
+    expect(effectiveLatestMoovin([])).toBeNull();
+    expect(computeIncident([]).active).toBe(false);
   });
 });

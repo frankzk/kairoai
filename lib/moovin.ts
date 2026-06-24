@@ -118,7 +118,7 @@ export async function fetchMoovinTracking(
       };
     }
 
-    const latest = detail.events[0] ?? null;
+    const latest = effectiveLatestMoovin(detail.events);
     const incident = computeIncident(detail.events);
     return {
       ...base,
@@ -146,9 +146,21 @@ export async function fetchMoovinTracking(
   }
 }
 
+// Estado efectivo: la entrega es terminal. Si la guia tiene un evento delivered,
+// ese prevalece como estado actual sobre cualquier evento posterior (Moovin
+// re-emite "Preccoordinacion"/"Recolectado" con fecha mas nueva bajo la misma
+// guia). events viene ordenado desc por fecha, asi find toma la entrega mas
+// reciente; si no hubo entrega, el mas reciente.
+export function effectiveLatestMoovin(events: MoovinEvent[]): MoovinEvent | null {
+  return events.find((e) => e.group === "delivered") ?? events[0] ?? null;
+}
+
 // Incidencia activa = el evento mas reciente es FAILED. Si despues hubo una
-// entrega o reintento, ya no cuenta como riesgo.
-function computeIncident(events: MoovinEvent[]): { active: boolean; reason: string } {
+// entrega o reintento, ya no cuenta como riesgo. La entrega es terminal: una guia
+// con un evento "delivered" nunca tiene incidencia activa (aunque Moovin emita
+// eventos posteriores).
+export function computeIncident(events: MoovinEvent[]): { active: boolean; reason: string } {
+  if (events.some((e) => e.group === "delivered")) return { active: false, reason: "" };
   const latest = events[0];
   if (!latest || latest.group !== "failed") return { active: false, reason: "" };
   return { active: true, reason: latest.note || latest.description };
