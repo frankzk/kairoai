@@ -382,8 +382,8 @@ function sortValue(i: Incident, key: SortKey): string | number {
   }
 }
 
-// ----- Filtro por cantidad de intentos de llamada. Las opciones 0/1/2+ parten
-// el total (Todos): por eso se incluye "Sin intentos" para las aun no llamadas.
+// ----- Filtro por cantidad de llamadas registradas. Las opciones 0/1/2+ parten
+// el total (Todas): por eso se incluye "Sin llamadas" para las aun no llamadas.
 type IntentosFilter = "todos" | "0" | "1" | "2mas";
 function matchIntentos(n: number, f: IntentosFilter): boolean {
   if (f === "0") return n === 0;
@@ -835,19 +835,19 @@ export default function IncidenciasPage() {
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Intentos</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Llamadas</span>
                 <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
                   <FilterPill active={intentosFilter === "todos"} count={facetCounts.intentos.todos}
-                    onClick={() => setIntentosFilter("todos")}>Todos</FilterPill>
+                    onClick={() => setIntentosFilter("todos")}>Todas</FilterPill>
                   <FilterPill active={intentosFilter === "0"} count={facetCounts.intentos.cero}
                     disabled={facetCounts.intentos.cero === 0 && intentosFilter !== "0"}
-                    onClick={() => setIntentosFilter("0")}>Sin intentos</FilterPill>
+                    onClick={() => setIntentosFilter("0")}>Sin llamadas</FilterPill>
                   <FilterPill active={intentosFilter === "1"} count={facetCounts.intentos.uno}
                     disabled={facetCounts.intentos.uno === 0 && intentosFilter !== "1"}
-                    onClick={() => setIntentosFilter("1")}>1 intento</FilterPill>
+                    onClick={() => setIntentosFilter("1")}>1 llamada</FilterPill>
                   <FilterPill active={intentosFilter === "2mas"} count={facetCounts.intentos.dosMas}
                     disabled={facetCounts.intentos.dosMas === 0 && intentosFilter !== "2mas"}
-                    onClick={() => setIntentosFilter("2mas")}>2+ intentos</FilterPill>
+                    onClick={() => setIntentosFilter("2mas")}>2+ llamadas</FilterPill>
                 </div>
               </div>
             </div>
@@ -921,7 +921,7 @@ export default function IncidenciasPage() {
                   <SortTh label="Guia" sortK="guia" active={sortKey === "guia"} dir={sortDir} onSort={toggleSort} />
                   <SortTh label="Causa" sortK="causa" active={sortKey === "causa"} dir={sortDir} onSort={toggleSort} />
                   <SortTh label="COD" sortK="cod" active={sortKey === "cod"} dir={sortDir} onSort={toggleSort} align="right" />
-                  <SortTh label="Int." sortK="intentos" active={sortKey === "intentos"} dir={sortDir} onSort={toggleSort} align="center" />
+                  <SortTh label="Llam." sortK="intentos" active={sortKey === "intentos"} dir={sortDir} onSort={toggleSort} align="center" />
                   <SortTh label="Edad" sortK="edad" active={sortKey === "edad"} dir={sortDir} onSort={toggleSort} align="center" />
                   <SortTh label="Reprog." sortK="reprog" active={sortKey === "reprog"} dir={sortDir} onSort={toggleSort} />
                   <th className="px-3 py-2"></th>
@@ -1152,7 +1152,7 @@ function DetailModal({
             <div><span className="text-muted-foreground">Courier:</span> {incident.courier || "—"}</div>
             <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount) : "—"}</div>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-muted-foreground">Intentos:</span>
+              <span className="text-muted-foreground">Intentos de entrega:</span>
               <span className="text-base font-bold tabular-nums">
                 {trackingEvents.length > 0 ? intentosEntrega : detailLoading ? "…" : "—"}
               </span>
