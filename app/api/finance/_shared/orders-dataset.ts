@@ -9,12 +9,16 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import { getDB } from "@/lib/db";
 import {
   listForzaTracking,
+  listIcomflyOrders,
   listLogisticsRows,
   listMoovinTracking,
   listPersistedShopifyOrders,
   listSettlementImports,
   listSettlementRows,
 } from "@/lib/finance";
+import { resolveDispatchState } from "@/lib/dispatch";
+import { normalizeMatchKey } from "@/lib/order-matching";
+import type { IcomflyOrderRecord } from "@/lib/finance-types";
 import {
   buildForzaTrackingMap,
   buildSettlementTraceMap,
@@ -184,13 +188,14 @@ async function writeDatasetCache(store: FinanceStorePublic, data: OrdersDataset)
 // page.tsx: persistidos->summary, mapas de tracking por guia, traces de
 // liquidacion, y buildVisibleOrderRows.
 async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
-  const [persisted, logisticsRows, moovin, forza, settlementRows, imports] = await Promise.all([
+  const [persisted, logisticsRows, moovin, forza, settlementRows, imports, icomflyOrders] = await Promise.all([
     listPersistedShopifyOrders(20000, 0, store.id),
     listLogisticsRows(undefined, store.id),
     listMoovinTracking(),
     listForzaTracking(store.id),
     listSettlementRows(undefined, store.id),
     listSettlementImports(store.id),
+    listIcomflyOrders(),
   ]);
 
   const shopifyOrders = persisted.map((order) =>
@@ -205,6 +210,28 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   const settlementTraceByKey = buildSettlementTraceMap(enrichedSettlementRows, imports);
 
   const rows = buildVisibleOrderRows(logisticsRows, shopifyOrders, store, moovinByPackage, forzaByGuide);
+
+  // Hito de despacho por fila (iComfly + recoleccion de Moovin), precalculado
+  // aqui para que orders/ lo funda en el "Estado de seguimiento" y que conteos/
+  // filtro/paginacion sean consistentes. iComfly va keyed por #MCRC
+  // (shopify_display_number); fuera de esa tienda el mapa no matchea -> null.
+  const dispatchByKey = new Map<string, IcomflyOrderRecord>();
+  for (const o of icomflyOrders) {
+    const key = normalizeMatchKey(o.shopify_display_number || "");
+    if (key && !dispatchByKey.has(key)) dispatchByKey.set(key, o);
+  }
+  for (const row of rows) {
+    const rec = dispatchByKey.get(normalizeMatchKey(row.shopify_order_name || row.order_name || ""));
+    row.dispatch_view = resolveDispatchState(
+      rec,
+      row.guide_number ? moovinByPackage.get(row.guide_number) : undefined,
+      row.guide_number
+    );
+    if (rec) {
+      row.dispatch_requested_by = rec.requested_by_name || "";
+      row.dispatch_confirmed_by = rec.confirmed_by_name || "";
+    }
+  }
 
   // Alertas del tab Liquidaciones (mismas operaciones que los useMemo de page.tsx):
   //  - "por reclamar": entregados sin liquidar, sobre las filas de liquidacion

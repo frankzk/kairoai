@@ -357,3 +357,24 @@ export function resolveDispatchState(
   if (state === "solicitado" && rec?.is_standby) return "standby";
   return state;
 }
+
+// Funde el hito de despacho dentro del "Estado de seguimiento": el limbo previo
+// al movimiento real del courier (solicitado/standby) reemplaza al engañoso
+// "En ruta"/"Pendiente". El "despachado" (ya recogido) NO genera estado nuevo:
+// cae al estado base (en_route/delivered/etc.). No pisa estados terminales ni
+// pedidos anulados.
+export function mergeDispatchIntoTracking(
+  baseStatus: string,
+  dispatchState: DispatchView | null,
+  row: { shopify_cancelled_at?: string | null; shopify_financial_status?: string | null }
+): string {
+  // Anulado manda (replica isShopifyCancelled sin arrastrar finance-orders, que
+  // usa el alias @/ y rompe los tests).
+  if (row.shopify_cancelled_at || row.shopify_financial_status === "voided") return baseStatus;
+  // Solo aplica al limbo previo al movimiento real (no pisa entregado, no
+  // entregado, incidencia, reintento ni anulado).
+  if (baseStatus !== "pending" && baseStatus !== "en_route") return baseStatus;
+  if (dispatchState === "standby") return "standby";
+  if (dispatchState === "solicitado") return "despacho_solicitado";
+  return baseStatus;
+}
