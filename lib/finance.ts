@@ -1,6 +1,7 @@
 import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
 import { normalizeForzaGuide } from "./forza";
+import { normalizeMatchKey } from "./order-matching";
 
 export * from "./finance-types";
 import type {
@@ -10,6 +11,8 @@ import type {
   ExpenseType,
   FinanceClaim,
   ForzaTrackingRow,
+  IcomflyAgentRecord,
+  IcomflyOrderRecord,
   LogisticsImport,
   LogisticsRow,
   MoovinTrackingRow,
@@ -1091,6 +1094,94 @@ export async function createPayrollStaff(input: { name: string; role: string }):
 export async function deletePayrollStaff(id: number): Promise<void> {
   const { error } = await getDB().from("payroll_staff").delete().eq("id", id);
   if (error) throw new Error(`deletePayrollStaff: ${error.message}`);
+}
+
+// Enriquecer el enlace de una persona de la planilla con su identidad de iComfly.
+export async function updatePayrollStaffIcomfly(
+  id: number,
+  patch: { email?: string | null; icomfly_user_id?: number | null }
+): Promise<void> {
+  const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.email !== undefined) payload.email = patch.email;
+  if (patch.icomfly_user_id !== undefined) payload.icomfly_user_id = patch.icomfly_user_id;
+  const { error } = await getDB().from("payroll_staff").update(payload).eq("id", id);
+  if (error) throw new Error(`updatePayrollStaffIcomfly: ${error.message}`);
+}
+
+// ─── iComfly: pedidos con estado de despacho (migracion 0010) ────────────────
+
+export async function listIcomflyOrders(
+  opts: { storeId?: number; limit?: number } = {}
+): Promise<IcomflyOrderRecord[]> {
+  const limit = Math.min(Math.max(opts.limit ?? 5000, 1), 50000);
+  const pageSize = 1000;
+  const all: IcomflyOrderRecord[] = [];
+  for (let from = 0; from < limit; from += pageSize) {
+    let query = getDB()
+      .from("icomfly_orders")
+      .select("*")
+      .order("requested_at", { ascending: false, nullsFirst: false })
+      .range(from, Math.min(from + pageSize, limit) - 1);
+    if (opts.storeId != null) query = query.eq("store_id", opts.storeId);
+    const { data, error } = await query;
+    if (error) throw new Error(`listIcomflyOrders: ${error.message}`);
+    const page = (data ?? []) as IcomflyOrderRecord[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
+}
+
+export async function upsertIcomflyOrders(
+  rows: Array<Omit<IcomflyOrderRecord, "synced_at">>
+): Promise<void> {
+  if (!rows.length) return;
+  const payload = rows.map((row) => ({ ...row, synced_at: new Date().toISOString() }));
+  const { error } = await getDB()
+    .from("icomfly_orders")
+    .upsert(payload, { onConflict: "store_id,icomfly_order_id" });
+  if (error) throw new Error(`upsertIcomflyOrders: ${error.message}`);
+}
+
+export async function listIcomflyAgents(storeId?: number): Promise<IcomflyAgentRecord[]> {
+  let query = getDB().from("icomfly_agents").select("*").order("name");
+  if (storeId != null) query = query.eq("store_id", storeId);
+  const { data, error } = await query;
+  if (error) throw new Error(`listIcomflyAgents: ${error.message}`);
+  return (data ?? []) as IcomflyAgentRecord[];
+}
+
+export async function upsertIcomflyAgents(
+  rows: Array<Omit<IcomflyAgentRecord, "synced_at">>
+): Promise<void> {
+  if (!rows.length) return;
+  const payload = rows.map((row) => ({ ...row, synced_at: new Date().toISOString() }));
+  const { error } = await getDB()
+    .from("icomfly_agents")
+    .upsert(payload, { onConflict: "store_id,user_id" });
+  if (error) throw new Error(`upsertIcomflyAgents: ${error.message}`);
+}
+
+// Claves de pedido (normalizeMatchKey) que ya tienen guia en la data de Boxful
+// importada (logistics_rows con guide_number). Senal de respaldo de guia final.
+export async function getDispatchedBoxfulKeys(): Promise<Set<string>> {
+  const keys = new Set<string>();
+  const pageSize = 1000;
+  for (let from = 0; from < 100000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("logistics_rows")
+      .select("order_name, guide_number")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`getDispatchedBoxfulKeys: ${error.message}`);
+    const page = (data ?? []) as Array<{ order_name: string | null; guide_number: string | null }>;
+    for (const row of page) {
+      if (!row.guide_number) continue;
+      const key = normalizeMatchKey(row.order_name ?? "");
+      if (key) keys.add(key);
+    }
+    if (page.length < pageSize) break;
+  }
+  return keys;
 }
 
 export async function listMoovinTracking(
