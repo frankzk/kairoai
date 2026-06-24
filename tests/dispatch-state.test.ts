@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isMoovinPickedUp, resolveDispatchState } from "../lib/dispatch";
+import { isMoovinPickedUp, mergeDispatchIntoTracking, resolveDispatchState } from "../lib/dispatch";
 import type { MoovinTrackingRow, IcomflyOrderRecord } from "../lib/finance-types";
 
 function moovin(over: Partial<MoovinTrackingRow> = {}): MoovinTrackingRow {
@@ -106,5 +106,40 @@ describe("resolveDispatchState", () => {
     expect(resolveDispatchState(standbyRec, moovin({ latest_status: "Recolección Solicitada" }), "G")).toBe("standby");
     // ya recogido => despachado (el flag de standby no aplica)
     expect(resolveDispatchState(standbyRec, moovin({ latest_status: "Sede de Moovin" }), "G")).toBe("despachado");
+  });
+});
+
+describe("mergeDispatchIntoTracking", () => {
+  const ok = { shopify_cancelled_at: null, shopify_financial_status: "paid" };
+  const cancelled = { shopify_cancelled_at: "2026-06-20T00:00:00Z", shopify_financial_status: "voided" };
+
+  it("solicitado pisa el engañoso 'en_route' / 'pending'", () => {
+    expect(mergeDispatchIntoTracking("en_route", "solicitado", ok)).toBe("despacho_solicitado");
+    expect(mergeDispatchIntoTracking("pending", "solicitado", ok)).toBe("despacho_solicitado");
+  });
+
+  it("standby pisa 'en_route'", () => {
+    expect(mergeDispatchIntoTracking("en_route", "standby", ok)).toBe("standby");
+  });
+
+  it("despachado (ya recogido) NO crea estado nuevo: cae al base", () => {
+    expect(mergeDispatchIntoTracking("en_route", "despachado", ok)).toBe("en_route");
+  });
+
+  it("no pisa estados terminales (entregado/no entregado/incidencia/reintento)", () => {
+    expect(mergeDispatchIntoTracking("delivered", "solicitado", ok)).toBe("delivered");
+    expect(mergeDispatchIntoTracking("not_delivered", "solicitado", ok)).toBe("not_delivered");
+    expect(mergeDispatchIntoTracking("incident", "solicitado", ok)).toBe("incident");
+    expect(mergeDispatchIntoTracking("en_route_retry", "solicitado", ok)).toBe("en_route_retry");
+  });
+
+  it("no pisa pedidos anulados", () => {
+    expect(mergeDispatchIntoTracking("en_route", "solicitado", cancelled)).toBe("en_route");
+    expect(mergeDispatchIntoTracking("annulled", null, ok)).toBe("annulled");
+  });
+
+  it("sin estado de despacho devuelve el base", () => {
+    expect(mergeDispatchIntoTracking("en_route", null, ok)).toBe("en_route");
+    expect(mergeDispatchIntoTracking("pending", "pendiente", ok)).toBe("pending");
   });
 });

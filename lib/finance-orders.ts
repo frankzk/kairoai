@@ -102,6 +102,12 @@ export interface TrackableOrderRow {
   created_at?: string | null;
   finalized_on?: string | null;
   package_items: ProductLineItem[];
+  // Hito de despacho precalculado en el dataset (server) a partir de iComfly +
+  // recoleccion de Moovin. Se funde en el "Estado de seguimiento" via
+  // mergeDispatchIntoTracking. Null/ausente fuera de la tienda con iComfly.
+  dispatch_view?: import("./dispatch").DispatchView | null;
+  dispatch_requested_by?: string;
+  dispatch_confirmed_by?: string;
 }
 
 export interface OpMetrics {
@@ -138,6 +144,8 @@ export interface MoovinTrackingEvent {
 type OrderTrackingFilter =
   | "all"
   | "pending"
+  | "despacho_solicitado"
+  | "standby"
   | "en_route"
   | "en_route_retry"
   | "incident_solvable"
@@ -700,6 +708,8 @@ export function getTrackingFilterFromStatus(
   if (status === "annulled") return "annulled";
   if (status === "delivered") return "delivered";
   if (status === "not_delivered" || status === "returned") return "not_delivered";
+  if (status === "despacho_solicitado") return "despacho_solicitado";
+  if (status === "standby") return "standby";
   if (status === "en_route") return "en_route";
   if (status === "en_route_retry") return "en_route_retry";
   if (status === "incident") return classifyIncident(row);

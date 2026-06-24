@@ -26,7 +26,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { normalizeSearchText, normalizeMatchKey } from "@/lib/order-matching";
+import { normalizeSearchText } from "@/lib/order-matching";
 import {
   type FinanceControlCenter,
   type FinancialAnomaly,
@@ -35,7 +35,7 @@ import {
   type ProductAnalysisRow,
   type ShopifyNoteAliasRow,
 } from "@/lib/finance-orders";
-import { type DispatchView, resolveDispatchState } from "@/lib/dispatch";
+import { mergeDispatchIntoTracking } from "@/lib/dispatch";
 import { reconcileMoovin, type MoovinDiscrepancy } from "@/lib/moovin-reconcile";
 import type {
   BoxfulFileControl,
@@ -43,7 +43,6 @@ import type {
   ExpenseType,
   FinanceClaim,
   ForzaTrackingRow,
-  IcomflyOrderRecord,
   LogisticsImport,
   LogisticsRow,
   MoovinTrackingRow,
@@ -75,7 +74,7 @@ type Tab = "orders" | "dispatch" | "products" | "notes" | "settlements" | "expen
 // endpoints, asi que el navegador ya NO ensambla el snapshot pesado (historico
 // Shopify ~11k + logistica completa) para ningun tab.
 
-type OrderTrackingFilter = "all" | "pending" | "en_route" | "en_route_retry" | "incident_solvable" | "incident_unsolvable" | "annulled" | "delivered" | "not_delivered";
+type OrderTrackingFilter = "all" | "pending" | "despacho_solicitado" | "standby" | "en_route" | "en_route_retry" | "incident_solvable" | "incident_unsolvable" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
   | "all"
   | "no_cost"
@@ -167,6 +166,11 @@ interface TrackableOrderRow {
   created_at?: string | null;
   finalized_on?: string | null;
   package_items: ProductLineItem[];
+  // Hito de despacho precalculado en el server (iComfly + recoleccion Moovin),
+  // que se funde en el "Estado de seguimiento" via mergeDispatchIntoTracking.
+  dispatch_view?: "despachado" | "solicitado" | "pendiente" | "standby" | null;
+  dispatch_requested_by?: string;
+  dispatch_confirmed_by?: string;
 }
 
 type ProductCostSaveInput = {
@@ -246,6 +250,8 @@ type ExpenseOriginalCurrency = (typeof EXPENSE_ORIGINAL_CURRENCIES)[number];
 const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "pending", label: "Pendientes" },
+  { value: "despacho_solicitado", label: "Despacho solicitado" },
+  { value: "standby", label: "Standby" },
   { value: "en_route", label: "En ruta" },
   { value: "en_route_retry", label: "Reintento" },
   { value: "incident_solvable", label: "Inc. solucionable" },
@@ -259,6 +265,8 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
 const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   all: "bg-muted-foreground/40",
   pending: "bg-slate-400",
+  despacho_solicitado: "bg-yellow-400",
+  standby: "bg-rose-600",
   en_route: "bg-cyan-400",
   en_route_retry: "bg-orange-500",
   // Solucionable (incidencia leve) en ambar; no solucionable (fallos repetidos)
@@ -307,6 +315,8 @@ const ORDERS_PAGE_SIZE = 100;
 const EMPTY_TRACKING_COUNTS: Record<OrderTrackingFilter, number> = {
   all: 0,
   pending: 0,
+  despacho_solicitado: 0,
+  standby: 0,
   en_route: 0,
   en_route_retry: 0,
   incident_solvable: 0,
@@ -1621,10 +1631,6 @@ function OrdersTab({
   }>({ moovin: [], forza: [] });
   const [tableLoading, setTableLoading] = useState(true);
   const [tableError, setTableError] = useState("");
-  // Despacho iComfly cruzado por nombre de Shopify (#MCRC...). Se trae una vez
-  // (es opcional: si falla, la tabla sigue sin la columna). Clave = order name
-  // normalizado (normalizeMatchKey, igual que el match de Boxful).
-  const [dispatchByKey, setDispatchByKey] = useState<Map<string, IcomflyOrderRecord>>(new Map());
   const [exporting, setExporting] = useState(false);
   // Busqueda con debounce (~300ms) para no disparar un fetch por tecla.
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -1695,34 +1701,6 @@ function OrdersTab({
     })();
     return () => controller.abort();
   }, [buildOrdersQuery, page, selectedStore.code, refreshKey]);
-
-  // Despacho iComfly: mapa por nombre de Shopify para anotar cada fila de la
-  // tabla con su sub-estado y atribucion. Una sola lectura (independiente de
-  // pagina/filtro). iComfly es store 71 (Costa Rica); en otras tiendas el mapa
-  // queda vacio y la columna muestra "-".
-  useEffect(() => {
-    const controller = new AbortController();
-    (async () => {
-      try {
-        const res = await fetch("/api/icomfly/sync", { cache: "no-store", signal: controller.signal });
-        if (!res.ok) return;
-        const json = await res.json();
-        const orders = Array.isArray(json.orders) ? (json.orders as IcomflyOrderRecord[]) : [];
-        const map = new Map<string, IcomflyOrderRecord>();
-        // listIcomflyOrders viene ordenado por requested_at desc, asi que el
-        // primero por clave es el mas reciente (un pedido Shopify puede tener
-        // varias lineas/pedidos en iComfly).
-        for (const o of orders) {
-          const key = normalizeMatchKey(o.shopify_display_number || "");
-          if (key && !map.has(key)) map.set(key, o);
-        }
-        setDispatchByKey(map);
-      } catch {
-        /* despacho es opcional */
-      }
-    })();
-    return () => controller.abort();
-  }, []);
 
   // Guias "en ruta" para los botones Moovin/Forza: dependen de la tienda (no de
   // pagina/filtro), asi que se traen una sola vez por tienda con ?guides=1, en
@@ -1866,7 +1844,7 @@ function OrdersTab({
       if (!res.ok) throw new Error(json.error ?? "No se pudo exportar");
       const exportRows = (Array.isArray(json.rows) ? (json.rows as OrderRowWithTraces[]) : []).map((row) => {
         const traces = row.traces ?? [];
-        const status = getEffectiveTrackingStatus(row, traces);
+        const status = mergeDispatchIntoTracking(getEffectiveTrackingStatus(row, traces), row.dispatch_view ?? null, row);
         const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
         const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
         return {
@@ -2175,7 +2153,6 @@ function OrdersTab({
             rows={serverRows}
             moovinByPackage={moovinByPackage}
             forzaByGuide={forzaByGuide}
-            dispatchByKey={dispatchByKey}
             loading={tableLoading}
             emptyLabel={
               orderSearch
@@ -2297,36 +2274,24 @@ function OrdersTab({
   );
 }
 
-// Estado físico de despacho (Alt B): el estado lo manda la recolección de
-// Moovin (resolveDispatchState); el "quién" viene de la atribución de iComfly.
-const DISPATCH_LABEL: Record<DispatchView, string> = {
-  despachado: "Despachado",
-  solicitado: "Solicitado",
-  standby: "Standby",
-  pendiente: "Pendiente",
-};
-const DISPATCH_VARIANT: Record<DispatchView, "success" | "warning" | "destructive" | "muted"> = {
-  despachado: "success",
-  solicitado: "warning",
-  standby: "destructive",
-  pendiente: "muted",
-};
-
-function DispatchBadge({ state, rec }: { state: DispatchView; rec?: IcomflyOrderRecord }) {
-  const who = rec ? rec.requested_by_name || rec.confirmed_by_name : "";
-  const whoLabel = rec?.requested_by_name ? "Solicito" : rec?.confirmed_by_name ? "Confirmo" : "";
+// Sub-línea de atribución bajo el badge de "Estado de seguimiento": solo cuando
+// el pedido está en el limbo de despacho (despacho_solicitado/standby), muestra
+// quién solicitó/confirmó (atribución de iComfly que viaja en la fila).
+function DispatchWho({
+  row,
+  status,
+}: {
+  row: Pick<OrderRowWithTraces, "dispatch_requested_by" | "dispatch_confirmed_by">;
+  status: string;
+}) {
+  if (status !== "despacho_solicitado" && status !== "standby") return null;
+  const who = row.dispatch_requested_by || row.dispatch_confirmed_by;
+  if (!who) return null;
+  const label = row.dispatch_requested_by ? "Solicito" : "Confirmo";
   return (
-    <div className="flex flex-col items-start gap-0.5">
-      <Badge variant={DISPATCH_VARIANT[state]}>{DISPATCH_LABEL[state]}</Badge>
-      {who && (
-        <span
-          className="max-w-[130px] truncate text-[10px] text-muted-foreground"
-          title={`${whoLabel}: ${who}`}
-        >
-          {whoLabel}: {who}
-        </span>
-      )}
-    </div>
+    <span className="max-w-[130px] truncate text-[10px] text-muted-foreground" title={`${label}: ${who}`}>
+      {label}: {who}
+    </span>
   );
 }
 
@@ -2335,7 +2300,6 @@ function OrdersTable({
   rows,
   moovinByPackage,
   forzaByGuide,
-  dispatchByKey,
   loading = false,
   emptyLabel = "No hay pedidos para mostrar.",
 }: {
@@ -2345,7 +2309,6 @@ function OrdersTable({
   rows: OrderRowWithTraces[];
   moovinByPackage: Map<string, MoovinTrackingRow>;
   forzaByGuide: Map<string, ForzaTrackingRow>;
-  dispatchByKey: Map<string, IcomflyOrderRecord>;
   loading?: boolean;
   emptyLabel?: string;
 }) {
@@ -2355,16 +2318,10 @@ function OrdersTable({
       <div className="space-y-2 md:hidden">
         {rows.map((row) => {
           const traces = row.traces ?? [];
-          const trackingStatus = getEffectiveTrackingStatus(row, traces);
+          const trackingStatus = mergeDispatchIntoTracking(getEffectiveTrackingStatus(row, traces), row.dispatch_view ?? null, row);
           const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
           const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
           const itemsText = (row.package_items ?? []).map((item) => item.title).join(", ");
-          const dispatch = dispatchByKey.get(normalizeMatchKey(row.shopify_order_name || row.order_name || ""));
-          const dispatchState = resolveDispatchState(
-            dispatch,
-            row.guide_number ? moovinByPackage.get(row.guide_number) : undefined,
-            row.guide_number
-          );
           return (
             <div key={row.row_key} className="rounded-lg border border-border bg-card p-3">
               <div className="flex items-start justify-between gap-2">
@@ -2375,7 +2332,10 @@ function OrdersTable({
                     {row.shopify_created_at ? ` · ${formatDate(row.shopify_created_at)}` : ""}
                   </p>
                 </div>
-                <StatusBadge status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
+                <div className="flex flex-col items-end gap-0.5">
+                  <StatusBadge status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
+                  <DispatchWho row={row} status={trackingStatus} />
+                </div>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                 {row.guide_number ? (
@@ -2409,7 +2369,6 @@ function OrdersTable({
                     {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
                   </Badge>
                   <SettlementStatusBadge traces={traces} />
-                  {dispatchState && <DispatchBadge state={dispatchState} rec={dispatch} />}
                   {traces.length > 0 && (
                     <span className="text-[11px] text-muted-foreground">
                       A liquidar {currency(sum(traces.map((trace) => trace.amount_to_liquidate)))}
@@ -2444,7 +2403,6 @@ function OrdersTable({
             <th className="px-2 py-1.5">Transportadora</th>
             <th className="px-2 py-1.5">Cliente</th>
             <th className="px-2 py-1.5">Estado seguimiento</th>
-            <th className="px-2 py-1.5">Despacho</th>
             <th className="px-2 py-1.5">Shopify</th>
             <th className="px-2 py-1.5">Fecha</th>
             <th className="px-2 py-1.5">Liquidacion</th>
@@ -2457,15 +2415,9 @@ function OrdersTable({
         <tbody>
           {rows.map((row) => {
             const traces = row.traces ?? [];
-            const trackingStatus = getEffectiveTrackingStatus(row, traces);
+            const trackingStatus = mergeDispatchIntoTracking(getEffectiveTrackingStatus(row, traces), row.dispatch_view ?? null, row);
             const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
             const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
-            const dispatch = dispatchByKey.get(normalizeMatchKey(row.shopify_order_name || row.order_name || ""));
-            const dispatchState = resolveDispatchState(
-              dispatch,
-              row.guide_number ? moovinByPackage.get(row.guide_number) : undefined,
-              row.guide_number
-            );
             return (
               <tr key={row.row_key} className="border-b border-border/50">
                 <td className="px-2 py-1.5 font-mono text-xs">{row.order_name}</td>
@@ -2516,13 +2468,13 @@ function OrdersTable({
                   )}
                 </td>
                 <td className="px-2 py-1.5">
-                  <StatusBadge
-                    status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus}
-                    label={getTrackingStatusLabel(row, traces, trackingStatus)}
-                  />
-                </td>
-                <td className="px-2 py-1.5">
-                  {dispatchState ? <DispatchBadge state={dispatchState} rec={dispatch} /> : <span className="text-xs text-muted-foreground">-</span>}
+                  <div className="flex flex-col items-start gap-0.5">
+                    <StatusBadge
+                      status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus}
+                      label={getTrackingStatusLabel(row, traces, trackingStatus)}
+                    />
+                    <DispatchWho row={row} status={trackingStatus} />
+                  </div>
                 </td>
                 <td className="px-2 py-1.5">
                   <Badge variant={row.match_status === "matched" ? "success" : "warning"}>
@@ -8039,6 +7991,18 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   }
   if (status === "annulled") return <Badge variant="warning">Anulado</Badge>;
   if (status === "unmatched") return <Badge variant="warning">Sin match</Badge>;
+  if (status === "despacho_solicitado")
+    return (
+      <Badge variant="warning" className="border-yellow-500/40 bg-yellow-500/20 text-yellow-300">
+        {label || "Despacho solicitado"}
+      </Badge>
+    );
+  if (status === "standby")
+    return (
+      <Badge variant="destructive" className="border-rose-500/40 bg-rose-500/20 text-rose-300">
+        {label || "Standby"}
+      </Badge>
+    );
   if (status === "en_route") return <Badge variant="info">{label || "En ruta"}</Badge>;
   if (status === "en_route_retry")
     return (
@@ -8874,6 +8838,8 @@ function getTrackingFilterFromStatus(
   if (status === "annulled") return "annulled";
   if (status === "delivered") return "delivered";
   if (status === "not_delivered" || status === "returned") return "not_delivered";
+  if (status === "despacho_solicitado") return "despacho_solicitado";
+  if (status === "standby") return "standby";
   if (status === "en_route") return "en_route";
   if (status === "en_route_retry") return "en_route_retry";
   if (status === "incident") return classifyIncident(row);
@@ -8900,6 +8866,8 @@ function getTrackingStatusLabel(
   status: string
 ): string {
   if (status === "annulled") return "Anulado";
+  if (status === "despacho_solicitado") return "Despacho solicitado";
+  if (status === "standby") return "Standby";
   if (isFinalTrackingStatus(row.internal_status)) {
     return status === "not_delivered" || status === "returned" ? "No entregado" : row.boxful_status || "Entregado";
   }
