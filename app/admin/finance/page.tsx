@@ -337,6 +337,7 @@ type ExpenseOriginalCurrency = (typeof EXPENSE_ORIGINAL_CURRENCIES)[number];
 const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "pending", label: "Pendientes" },
+  { value: "recolectado", label: "Recolectado" },
   { value: "en_route", label: "En ruta" },
   { value: "en_route_retry", label: "Reintento" },
   { value: "incident_solvable", label: "Inc. solucionable" },
@@ -350,6 +351,9 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
 const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   all: "bg-muted-foreground/40",
   pending: "bg-slate-400",
+  // Recolectado: recogido por el courier pero aun no en ultima milla; azul para
+  // distinguirlo del cian de "En ruta a destino".
+  recolectado: "bg-blue-400",
   en_route: "bg-cyan-400",
   en_route_retry: "bg-orange-500",
   // Solucionable (incidencia leve) en ambar; no solucionable (fallos repetidos)
@@ -1001,6 +1005,7 @@ export default function FinancePage() {
       annulled: effectiveStatuses.filter((status) => status === "annulled").length,
       liquidationAlerts: liquidationAlertRows.length,
       anomalies: liquidationAlertRows.length + doubleSettlementAnomalies.length,
+      recolectado: effectiveStatuses.filter((status) => status === "recolectado").length,
       enRoute: effectiveStatuses.filter((status) => status === "en_route").length,
       enRouteRetry: effectiveStatuses.filter((status) => status === "en_route_retry").length,
       incident: effectiveStatuses.filter((status) => status === "incident").length,
@@ -1393,6 +1398,7 @@ function OrdersTab({
     const counts: Record<OrderTrackingFilter, number> = {
       all: searchedRows.length,
       pending: 0,
+      recolectado: 0,
       en_route: 0,
       en_route_retry: 0,
       incident_solvable: 0,
@@ -1428,7 +1434,14 @@ function OrdersTab({
     for (const row of rows) {
       if (!isMoovinCourier(row.courier) || !row.guide_number) continue;
       const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      if (status !== "en_route" && status !== "en_route_retry" && status !== "incident" && status !== "pending") continue;
+      if (
+        status !== "recolectado" &&
+        status !== "en_route" &&
+        status !== "en_route_retry" &&
+        status !== "incident" &&
+        status !== "pending"
+      )
+        continue;
       if (!byGuide.has(row.guide_number)) {
         byGuide.set(row.guide_number, { idPackage: row.guide_number, lastName: row.last_name ?? "" });
       }
@@ -6745,6 +6758,7 @@ function getKpiWindows(range: KpiRange, now: Date): KpiWindow {
 
 function isDispatchedStatus(status: string): boolean {
   return (
+    status === "recolectado" ||
     status === "en_route" ||
     status === "en_route_retry" ||
     status === "incident" ||
@@ -6780,7 +6794,9 @@ function computeOpMetrics(orders: OrderProfitabilityRow[]): OpMetrics {
     if (status === "delivered") delivered += 1;
     else if (status === "not_delivered" || status === "returned") notDelivered += 1;
     else if (status === "annulled") annulled += 1;
-    else if (status === "en_route") enRoute += 1;
+    // "Recolectado" es transito activo (recogido, aun no en ultima milla): suma
+    // al WIP "En reparto / en transito ahora" junto con "En ruta".
+    else if (status === "en_route" || status === "recolectado") enRoute += 1;
     else if (status === "en_route_retry") enRouteRetry += 1;
     const value = Number(order.order_value || 0);
     if (value > 0) {
@@ -7062,6 +7078,12 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   }
   if (status === "annulled") return <Badge variant="warning">Anulado</Badge>;
   if (status === "unmatched") return <Badge variant="warning">Sin match</Badge>;
+  if (status === "recolectado")
+    return (
+      <Badge variant="info" className="border-blue-500/40 bg-blue-500/20 text-blue-300">
+        {label || "Recolectado"}
+      </Badge>
+    );
   if (status === "en_route") return <Badge variant="info">{label || "En ruta"}</Badge>;
   if (status === "en_route_retry")
     return (

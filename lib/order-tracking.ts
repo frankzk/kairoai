@@ -16,6 +16,7 @@ import type { MoovinTrackingRow } from "./finance-types";
 export type OrderTrackingFilter =
   | "all"
   | "pending"
+  | "recolectado"
   | "en_route"
   | "en_route_retry"
   | "incident_solvable"
@@ -61,26 +62,50 @@ export function getEffectiveTrackingStatus(
   >,
   traces: TrackingSettlementTrace[]
 ): string {
-  // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
   const moovinStatus = moovinGroupToStatus(row.moovin_group);
-  if (moovinStatus) {
-    // En ruta tras fallar la entrega (1+ incidencia) = reintento a presionar.
-    if (moovinStatus === "en_route" && (row.moovin_incidents ?? 0) >= 1) return "en_route_retry";
-    return moovinStatus;
-  }
 
+  // 1) Moovin en vivo manda SOLO cuando su ultimo evento ya es terminal o
+  //    incidencia (entregado / devuelto / incidencia). Un "in_progress" de
+  //    Moovin es la senal mas debil (y a menudo cache viejo): NO debe tapar un
+  //    estado terminal/cancelado/incidencia confirmado por Boxful o liquidacion.
+  if (moovinStatus && moovinStatus !== "en_route") return moovinStatus;
+
+  // 2) Estado interno final (columna "Estado" de Boxful ya mapeada al importar).
   if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
 
-  const boxfulStatus = inferTrackingStatusFromText(row.boxful_status);
-  if (isFinalTrackingStatus(boxfulStatus)) return boxfulStatus;
+  // 3) Texto del estado de Boxful cuando es "resuelto": entregado, no entregado,
+  //    guia cancelada (=> anulado) o problemas/incidencia (=> incidencia). Esto
+  //    saca de "En ruta" a pedidos que claramente no estan en ruta aunque el
+  //    cache de Moovin haya quedado en "in_progress".
+  const boxfulStatus = classifyBoxfulStatusText(row.boxful_status);
+  if (isResolvedTrackingStatus(boxfulStatus)) return boxfulStatus;
 
+  // 4) Liquidacion con estado final (un pedido liquidado ya llego a su termino).
   const settlementStatus = traces.find((trace) => isFinalTrackingStatus(trace.internal_status));
   if (settlementStatus) return settlementStatus.internal_status;
 
-  // Tiene guia (Boxful, liquidacion o el fulfillment de Shopify) = despachado.
+  // 5) Reintento de Moovin: en ruta tras 1+ incidencia de entrega. Manda sobre
+  //    el sub-estado de transito de Boxful (que puede ser un dato mas viejo).
+  if (moovinStatus === "en_route" && (row.moovin_incidents ?? 0) >= 1) return "en_route_retry";
+
+  // 6) Sub-estado de transito con el dato mas granular: el texto de Boxful
+  //    distingue "recolectado" (recogido, aun no en ultima milla) de "en ruta a
+  //    destino"; Moovin solo informa "in_progress".
+  if (boxfulStatus === "recolectado") return "recolectado";
+  if (boxfulStatus === "en_route") return "en_route";
+
+  // 7) Moovin en progreso sin mas detalle => en ruta.
+  if (moovinStatus === "en_route") return "en_route";
+
+  // 8) "Registrado / por preparar": la guia existe pero el paquete aun no se
+  //    recolecto => pendiente, no en ruta.
+  if (boxfulStatus === "pending") return "pending";
+
+  // 9) Sin movimiento logistico y cancelado en Shopify => anulado.
   const hasOperationalMovement = row.source !== "shopify" || traces.length > 0 || Boolean(row.guide_number);
   if (isShopifyCancelled(row) && !hasOperationalMovement) return "annulled";
-  // Con guia/courier (movimiento logistico) y sin estado final = en reparto.
+
+  // 10) Con guia/courier (movimiento logistico) y sin estado final => en reparto.
   if (hasOperationalMovement) return "en_route";
 
   return "pending";
@@ -91,6 +116,7 @@ export function getEffectiveTrackingStatus(
 export function isPendingLike(status: string): boolean {
   return (
     status === "pending" ||
+    status === "recolectado" ||
     status === "en_route" ||
     status === "en_route_retry" ||
     status === "incident"
@@ -104,6 +130,66 @@ export function inferTrackingStatusFromText(status: string): string {
   return "pending";
 }
 
+// Normaliza el texto del estado de Boxful para compararlo por substring.
+function normalizeStatusText(value: string): string {
+  // Boxful escribe el estado en mayus/minus indistintamente; los tokens que
+  // comparamos ("entregado", "cancelad", "recolectad", "en ruta", "registrad",
+  // "problema", ...) no llevan tilde, asi que basta con normalizar a minusculas.
+  return String(value || "").toLowerCase().trim();
+}
+
+// Estados que ya "resolvieron" el pedido (terminal, anulado o incidencia) y por
+// tanto NO son "en ruta". Se usa para que estas senales le ganen a un
+// "in_progress" de Moovin que pudo quedar viejo en cache.
+export function isResolvedTrackingStatus(status: string): boolean {
+  return (
+    status === "delivered" ||
+    status === "not_delivered" ||
+    status === "returned" ||
+    status === "annulled" ||
+    status === "incident"
+  );
+}
+
+// Clasifica el texto del estado de Boxful (columna "Estado"/M) a un estado de
+// seguimiento. La columna trae mas granularidad que el grupo de Moovin
+// ("Recolectado", "En ruta a destino", "Problemas en gestion", "Guia
+// cancelada", "Registrado", ...). Devuelve "" cuando el texto esta vacio o no se
+// reconoce, para que el llamador caiga a las otras senales (Moovin, guia,
+// liquidacion) sin forzar una clasificacion.
+export function classifyBoxfulStatusText(status: string): string {
+  const text = normalizeStatusText(status);
+  if (!text) return "";
+  // "No entregado" contiene "entregado": se evalua primero.
+  if (text.includes("no entregado") || text.includes("devuelto") || text.includes("rechazad")) {
+    return "not_delivered";
+  }
+  if (text.includes("entregado")) return "delivered";
+  // "Guia cancelada" / "Cancelado" => el envio se anulo.
+  if (text.includes("cancelad")) return "annulled";
+  // "Problemas en gestion" / "Novedad" / "Incidencia" => incidencia operativa.
+  if (text.includes("problema") || text.includes("incidencia") || text.includes("novedad")) {
+    return "incident";
+  }
+  // "Recolectado": el courier ya lo recogio, aun no sale a ultima milla.
+  if (text.includes("recolectad")) return "recolectado";
+  // "En ruta a destino" y demas sub-estados de transito activo.
+  if (
+    text.includes("en ruta") ||
+    text.includes("reparto") ||
+    text.includes("transito") ||
+    text.includes("distribu")
+  ) {
+    return "en_route";
+  }
+  // "Registrado" / "Por preparar": la guia existe pero el paquete no se ha
+  // recolectado todavia => pendiente.
+  if (text.includes("registrad") || text.includes("por preparar") || text.includes("preparacion")) {
+    return "pending";
+  }
+  return "";
+}
+
 export function getTrackingFilterFromStatus(
   status: string,
   row?: Pick<TrackingOrderInput, "moovin_incidents" | "moovin_route_attempts">
@@ -111,6 +197,7 @@ export function getTrackingFilterFromStatus(
   if (status === "annulled") return "annulled";
   if (status === "delivered") return "delivered";
   if (status === "not_delivered" || status === "returned") return "not_delivered";
+  if (status === "recolectado") return "recolectado";
   if (status === "en_route") return "en_route";
   if (status === "en_route_retry") return "en_route_retry";
   if (status === "incident") return classifyIncident(row);
@@ -145,6 +232,7 @@ export function getTrackingStatusLabel(
   if (settlementTrace?.settlement_status) return settlementTrace.settlement_status;
   if (status === "delivered") return "Entregado";
   if (status === "not_delivered" || status === "returned") return "No entregado";
+  if (status === "recolectado") return row.boxful_status || "Recolectado";
   if (status === "en_route") return row.boxful_status || "En ruta";
   if (status === "en_route_retry")
     return (row.moovin_incidents ?? 1) > 1 ? `Reintento (${row.moovin_incidents})` : "Reintento";

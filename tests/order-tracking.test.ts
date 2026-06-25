@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyBoxfulStatusText,
   classifyIncident,
   countMoovinIncidents,
   countMoovinRouteAttempts,
@@ -110,6 +111,54 @@ describe("getEffectiveTrackingStatus", () => {
     const row = moovinOrder({ moovin_group: undefined, guide_number: "G9" });
     expect(getEffectiveTrackingStatus(row, [])).toBe("en_route");
   });
+
+  // Reclasificacion por el texto del estado de Boxful (columna "Estado"/M): los
+  // estados que NO son transito salen del cajon de sastre "En ruta".
+  it("Boxful 'Guía cancelada' => annulled", () => {
+    const row = moovinOrder({ moovin_group: undefined, source: "boxful", guide_number: "G1", boxful_status: "Guía cancelada" });
+    expect(getEffectiveTrackingStatus(row, [])).toBe("annulled");
+  });
+  it("Boxful 'Problemas en gestión' => incidencia (solucionable)", () => {
+    const row = moovinOrder({ moovin_group: undefined, source: "boxful", guide_number: "G1", boxful_status: "Problemas en gestión" });
+    expect(getEffectiveTrackingStatus(row, [])).toBe("incident");
+    expect(getTrackingFilterFromStatus("incident", row)).toBe("incident_solvable");
+  });
+  it("Boxful 'Recolectado' => recolectado (no en_route)", () => {
+    const row = moovinOrder({ moovin_group: undefined, source: "boxful", guide_number: "G1", boxful_status: "Recolectado" });
+    expect(getEffectiveTrackingStatus(row, [])).toBe("recolectado");
+  });
+  it("Boxful 'En ruta a destino' => en_route", () => {
+    const row = moovinOrder({ moovin_group: undefined, source: "boxful", guide_number: "G1", boxful_status: "En ruta a destino" });
+    expect(getEffectiveTrackingStatus(row, [])).toBe("en_route");
+  });
+  it("Boxful 'Registrado' => pending (guía creada, sin recolectar)", () => {
+    const row = moovinOrder({ moovin_group: undefined, source: "boxful", guide_number: "G1", boxful_status: "Registrado" });
+    expect(getEffectiveTrackingStatus(row, [])).toBe("pending");
+  });
+
+  // Una senal terminal/cancelada/incidencia le gana a un "in_progress" viejo de
+  // Moovin (cache que no se actualizo tras la entrega/devolucion/liquidacion).
+  it("Moovin in_progress viejo + interno 'no entregado' => not_delivered", () => {
+    const row = moovinOrder({ moovin_group: "in_progress", internal_status: "not_delivered", boxful_status: "No entregado" });
+    expect(getEffectiveTrackingStatus(row, [])).toBe("not_delivered");
+  });
+  it("Moovin in_progress viejo + Boxful 'Guía cancelada' => annulled", () => {
+    const row = moovinOrder({ moovin_group: "in_progress", boxful_status: "Guía cancelada" });
+    expect(getEffectiveTrackingStatus(row, [])).toBe("annulled");
+  });
+  it("Moovin in_progress + Boxful 'Recolectado' => recolectado (dato mas granular)", () => {
+    const row = moovinOrder({ moovin_group: "in_progress", boxful_status: "Recolectado" });
+    expect(getEffectiveTrackingStatus(row, [])).toBe("recolectado");
+  });
+  it("liquidacion entregada le gana a un in_progress viejo de Moovin", () => {
+    const row = moovinOrder({ moovin_group: "in_progress" });
+    const traces = [{ settlement_status: "Entregado", internal_status: "delivered" }];
+    expect(getEffectiveTrackingStatus(row, traces)).toBe("delivered");
+  });
+  it("reintento de Moovin manda sobre un 'Recolectado' viejo de Boxful", () => {
+    const row = moovinOrder({ moovin_group: "in_progress", moovin_incidents: 1, boxful_status: "Recolectado" });
+    expect(getEffectiveTrackingStatus(row, [])).toBe("en_route_retry");
+  });
 });
 
 describe("getTrackingStatusLabel", () => {
@@ -157,5 +206,42 @@ describe("clasificacion de extremo a extremo", () => {
     };
     expect(row).toEqual({ moovin_incidents: 1, moovin_route_attempts: 1 });
     expect(classifyIncident(row)).toBe("incident_solvable");
+  });
+});
+
+describe("classifyBoxfulStatusText", () => {
+  it("mapea los estados de la columna 'Estado' de Boxful", () => {
+    expect(classifyBoxfulStatusText("Entregado")).toBe("delivered");
+    expect(classifyBoxfulStatusText("No entregado")).toBe("not_delivered");
+    expect(classifyBoxfulStatusText("Guía cancelada")).toBe("annulled");
+    expect(classifyBoxfulStatusText("Problemas en gestión")).toBe("incident");
+    expect(classifyBoxfulStatusText("Recolectado")).toBe("recolectado");
+    expect(classifyBoxfulStatusText("En ruta a destino")).toBe("en_route");
+    expect(classifyBoxfulStatusText("Registrado")).toBe("pending");
+  });
+  it("tolera mayúsculas y la variante sin tilde ('gestion', 'Guia')", () => {
+    expect(classifyBoxfulStatusText("PROBLEMAS EN GESTION")).toBe("incident");
+    expect(classifyBoxfulStatusText("Guia cancelada")).toBe("annulled");
+  });
+  it("texto vacío o desconocido => '' (cae a las otras señales)", () => {
+    expect(classifyBoxfulStatusText("")).toBe("");
+    expect(classifyBoxfulStatusText("Algo raro")).toBe("");
+  });
+});
+
+describe("recolectado como estado propio", () => {
+  it("getTrackingFilterFromStatus mapea recolectado a su filtro", () => {
+    expect(getTrackingFilterFromStatus("recolectado")).toBe("recolectado");
+  });
+  it("recolectado cuenta como pendiente operativo (transito activo)", () => {
+    expect(isPendingLike("recolectado")).toBe(true);
+  });
+  it("la etiqueta usa el texto de Boxful o 'Recolectado' por defecto", () => {
+    expect(
+      getTrackingStatusLabel({ internal_status: "pending", boxful_status: "Recolectado" }, [], "recolectado")
+    ).toBe("Recolectado");
+    expect(
+      getTrackingStatusLabel({ internal_status: "pending", boxful_status: "" }, [], "recolectado")
+    ).toBe("Recolectado");
   });
 });
