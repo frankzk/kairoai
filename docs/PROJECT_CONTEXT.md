@@ -32,6 +32,31 @@ This document is the onboarding source for future devs and dev agents. Keep it u
   - Google Gemini
   - Supabase
 
+## Multi-store Platform Architecture
+
+The app is being evolved without rewriting the working Costa Rica operation.
+Finance, dispatch, incidents, and courier data remain `store_id` scoped. The
+new platform registry in `supabase/migrations/0019_platform_registry.sql` adds
+the onboarding primitives needed for 8+ stores:
+
+- `stores` remains the tenant dimension and now carries timezone, locale,
+  historical Shopify lower bound, default courier, and metadata.
+- `store_integrations` stores provider configuration per store using env-var
+  references only; secret values stay in Vercel/environment variables.
+- `courier_accounts` defines which couriers are active per store and whether
+  they support API tracking, file import, or both.
+- `courier_file_profiles` stores XLSX/CSV mapping profiles so unknown couriers
+  can be onboarded by file format before a custom API adapter exists.
+- `user_profiles` and `user_store_roles` are the RBAC foundation for Supabase
+  Auth. Until the auth migration is complete, the existing admin password is a
+  compatibility bridge.
+- `courier_shipments` and `courier_tracking_events` are the generic future
+  cache for courier status. Existing Moovin/Forza tables stay in place while the
+  adapter migration is staged.
+
+Important rule: new store-aware APIs should require an explicit `store`. Legacy
+routes may keep compatibility defaults only while they are being migrated.
+
 ## Auth
 
 A simple admin login is active in production.
