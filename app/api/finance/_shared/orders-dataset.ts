@@ -195,7 +195,7 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
     listForzaTracking(store.id),
     listSettlementRows(undefined, store.id),
     listSettlementImports(store.id),
-    listIcomflyOrders(),
+    listIcomflyOrders({ storeId: store.id }),
   ]);
 
   const shopifyOrders = persisted.map((order) =>
