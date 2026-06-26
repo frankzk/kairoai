@@ -41,6 +41,7 @@ ALTER TABLE product_costs
   ADD CONSTRAINT product_costs_store_fk
   FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE RESTRICT;
 ALTER TABLE product_costs DROP CONSTRAINT IF EXISTS product_costs_sku_key;
+DROP INDEX IF EXISTS product_costs_sku_key;
 CREATE UNIQUE INDEX IF NOT EXISTS product_costs_store_sku_key
   ON product_costs (store_id, sku);
 CREATE INDEX IF NOT EXISTS product_costs_store_idx ON product_costs (store_id);
