@@ -1424,6 +1424,7 @@ export default function FinancePage() {
             {tab === "dispatch" && <DispatchTab />}
             {tab === "products" && (
               <ProductAnalysisTab
+                storeCode={selectedStore.code}
                 rows={productAnalysisRows}
                 rowsLoading={productAnalysisLoading}
                 rowsError={productAnalysisError}
@@ -2884,6 +2885,7 @@ function formatCourierDate(value: string, locale: string): string {
 type ProductColumnKey = "product_name" | "cost" | "orders" | "dispatch_rate" | "delivery_effectiveness";
 
 function ProductAnalysisTab({
+  storeCode,
   rows,
   rowsLoading,
   rowsError,
@@ -2895,6 +2897,7 @@ function ProductAnalysisTab({
   onSaveProductCost,
   onReloadCosts,
 }: {
+  storeCode: FinanceStoreCode;
   rows: ProductAnalysisRow[];
   rowsLoading: boolean;
   rowsError: string;
@@ -3219,7 +3222,11 @@ function ProductAnalysisTab({
         />
       )}
       {isBulkCostOpen && (
-        <BulkCostImportModal onClose={() => setIsBulkCostOpen(false)} onReloadCosts={onReloadCosts} />
+        <BulkCostImportModal
+          storeCode={storeCode}
+          onClose={() => setIsBulkCostOpen(false)}
+          onReloadCosts={onReloadCosts}
+        />
       )}
     </Card>
   );
@@ -3375,9 +3382,11 @@ interface ParsedCostRow {
 }
 
 function BulkCostImportModal({
+  storeCode,
   onClose,
   onReloadCosts,
 }: {
+  storeCode: FinanceStoreCode;
   onClose: () => void;
   onReloadCosts: () => Promise<void>;
 }) {
@@ -3420,7 +3429,7 @@ function BulkCostImportModal({
       const res = await fetch("/api/finance/product-costs/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: parsed }),
+        body: JSON.stringify({ store: storeCode, items: parsed }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "No se pudo importar");

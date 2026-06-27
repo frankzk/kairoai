@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { upsertProductCost } from "@/lib/finance";
+import { getRequiredStoreFromBody } from "@/lib/stores";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -16,6 +17,13 @@ interface BulkItem {
 // los errores por SKU sin abortar el resto.
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
+  const store = getRequiredStoreFromBody(body);
+  if (!store) {
+    return NextResponse.json(
+      { error: "store requerido: usa mireva-cr o mireva-hn" },
+      { status: 400 }
+    );
+  }
   const items: BulkItem[] = Array.isArray(body?.items) ? body.items : [];
   if (!items.length) {
     return NextResponse.json({ error: "items requerido" }, { status: 400 });
@@ -42,7 +50,7 @@ export async function POST(req: NextRequest) {
         unit_cost: unitCost,
         packaging_cost: Number(item.packaging_cost ?? 0) || 0,
         effective_from: item.effective_from || undefined,
-      });
+      }, store.id);
       saved += 1;
     } catch (err) {
       errors.push({ sku, error: err instanceof Error ? err.message : "Error al guardar" });
