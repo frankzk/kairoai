@@ -8,7 +8,7 @@ vi.mock("@/lib/finance", async (importOriginal) => ({
   upsertProductCost,
 }));
 
-function req(url: string, init?: RequestInit): NextRequest {
+function req(url: string, init?: ConstructorParameters<typeof NextRequest>[1]): NextRequest {
   return new NextRequest(url, init);
 }
 
