@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { getRequiredStoreFromSearchParams, getShopifyCredentials } from "@/lib/stores";
 
 export const runtime = "nodejs";
 
@@ -49,13 +50,25 @@ function mapDraftOrder(o: Record<string, unknown>): DraftOrderSummary {
   };
 }
 
-export async function GET() {
-  if (!process.env.SHOPIFY_SHOP_DOMAIN || !process.env.SHOPIFY_ACCESS_TOKEN) {
-    return NextResponse.json({ error: "Shopify no configurado." }, { status: 503 });
+export async function GET(req: NextRequest) {
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) {
+    return NextResponse.json(
+      { error: "store requerido: usa mireva-cr o mireva-hn" },
+      { status: 400 }
+    );
+  }
+
+  const { shop, token, missing } = getShopifyCredentials(store);
+  if (!shop || !token) {
+    return NextResponse.json(
+      { error: `Shopify ${store.shortLabel} no configurado: faltan ${missing.join(" y ")} en Vercel.` },
+      { status: 503 }
+    );
   }
 
   const headers = {
-    "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+    "X-Shopify-Access-Token": token,
     "Content-Type": "application/json",
   };
 
@@ -64,7 +77,7 @@ export async function GET() {
   // Shopify draft_orders doesn't support order param — paginate all pages
   // and sort client-side. Max 15 pages = 3750 orders safety cap.
   let nextUrl: string | null =
-    `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/draft_orders.json?status=open&limit=250`;
+    `https://${shop}/admin/api/2024-01/draft_orders.json?status=open&limit=250`;
 
   let page = 0;
   while (nextUrl && page < 15) {
@@ -98,5 +111,5 @@ export async function GET() {
     .map(mapDraftOrder)
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
 
-  return NextResponse.json({ orders, total: orders.length });
+  return NextResponse.json({ orders, total: orders.length, store: store.code });
 }

@@ -3,27 +3,40 @@ import {
   getPersistedShopifyCoverage,
   listPersistedShopifyOrders,
   upsertPersistedShopifyOrders,
-  type PersistedShopifyOrder,
 } from "@/lib/finance";
+import {
+  getRequiredStoreFromBody,
+  getRequiredStoreFromSearchParams,
+} from "@/lib/stores";
+import {
+  DEFAULT_SYNC_PAGES_PER_REQUEST,
+  MAX_SYNC_PAGES_PER_REQUEST,
+  PAGE_DELAY_MS,
+  buildInitialUrl,
+  buildUpdatedUrl,
+  fetchShopifyPage,
+  getDefaultCreatedAtMin,
+  mapShopifyOrder,
+  sleep,
+} from "@/lib/shopify-sync";
+import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const DEFAULT_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
-const DEFAULT_SYNC_PAGES_PER_REQUEST = 8;
-const MAX_SYNC_PAGES_PER_REQUEST = 12;
-const MAX_GET_LIMIT = 4000;
-// Shopify REST permite ~2 req/s; un respiro entre paginas evita 429 en rafaga.
-const PAGE_DELAY_MS = 350;
+const MAX_GET_LIMIT = 1000;
 
 export async function GET(req: NextRequest) {
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) return missingStoreResponse();
   try {
     const requestedLimit = Number(req.nextUrl.searchParams.get("limit") || 1000);
     const offset = Math.max(Number(req.nextUrl.searchParams.get("offset") || 0), 0);
     const limit = Math.min(Math.max(requestedLimit, 1), MAX_GET_LIMIT);
+    const includeCoverage = req.nextUrl.searchParams.get("coverage") !== "0";
     const [orders, coverage] = await Promise.all([
-      listPersistedShopifyOrders(limit + 1, offset),
-      getPersistedShopifyCoverage(),
+      listPersistedShopifyOrders(limit + 1, offset, store.id),
+      includeCoverage ? getPersistedShopifyCoverage(store.id) : Promise.resolve(null),
     ]);
     const pageOrders = orders.slice(0, limit);
     const hasMore = orders.length > limit;
@@ -31,6 +44,7 @@ export async function GET(req: NextRequest) {
       orders: pageOrders,
       total: pageOrders.length,
       coverage,
+      store: store.code,
       offset,
       limit,
       has_more: hasMore,
@@ -45,39 +59,49 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
+    const store = getRequiredStoreFromBody(body);
+    if (!store) return missingStoreResponse();
     const maxPages = Math.min(
       Math.max(Number(body.max_pages ?? DEFAULT_SYNC_PAGES_PER_REQUEST), 1),
       MAX_SYNC_PAGES_PER_REQUEST
     );
-    const createdAtMin = String(body.created_at_min ?? DEFAULT_CREATED_AT_MIN);
-    const mode = body.mode === "backfill" ? "backfill" : "forward";
+    const mode =
+      body.mode === "backfill" ? "backfill" : body.mode === "refresh" ? "refresh" : "forward";
+    const createdAtMin = String(body.created_at_min ?? getDefaultCreatedAtMin(store));
 
     let url: string;
     if (typeof body.next_url === "string" && body.next_url) {
       url = body.next_url;
+    } else if (mode === "refresh") {
+      // Recorre pedidos por updated_at para capturar guias/fulfillments que se
+      // crearon despues del sync inicial (que solo mira created_at).
+      const updatedAtMin = String(
+        body.updated_at_min ?? new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
+      );
+      url = buildUpdatedUrl(updatedAtMin, store);
     } else if (mode === "backfill") {
       // Continua hacia atras desde el pedido mas viejo ya sincronizado, asi
       // cada llamada avanza aunque la anterior haya muerto a mitad de camino.
-      const coverage = await getPersistedShopifyCoverage();
+      const coverage = await getPersistedShopifyCoverage(store.id);
       if (!coverage.oldest) {
-        url = buildInitialUrl(createdAtMin);
+        url = buildInitialUrl(createdAtMin, undefined, store);
       } else if (coverage.oldest <= createdAtMin) {
-        return NextResponse.json({ synced: 0, done: true, oldest: coverage.oldest });
+        return NextResponse.json({ synced: 0, done: true, oldest: coverage.oldest, store: store.code });
       } else {
         // Se excluye el pedido frontera (ya sincronizado) restando un segundo,
         // para que cada llamada avance en vez de repetir la misma ventana.
         const beforeOldest = new Date(new Date(coverage.oldest).getTime() - 1000).toISOString();
-        url = buildInitialUrl(createdAtMin, beforeOldest);
+        url = buildInitialUrl(createdAtMin, beforeOldest, store);
       }
     } else {
-      url = buildInitialUrl(createdAtMin);
+      url = buildInitialUrl(createdAtMin, undefined, store);
     }
 
     const rawOrders: Array<Record<string, unknown>> = [];
     let pagesChecked = 0;
     for (let page = 0; page < maxPages && url; page++) {
       if (page > 0) await sleep(PAGE_DELAY_MS);
-      const res = await fetchShopifyPage(url);
+      const res = await fetchShopifyPage(url, store);
 
       if (!res.ok) {
         const text = await res.text();
@@ -97,7 +121,15 @@ export async function POST(req: NextRequest) {
     }
 
     const orders = rawOrders.map(mapShopifyOrder);
-    await upsertPersistedShopifyOrders(orders);
+    await upsertPersistedShopifyOrders(orders, store.id);
+
+    // El sync muto shopify_orders: refresca la cache durable del dataset (solo si
+    // entraron pedidos). Defensivo: nunca rompe el sync si la cache falla.
+    if (orders.length > 0) {
+      await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+        console.warn(`[finance/shopify-sync cache] ${store.code}:`, cacheErr)
+      );
+    }
 
     const oldestFetched = orders.reduce<string | null>((min, order) => {
       const created = order.shopify_created_at;
@@ -113,6 +145,7 @@ export async function POST(req: NextRequest) {
       oldest: oldestFetched,
       created_at_min: createdAtMin,
       pages_checked: pagesChecked,
+      store: store.code,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error sincronizando Shopify";
@@ -120,126 +153,9 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function fetchShopifyPage(url: string): Promise<Response> {
-  const doFetch = () =>
-    fetch(url, {
-      headers: {
-        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN ?? "",
-        "Content-Type": "application/json",
-      },
-      cache: "no-store",
-    });
-
-  let res = await doFetch();
-  if (res.status === 429) {
-    const retryAfter = Number(res.headers.get("retry-after") || 1.2);
-    await sleep(Math.min(Math.max(retryAfter, 0.5), 5) * 1000);
-    res = await doFetch();
-  }
-  return res;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function buildInitialUrl(createdAtMin: string, createdAtMax?: string): string {
-  if (!process.env.SHOPIFY_SHOP_DOMAIN || !process.env.SHOPIFY_ACCESS_TOKEN) {
-    throw new Error("Shopify no configurado: faltan SHOPIFY_SHOP_DOMAIN o SHOPIFY_ACCESS_TOKEN.");
-  }
-
-  const fields = [
-    "id",
-    "order_number",
-    "name",
-    "email",
-    "phone",
-    "financial_status",
-    "fulfillment_status",
-    "cancelled_at",
-    "note",
-    "note_attributes",
-    "total_price",
-    "currency",
-    "line_items",
-    "customer",
-    "billing_address",
-    "shipping_address",
-    "fulfillments",
-    "created_at",
-    "updated_at",
-  ].join(",");
-
-  const params = new URLSearchParams({
-    status: "any",
-    limit: "250",
-    order: "created_at desc",
-    created_at_min: createdAtMin,
-    fields,
-  });
-  if (createdAtMax) params.set("created_at_max", createdAtMax);
-  return `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2024-01/orders.json?${params.toString()}`;
-}
-
-function mapShopifyOrder(order: Record<string, unknown>): Omit<PersistedShopifyOrder, "id" | "synced_at"> {
-  const customer = order.customer as Record<string, unknown> | undefined;
-  const billing = order.billing_address as Record<string, unknown> | undefined;
-  const shipping = order.shipping_address as Record<string, unknown> | undefined;
-  const lineItems = (order.line_items as Array<Record<string, unknown>>) ?? [];
-
-  const firstName = (customer?.first_name as string) ?? (billing?.first_name as string) ?? "";
-  const lastName = (customer?.last_name as string) ?? (billing?.last_name as string) ?? "";
-  const phone =
-    (order.phone as string | null) ??
-    (shipping?.phone as string | null) ??
-    (billing?.phone as string | null) ??
-    (customer?.phone as string | null) ??
-    null;
-
-  // Guia/transportadora del fulfillment mas reciente con tracking.
-  const fulfillments = ((order.fulfillments as Array<Record<string, unknown>>) ?? [])
-    .filter((f) => f.tracking_number || (Array.isArray(f.tracking_numbers) && f.tracking_numbers.length))
-    .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
-  const latestFulfillment = fulfillments[0];
-  const trackingNumbers = Array.isArray(latestFulfillment?.tracking_numbers)
-    ? (latestFulfillment?.tracking_numbers as unknown[])
-    : [];
-  const trackingNumber = String(
-    latestFulfillment?.tracking_number ?? trackingNumbers[0] ?? ""
-  ).trim();
-  const trackingCompany = String(latestFulfillment?.tracking_company ?? "").trim();
-
-  return {
-    shopify_order_id: String(order.id ?? ""),
-    order_number: order.order_number ? Number(order.order_number) : null,
-    name: String(order.name ?? ""),
-    customer_name: `${firstName} ${lastName}`.trim() || "Sin nombre",
-    first_name: firstName,
-    last_name: lastName,
-    phone,
-    email: (order.email as string | null) ?? null,
-    financial_status: String(order.financial_status ?? ""),
-    fulfillment_status: String(order.fulfillment_status ?? ""),
-    cancelled_at: (order.cancelled_at as string | null) ?? null,
-    total_price: Number(order.total_price ?? 0),
-    currency: String(order.currency ?? "CRC"),
-    note: String(order.note ?? ""),
-    note_attributes: ((order.note_attributes as Array<Record<string, unknown>>) ?? []).map(
-      (attribute) => ({
-        name: String(attribute.name ?? ""),
-        value: String(attribute.value ?? ""),
-      })
-    ),
-    tracking_number: trackingNumber,
-    tracking_company: trackingCompany,
-    line_items: lineItems.map((item) => ({
-      sku: String(item.sku ?? ""),
-      title: String(item.title ?? ""),
-      quantity: Number(item.quantity ?? 0),
-      price: Number(item.price ?? 0),
-    })),
-    raw_order: order,
-    shopify_created_at: (order.created_at as string | null) ?? null,
-    shopify_updated_at: (order.updated_at as string | null) ?? null,
-  };
+function missingStoreResponse() {
+  return NextResponse.json(
+    { error: "store requerido: usa mireva-cr o mireva-hn" },
+    { status: 400 }
+  );
 }

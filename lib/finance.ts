@@ -1,4 +1,6 @@
 import { getDB } from "@/lib/db";
+import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
+import { normalizeForzaGuide } from "./forza";
 import { normalizeMatchKey } from "./order-matching";
 
 export * from "./finance-types";
@@ -8,6 +10,7 @@ import type {
   BusinessExpense,
   ExpenseType,
   FinanceClaim,
+  ForzaTrackingRow,
   IcomflyAgentRecord,
   IcomflyOrderRecord,
   LogisticsImport,
@@ -21,33 +24,42 @@ import type {
   SettlementRow,
 } from "./finance-types";
 
-export async function listProductCosts(): Promise<ProductCost[]> {
+export async function listProductCosts(storeId = DEFAULT_FINANCE_STORE_ID): Promise<ProductCost[]> {
   const { data, error } = await getDB()
     .from("product_costs")
     .select("*")
+    .eq("store_id", storeId)
     .order("active", { ascending: false })
     .order("sku");
+  if (shouldFallbackToLegacyStore(error, storeId)) return listLegacyProductCosts();
   if (error) throw new Error(`listProductCosts: ${error.message}`);
   return (data ?? []) as ProductCost[];
 }
 
-export async function listProductCostVersions(sku?: string): Promise<ProductCostVersion[]> {
+export async function listProductCostVersions(
+  sku?: string,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<ProductCostVersion[]> {
   let query = getDB()
     .from("product_cost_versions")
     .select("*")
+    .eq("store_id", storeId)
     .order("effective_from", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(1000);
   if (sku) query = query.eq("sku", sku.trim().toLowerCase());
   const { data, error } = await query;
+  if (shouldFallbackToLegacyStore(error, storeId)) return listLegacyProductCostVersions(sku);
   if (error) throw new Error(`listProductCostVersions: ${error.message}`);
   return (data ?? []) as ProductCostVersion[];
 }
 
 export async function upsertProductCost(
-  input: Partial<ProductCost> & { sku: string }
+  input: Partial<ProductCost> & { sku: string },
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<ProductCost> {
   const payload = {
+    store_id: storeId,
     sku: input.sku.trim().toLowerCase(),
     product_name: input.product_name?.trim() ?? "",
     unit_cost: Number(input.unit_cost ?? 0),
@@ -66,6 +78,7 @@ export async function upsertProductCost(
   const { data: existing, error: findError } = await db
     .from("product_costs")
     .select("id")
+    .eq("store_id", storeId)
     .eq("sku", payload.sku)
     .order("id", { ascending: false })
     .limit(1)
@@ -84,6 +97,7 @@ export async function upsertProductCost(
   const { error: versionError } = await getDB()
     .from("product_cost_versions")
     .insert({
+      store_id: storeId,
       sku: payload.sku,
       product_name: payload.product_name,
       unit_cost: payload.unit_cost,
@@ -98,28 +112,42 @@ export async function upsertProductCost(
   return data as ProductCost;
 }
 
-export async function deleteProductCost(id: number): Promise<void> {
-  const { error } = await getDB().from("product_costs").delete().eq("id", id);
+export async function deleteProductCost(
+  id: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<void> {
+  const { error } = await getDB()
+    .from("product_costs")
+    .delete()
+    .eq("id", id)
+    .eq("store_id", storeId);
   if (error) throw new Error(`deleteProductCost: ${error.message}`);
 }
 
-export async function listExpenses(type?: ExpenseType): Promise<BusinessExpense[]> {
+export async function listExpenses(
+  type?: ExpenseType,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<BusinessExpense[]> {
   let query = getDB()
     .from("business_expenses")
     .select("*")
+    .eq("store_id", storeId)
     .order("expense_date", { ascending: false })
     .order("created_at", { ascending: false });
   if (type) query = query.eq("type", type);
   const { data, error } = await query;
+  if (shouldFallbackToLegacyStore(error, storeId)) return listLegacyExpenses(type);
   if (error) throw new Error(`listExpenses: ${error.message}`);
   return (data ?? []) as BusinessExpense[];
 }
 
 export async function createExpense(
-  input: Omit<BusinessExpense, "id" | "created_at" | "updated_at">
+  input: Omit<BusinessExpense, "id" | "created_at" | "updated_at" | "store_id">,
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<BusinessExpense> {
   const payload = {
     ...input,
+    store_id: storeId,
     amount: Number(input.amount ?? 0),
     currency: input.currency || "CRC",
     updated_at: new Date().toISOString(),
@@ -135,40 +163,61 @@ export async function createExpense(
 
 export async function updateExpense(
   id: number,
-  updates: Partial<BusinessExpense>
+  updates: Partial<BusinessExpense>,
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<void> {
   const { error } = await getDB()
     .from("business_expenses")
     .update({ ...updates, updated_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("store_id", storeId);
   if (error) throw new Error(`updateExpense: ${error.message}`);
 }
 
-export async function deleteExpense(id: number): Promise<void> {
-  const { error } = await getDB().from("business_expenses").delete().eq("id", id);
+export async function deleteExpense(
+  id: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<void> {
+  const { error } = await getDB()
+    .from("business_expenses")
+    .delete()
+    .eq("id", id)
+    .eq("store_id", storeId);
   if (error) throw new Error(`deleteExpense: ${error.message}`);
 }
 
-export async function listSettlementImports(): Promise<SettlementImport[]> {
+export async function listSettlementImports(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<SettlementImport[]> {
   const { data, error } = await getDB()
     .from("settlement_imports")
     .select("*")
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false });
+  if (shouldFallbackToLegacyStore(error, storeId)) return listLegacySettlementImports();
   if (error) throw new Error(`listSettlementImports: ${error.message}`);
   return (data ?? []) as SettlementImport[];
 }
 
-export async function deleteSettlementImport(id: number): Promise<void> {
-  const { error } = await getDB().from("settlement_imports").delete().eq("id", id);
+export async function deleteSettlementImport(
+  id: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<void> {
+  const { error } = await getDB()
+    .from("settlement_imports")
+    .delete()
+    .eq("id", id)
+    .eq("store_id", storeId);
   if (error) throw new Error(`deleteSettlementImport: ${error.message}`);
 }
 
 export async function createSettlementImport(
-  input: Omit<SettlementImport, "id" | "created_at">
+  input: Omit<SettlementImport, "id" | "created_at" | "store_id">,
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<SettlementImport> {
   const { data, error } = await getDB()
     .from("settlement_imports")
-    .insert(input)
+    .insert({ ...input, store_id: storeId })
     .select()
     .single();
   if (error) throw new Error(`createSettlementImport: ${error.message}`);
@@ -183,64 +232,128 @@ export async function insertSettlementRows(
   if (error) throw new Error(`insertSettlementRows: ${error.message}`);
 }
 
+// Re-emparejado: actualiza filas existentes por id. Se omite raw_row del payload
+// a proposito (columna con DEFAULT '{}') para no pisar el original guardado al
+// importar; el upsert solo toca las columnas presentes en cada fila.
+export async function upsertSettlementRows(rows: SettlementRow[]): Promise<void> {
+  if (!rows.length) return;
+  const { error } = await getDB()
+    .from("settlement_rows")
+    .upsert(rows, { onConflict: "id" });
+  if (error) throw new Error(`upsertSettlementRows: ${error.message}`);
+}
+
+export async function updateSettlementImportMatchCounts(
+  id: number,
+  storeId: number,
+  matchedRows: number,
+  unmatchedRows: number
+): Promise<void> {
+  const { error } = await getDB()
+    .from("settlement_imports")
+    .update({ matched_rows: matchedRows, unmatched_rows: unmatchedRows })
+    .eq("id", id)
+    .eq("store_id", storeId);
+  if (error) throw new Error(`updateSettlementImportMatchCounts: ${error.message}`);
+}
+
 const SETTLEMENT_ROW_COLUMNS_BASE =
-  "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, service_type, cod_amount, cod_commission, card_commission, delivery_cost, pick_pack_cost, packaging_cost, amount_to_liquidate, settlement_status, internal_status, match_status, shopify_order_id, shopify_order_name, shopify_financial_status, shopify_fulfillment_status, shopify_total, shopify_created_at, order_items, created_at";
+  "id, store_id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, service_type, cod_amount, cod_commission, card_commission, delivery_cost, pick_pack_cost, packaging_cost, amount_to_liquidate, settlement_status, internal_status, match_status, shopify_order_id, shopify_order_name, shopify_financial_status, shopify_fulfillment_status, shopify_total, shopify_created_at, order_items, created_at";
 // first_name/last_name requieren la migracion 0005; si falta, se reintenta
 // sin ellas.
 let settlementNameColumnsMissing = false;
+const LEGACY_SETTLEMENT_ROW_COLUMNS =
+  "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, service_type, cod_amount, cod_commission, card_commission, delivery_cost, pick_pack_cost, packaging_cost, amount_to_liquidate, settlement_status, internal_status, match_status, shopify_order_id, shopify_order_name, shopify_financial_status, shopify_fulfillment_status, shopify_total, shopify_created_at, order_items, created_at";
 
-export async function listSettlementRows(importId?: number): Promise<SettlementRow[]> {
+export async function listSettlementRows(
+  importId?: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<SettlementRow[]> {
   // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
-  // defecto); se pagina con range() para devolver todas las filas.
+  // defecto); se pagina con range(). La primera pagina va en serie (detecta
+  // columnas faltantes / fallback legacy) y el resto va en lotes concurrentes
+  // para no encadenar hasta 20 viajes a Supabase en una sola carga.
   const pageSize = 1000;
-  const all: SettlementRow[] = [];
-  for (let from = 0; from < 20000; from += pageSize) {
-    const fetchPage = (withNames: boolean) => {
-      let query = getDB()
-        .from("settlement_rows")
-        .select(withNames ? `${SETTLEMENT_ROW_COLUMNS_BASE}, first_name, last_name` : SETTLEMENT_ROW_COLUMNS_BASE)
-        .order("created_on", { ascending: false, nullsFirst: false })
-        .order("id", { ascending: false })
-        .range(from, from + pageSize - 1);
-      if (importId) query = query.eq("import_id", importId);
-      return query;
-    };
-    let { data, error } = await fetchPage(!settlementNameColumnsMissing);
-    if (error && !settlementNameColumnsMissing && isMissingColumnError(error.message)) {
-      settlementNameColumnsMissing = true;
-      ({ data, error } = await fetchPage(false));
+  const concurrency = 5;
+  const maxRows = 20000;
+  const fetchPage = (from: number, withNames: boolean) => {
+    let query = getDB()
+      .from("settlement_rows")
+      .select(withNames ? `${SETTLEMENT_ROW_COLUMNS_BASE}, first_name, last_name` : SETTLEMENT_ROW_COLUMNS_BASE)
+      .eq("store_id", storeId)
+      .order("created_on", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (importId) query = query.eq("import_id", importId);
+    return query;
+  };
+
+  let first = await fetchPage(0, !settlementNameColumnsMissing);
+  if (shouldFallbackToLegacyStore(first.error, storeId)) return listLegacySettlementRows(importId);
+  if (first.error && !settlementNameColumnsMissing && isMissingColumnError(first.error.message)) {
+    settlementNameColumnsMissing = true;
+    first = await fetchPage(0, false);
+  }
+  if (shouldFallbackToLegacyStore(first.error, storeId)) return listLegacySettlementRows(importId);
+  if (first.error) throw new Error(`listSettlementRows: ${first.error.message}`);
+
+  const withNames = !settlementNameColumnsMissing;
+  const all: SettlementRow[] = [...((first.data ?? []) as unknown as SettlementRow[])];
+  let done = (first.data?.length ?? 0) < pageSize;
+
+  for (let base = pageSize; base < maxRows && !done; base += pageSize * concurrency) {
+    const froms: number[] = [];
+    for (let i = 0; i < concurrency; i++) {
+      const from = base + i * pageSize;
+      if (from >= maxRows) break;
+      froms.push(from);
     }
-    if (error) throw new Error(`listSettlementRows: ${error.message}`);
-    const page = (data ?? []) as unknown as SettlementRow[];
-    all.push(...page);
-    if (page.length < pageSize) break;
+    const results = await Promise.all(froms.map((from) => fetchPage(from, withNames)));
+    for (const { data, error } of results) {
+      if (error) throw new Error(`listSettlementRows: ${error.message}`);
+      const page = (data ?? []) as unknown as SettlementRow[];
+      all.push(...page);
+      if (page.length < pageSize) done = true;
+    }
   }
   return all;
 }
 
-export async function listLogisticsImports(): Promise<LogisticsImport[]> {
+export async function listLogisticsImports(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<LogisticsImport[]> {
   const { data, error } = await getDB()
     .from("logistics_imports")
     .select("*")
+    .eq("store_id", storeId)
     .order("created_at", { ascending: false });
+  if (shouldFallbackToLegacyStore(error, storeId)) return listLegacyLogisticsImports();
   if (error) throw new Error(`listLogisticsImports: ${error.message}`);
   return (data ?? []) as LogisticsImport[];
 }
 
 export async function createLogisticsImport(
-  input: Omit<LogisticsImport, "id" | "created_at">
+  input: Omit<LogisticsImport, "id" | "created_at" | "store_id">,
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<LogisticsImport> {
   const { data, error } = await getDB()
     .from("logistics_imports")
-    .insert(input)
+    .insert({ ...input, store_id: storeId })
     .select()
     .single();
   if (error) throw new Error(`createLogisticsImport: ${error.message}`);
   return data as LogisticsImport;
 }
 
-export async function deleteLogisticsImport(id: number): Promise<void> {
-  const { error } = await getDB().from("logistics_imports").delete().eq("id", id);
+export async function deleteLogisticsImport(
+  id: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<void> {
+  const { error } = await getDB()
+    .from("logistics_imports")
+    .delete()
+    .eq("id", id)
+    .eq("store_id", storeId);
   if (error) throw new Error(`deleteLogisticsImport: ${error.message}`);
 }
 
@@ -252,37 +365,153 @@ export async function insertLogisticsRows(
   if (error) throw new Error(`insertLogisticsRows: ${error.message}`);
 }
 
-const LOGISTICS_ROW_COLUMNS_BASE =
-  "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, package_items, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
-let logisticsNameColumnsMissing = false;
+// Re-emparejado: ver nota en upsertSettlementRows. raw_row se omite a proposito.
+export async function upsertLogisticsRows(rows: LogisticsRow[]): Promise<void> {
+  if (!rows.length) return;
+  const { error } = await getDB()
+    .from("logistics_rows")
+    .upsert(rows, { onConflict: "id" });
+  if (error) throw new Error(`upsertLogisticsRows: ${error.message}`);
+}
 
-export async function listLogisticsRows(importId?: number): Promise<LogisticsRow[]> {
-  // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
-  // defecto); se pagina con range() para devolver todas las filas.
+export async function updateLogisticsImportMatchCounts(
+  id: number,
+  storeId: number,
+  matchedRows: number,
+  unmatchedRows: number
+): Promise<void> {
+  const { error } = await getDB()
+    .from("logistics_imports")
+    .update({ matched_rows: matchedRows, unmatched_rows: unmatchedRows })
+    .eq("id", id)
+    .eq("store_id", storeId);
+  if (error) throw new Error(`updateLogisticsImportMatchCounts: ${error.message}`);
+}
+
+const LOGISTICS_ROW_COLUMNS_BASE =
+  "id, store_id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, package_items, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
+// Variante liviana para la descarga masiva del cliente: sin package_items (el
+// array mas pesado) para que cada pagina sea chica y no se corte la carga; las
+// filas con match toman los items del pedido de Shopify igual.
+const LOGISTICS_ROW_COLUMNS_SLIM =
+  "id, store_id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
+let logisticsNameColumnsMissing = false;
+const LEGACY_LOGISTICS_ROW_COLUMNS =
+  "id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, boxful_status, internal_status, match_status, service_type, cod_amount, cod_commission, delivery_cost, total_cost, liquidated_on, finalized_on, label_url, package_items, shopify_order_id, shopify_order_name, shopify_order_number, shopify_financial_status, shopify_fulfillment_status, shopify_cancelled_at, shopify_total, shopify_created_at, created_at";
+
+export async function listLogisticsRows(
+  importId?: number,
+  storeId = DEFAULT_FINANCE_STORE_ID,
+  options: { slim?: boolean } = {}
+): Promise<LogisticsRow[]> {
+  // PostgREST recorta cada respuesta a max-rows (1000); se pagina con range().
+  // La primera pagina va en serie (detecta columnas faltantes / fallback legacy)
+  // y el resto en lotes concurrentes para no encadenar viajes a Supabase.
   const pageSize = 1000;
-  const all: LogisticsRow[] = [];
-  for (let from = 0; from < 20000; from += pageSize) {
-    const fetchPage = (withNames: boolean) => {
-      let query = getDB()
-        .from("logistics_rows")
-        .select(withNames ? `${LOGISTICS_ROW_COLUMNS_BASE}, first_name, last_name` : LOGISTICS_ROW_COLUMNS_BASE)
-        .order("created_on", { ascending: false, nullsFirst: false })
-        .order("id", { ascending: false })
-        .range(from, from + pageSize - 1);
-      if (importId) query = query.eq("import_id", importId);
-      return query;
-    };
-    let { data, error } = await fetchPage(!logisticsNameColumnsMissing);
-    if (error && !logisticsNameColumnsMissing && isMissingColumnError(error.message)) {
-      logisticsNameColumnsMissing = true;
-      ({ data, error } = await fetchPage(false));
+  const concurrency = 5;
+  const maxRows = 20000;
+  const baseColumns = options.slim ? LOGISTICS_ROW_COLUMNS_SLIM : LOGISTICS_ROW_COLUMNS_BASE;
+  const fetchPage = (from: number, withNames: boolean) => {
+    let query = getDB()
+      .from("logistics_rows")
+      .select(withNames ? `${baseColumns}, first_name, last_name` : baseColumns)
+      .eq("store_id", storeId)
+      .order("created_on", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (importId) query = query.eq("import_id", importId);
+    return query;
+  };
+
+  let first = await fetchPage(0, !logisticsNameColumnsMissing);
+  if (shouldFallbackToLegacyStore(first.error, storeId)) return listLegacyLogisticsRows(importId);
+  if (first.error && !logisticsNameColumnsMissing && isMissingColumnError(first.error.message)) {
+    logisticsNameColumnsMissing = true;
+    first = await fetchPage(0, false);
+  }
+  if (shouldFallbackToLegacyStore(first.error, storeId)) return listLegacyLogisticsRows(importId);
+  if (first.error) throw new Error(`listLogisticsRows: ${first.error.message}`);
+
+  const withNames = !logisticsNameColumnsMissing;
+  const all: LogisticsRow[] = [...((first.data ?? []) as unknown as LogisticsRow[])];
+  let done = (first.data?.length ?? 0) < pageSize;
+
+  for (let base = pageSize; base < maxRows && !done; base += pageSize * concurrency) {
+    const froms: number[] = [];
+    for (let i = 0; i < concurrency; i++) {
+      const from = base + i * pageSize;
+      if (from >= maxRows) break;
+      froms.push(from);
     }
-    if (error) throw new Error(`listLogisticsRows: ${error.message}`);
-    const page = (data ?? []) as unknown as LogisticsRow[];
-    all.push(...page);
-    if (page.length < pageSize) break;
+    const results = await Promise.all(froms.map((from) => fetchPage(from, withNames)));
+    for (const { data, error } of results) {
+      if (error) throw new Error(`listLogisticsRows: ${error.message}`);
+      const page = (data ?? []) as unknown as LogisticsRow[];
+      all.push(...page);
+      if (page.length < pageSize) done = true;
+    }
   }
   return all;
+}
+
+export async function listLogisticsRowsPage(
+  options: {
+    importId?: number;
+    storeId?: number;
+    limit?: number;
+    offset?: number;
+    slim?: boolean;
+  } = {}
+): Promise<{ rows: LogisticsRow[]; hasMore: boolean; nextOffset: number | null }> {
+  const importId = options.importId;
+  const storeId = options.storeId ?? DEFAULT_FINANCE_STORE_ID;
+  const limit = Math.min(Math.max(Math.floor(options.limit ?? 1000), 1), 1000);
+  const offset = Math.max(Math.floor(options.offset ?? 0), 0);
+  const baseColumns = options.slim ? LOGISTICS_ROW_COLUMNS_SLIM : LOGISTICS_ROW_COLUMNS_BASE;
+
+  const fetchPage = (withNames: boolean) => {
+    let query = getDB()
+      .from("logistics_rows")
+      .select(withNames ? `${baseColumns}, first_name, last_name` : baseColumns)
+      .eq("store_id", storeId)
+      .order("created_on", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + limit);
+    if (importId) query = query.eq("import_id", importId);
+    return query;
+  };
+
+  let { data, error } = await fetchPage(!logisticsNameColumnsMissing);
+  if (shouldFallbackToLegacyStore(error, storeId)) {
+    const rows = (await listLegacyLogisticsRows(importId)).slice(offset, offset + limit);
+    return {
+      rows,
+      hasMore: rows.length === limit,
+      nextOffset: rows.length === limit ? offset + limit : null,
+    };
+  }
+  if (error && !logisticsNameColumnsMissing && isMissingColumnError(error.message)) {
+    logisticsNameColumnsMissing = true;
+    ({ data, error } = await fetchPage(false));
+  }
+  if (shouldFallbackToLegacyStore(error, storeId)) {
+    const rows = (await listLegacyLogisticsRows(importId)).slice(offset, offset + limit);
+    return {
+      rows,
+      hasMore: rows.length === limit,
+      nextOffset: rows.length === limit ? offset + limit : null,
+    };
+  }
+  if (error) throw new Error(`listLogisticsRowsPage: ${error.message}`);
+
+  const page = (data ?? []) as unknown as LogisticsRow[];
+  const rows = page.slice(0, limit);
+  const hasMore = page.length > limit;
+  return {
+    rows,
+    hasMore,
+    nextOffset: hasMore ? offset + limit : null,
+  };
 }
 
 // Sin raw_order completo: las lineas y notas se resuelven aca para que la
@@ -293,7 +522,7 @@ export async function listLogisticsRows(importId?: number): Promise<LogisticsRow
 // mientras la migracion no este aplicada.
 // Tier 0: columnas planas con nombre/apellido (requiere migraciones 0003 y 0005).
 const PERSISTED_NAMES_BASE =
-  "id, shopify_order_id, order_number, name, customer_name, first_name, last_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note, note_attributes";
+  "id, store_id, shopify_order_id, order_number, name, customer_name, first_name, last_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note, note_attributes";
 
 // Tier 0: todo plano, incluye tracking del fulfillment (requiere 0007).
 const PERSISTED_ORDER_SUMMARY_COLUMNS_FAST = `${PERSISTED_NAMES_BASE}, tracking_number, tracking_company`;
@@ -303,11 +532,11 @@ const PERSISTED_ORDER_SUMMARY_COLUMNS_NAMES = PERSISTED_NAMES_BASE;
 
 // Tier 2: nota plana sin nombres ni tracking (0003 si, 0005 no).
 const PERSISTED_ORDER_SUMMARY_COLUMNS_NOTE_ONLY =
-  "id, shopify_order_id, order_number, name, customer_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note, note_attributes";
+  "id, store_id, shopify_order_id, order_number, name, customer_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note, note_attributes";
 
 // Tier 3: extraccion de raw_order (pre-0003). Lento; solo como ultimo recurso.
 const PERSISTED_ORDER_SUMMARY_COLUMNS_LEGACY =
-  "id, shopify_order_id, order_number, name, customer_name, first_name:raw_order->'customer'->>first_name, last_name:raw_order->'customer'->>last_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note:raw_order->>note, note_attributes:raw_order->note_attributes, raw_line_items:raw_order->line_items";
+  "id, store_id, shopify_order_id, order_number, name, customer_name, first_name:raw_order->'customer'->>first_name, last_name:raw_order->'customer'->>last_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note:raw_order->>note, note_attributes:raw_order->note_attributes, raw_line_items:raw_order->line_items";
 
 const PERSISTED_TIERS = [
   PERSISTED_ORDER_SUMMARY_COLUMNS_FAST,
@@ -320,6 +549,8 @@ let persistedTier = 0;
 function isMissingColumnError(message: string): boolean {
   return /does not exist|42703/.test(message);
 }
+const LEGACY_PERSISTED_ORDER_SUMMARY_COLUMNS =
+  "id, shopify_order_id, order_number, name, customer_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note:raw_order->>note, note_attributes:raw_order->note_attributes, raw_line_items:raw_order->line_items";
 
 export interface PersistedShopifyOrderSummary
   extends Omit<PersistedShopifyOrder, "raw_order"> {
@@ -327,38 +558,67 @@ export interface PersistedShopifyOrderSummary
   note_attributes: Array<{ name?: string | null; value?: string | null }>;
 }
 
-export async function listPersistedShopifyOrders(limit = 1000, offset = 0): Promise<PersistedShopifyOrderSummary[]> {
+export async function listPersistedShopifyOrders(
+  limit = 1000,
+  offset = 0,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<PersistedShopifyOrderSummary[]> {
   type RawSummary = PersistedShopifyOrderSummary & {
     raw_line_items: Array<Record<string, unknown>> | null;
   };
   // PostgREST recorta cada respuesta a max-rows (1000 en Supabase por
-  // defecto); se pagina con range() hasta el limite pedido.
+  // defecto); se piden bloques de ese tamano hasta el limite pedido.
   const pageSize = 1000;
   const rows: RawSummary[] = [];
   const safeLimit = Math.max(Math.floor(limit), 0);
   const safeOffset = Math.max(Math.floor(offset), 0);
+  // Lectura desde el principio (offset 0): paginacion por keyset sobre el id
+  // (PK). Es el camino del rebuild del dataset (hasta 20k filas) y de la
+  // cobertura. Un OFFSET profundo obliga a Postgres a reordenar toda la tabla
+  // (arrastrando el JSONB de cada fila) y descartar miles de filas por pagina,
+  // lo que reventaba el statement timeout -> FUNCTION_INVOCATION_TIMEOUT en
+  // /api/finance/orders con la cache fria. El consumidor reordena por fecha, asi
+  // que ordenar por id alcanza. Para offset>0 (uso puntual y acotado del GET de
+  // shopify-sync) se mantiene range().
+  const useKeyset = safeOffset === 0;
+  let lastId: number | null = null;
   for (let fetched = 0; fetched < safeLimit; fetched += pageSize) {
-    const from = safeOffset + fetched;
-    const to = safeOffset + Math.min(fetched + pageSize, safeLimit) - 1;
-    const fetchPage = (columns: string) =>
-      getDB()
-        .from("shopify_orders")
-        .select(columns)
-        .order("shopify_created_at", { ascending: false, nullsFirst: false })
-        .order("id", { ascending: false })
-        .range(from, to);
+    const batchSize = Math.min(pageSize, safeLimit - fetched);
+    const fetchPage = (columns: string) => {
+      let query = getDB().from("shopify_orders").select(columns).eq("store_id", storeId);
+      if (useKeyset) {
+        query = query.order("id", { ascending: false }).limit(batchSize);
+        if (lastId !== null) query = query.lt("id", lastId);
+      } else {
+        const from = safeOffset + fetched;
+        const to = safeOffset + Math.min(fetched + pageSize, safeLimit) - 1;
+        query = query
+          .order("shopify_created_at", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: false })
+          .range(from, to);
+      }
+      return query;
+    };
 
     let result = await fetchPage(PERSISTED_TIERS[persistedTier]);
+    if (shouldFallbackToLegacyStore(result.error, storeId)) {
+      return listLegacyPersistedShopifyOrders(limit, offset);
+    }
     // Si falta una columna de una migracion no aplicada, baja al siguiente
     // tier (sigue siendo rapido hasta el ultimo, que ya extrae de raw_order).
     while (result.error && isMissingColumnError(result.error.message) && persistedTier < PERSISTED_TIERS.length - 1) {
       persistedTier += 1;
       result = await fetchPage(PERSISTED_TIERS[persistedTier]);
+      if (shouldFallbackToLegacyStore(result.error, storeId)) {
+        return listLegacyPersistedShopifyOrders(limit, offset);
+      }
     }
     if (result.error) throw new Error(`listPersistedShopifyOrders: ${result.error.message}`);
     const page = (result.data ?? []) as unknown as RawSummary[];
+    if (!page.length) break;
     rows.push(...page);
-    if (page.length < pageSize) break;
+    lastId = Number((page[page.length - 1] as unknown as { id: number }).id);
+    if (page.length < batchSize) break;
   }
   return rows.map(({ raw_line_items, ...order }) => ({
     ...order,
@@ -383,23 +643,28 @@ export interface PersistedShopifyCoverage {
   newest: string | null;
 }
 
-export async function getPersistedShopifyCoverage(): Promise<PersistedShopifyCoverage> {
+export async function getPersistedShopifyCoverage(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<PersistedShopifyCoverage> {
   const db = getDB();
   const [countRes, oldestRes, newestRes] = await Promise.all([
-    db.from("shopify_orders").select("id", { count: "exact", head: true }),
+    db.from("shopify_orders").select("id", { count: "estimated", head: true }).eq("store_id", storeId),
     db
       .from("shopify_orders")
       .select("shopify_created_at")
+      .eq("store_id", storeId)
       .not("shopify_created_at", "is", null)
       .order("shopify_created_at", { ascending: true })
       .limit(1),
     db
       .from("shopify_orders")
       .select("shopify_created_at")
+      .eq("store_id", storeId)
       .not("shopify_created_at", "is", null)
       .order("shopify_created_at", { ascending: false })
       .limit(1),
   ]);
+  if (shouldFallbackToLegacyStore(countRes.error, storeId)) return getLegacyPersistedShopifyCoverage();
   if (countRes.error) throw new Error(`getPersistedShopifyCoverage: ${countRes.error.message}`);
   return {
     count: countRes.count ?? 0,
@@ -409,16 +674,18 @@ export async function getPersistedShopifyCoverage(): Promise<PersistedShopifyCov
 }
 
 export async function upsertPersistedShopifyOrders(
-  orders: Omit<PersistedShopifyOrder, "id" | "synced_at">[]
+  orders: Omit<PersistedShopifyOrder, "id" | "synced_at" | "store_id">[],
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<void> {
   if (!orders.length) return;
   const payload = orders.map((order) => ({
     ...order,
+    store_id: storeId,
     synced_at: new Date().toISOString(),
   }));
   let { error } = await getDB()
     .from("shopify_orders")
-    .upsert(payload, { onConflict: "shopify_order_id" });
+    .upsert(payload, { onConflict: "store_id,shopify_order_id" });
   if (error && isMissingColumnError(error.message)) {
     // Migraciones 0003/0005 no aplicadas aun: quita las columnas opcionales
     // (note/note_attributes/first_name/last_name) y reintenta.
@@ -435,24 +702,30 @@ export async function upsertPersistedShopifyOrders(
     );
     ({ error } = await getDB()
       .from("shopify_orders")
-      .upsert(legacyPayload, { onConflict: "shopify_order_id" }));
+      .upsert(legacyPayload, { onConflict: "store_id,shopify_order_id" }));
   }
   if (error) throw new Error(`upsertPersistedShopifyOrders: ${error.message}`);
 }
 
-export async function listFinanceClaims(): Promise<FinanceClaim[]> {
+export async function listFinanceClaims(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<FinanceClaim[]> {
   const { data, error } = await getDB()
     .from("finance_claims")
     .select("*")
+    .eq("store_id", storeId)
     .order("updated_at", { ascending: false });
+  if (shouldFallbackToLegacyStore(error, storeId)) return listLegacyFinanceClaims();
   if (error) throw new Error(`listFinanceClaims: ${error.message}`);
   return (data ?? []) as FinanceClaim[];
 }
 
 export async function upsertFinanceClaim(
-  input: Partial<FinanceClaim> & { anomaly_key: string }
+  input: Partial<FinanceClaim> & { anomaly_key: string },
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<FinanceClaim> {
   const payload = {
+    store_id: storeId,
     anomaly_key: input.anomaly_key,
     order_name: input.order_name ?? "",
     guide_number: input.guide_number ?? "",
@@ -465,27 +738,33 @@ export async function upsertFinanceClaim(
   };
   const { data, error } = await getDB()
     .from("finance_claims")
-    .upsert(payload, { onConflict: "anomaly_key" })
+    .upsert(payload, { onConflict: "store_id,anomaly_key" })
     .select()
     .single();
   if (error) throw new Error(`upsertFinanceClaim: ${error.message}`);
   return data as FinanceClaim;
 }
 
-export async function listBoxfulFileControls(): Promise<BoxfulFileControl[]> {
+export async function listBoxfulFileControls(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<BoxfulFileControl[]> {
   const { data, error } = await getDB()
     .from("boxful_file_controls")
     .select("*")
+    .eq("store_id", storeId)
     .order("cutoff_date", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
+  if (shouldFallbackToLegacyStore(error, storeId)) return listLegacyBoxfulFileControls();
   if (error) throw new Error(`listBoxfulFileControls: ${error.message}`);
   return (data ?? []) as BoxfulFileControl[];
 }
 
 export async function upsertBoxfulFileControl(
-  input: Partial<BoxfulFileControl> & { file_name: string; file_type: "logistica" | "liquidacion" }
+  input: Partial<BoxfulFileControl> & { file_name: string; file_type: "logistica" | "liquidacion" },
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<BoxfulFileControl> {
   const payload = {
+    store_id: storeId,
     file_name: input.file_name,
     file_type: input.file_type,
     cutoff_date: input.cutoff_date ?? null,
@@ -497,18 +776,20 @@ export async function upsertBoxfulFileControl(
   };
   const { data, error } = await getDB()
     .from("boxful_file_controls")
-    .upsert(payload, { onConflict: "file_name" })
+    .upsert(payload, { onConflict: "store_id,file_name,file_type" })
     .select()
     .single();
   if (error) throw new Error(`upsertBoxfulFileControl: ${error.message}`);
   return data as BoxfulFileControl;
 }
 
-export async function getProfitabilitySummary(): Promise<ProfitabilitySummary> {
+export async function getProfitabilitySummary(
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<ProfitabilitySummary> {
   const [rows, costs, expenses] = await Promise.all([
-    listSettlementRows(),
-    listProductCosts(),
-    listExpenses(),
+    listSettlementRows(undefined, storeId),
+    listProductCosts(storeId),
+    listExpenses(undefined, storeId),
   ]);
 
   const costBySku = new Map<string, ProductCost>();
@@ -595,6 +876,199 @@ function getProductCostKey(item: { sku?: string | null; title?: string | null })
     .replace(/^-+|-+$/g, "")
     .slice(0, 96);
   return slug ? `producto:${slug}` : "";
+}
+
+type StorePartitionError = {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+} | null;
+
+function shouldFallbackToLegacyStore(error: StorePartitionError, storeId: number): boolean {
+  if (!error || storeId !== DEFAULT_FINANCE_STORE_ID) return false;
+  const text = [error.code, error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return text.includes("store_id") || text.includes("store id");
+}
+
+async function listLegacyProductCosts(): Promise<ProductCost[]> {
+  const { data, error } = await getDB()
+    .from("product_costs")
+    .select("*")
+    .order("active", { ascending: false })
+    .order("sku");
+  if (error) throw new Error(`listProductCosts: ${error.message}`);
+  return (data ?? []) as ProductCost[];
+}
+
+async function listLegacyProductCostVersions(sku?: string): Promise<ProductCostVersion[]> {
+  let query = getDB()
+    .from("product_cost_versions")
+    .select("*")
+    .order("effective_from", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1000);
+  if (sku) query = query.eq("sku", sku.trim().toLowerCase());
+  const { data, error } = await query;
+  if (error) throw new Error(`listProductCostVersions: ${error.message}`);
+  return (data ?? []) as ProductCostVersion[];
+}
+
+async function listLegacyExpenses(type?: ExpenseType): Promise<BusinessExpense[]> {
+  let query = getDB()
+    .from("business_expenses")
+    .select("*")
+    .order("expense_date", { ascending: false })
+    .order("created_at", { ascending: false });
+  if (type) query = query.eq("type", type);
+  const { data, error } = await query;
+  if (error) throw new Error(`listExpenses: ${error.message}`);
+  return (data ?? []) as BusinessExpense[];
+}
+
+async function listLegacySettlementImports(): Promise<SettlementImport[]> {
+  const { data, error } = await getDB()
+    .from("settlement_imports")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`listSettlementImports: ${error.message}`);
+  return (data ?? []) as SettlementImport[];
+}
+
+async function listLegacySettlementRows(importId?: number): Promise<SettlementRow[]> {
+  const pageSize = 1000;
+  const all: SettlementRow[] = [];
+  for (let from = 0; from < 20000; from += pageSize) {
+    let query = getDB()
+      .from("settlement_rows")
+      .select(LEGACY_SETTLEMENT_ROW_COLUMNS)
+      .order("created_on", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (importId) query = query.eq("import_id", importId);
+    const { data, error } = await query;
+    if (error) throw new Error(`listSettlementRows: ${error.message}`);
+    const page = (data ?? []) as unknown as SettlementRow[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
+}
+
+async function listLegacyLogisticsImports(): Promise<LogisticsImport[]> {
+  const { data, error } = await getDB()
+    .from("logistics_imports")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`listLogisticsImports: ${error.message}`);
+  return (data ?? []) as LogisticsImport[];
+}
+
+async function listLegacyLogisticsRows(importId?: number): Promise<LogisticsRow[]> {
+  const pageSize = 1000;
+  const all: LogisticsRow[] = [];
+  for (let from = 0; from < 20000; from += pageSize) {
+    let query = getDB()
+      .from("logistics_rows")
+      .select(LEGACY_LOGISTICS_ROW_COLUMNS)
+      .order("created_on", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (importId) query = query.eq("import_id", importId);
+    const { data, error } = await query;
+    if (error) throw new Error(`listLogisticsRows: ${error.message}`);
+    const page = (data ?? []) as unknown as LogisticsRow[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
+}
+
+async function listLegacyPersistedShopifyOrders(
+  limit = 1000,
+  offset = 0
+): Promise<PersistedShopifyOrderSummary[]> {
+  type RawSummary = PersistedShopifyOrderSummary & {
+    raw_line_items: Array<Record<string, unknown>> | null;
+  };
+  const pageSize = 1000;
+  const rows: RawSummary[] = [];
+  const safeLimit = Math.max(Math.floor(limit), 0);
+  const safeOffset = Math.max(Math.floor(offset), 0);
+  for (let fetched = 0; fetched < safeLimit; fetched += pageSize) {
+    const from = safeOffset + fetched;
+    const to = safeOffset + Math.min(fetched + pageSize, safeLimit) - 1;
+    const { data, error } = await getDB()
+      .from("shopify_orders")
+      .select(LEGACY_PERSISTED_ORDER_SUMMARY_COLUMNS)
+      .order("shopify_created_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, to);
+    if (error) throw new Error(`listPersistedShopifyOrders: ${error.message}`);
+    const page = (data ?? []) as unknown as RawSummary[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows.map(({ raw_line_items, ...order }) => ({
+    ...order,
+    note: order.note ?? "",
+    note_attributes: order.note_attributes ?? [],
+    line_items: order.line_items?.length
+      ? order.line_items
+      : (raw_line_items ?? []).map((item) => ({
+          sku: String(item.sku ?? ""),
+          title: String(item.title ?? ""),
+          quantity: Number(item.quantity ?? 0),
+          price: Number(item.price ?? 0),
+        })),
+  }));
+}
+
+async function getLegacyPersistedShopifyCoverage(): Promise<PersistedShopifyCoverage> {
+  const db = getDB();
+  const [countRes, oldestRes, newestRes] = await Promise.all([
+    db.from("shopify_orders").select("id", { count: "estimated", head: true }),
+    db
+      .from("shopify_orders")
+      .select("shopify_created_at")
+      .not("shopify_created_at", "is", null)
+      .order("shopify_created_at", { ascending: true })
+      .limit(1),
+    db
+      .from("shopify_orders")
+      .select("shopify_created_at")
+      .not("shopify_created_at", "is", null)
+      .order("shopify_created_at", { ascending: false })
+      .limit(1),
+  ]);
+  if (countRes.error) throw new Error(`getPersistedShopifyCoverage: ${countRes.error.message}`);
+  return {
+    count: countRes.count ?? 0,
+    oldest: (oldestRes.data?.[0]?.shopify_created_at as string | undefined) ?? null,
+    newest: (newestRes.data?.[0]?.shopify_created_at as string | undefined) ?? null,
+  };
+}
+
+async function listLegacyFinanceClaims(): Promise<FinanceClaim[]> {
+  const { data, error } = await getDB()
+    .from("finance_claims")
+    .select("*")
+    .order("updated_at", { ascending: false });
+  if (error) throw new Error(`listFinanceClaims: ${error.message}`);
+  return (data ?? []) as FinanceClaim[];
+}
+
+async function listLegacyBoxfulFileControls(): Promise<BoxfulFileControl[]> {
+  const { data, error } = await getDB()
+    .from("boxful_file_controls")
+    .select("*")
+    .order("cutoff_date", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`listBoxfulFileControls: ${error.message}`);
+  return (data ?? []) as BoxfulFileControl[];
 }
 
 export async function listPayrollStaff(): Promise<PayrollStaff[]> {
@@ -710,19 +1184,41 @@ export async function getDispatchedBoxfulKeys(): Promise<Set<string>> {
   return keys;
 }
 
-export async function listMoovinTracking(): Promise<MoovinTrackingRow[]> {
+export async function listMoovinTracking(
+  opts: { since?: string | null } = {}
+): Promise<MoovinTrackingRow[]> {
   const pageSize = 1000;
+  const concurrency = 5;
+  const maxRows = 50000;
   const all: MoovinTrackingRow[] = [];
-  for (let from = 0; from < 50000; from += pageSize) {
-    const { data, error } = await getDB()
-      .from("moovin_tracking")
-      .select("*")
-      .order("checked_at", { ascending: false })
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`listMoovinTracking: ${error.message}`);
-    const page = (data ?? []) as MoovinTrackingRow[];
-    all.push(...page);
-    if (page.length < pageSize) break;
+  let done = false;
+  // Lee las paginas en lotes concurrentes (en vez de una por una en serie) para
+  // no encadenar hasta 50 viajes a Supabase. Con `since` solo trae el tracking
+  // re-chequeado despues de esa marca (modo incremental del cron de novedades).
+  for (let base = 0; base < maxRows && !done; base += pageSize * concurrency) {
+    const ranges: Array<[number, number]> = [];
+    for (let i = 0; i < concurrency; i++) {
+      const from = base + i * pageSize;
+      if (from >= maxRows) break;
+      ranges.push([from, from + pageSize - 1]);
+    }
+    const results = await Promise.all(
+      ranges.map(([from, to]) => {
+        let query = getDB()
+          .from("moovin_tracking")
+          .select("*")
+          .order("checked_at", { ascending: false })
+          .range(from, to);
+        if (opts.since) query = query.gt("checked_at", opts.since);
+        return query;
+      })
+    );
+    for (const { data, error } of results) {
+      if (error) throw new Error(`listMoovinTracking: ${error.message}`);
+      const page = (data ?? []) as MoovinTrackingRow[];
+      all.push(...page);
+      if (page.length < pageSize) done = true;
+    }
   }
   return all;
 }
@@ -736,6 +1232,21 @@ export async function upsertMoovinTracking(
     .from("moovin_tracking")
     .upsert(payload, { onConflict: "id_package" });
   if (error) throw new Error(`upsertMoovinTracking: ${error.message}`);
+}
+
+// Una fila de tracking de Moovin por su id_package (= la guia de la novedad).
+// Para el detalle de una novedad: trae el historial completo (columna events).
+export async function getMoovinTrackingByPackage(
+  idPackage: string
+): Promise<MoovinTrackingRow | null> {
+  if (!idPackage) return null;
+  const { data, error } = await getDB()
+    .from("moovin_tracking")
+    .select("*")
+    .eq("id_package", idPackage)
+    .limit(1);
+  if (error) throw new Error(`getMoovinTrackingByPackage: ${error.message}`);
+  return ((data ?? []) as MoovinTrackingRow[])[0] ?? null;
 }
 
 // Guias ya consultadas dentro de la ventana fresca (no hace falta reconsultar).
@@ -806,4 +1317,83 @@ export async function listMoovinSyncCandidates(
     if (candidates.length >= limit) break;
   }
   return candidates;
+}
+
+export async function listForzaTracking(
+  storeId = DEFAULT_FINANCE_STORE_ID,
+  opts: { since?: string | null } = {}
+): Promise<ForzaTrackingRow[]> {
+  const pageSize = 1000;
+  const all: ForzaTrackingRow[] = [];
+  for (let from = 0; from < 50000; from += pageSize) {
+    let query = getDB()
+      .from("forza_tracking")
+      .select("*")
+      .eq("store_id", storeId)
+      .order("checked_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (opts.since) query = query.gt("checked_at", opts.since);
+    const { data, error } = await query;
+    if (error) throw new Error(`listForzaTracking: ${error.message}`);
+    const page = (data ?? []) as ForzaTrackingRow[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
+}
+
+export async function upsertForzaTracking(
+  rows: Omit<ForzaTrackingRow, "checked_at" | "store_id">[],
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<void> {
+  if (!rows.length) return;
+  const payload = rows.map((row) => ({ ...row, store_id: storeId, checked_at: new Date().toISOString() }));
+  const { error } = await getDB()
+    .from("forza_tracking")
+    .upsert(payload, { onConflict: "store_id,guide_number" });
+  if (error) throw new Error(`upsertForzaTracking: ${error.message}`);
+}
+
+// Una fila de tracking de Forza por (store_id, guide_number). Para el detalle de
+// una novedad: trae el historial completo (columna events).
+export async function getForzaTrackingByGuide(
+  storeId: number,
+  guideNumber: string
+): Promise<ForzaTrackingRow | null> {
+  if (!guideNumber) return null;
+  const { data, error } = await getDB()
+    .from("forza_tracking")
+    .select("*")
+    .eq("store_id", storeId)
+    .eq("guide_number", guideNumber)
+    .limit(1);
+  if (error) throw new Error(`getForzaTrackingByGuide: ${error.message}`);
+  return ((data ?? []) as ForzaTrackingRow[])[0] ?? null;
+}
+
+export async function getRecentlyCheckedForzaGuides(
+  storeId: number,
+  maxAgeMinutes: number
+): Promise<Set<string>> {
+  const since = new Date(Date.now() - maxAgeMinutes * 60 * 1000).toISOString();
+  const fresh = new Set<string>();
+  const pageSize = 1000;
+  for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("forza_tracking")
+      .select("guide_number")
+      .eq("store_id", storeId)
+      .gte("checked_at", since)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`getRecentlyCheckedForzaGuides: ${error.message}`);
+    const page = (data ?? []) as Array<{ guide_number: string }>;
+    for (const row of page) {
+      const normalized = normalizeForzaGuide(row.guide_number);
+      if (!normalized) continue;
+      fresh.add(normalized);
+      fresh.add(normalized.replace(/^FD/i, ""));
+    }
+    if (page.length < pageSize) break;
+  }
+  return fresh;
 }

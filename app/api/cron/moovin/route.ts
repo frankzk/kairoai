@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { fetchMoovinTracking } from "@/lib/moovin";
 import { listMoovinSyncCandidates, upsertMoovinTracking } from "@/lib/finance";
+import { FINANCE_STORES, getStoreConfig } from "@/lib/stores";
+import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
+import { detectIncidents } from "@/lib/incidents-run";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 // ~2 req/s a Moovin.
 const PER_REQUEST_DELAY_MS = 400;
@@ -24,7 +27,7 @@ function authorized(req: Request): boolean {
   return req.headers.get("authorization") === `Bearer ${secret}`;
 }
 
-async function run() {
+async function run(chainDetect: boolean) {
   let candidates;
   try {
     candidates = await listMoovinSyncCandidates(MAX_PER_RUN, FRESH_WINDOW_MINUTES);
@@ -72,23 +75,49 @@ async function run() {
     }
   }
 
+  // El cron muto moovin_tracking: refresca la cache durable del dataset de las
+  // tiendas que usan Moovin (solo si hubo cambios). Defensivo: nunca rompe el cron.
+  if (checked > 0) {
+    const moovinStores = FINANCE_STORES.filter((store) => store.logisticsProvider === "moovin");
+    await Promise.all(
+      moovinStores.map((store) =>
+        refreshFinanceDatasetCache(getStoreConfig(store.code)).catch((cacheErr) =>
+          console.warn(`[cron/moovin cache] ${store.code}:`, cacheErr)
+        )
+      )
+    );
+  }
+
+  // Encadena la deteccion de novedades sobre el tracking recien refrescado: asi
+  // las incidencias nuevas entran sin depender de una corrida aparte. Solo en el
+  // cron programado (GET) y si hubo cambios; best-effort (nunca rompe el sync).
+  let detected: Awaited<ReturnType<typeof detectIncidents>> | null = null;
+  if (chainDetect && checked > 0) {
+    try {
+      detected = await detectIncidents(false);
+    } catch (err) {
+      console.warn("[cron/moovin detect]", err);
+    }
+  }
+
   return NextResponse.json({
     candidates: candidates.length,
     checked,
     delivered,
     incidents,
     failed,
+    detected,
   });
 }
 
 export async function GET(req: Request) {
   if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  return run();
+  return run(true);
 }
 
 export async function POST(req: Request) {
   if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  return run();
+  return run(false);
 }
 
 function sleep(ms: number): Promise<void> {

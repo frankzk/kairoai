@@ -5,6 +5,7 @@
 // Reusada por la ruta de sync (servidor) y testeable de forma aislada.
 
 import { normalizeMatchKey } from "./order-matching";
+import type { MoovinTrackingRow, IcomflyOrderRecord } from "./finance-types";
 
 // ─── Configuracion (pendiente de confirmar con iComfly) ──────────────────────
 // Cual campo de `atribucion` representa la "solicitud de despacho" de la asesora
@@ -284,3 +285,96 @@ export const DISPATCH_STATE_LABELS: Record<DispatchState, string> = {
   despacho_solicitado: "Despacho solicitado",
   despachado: "Despachado / Guia final",
 };
+
+// ─── Estado de DESPACHO por recoleccion fisica de Moovin (columna Pedidos) ────
+// La columna "Despacho" no debe decir "Despachado" apenas iComfly genera la
+// guia: hasta que Moovin no recoge del almacen, el pedido sigue "Solicitado"
+// (substatus "Recoleccion Solicitada"). El estado fisico se lee de Moovin (que
+// kairoai ya tiene en moovinByPackage).
+
+// Titulos de Moovin que indican que el paquete TODAVIA esta en el almacen
+// (recoleccion pedida pero no concretada).
+const MOOVIN_PRE_PICKUP_TITLES = ["recolec", "por preparar", "registrad"];
+
+// Replica de deriveMoovinGroup (lib/finance-orders) para no arrastrar ese modulo
+// (usa alias @/ que vitest no resuelve). Logica identica.
+function moovinGroup(row: MoovinTrackingRow): string {
+  const code = String(row.latest_code ?? "").toUpperCase();
+  const title = String(row.latest_status ?? "").toLowerCase();
+  if (code.startsWith("CANCEL") || title.includes("cancelado")) return "returned";
+  return row.latest_group ?? "";
+}
+
+// true  = el paquete ya salio del almacen (recogido / en transito / entregado / incidencia)
+// false = recoleccion solicitada, sigue en el almacen
+// undefined = no hay dato de Moovin (no se puede afirmar)
+export function isMoovinPickedUp(row: MoovinTrackingRow | undefined): boolean | undefined {
+  if (!row) return undefined;
+  const group = moovinGroup(row);
+  if (group === "delivered" || group === "failed" || group === "returned") return true;
+  if (group === "in_progress") {
+    const title = String(row.latest_status ?? "").toLowerCase();
+    if (MOOVIN_PRE_PICKUP_TITLES.some((t) => title.includes(t))) return false;
+    // "Sede de Moovin", "En ruta...", "Coordinado", etc. = ya recogido.
+    return true;
+  }
+  return undefined;
+}
+
+export type DispatchView = "despachado" | "solicitado" | "pendiente" | "standby";
+
+// Resuelve el estado de la columna "Despacho" combinando la recoleccion fisica
+// de Moovin (senal primaria) con la atribucion de iComfly. Si hay dato de Moovin
+// manda este; si no, cae al dispatch_state de iComfly (no regresa
+// historicos/entregados sin row de Moovin). null si no hay ni pedido ni guia.
+export function resolveDispatchState(
+  rec: IcomflyOrderRecord | undefined,
+  moovin: MoovinTrackingRow | undefined,
+  guideNumber: string | undefined
+): DispatchView | null {
+  const pickedUp = isMoovinPickedUp(moovin);
+  const hasGuide = Boolean(guideNumber && String(guideNumber).trim());
+
+  let state: DispatchView | null;
+  if (pickedUp === true) {
+    state = "despachado";
+  } else if (pickedUp === false) {
+    state = "solicitado"; // Moovin confirma que sigue en el almacen
+  } else if (rec) {
+    state =
+      rec.dispatch_state === "despachado"
+        ? "despachado"
+        : rec.dispatch_state === "despacho_solicitado"
+          ? "solicitado"
+          : "pendiente";
+  } else if (hasGuide) {
+    state = "despachado";
+  } else {
+    return null;
+  }
+
+  // Standby solo aplica al limbo "solicitado" (guia hecha, sin recoger).
+  if (state === "solicitado" && rec?.is_standby) return "standby";
+  return state;
+}
+
+// Funde el hito de despacho dentro del "Estado de seguimiento": el limbo previo
+// al movimiento real del courier (solicitado/standby) reemplaza al engañoso
+// "En ruta"/"Pendiente". El "despachado" (ya recogido) NO genera estado nuevo:
+// cae al estado base (en_route/delivered/etc.). No pisa estados terminales ni
+// pedidos anulados.
+export function mergeDispatchIntoTracking(
+  baseStatus: string,
+  dispatchState: DispatchView | null,
+  row: { shopify_cancelled_at?: string | null; shopify_financial_status?: string | null }
+): string {
+  // Anulado manda (replica isShopifyCancelled sin arrastrar finance-orders, que
+  // usa el alias @/ y rompe los tests).
+  if (row.shopify_cancelled_at || row.shopify_financial_status === "voided") return baseStatus;
+  // Solo aplica al limbo previo al movimiento real (no pisa entregado, no
+  // entregado, incidencia, reintento ni anulado).
+  if (baseStatus !== "pending" && baseStatus !== "en_route") return baseStatus;
+  if (dispatchState === "standby") return "standby";
+  if (dispatchState === "solicitado") return "despacho_solicitado";
+  return baseStatus;
+}

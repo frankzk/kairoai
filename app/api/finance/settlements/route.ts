@@ -17,6 +17,9 @@ import {
   type SettlementOrderItem,
   type SettlementRow,
 } from "@/lib/finance";
+import { toFriendlyErrorMessage } from "@/lib/api-errors";
+import { getRequiredStoreConfig, getRequiredStoreFromSearchParams } from "@/lib/stores";
+import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -48,15 +51,17 @@ interface ParsedSettlementRow {
 }
 
 export async function GET(req: NextRequest) {
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) return missingStoreResponse();
   try {
     const importId = Number(req.nextUrl.searchParams.get("import_id"));
     const [imports, rows] = await Promise.all([
-      listSettlementImports(),
-      listSettlementRows(importId || undefined),
+      listSettlementImports(store.id),
+      listSettlementRows(importId || undefined, store.id),
     ]);
     return NextResponse.json({ imports, rows });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al leer liquidaciones";
+    const message = toFriendlyErrorMessage(err, "Error al leer liquidaciones");
     return NextResponse.json({ imports: [], rows: [], error: message }, { status: 500 });
   }
 }
@@ -64,6 +69,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
+    const store = getRequiredStoreConfig(form.get("store"));
+    if (!store) return missingStoreResponse();
     const file = form.get("file");
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "Archivo requerido" }, { status: 400 });
@@ -82,7 +89,8 @@ export async function POST(req: NextRequest) {
 
     const consolidated = parseConsolidated(workbook);
     const shopifyOrders = await loadShopifyOrdersForMatching(
-      periodStart ?? inferEarliestDate(settlementRows)
+      periodStart ?? inferEarliestDate(settlementRows),
+      store.id
     );
     const matchIndex = buildShopifyMatchIndex(shopifyOrders);
 
@@ -104,34 +112,40 @@ export async function POST(req: NextRequest) {
       return { row, shopify };
     });
 
-    const settlementImport = await createSettlementImport({
-      file_name: file.name,
-      period_label: periodLabel,
-      period_start: periodStart,
-      period_end: periodEnd,
-      total_rows: settlementRows.length,
-      matched_rows: matchedRows,
-      unmatched_rows: settlementRows.length - matchedRows,
-      total_collected: consolidated.total_collected || sum(settlementRows.map((r) => r.cod_amount)),
-      total_to_liquidate:
-        consolidated.total_to_liquidate || sum(settlementRows.map((r) => r.amount_to_liquidate)),
-      status_summary: statusSummary,
-    });
-    try {
-      await upsertBoxfulFileControl({
+    const settlementImport = await createSettlementImport(
+      {
         file_name: file.name,
-        file_type: "liquidacion",
-        cutoff_date: periodEnd,
-        status: "importado",
-        import_id: settlementImport.id,
-        imported_at: settlementImport.created_at,
-      });
+        period_label: periodLabel,
+        period_start: periodStart,
+        period_end: periodEnd,
+        total_rows: settlementRows.length,
+        matched_rows: matchedRows,
+        unmatched_rows: settlementRows.length - matchedRows,
+        total_collected: consolidated.total_collected || sum(settlementRows.map((r) => r.cod_amount)),
+        total_to_liquidate:
+          consolidated.total_to_liquidate || sum(settlementRows.map((r) => r.amount_to_liquidate)),
+        status_summary: statusSummary,
+      },
+      store.id
+    );
+    try {
+      await upsertBoxfulFileControl(
+        {
+          file_name: file.name,
+          file_type: "liquidacion",
+          cutoff_date: periodEnd,
+          status: "importado",
+          import_id: settlementImport.id,
+          imported_at: settlementImport.created_at,
+        },
+        store.id
+      );
     } catch (fileControlError) {
       console.warn("[finance/settlements file control]", fileControlError);
     }
 
     const rowsToInsert = pendingRows.map(({ row, shopify }) =>
-      buildSettlementRow(settlementImport.id, row, shopify)
+      buildSettlementRow(settlementImport.id, row, store.id, shopify)
     );
 
     // Si las filas no entran, el import se revierte: un archivo nunca debe
@@ -145,10 +159,16 @@ export async function POST(req: NextRequest) {
         await Promise.all(batches.slice(i, i + INSERT_CONCURRENCY).map(insertSettlementRows));
       }
     } catch (insertError) {
-      await deleteSettlementImport(settlementImport.id).catch(() => undefined);
+      await deleteSettlementImport(settlementImport.id, store.id).catch(() => undefined);
       const detail = insertError instanceof Error ? insertError.message : String(insertError);
       throw new Error(`No se pudieron guardar las filas (import revertido): ${detail}`);
     }
+
+    // El import muto settlement_rows: refresca la cache durable del dataset.
+    // Defensivo: nunca debe romper el import si la cache falla.
+    await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+      console.warn("[finance/settlements POST cache]", cacheErr)
+    );
 
     return NextResponse.json({
       import: settlementImport,
@@ -157,23 +177,35 @@ export async function POST(req: NextRequest) {
       status_summary: statusSummary,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al importar liquidacion";
+    const message = toFriendlyErrorMessage(err, "Error al importar liquidacion");
     console.error("[finance/settlements POST]", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function DELETE(req: NextRequest) {
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) return missingStoreResponse();
   const id = Number(req.nextUrl.searchParams.get("id"));
   if (!id) return NextResponse.json({ error: "id requerido" }, { status: 400 });
 
   try {
-    await deleteSettlementImport(id);
+    await deleteSettlementImport(id, store.id);
+    await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+      console.warn("[finance/settlements DELETE cache]", cacheErr)
+    );
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al eliminar liquidacion";
+    const message = toFriendlyErrorMessage(err, "Error al eliminar liquidacion");
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+function missingStoreResponse() {
+  return NextResponse.json(
+    { error: "store requerido: usa mireva-cr o mireva-hn" },
+    { status: 400 }
+  );
 }
 
 function parseSettlementRows(workbook: XLSX.WorkBook): ParsedSettlementRow[] {
@@ -242,6 +274,7 @@ function parseConsolidated(workbook: XLSX.WorkBook): {
 function buildSettlementRow(
   importId: number,
   row: ParsedSettlementRow,
+  storeId: number,
   shopify?: ShopifySettlementOrder
 ): Omit<SettlementRow, "id" | "created_at"> {
   const orderItems: SettlementOrderItem[] = (shopify?.line_items ?? []).map((item) => ({
@@ -252,6 +285,7 @@ function buildSettlementRow(
   }));
 
   return {
+    store_id: storeId,
     import_id: importId,
     guide_number: row.guide_number,
     order_name: row.order_name,

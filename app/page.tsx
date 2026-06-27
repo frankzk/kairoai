@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Zap, TrendingUp, Settings, Phone, Package, ShoppingCart, LogOut, Banknote } from "lucide-react";
+import { RefreshCw, Zap, TrendingUp, Settings, Phone, Package, ShoppingCart, LogOut, Banknote, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -124,6 +124,12 @@ export default function DashboardPage() {
               <Button variant="outline" size="sm" className="gap-2">
                 <Banknote className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Gestion</span>
+              </Button>
+            </Link>
+            <Link href="/admin/incidencias">
+              <Button variant="outline" size="sm" className="gap-2">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Novedades</span>
               </Button>
             </Link>
             <Button variant="ghost" size="sm" onClick={logout} className="gap-2">

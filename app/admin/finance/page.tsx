@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import Link from "next/link";
 import {
@@ -26,38 +26,23 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { normalizeSearchText } from "@/lib/order-matching";
 import {
-  buildShopifyMatchIndex,
-  extractExternalOrderCodesFromText,
-  findShopifyOrderForRow,
-  getOrderMatchKeys,
-  getShopifyNoteText,
-  getShopifyOrderMatchKeys,
-  normalizeMatchKey,
-  normalizeSearchText,
-  type OrderMatchKeySource,
-} from "@/lib/order-matching";
+  type FinanceControlCenter,
+  type FinancialAnomaly,
+  type MonthlyCloseRow,
+  type OrderProfitabilityRow,
+  type ProductAnalysisRow,
+  type ShopifyNoteAliasRow,
+} from "@/lib/finance-orders";
+import { mergeDispatchIntoTracking } from "@/lib/dispatch";
 import { reconcileMoovin, type MoovinDiscrepancy } from "@/lib/moovin-reconcile";
-import {
-  classifyIncident,
-  countMoovinIncidents,
-  countMoovinRouteAttempts,
-  deriveMoovinGroup,
-  getEffectiveTrackingStatus,
-  getTrackingFilterFromStatus,
-  getTrackingStatusLabel,
-  inferTrackingStatusFromText,
-  isFinalTrackingStatus,
-  isPendingLike,
-  isShopifyCancelled,
-  moovinGroupToStatus,
-  type OrderTrackingFilter,
-} from "@/lib/order-tracking";
 import type {
   BoxfulFileControl,
   BusinessExpense,
   ExpenseType,
   FinanceClaim,
+  ForzaTrackingRow,
   LogisticsImport,
   LogisticsRow,
   MoovinTrackingRow,
@@ -68,6 +53,14 @@ import type {
   SettlementImport,
   SettlementRow,
 } from "@/lib/finance-types";
+import {
+  FINANCE_STORES,
+  getFinanceStore,
+  type FinanceStoreCode,
+  type FinanceStorePublic,
+} from "@/lib/store-config";
+import { useSelectedStore } from "@/lib/use-selected-store";
+import { sanitizeExternalError } from "@/lib/api-errors";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,7 +68,13 @@ import { Input } from "@/components/ui/input";
 import DispatchTab from "@/components/DispatchTab";
 
 type Tab = "orders" | "dispatch" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
-type FinancialAnomalySeverity = "high" | "medium" | "low";
+
+// Carril 2 (ultimo tab): TODOS los tabs cargan server-side. Pedidos/KPIs, Productos,
+// Notas, Cierre y ahora Liquidaciones traen sus datos ya calculados desde sus
+// endpoints, asi que el navegador ya NO ensambla el snapshot pesado (historico
+// Shopify ~11k + logistica completa) para ningun tab.
+
+type OrderTrackingFilter = "all" | "pending" | "despacho_solicitado" | "standby" | "en_route" | "en_route_retry" | "incident_solvable" | "incident_unsolvable" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
   | "all"
   | "no_cost"
@@ -97,7 +96,6 @@ type MonthlyOrderFilter =
   | "unsettled"
   | "to_claim"
   | "duplicate";
-type ShopifyHistoryProgress = { loaded: number; total: number | null };
 type SettlementImportSort = "recent" | "oldest";
 type SettlementShopifyFilter = "all" | "matched" | "unmatched";
 type ProductLineItem = { sku?: string; title: string; quantity: number; price: number };
@@ -138,14 +136,6 @@ interface ShopifyOrderSummary {
   line_items: ProductLineItem[];
 }
 
-interface ShopifyNoteAliasRow {
-  row_key: string;
-  shopify_order_name: string;
-  note_order_number: string;
-  note: string;
-  created_at: string;
-}
-
 interface TrackableOrderRow {
   id?: number;
   row_key: string;
@@ -155,6 +145,8 @@ interface TrackableOrderRow {
   moovin_group?: string;
   moovin_incidents?: number;
   moovin_route_attempts?: number;
+  forza_group?: string;
+  forza_incidents?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -174,6 +166,11 @@ interface TrackableOrderRow {
   created_at?: string | null;
   finalized_on?: string | null;
   package_items: ProductLineItem[];
+  // Hito de despacho precalculado en el server (iComfly + recoleccion Moovin),
+  // que se funde en el "Estado de seguimiento" via mergeDispatchIntoTracking.
+  dispatch_view?: "despachado" | "solicitado" | "pendiente" | "standby" | null;
+  dispatch_requested_by?: string;
+  dispatch_confirmed_by?: string;
 }
 
 type ProductCostSaveInput = {
@@ -195,113 +192,17 @@ interface ShopifyProductOption {
   image_url?: string;
 }
 
-interface OrderProfitabilityRow {
-  order_key: string;
-  order_name: string;
-  guide_number: string;
-  customer_name: string;
-  source: "shopify" | "boxful" | "liquidacion";
-  shopify_cancelled_at: string | null;
-  shopify_financial_status: string;
-  tracking_status: string;
-  // Estado a nivel de filtro para el badge (separa incidencia solucionable / no
-  // solucionable). tracking_status conserva "incident" para la logica de
-  // agregacion (pendientes, caja, etc.).
-  tracking_badge_status: string;
-  tracking_label: string;
-  settlement_status: string;
-  settlement_files: string[];
-  settlement_count: number;
-  settlement_charged_costs: number;
-  settlement_cod_commission: number;
-  settlement_card_commission: number;
-  settlement_delivery_cost: number;
-  settlement_pick_pack_cost: number;
-  settlement_packaging_cost: number;
-  amount_to_liquidate: number;
-  expected_cod: number;
-  order_value: number;
-  product_cost: number;
-  contribution_margin: number;
-  missing_cost_skus: string[];
-  items: ProductLineItem[];
-  items_summary: string;
-  cash_status: "cobrado" | "por_cobrar" | "sin_caja";
-  issue_count: number;
-  created_at: string | null;
-  days_since_order: number | null;
-  delivered_on: string | null;
-}
-
-interface ProductAnalysisRow {
-  key: string;
-  product_name: string;
-  sku: string;
-  sample_orders: string[];
-  orders: number;
-  units: number;
-  dispatched: number;
-  dispatch_rate: number;
-  delivery_effectiveness: number;
-  delivered: number;
-  not_delivered: number;
-  annulled: number;
-  pending: number;
-}
-
-interface FinancialAnomaly {
-  id: string;
-  severity: FinancialAnomalySeverity;
-  type: string;
-  order_name: string;
-  guide_number: string;
-  amount: number;
-  source_file: string;
-  message: string;
-  action: string;
-}
-
-interface FinanceControlCenter {
-  orders: OrderProfitabilityRow[];
-  anomalies: FinancialAnomaly[];
-  cash_received: number;
-  cash_pending: number;
-  contribution_margin: number;
-  missing_cost_count: number;
-}
-
-interface MonthlyCloseRow {
-  month: string;
-  orders: number;
-  delivered: number;
-  not_delivered: number;
-  annulled: number;
-  pending: number;
-  settled: number;
-  unsettled: number;
-  to_claim: number;
-  to_claim_fresh: number;
-  to_claim_overdue: number;
-  duplicate_settlements: number;
-  boxful_costs: number;
-  boxful_cod_commission: number;
-  boxful_card_commission: number;
-  boxful_delivery_cost: number;
-  boxful_pick_pack_cost: number;
-  boxful_packaging_cost: number;
-  cash_received: number;
-  cash_pending: number;
-  product_costs: number;
-  ads: number;
-  payroll: number;
-  misc: number;
-  contribution_margin: number;
-  net_profit: number;
-  misc_software: number;
-  misc_other: number;
-}
+const EMPTY_FINANCE_CONTROL_CENTER: FinanceControlCenter = {
+  orders: [],
+  anomalies: [],
+  cash_received: 0,
+  cash_pending: 0,
+  contribution_margin: 0,
+  missing_cost_count: 0,
+};
 
 const emptyExpense = {
+  id: null as number | null,
   type: "ads" as ExpenseType,
   expense_date: new Date().toISOString().slice(0, 10),
   month: new Date().toISOString().slice(0, 7),
@@ -332,11 +233,25 @@ const PAYROLL_PAYMENT_TYPES = [
   "CTS",
   "Gratificacion",
 ] as const;
+const MISC_EXPENSE_CATEGORIES = [
+  "shopify",
+  "make.com",
+  "herramientas espia + heygen + capcut + higgsfield",
+  "chatseller",
+  "icomfly",
+  "zadarma",
+  "openai",
+  "whatsapp api",
+  "gastos financieros",
+  "otros",
+] as const;
 type ExpenseOriginalCurrency = (typeof EXPENSE_ORIGINAL_CURRENCIES)[number];
 
 const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "pending", label: "Pendientes" },
+  { value: "despacho_solicitado", label: "Despacho solicitado" },
+  { value: "standby", label: "Standby" },
   { value: "en_route", label: "En ruta" },
   { value: "en_route_retry", label: "Reintento" },
   { value: "incident_solvable", label: "Inc. solucionable" },
@@ -350,6 +265,8 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
 const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   all: "bg-muted-foreground/40",
   pending: "bg-slate-400",
+  despacho_solicitado: "bg-yellow-400",
+  standby: "bg-rose-600",
   en_route: "bg-cyan-400",
   en_route_retry: "bg-orange-500",
   // Solucionable (incidencia leve) en ambar; no solucionable (fallos repetidos)
@@ -386,6 +303,64 @@ const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
   { value: "month", label: "Mes" },
   { value: "range", label: "Rango" },
 ];
+
+// --- Tabla de pedidos server-side (Carril 2 inc.2) -------------------------
+// Las filas que devuelve /api/finance/orders ya traen las trazas de liquidacion
+// resueltas server-side, asi la tabla no necesita el settlementTraceByKey en
+// memoria.
+type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[] };
+
+const ORDERS_PAGE_SIZE = 100;
+
+const EMPTY_TRACKING_COUNTS: Record<OrderTrackingFilter, number> = {
+  all: 0,
+  pending: 0,
+  despacho_solicitado: 0,
+  standby: 0,
+  en_route: 0,
+  en_route_retry: 0,
+  incident_solvable: 0,
+  incident_unsolvable: 0,
+  annulled: 0,
+  delivered: 0,
+  not_delivered: 0,
+};
+
+const EMPTY_SETTLEMENT_COUNTS: Record<OrderSettlementFilter, number> = {
+  all: 0,
+  settled: 0,
+  unsettled: 0,
+  to_claim: 0,
+  duplicate: 0,
+};
+
+// Meses disponibles para el selector, derivados del rango de cobertura Shopify
+// (oldest..newest) en vez de recorrer el snapshot completo. Devuelve YYYY-MM
+// desc.
+function buildMonthOptionsFromCoverage(
+  coverage: { oldest: string | null; newest: string | null } | null
+): string[] {
+  const oldest = coverage?.oldest ? coverage.oldest.slice(0, 7) : "";
+  const newest = coverage?.newest ? coverage.newest.slice(0, 7) : "";
+  const end = newest || new Date().toISOString().slice(0, 7);
+  const start = oldest || end;
+  if (!/^\d{4}-\d{2}$/.test(start) || !/^\d{4}-\d{2}$/.test(end)) return [];
+  const months: string[] = [];
+  let [year, month] = start.split("-").map(Number);
+  const [endYear, endMonth] = end.split("-").map(Number);
+  // Tope de seguridad por si las fechas vienen invertidas/corruptas.
+  let guard = 0;
+  while ((year < endYear || (year === endYear && month <= endMonth)) && guard < 600) {
+    months.push(`${year}-${String(month).padStart(2, "0")}`);
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+    guard += 1;
+  }
+  return months.reverse();
+}
 
 const MONTHLY_ORDER_FILTERS: Array<{ value: MonthlyOrderFilter; label: string }> = [
   { value: "all", label: "Todos" },
@@ -456,21 +431,55 @@ const EXPENSE_VIEW_CONFIG: Array<{
   },
 ];
 
-const FINANCE_SHOPIFY_CREATED_AT_MIN = "2026-01-01T00:00:00-06:00";
-const FINANCE_SHOPIFY_SYNC_PAGE_SIZE = 4000;
+const FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE: Record<FinanceStoreCode, string> = {
+  "mireva-cr": "2026-01-01T00:00:00-06:00",
+  "mireva-hn": "2025-12-09T00:00:00-06:00",
+};
+// Solo la primera pagina (Shopify base + logistica): el resto de tabs cargan
+// server-side, asi que ya NO se pagina hacia el snapshot completo en el navegador.
+const FINANCE_SHOPIFY_SYNC_INITIAL_PAGE_SIZE = 250;
 // Ventana de "pedidos actualizados recientemente" leida en vivo de Shopify.
 const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
-const FINANCE_SHOPIFY_SYNC_MAX_ROWS = 25000;
-// Cadencia del auto-refresco del dashboard (KPIs, Shopify y tracking Moovin).
-const FINANCE_AUTO_REFRESH_MS = 15 * 60 * 1000;
+const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
+const FINANCE_LOGISTICS_INITIAL_PAGE_SIZE = 500;
+const FINANCE_FAST_FETCH_TIMEOUT_MS = 20000;
+const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
   const [kpiRange, setKpiRange] = useState<KpiRange>("30d");
+  // KPIs operativos: ahora se calculan server-side (Carril 2 inc.2) en
+  // /api/finance/kpis para no depender de cargar las ~11k filas en el navegador.
+  const [kpiCards, setKpiCards] = useState<KpiCardVM[]>([]);
+  const [kpiLoading, setKpiLoading] = useState(true);
+  // Carril 2 inc.2: la barra de Alertas se alimenta de conteos server-side
+  // (period=all) en vez del snapshot en memoria, que ya no se carga en el tab
+  // Pedidos. Pedimos /api/finance/orders con pageSize=1 (el dataset esta cacheado
+  // 30s en el server, asi que es barato) solo para leer tracking/settlement counts.
+  const [alertCounts, setAlertCounts] = useState<{
+    trackingCounts: Record<OrderTrackingFilter, number>;
+    settlementCounts: Record<OrderSettlementFilter, number>;
+  }>({ trackingCounts: EMPTY_TRACKING_COUNTS, settlementCounts: EMPTY_SETTLEMENT_COUNTS });
+  // Carril 2 inc.2 (tabs restantes): Productos, Cierre mensual y Notas cargan
+  // server-side. Cada uno trae sus filas ya calculadas desde su endpoint, asi que
+  // estos tabs ya no dependen del snapshot pesado (~11k pedidos) en el navegador.
+  const [productAnalysisRows, setProductAnalysisRows] = useState<ProductAnalysisRow[]>([]);
+  const [productAnalysisLoading, setProductAnalysisLoading] = useState(false);
+  const [productAnalysisError, setProductAnalysisError] = useState("");
+  const [monthlyCloseRows, setMonthlyCloseRows] = useState<MonthlyCloseRow[]>([]);
+  const [financeControl, setFinanceControl] = useState<FinanceControlCenter>(EMPTY_FINANCE_CONTROL_CENTER);
+  const [monthlyCloseLoading, setMonthlyCloseLoading] = useState(false);
+  const [monthlyCloseError, setMonthlyCloseError] = useState("");
+  const [noteAliasRows, setNoteAliasRows] = useState<ShopifyNoteAliasRow[]>([]);
+  const [noteShopifyOrderCount, setNoteShopifyOrderCount] = useState(0);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesError, setNotesError] = useState("");
+  const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
   const [imports, setImports] = useState<SettlementImport[]>([]);
-  const [rows, setRows] = useState<SettlementRow[]>([]);
   const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
-  const [logisticsRows, setLogisticsRows] = useState<LogisticsRow[]>([]);
+  // shopifyOrders se mantiene SOLO como contador base para el tab Pedidos
+  // (shopifyOrderCount) y se alimenta de la primera pagina + pedidos recientes;
+  // ya NO se carga el historico completo (~11k) en el navegador.
   const [shopifyOrders, setShopifyOrders] = useState<ShopifyOrderSummary[]>([]);
   const [shopifyCoverage, setShopifyCoverage] = useState<{
     count: number;
@@ -487,251 +496,274 @@ export default function FinancePage() {
   const [expenses, setExpenses] = useState<BusinessExpense[]>([]);
   const [summary, setSummary] = useState<ProfitabilitySummary | null>(null);
   const [moovinByPackage, setMoovinByPackage] = useState<Map<string, MoovinTrackingRow>>(new Map());
+  const [forzaByGuide, setForzaByGuide] = useState<Map<string, ForzaTrackingRow>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
   const [importingLogistics, setImportingLogistics] = useState(false);
   const [syncingShopify, setSyncingShopify] = useState(false);
-  const [shopifyHistoryLoading, setShopifyHistoryLoading] = useState(false);
-  const [shopifyHistoryProgress, setShopifyHistoryProgress] = useState<ShopifyHistoryProgress>({
-    loaded: 0,
-    total: null,
-  });
   const [syncMessage, setSyncMessage] = useState("");
+  const [rematching, setRematching] = useState(false);
+  const [rematchMessage, setRematchMessage] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
-  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const refreshRunRef = useRef(0);
-  // Espejos del estado para que el auto-refresco (effect con deps vacias) lea
-  // siempre el valor actual sin re-suscribirse.
-  const loadingRef = useRef(loading);
-  loadingRef.current = loading;
-  const shopifyHistoryLoadingRef = useRef(shopifyHistoryLoading);
-  shopifyHistoryLoadingRef.current = shopifyHistoryLoading;
-  const lastRefreshedAtRef = useRef(lastRefreshedAt);
-  lastRefreshedAtRef.current = lastRefreshedAt;
+  const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
 
   const latestLogisticsImport = logisticsImports[0];
-  const liquidationAlertRows = useMemo(
-    () => getDeliveredWithoutSettlement(logisticsRows, rows),
-    [logisticsRows, rows]
-  );
-  const matchedSettlementRows = useMemo(
-    () => enrichSettlementRowsWithShopify(rows, shopifyOrders),
-    [rows, shopifyOrders]
-  );
-  const settlementTraceByKey = useMemo(
-    () => buildSettlementTraceByKey(matchedSettlementRows, imports),
-    [matchedSettlementRows, imports]
-  );
-  const visibleOrderRows = useMemo(
-    () => buildVisibleOrderRows(logisticsRows, shopifyOrders, moovinByPackage),
-    [logisticsRows, shopifyOrders, moovinByPackage]
-  );
-  const doubleSettlementAnomalies = useMemo(
-    () => getDoubleSettlementAnomalies(settlementTraceByKey),
-    [settlementTraceByKey]
-  );
-  const financeControl = useMemo(
-    () => buildFinanceControlCenter(visibleOrderRows, matchedSettlementRows, imports, costs, costVersions, settlementTraceByKey),
-    [visibleOrderRows, matchedSettlementRows, imports, costs, costVersions, settlementTraceByKey]
-  );
-  const productAnalysisRows = useMemo(
-    () => buildProductAnalysisRows(financeControl.orders),
-    [financeControl.orders]
-  );
   const claimByAnomalyKey = useMemo(
     () => new Map(claims.map((claim) => [claim.anomaly_key, claim])),
     [claims]
   );
-  const monthlyCloseRows = useMemo(
-    () => buildMonthlyCloseRows(financeControl.orders, expenses),
-    [financeControl.orders, expenses]
-  );
 
-  // background: auto-refresco periodico (sin spinner de pantalla completa y sin
-  // re-bajar todo el historico Shopify). Solo refresca la data viva y mezcla los
-  // pedidos recientes sobre el historico ya cargado, para mantener KPIs y estados
-  // al dia sin interrumpir al usuario.
-  async function refresh(opts: { background?: boolean } = {}) {
-    const background = opts.background === true;
+  async function refresh() {
     const refreshRun = refreshRunRef.current + 1;
     refreshRunRef.current = refreshRun;
     const isCurrentRun = () => refreshRunRef.current === refreshRun;
-    if (!background) {
-      setLoading(true);
-      setShopifyHistoryLoading(false);
-      setShopifyHistoryProgress({ loaded: 0, total: null });
-    }
+    const activeStoreCode = selectedStore.code;
+    setLoading(true);
     setError("");
+    setImports([]);
+    setLogisticsImports([]);
+    setShopifyOrders([]);
+    setShopifyCoverage(null);
     try {
-      const [settlementsRes, logisticsRes, costsRes, expensesRes, summaryRes] =
-        await Promise.all([
-          fetch("/api/finance/settlements", { cache: "no-store" }),
-          fetch("/api/finance/logistics", { cache: "no-store" }),
-          fetch("/api/finance/product-costs", { cache: "no-store" }),
-          fetch("/api/finance/expenses", { cache: "no-store" }),
-          fetch("/api/finance/summary", { cache: "no-store" }),
-        ]);
-
-      const settlementsJson = await readApiJson(settlementsRes);
-      const logisticsJson = await readApiJson(logisticsRes);
-      const costsJson = await readApiJson(costsRes);
-      const expensesJson = await readApiJson(expensesRes);
-      const summaryJson = await readApiJson(summaryRes);
-      // Un solo fetch en vivo: pedidos ACTUALIZADOS recientemente (capta notas
-      // editadas y cambios de estado en pedidos de cualquier antiguedad); el
-      // resto viene de la base sincronizada. Las llamadas son en paralelo.
-      const safeJson = async (input: Promise<Response>): Promise<Record<string, unknown>> => {
+      const safeJson = async (input: Promise<Response>, label: string): Promise<Record<string, any>> => {
         try {
           return await readApiJson(await input);
-        } catch {
-          return {};
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "No se pudo leer la respuesta del servidor";
+          return { error: `${label}: ${message}` };
         }
       };
+      const reportCriticalError = (maybeError: unknown) => {
+        if (maybeError && isCurrentRun()) setError((current) => current || String(maybeError));
+      };
+      const loadJson = (
+        label: string,
+        request: () => Promise<Response>,
+        apply: (json: Record<string, any>) => void,
+        options: { critical?: boolean; delayMs?: number } = {}
+      ) => {
+        const task = (async () => {
+          if (options.delayMs) await delay(options.delayMs);
+          const json = await safeJson(request(), label);
+          if (!isCurrentRun()) return;
+          apply(json);
+          if (options.critical) reportCriticalError(json.error);
+        })();
+        return task;
+      };
+
+      // Cada fuente carga de forma independiente: una llamada lenta no puede
+      // bloquear el primer render del dashboard.
       const recentUpdatesMin = new Date(
         Date.now() - FINANCE_SHOPIFY_RECENT_UPDATES_DAYS * 24 * 60 * 60 * 1000
       ).toISOString();
-      const [shopifyOrdersJson, claimsJson, boxfulFilesJson] = await Promise.all([
-        safeJson(
-          fetch(
-            `/api/shopify/orders?status=any&all=1&max_pages=4&updated_at_min=${encodeURIComponent(recentUpdatesMin)}`,
-            { cache: "no-store" }
-          )
-        ),
-        safeJson(fetch("/api/finance/claims", { cache: "no-store" })),
-        safeJson(fetch("/api/finance/boxful-files", { cache: "no-store" })),
-      ]);
 
-      if (!isCurrentRun()) return;
-
-      setImports(settlementsJson.imports ?? []);
-      setRows(settlementsJson.rows ?? []);
-      setLogisticsImports(logisticsJson.imports ?? []);
-      setLogisticsRows(logisticsJson.rows ?? []);
-      const liveShopifyOrders = Array.isArray(shopifyOrdersJson.orders) ? shopifyOrdersJson.orders as ShopifyOrderSummary[] : [];
-      if (background) {
-        // Conservar el historico ya cargado; solo superponer los pedidos recientes.
-        setShopifyOrders((prev) => mergeShopifyOrderSummaries(prev, liveShopifyOrders));
-      } else {
-        setShopifyOrders(mergeShopifyOrderSummaries(liveShopifyOrders));
-        setShopifyCoverage(null);
-      }
-      setCosts(costsJson.costs ?? []);
-      setCostVersions(Array.isArray(costsJson.versions) ? costsJson.versions as ProductCostVersion[] : []);
-      setExpenses(expensesJson.expenses ?? []);
-      setClaims(Array.isArray(claimsJson.claims) ? claimsJson.claims as FinanceClaim[] : []);
-      setBoxfulFiles(Array.isArray(boxfulFilesJson.files) ? boxfulFilesJson.files as BoxfulFileControl[] : []);
-      setSummary(summaryJson.summary ?? null);
-
-      const firstError =
-        settlementsJson.error ??
-        logisticsJson.error ??
-        costsJson.error ??
-        expensesJson.error ??
-        summaryJson.error;
-      if (firstError) setError(firstError);
-      if (!background) setLoading(false);
-      setLastRefreshedAt(new Date());
-
-      // El historico completo de Shopify se baja por lotes solo en la carga
-      // normal; en el auto-refresco se conserva el ya cargado para no repetir
-      // un pull pesado cada pocos minutos.
-      if (background) return;
-
-      setShopifyHistoryLoading(true);
-      try {
-        const persistedShopifyJson = await fetchPersistedShopifySnapshot((partial) => {
-          if (!isCurrentRun()) return;
-          const persistedShopifyOrders = Array.isArray(partial.orders)
-            ? (partial.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
+      // Solo la primera pagina Shopify + coverage (agregado barato): el total real
+      // y el rango de fechas para el tab Pedidos. Carril 2 (ultimo tab): ya NO se
+      // continua hacia el historico completo (~11k filas) en el navegador.
+      const firstShopifyPageTask = loadJson(
+        "pedidos Shopify base",
+        () =>
+          fetchWithTimeout(
+            // coverage=1 (agregado barato: total + rango de fechas) para que el
+            // tab Pedidos tenga el total real y los meses del selector sin cargar
+            // las ~11k filas (Carril 2 inc.2).
+            withStore(
+              `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_INITIAL_PAGE_SIZE}&offset=0&coverage=1`,
+              activeStoreCode
+            ),
+            { cache: "no-store" },
+            FINANCE_FAST_FETCH_TIMEOUT_MS
+          ),
+        (json) => {
+          const persistedShopifyOrders = Array.isArray(json.orders)
+            ? (json.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
             : [];
+          if (persistedShopifyOrders.length) {
+            setShopifyOrders((current) => mergeShopifyOrderSummaries(current, persistedShopifyOrders));
+          }
           const coverage =
-            (partial.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
-            null;
-          startTransition(() => {
-            setShopifyOrders(mergeShopifyOrderSummaries(persistedShopifyOrders, liveShopifyOrders));
+            (json.coverage as { count: number; oldest: string | null; newest: string | null } | null) ?? null;
+          if (coverage) {
             setShopifyCoverage(coverage);
-            setShopifyHistoryProgress({
-              loaded: persistedShopifyOrders.length,
-              total: coverage?.count ?? null,
-            });
-          });
-        });
+          }
+        },
+        { delayMs: 0 }
+      );
 
+      // Solo la primera pagina de logistica: alimenta los imports de logistica
+      // (badge del tab Pedidos). Carril 2 (ultimo tab): ya NO se descarga la
+      // logistica completa en el navegador (las alertas de cobro las calcula
+      // /api/finance/settlements-view).
+      const logisticsTask = (async () => {
+        await delay(250);
         if (!isCurrentRun()) return;
-        const persistedShopifyOrders = Array.isArray(persistedShopifyJson.orders)
-          ? (persistedShopifyJson.orders as Array<Record<string, unknown>>).map(persistedOrderToSummary)
-          : [];
-        const coverage =
-          (persistedShopifyJson.coverage as { count: number; oldest: string | null; newest: string | null } | null) ??
-          null;
-        startTransition(() => {
-          setShopifyOrders(mergeShopifyOrderSummaries(persistedShopifyOrders, liveShopifyOrders));
-          setShopifyCoverage(coverage);
-          setShopifyHistoryProgress({
-            loaded: persistedShopifyOrders.length,
-            total: coverage?.count ?? null,
-          });
-        });
-      } catch (err) {
-        if (isCurrentRun()) {
-          const message = err instanceof Error ? err.message : "No se pudo leer el historico Shopify";
-          setError((current) => current || message);
-        }
-      } finally {
-        if (isCurrentRun()) setShopifyHistoryLoading(false);
-      }
+        const logisticsJson = await safeJson(
+          fetchWithTimeout(
+            withStore(
+              `/api/finance/logistics?limit=${FINANCE_LOGISTICS_INITIAL_PAGE_SIZE}&offset=0`,
+              activeStoreCode
+            ),
+            { cache: "no-store" },
+            FINANCE_FAST_FETCH_TIMEOUT_MS
+          ),
+          "logistica Boxful"
+        );
+        if (!isCurrentRun()) return;
+        setLogisticsImports(logisticsJson.imports ?? []);
+      })();
+
+      loadJson(
+        "costos SKU",
+        () =>
+          fetchWithTimeout(
+            withStore("/api/finance/product-costs", activeStoreCode),
+            { cache: "no-store" },
+            FINANCE_FAST_FETCH_TIMEOUT_MS
+          ),
+        (json) => {
+          setCosts(json.costs ?? []);
+          setCostVersions(Array.isArray(json.versions) ? json.versions as ProductCostVersion[] : []);
+        },
+        { delayMs: 150 }
+      );
+      loadJson(
+        "gastos",
+        () =>
+          fetchWithTimeout(
+            withStore("/api/finance/expenses", activeStoreCode),
+            { cache: "no-store" },
+            FINANCE_FAST_FETCH_TIMEOUT_MS
+        ),
+        (json) => setExpenses(json.expenses ?? []),
+        { delayMs: 300 }
+      );
+      loadJson(
+        "resumen financiero",
+        () =>
+          fetchWithTimeout(
+            withStore("/api/finance/summary", activeStoreCode),
+            { cache: "no-store" },
+            FINANCE_FAST_FETCH_TIMEOUT_MS
+        ),
+        (json) => setSummary(json.summary ?? null),
+        { delayMs: 600 }
+      );
+      loadJson(
+        "pedidos recientes Shopify",
+        () =>
+          fetchWithTimeout(
+            withStore(
+              `/api/shopify/orders?status=any&all=1&max_pages=4&updated_at_min=${encodeURIComponent(recentUpdatesMin)}`,
+              activeStoreCode
+            ),
+            { cache: "no-store" },
+            FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
+          ),
+        (json) => {
+          const recentShopifyOrders = Array.isArray(json.orders) ? (json.orders as ShopifyOrderSummary[]) : [];
+          if (recentShopifyOrders.length) {
+            setShopifyOrders((current) => mergeShopifyOrderSummaries(current, recentShopifyOrders));
+          }
+        },
+        { delayMs: 400 }
+      );
+      loadJson(
+        "notas Shopify",
+        () =>
+          fetchWithTimeout(
+            withStore(
+              `/api/shopify/note-orders?created_at_min=${encodeURIComponent(getShopifyNotesCreatedAtMin(activeStoreCode))}&max_pages=12`,
+              activeStoreCode
+            ),
+            { cache: "no-store" },
+            FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
+          ),
+        (json) => {
+          const noteShopifyOrders = Array.isArray(json.orders) ? (json.orders as ShopifyOrderSummary[]) : [];
+          if (noteShopifyOrders.length) {
+            setShopifyOrders((current) => mergeShopifyOrderSummaries(current, noteShopifyOrders));
+          }
+        },
+        { delayMs: 800 }
+      );
+      loadJson(
+        "reclamos",
+        () =>
+          fetchWithTimeout(
+            withStore("/api/finance/claims", activeStoreCode),
+            { cache: "no-store" },
+            FINANCE_FAST_FETCH_TIMEOUT_MS
+        ),
+        (json) => setClaims(Array.isArray(json.claims) ? json.claims as FinanceClaim[] : []),
+        { delayMs: 200 }
+      );
+      loadJson(
+        "archivos Boxful",
+        () =>
+          fetchWithTimeout(
+            withStore("/api/finance/boxful-files", activeStoreCode),
+            { cache: "no-store" },
+            FINANCE_FAST_FETCH_TIMEOUT_MS
+        ),
+        (json) => setBoxfulFiles(Array.isArray(json.files) ? json.files as BoxfulFileControl[] : []),
+        { delayMs: 250 }
+      );
+
+      void Promise.race([
+        Promise.allSettled([firstShopifyPageTask, logisticsTask]),
+        delay(12000),
+      ]).finally(() => {
+        if (isCurrentRun()) setLoading(false);
+      });
+
+      // Solo los imports de liquidaciones (lista pequena): alimentan el selector de
+      // archivos y los badges del tab Liquidaciones. Las filas enriquecidas, las
+      // alertas de cobro y las anomalias las trae /api/finance/settlements-view
+      // (Carril 2 — tab Liquidaciones), asi que aqui ya NO se guardan las filas.
+      void (async () => {
+        await delay(1200);
+        if (!isCurrentRun()) return;
+        const settlementsJson = await safeJson(
+          fetchWithTimeout(
+            withStore("/api/finance/settlements", activeStoreCode),
+            { cache: "no-store" },
+            FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
+          ),
+          "liquidaciones"
+        );
+        if (!isCurrentRun()) return;
+        setImports(settlementsJson.imports ?? []);
+      })();
     } catch (err) {
-      if (isCurrentRun() && !background) setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
+      if (isCurrentRun()) setError(err instanceof Error ? err.message : "Error cargando gestion financiera");
     } finally {
-      if (isCurrentRun() && !background) setLoading(false);
+      if (isCurrentRun()) setLoading(false);
     }
   }
 
   useEffect(() => {
     refresh();
-    loadShopifyProducts();
-    reloadMoovin();
-  }, []);
+    reloadCarrierTracking();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStoreCode]);
 
-  // Auto-refresco continuo: mantiene KPIs, pedidos Shopify y tracking Moovin al
-  // dia sin intervencion. Corre cada FINANCE_AUTO_REFRESH_MS y tambien al volver
-  // a la pestana si el dato ya quedo viejo. El cron del servidor mantiene fresco
-  // el cache de Moovin; aqui solo se re-lee (reloadMoovin) y se refresca la data
-  // viva en segundo plano (sin spinner ni re-bajar el historico).
   useEffect(() => {
-    const backgroundRefresh = () => {
-      // No solaparse con una carga normal en curso ni con el historico Shopify.
-      if (loadingRef.current || shopifyHistoryLoadingRef.current) return;
-      refresh({ background: true });
-      reloadMoovin();
-    };
-
-    const interval = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      backgroundRefresh();
-    }, FINANCE_AUTO_REFRESH_MS);
-
-    const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
-      const last = lastRefreshedAtRef.current;
-      // Evita refrescar en cada cambio de foco: solo si el dato ya esta viejo.
-      if (last && Date.now() - last.getTime() < FINANCE_AUTO_REFRESH_MS) return;
-      backgroundRefresh();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, []);
+    if (tab !== "products" || shopifyProducts.length || productsLoading) return;
+    loadShopifyProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selectedStoreCode]);
 
   async function loadShopifyProducts() {
+    const activeStoreCode = selectedStore.code;
     setProductsLoading(true);
     setProductsError("");
     try {
-      const res = await fetch("/api/shopify/products", { cache: "no-store" });
+      const res = await fetch(withStore("/api/shopify/products", activeStoreCode), {
+        cache: "no-store",
+      });
       const json = await readApiJson(res);
       if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar productos Shopify");
       setShopifyProducts(json.products ?? []);
@@ -746,10 +778,11 @@ export default function FinancePage() {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    data.set("store", selectedStore.code);
     setImporting(true);
     setError("");
     try {
-      const res = await fetch("/api/finance/settlements", {
+      const res = await fetch(withStore("/api/finance/settlements", selectedStore.code), {
         method: "POST",
         body: data,
       });
@@ -765,7 +798,9 @@ export default function FinancePage() {
   }
 
   async function deleteSettlementImport(id: number) {
-    const res = await fetch(`/api/finance/settlements?id=${id}`, { method: "DELETE" });
+    const res = await fetch(withStore(`/api/finance/settlements?id=${id}`, selectedStore.code), {
+      method: "DELETE",
+    });
     const json = await readApiJson(res);
     if (!res.ok) {
       setError(json.error ?? "No se pudo eliminar liquidacion");
@@ -778,10 +813,11 @@ export default function FinancePage() {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    data.set("store", selectedStore.code);
     setImportingLogistics(true);
     setError("");
     try {
-      const res = await fetch("/api/finance/logistics", {
+      const res = await fetch(withStore("/api/finance/logistics", selectedStore.code), {
         method: "POST",
         body: data,
       });
@@ -800,10 +836,10 @@ export default function FinancePage() {
   }
 
   async function saveProductCost(input: ProductCostSaveInput) {
-    const res = await fetch("/api/finance/product-costs", {
+    const res = await fetch(withStore("/api/finance/product-costs", selectedStore.code), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
+      body: JSON.stringify({ ...input, store: selectedStore.code }),
     });
     const json = await readApiJson(res);
     if (!res.ok) {
@@ -821,6 +857,7 @@ export default function FinancePage() {
     setCostVersions((current) => [
       {
         id: Date.now(),
+        store_id: savedCost.store_id,
         sku: savedCost.sku,
         product_name: savedCost.product_name,
         unit_cost: savedCost.unit_cost,
@@ -834,7 +871,9 @@ export default function FinancePage() {
     // El refresco del resumen es secundario: si falla (endpoint pesado o
     // migracion pendiente) no debe reportar el guardado como fallido.
     try {
-      const summaryRes = await fetch("/api/finance/summary", { cache: "no-store" });
+      const summaryRes = await fetch(withStore("/api/finance/summary", selectedStore.code), {
+        cache: "no-store",
+      });
       const summaryJson = await readApiJson(summaryRes);
       if (summaryRes.ok) setSummary(summaryJson.summary ?? null);
     } catch {
@@ -843,15 +882,30 @@ export default function FinancePage() {
   }
 
   async function reloadCosts() {
-    const res = await fetch("/api/finance/product-costs", { cache: "no-store" });
+    const res = await fetch(withStore("/api/finance/product-costs", selectedStore.code), {
+      cache: "no-store",
+    });
     const json = await readApiJson(res);
     setCosts(json.costs ?? []);
     setCostVersions(Array.isArray(json.versions) ? (json.versions as ProductCostVersion[]) : []);
   }
 
-  async function reloadMoovin() {
+  async function reloadCarrierTracking(storeCode = selectedStore.code) {
+    const store = getFinanceStore(storeCode);
+    if (store.logisticsProvider === "moovin") {
+      setForzaByGuide(new Map());
+      await reloadMoovin(storeCode);
+      return;
+    }
+    setMoovinByPackage(new Map());
+    await reloadForza(storeCode);
+  }
+
+  async function reloadMoovin(storeCode = selectedStore.code) {
     try {
-      const json = await readApiJson(await fetch("/api/finance/moovin-sync", { cache: "no-store" }));
+      const json = await readApiJson(
+        await fetch(withStore("/api/finance/moovin-sync", storeCode), { cache: "no-store" })
+      );
       if (Array.isArray(json.rows)) {
         setMoovinByPackage(new Map((json.rows as MoovinTrackingRow[]).map((r) => [r.id_package, r])));
       }
@@ -860,21 +914,68 @@ export default function FinancePage() {
     }
   }
 
+  async function reloadForza(storeCode = selectedStore.code) {
+    try {
+      const json = await readApiJson(
+        await fetch(withStore("/api/finance/forza-sync", storeCode), { cache: "no-store" })
+      );
+      if (Array.isArray(json.rows)) {
+        setForzaByGuide(buildForzaTrackingMap(json.rows as ForzaTrackingRow[]));
+      }
+    } catch {
+      // sin cache; el estado cae a guia/Boxful/sistema.
+    }
+  }
+
+  async function rematchImports() {
+    setRematching(true);
+    setRematchMessage("Re-emparejando con la base de Shopify...");
+    setError("");
+    try {
+      const res = await fetch(withStore("/api/finance/rematch", selectedStore.code), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store: selectedStore.code }),
+      });
+      const json = await readApiJson(res);
+      if (!res.ok) throw new Error(json.error ?? "No se pudo re-emparejar");
+      const logistics = json.logistics ?? { matched: 0, total: 0 };
+      const settlements = json.settlements ?? { matched: 0, total: 0 };
+      setRematchMessage(
+        `Re-emparejado listo: Boxful ${logistics.matched}/${logistics.total} con match` +
+          (settlements.total
+            ? `, liquidaciones ${settlements.matched}/${settlements.total} con match`
+            : "") +
+          "."
+      );
+      await refresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "No se pudo re-emparejar";
+      setError(message);
+      setRematchMessage(message);
+    } finally {
+      setRematching(false);
+    }
+  }
+
   async function syncShopifyHistory() {
     setSyncingShopify(true);
     setSyncMessage("Sincronizando Shopify...");
     setError("");
     let totalSynced = 0;
+    const activeStoreCode = selectedStore.code;
+    const shopifyCreatedAtMin = getShopifyCreatedAtMin(activeStoreCode);
 
     // Fase 1: pedidos recientes (de lo mas nuevo hacia atras con cursor).
     try {
       let nextUrl: string | null = null;
       for (let batch = 0; batch < 40; batch++) {
-        const res = await fetch("/api/finance/shopify-sync", {
+        const res = await fetch(withStore("/api/finance/shopify-sync", activeStoreCode), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            created_at_min: FINANCE_SHOPIFY_CREATED_AT_MIN,
+            store: activeStoreCode,
+            created_at_min: shopifyCreatedAtMin,
             max_pages: 8,
             next_url: nextUrl,
           }),
@@ -898,11 +999,12 @@ export default function FinancePage() {
     try {
       let oldestReached: string | null = null;
       for (let batch = 0; batch < 80; batch++) {
-        const res = await fetch("/api/finance/shopify-sync", {
+        const res = await fetch(withStore("/api/finance/shopify-sync", activeStoreCode), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            created_at_min: FINANCE_SHOPIFY_CREATED_AT_MIN,
+            store: activeStoreCode,
+            created_at_min: shopifyCreatedAtMin,
             max_pages: 8,
             mode: "backfill",
           }),
@@ -935,10 +1037,11 @@ export default function FinancePage() {
   }
 
   async function saveClaim(anomaly: FinancialAnomaly, status: FinanceClaim["status"], notes = "") {
-    const res = await fetch("/api/finance/claims", {
+    const res = await fetch(withStore("/api/finance/claims", selectedStore.code), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        store: selectedStore.code,
         anomaly_key: anomaly.id,
         order_name: anomaly.order_name,
         guide_number: anomaly.guide_number,
@@ -969,14 +1072,19 @@ export default function FinancePage() {
       return false;
     }
 
-    const res = await fetch("/api/finance/expenses", {
-      method: "POST",
+    const isEditingExpense = Boolean(expenseForm.id);
+    const res = await fetch(withStore("/api/finance/expenses", selectedStore.code), {
+      method: isEditingExpense ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(expensePayload.expense),
+      body: JSON.stringify({
+        ...expensePayload.expense,
+        ...(isEditingExpense ? { id: expenseForm.id } : {}),
+        store: selectedStore.code,
+      }),
     });
     const json = await readApiJson(res);
     if (!res.ok) {
-      setError(json.error ?? "No se pudo guardar gasto");
+      setError(json.error ?? (isEditingExpense ? "No se pudo actualizar gasto" : "No se pudo guardar gasto"));
       return false;
     }
     setExpenseForm({ ...emptyExpense, type: expenseForm.type });
@@ -985,118 +1093,219 @@ export default function FinancePage() {
   }
 
   async function deleteExpense(id: number) {
-    await fetch(`/api/finance/expenses?id=${id}`, { method: "DELETE" });
+    await fetch(withStore(`/api/finance/expenses?id=${id}`, selectedStore.code), { method: "DELETE" });
     await refresh();
   }
 
-  const orderStats = useMemo(() => {
-    const effectiveStatuses = visibleOrderRows.map((row) =>
-      getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey))
-    );
-    return {
-      delivered: effectiveStatuses.filter((status) => status === "delivered").length,
-      notDelivered: effectiveStatuses.filter(
-        (status) => status === "not_delivered" || status === "returned"
-      ).length,
-      annulled: effectiveStatuses.filter((status) => status === "annulled").length,
-      liquidationAlerts: liquidationAlertRows.length,
-      anomalies: liquidationAlertRows.length + doubleSettlementAnomalies.length,
-      enRoute: effectiveStatuses.filter((status) => status === "en_route").length,
-      enRouteRetry: effectiveStatuses.filter((status) => status === "en_route_retry").length,
-      incident: effectiveStatuses.filter((status) => status === "incident").length,
-      pending: effectiveStatuses.filter((status) => status === "pending" || status === "unmatched").length,
-      unmatched: logisticsRows.filter((row) => row.match_status === "unmatched").length,
-      total: money(rows.reduce((acc, row) => acc + Number(row.amount_to_liquidate || 0), 0)),
-    };
-  }, [
-    doubleSettlementAnomalies.length,
-    logisticsRows,
-    liquidationAlertRows.length,
-    rows,
-    settlementTraceByKey,
-    visibleOrderRows,
-  ]);
+  // Carril 2 inc.2: la barra de Alertas ya NO se calcula sobre visibleOrderRows
+  // (que en el tab Pedidos queda vacio porque el snapshot pesado esta diferido).
+  // Sus conteos vienen del estado `alertCounts`, alimentado por el efecto
+  // server-side de mas abajo (/api/finance/orders?period=all).
 
-  // KPIs operativos por cohorte de fecha de creacion, con comparativo
-  // like-for-like contra el periodo inmediatamente anterior.
-  const operationalKpis = useMemo(() => {
-    const now = new Date();
-    const win = getKpiWindows(kpiRange, now);
-    const inWindow = (value: string | null, start: number, end: number) => {
-      if (!value) return false;
-      const time = new Date(value).getTime();
-      return !Number.isNaN(time) && time >= start && time < end;
-    };
-    const cur = computeOpMetrics(
-      financeControl.orders.filter((order) => inWindow(order.created_at, win.curStart, win.curEnd))
-    );
-    const prev =
-      win.prevStart != null && win.prevEnd != null
-        ? computeOpMetrics(
-            financeControl.orders.filter((order) =>
-              inWindow(order.created_at, win.prevStart as number, win.prevEnd as number)
-            )
-          )
-        : null;
-    return { win, cards: buildOperationalKpiCards(cur, prev) };
-  }, [financeControl.orders, kpiRange]);
+  // La ventana (etiqueta de rango / comparativo / "tasas en maduracion") es
+  // pura y barata: se calcula en cliente. Las tarjetas de KPIs vienen del
+  // endpoint server-side (efecto de abajo). Mientras no hay datos, mostramos las
+  // 7 tarjetas en cero para conservar el layout (OperationalKpiCard pinta "...").
+  const operationalKpis = useMemo(
+    () => ({
+      win: getKpiWindows(kpiRange, new Date()),
+      cards: kpiCards.length ? kpiCards : buildOperationalKpiCards(EMPTY_OP_METRICS, null),
+    }),
+    [kpiRange, kpiCards]
+  );
+
+  // Fetch de KPIs server-side: current + previous por tienda y periodo. Reemplaza
+  // el calculo en memoria sobre visibleOrderRows (Carril 2 inc.2).
+  useEffect(() => {
+    const controller = new AbortController();
+    setKpiLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(
+          withStore(`/api/finance/kpis?period=${kpiRange}`, selectedStoreCode),
+          { cache: "no-store", signal: controller.signal }
+        );
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudieron calcular los KPIs");
+        const current = json.current as OpMetrics | undefined;
+        const previous = (json.previous as OpMetrics | null | undefined) ?? null;
+        if (!current) throw new Error("Respuesta de KPIs invalida");
+        setKpiCards(buildOperationalKpiCards(current, previous));
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        // No bloqueamos la pantalla por los KPIs; quedan vacios y la tabla sigue.
+        setKpiCards([]);
+      } finally {
+        if (!controller.signal.aborted) setKpiLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [selectedStoreCode, kpiRange]);
+
+  // Conteos para la barra de Alertas (Carril 2 inc.2). period=all para que las
+  // alertas reflejen todo el historico, no solo la ventana del selector. Una
+  // sola request barata (pageSize=1; el server cachea el dataset 30s) por tienda
+  // o cuando se actualiza. No reintroduce el snapshot pesado en el tab Pedidos.
+  useEffect(() => {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          withStore("/api/finance/orders?period=all&pageSize=1", selectedStoreCode),
+          { cache: "no-store", signal: controller.signal }
+        );
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar las alertas");
+        setAlertCounts({
+          trackingCounts: (json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS,
+          settlementCounts: (json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS,
+        });
+      } catch {
+        if (controller.signal.aborted) return;
+        // Las alertas son informativas; si fallan dejamos los conteos en cero y
+        // la tabla de pedidos sigue funcionando.
+        setAlertCounts({ trackingCounts: EMPTY_TRACKING_COUNTS, settlementCounts: EMPTY_SETTLEMENT_COUNTS });
+      }
+    })();
+    return () => controller.abort();
+  }, [selectedStoreCode]);
+
+  // Productos server-side (Carril 2 inc.2): /api/finance/product-analysis devuelve
+  // las filas ya agregadas (buildFinanceControlCenter + buildProductAnalysisRows en
+  // el server). Solo se pide al entrar al tab o al cambiar de tienda.
+  useEffect(() => {
+    if (tab !== "products") return;
+    const controller = new AbortController();
+    setProductAnalysisLoading(true);
+    setProductAnalysisError("");
+    (async () => {
+      try {
+        const res = await fetch(
+          withStore("/api/finance/product-analysis", selectedStoreCode),
+          { cache: "no-store", signal: controller.signal }
+        );
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudo analizar productos");
+        setProductAnalysisRows(Array.isArray(json.rows) ? (json.rows as ProductAnalysisRow[]) : []);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setProductAnalysisRows([]);
+        setProductAnalysisError(err instanceof Error ? err.message : "No se pudo analizar productos");
+      } finally {
+        if (!controller.signal.aborted) setProductAnalysisLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [tab, selectedStoreCode]);
+
+  // Cierre mensual server-side (Carril 2 inc.2): /api/finance/monthly-close devuelve
+  // las filas del cierre + el centro de control (financeControl) ya calculados.
+  useEffect(() => {
+    if (tab !== "monthly") return;
+    const controller = new AbortController();
+    setMonthlyCloseLoading(true);
+    setMonthlyCloseError("");
+    (async () => {
+      try {
+        const res = await fetch(
+          withStore("/api/finance/monthly-close", selectedStoreCode),
+          { cache: "no-store", signal: controller.signal }
+        );
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudo calcular el cierre mensual");
+        setMonthlyCloseRows(Array.isArray(json.rows) ? (json.rows as MonthlyCloseRow[]) : []);
+        setFinanceControl((json.control as FinanceControlCenter) ?? EMPTY_FINANCE_CONTROL_CENTER);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setMonthlyCloseRows([]);
+        setFinanceControl(EMPTY_FINANCE_CONTROL_CENTER);
+        setMonthlyCloseError(err instanceof Error ? err.message : "No se pudo calcular el cierre mensual");
+      } finally {
+        if (!controller.signal.aborted) setMonthlyCloseLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [tab, selectedStoreCode]);
+
+  // Notas Shopify server-side (Carril 2 inc.2): /api/finance/notes devuelve los
+  // alias (buildShopifyNoteAliasRows). El cliente hace la busqueda de texto y el
+  // filtro "solo con codigo" en memoria sobre esta lista pequena.
+  useEffect(() => {
+    if (tab !== "notes") return;
+    const controller = new AbortController();
+    setNotesLoading(true);
+    setNotesError("");
+    (async () => {
+      try {
+        const res = await fetch(
+          withStore("/api/finance/notes", selectedStoreCode),
+          { cache: "no-store", signal: controller.signal }
+        );
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar las notas Shopify");
+        setNoteAliasRows(Array.isArray(json.rows) ? (json.rows as ShopifyNoteAliasRow[]) : []);
+        setNoteShopifyOrderCount(Number(json.shopifyOrderCount ?? 0));
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setNoteAliasRows([]);
+        setNoteShopifyOrderCount(0);
+        setNotesError(err instanceof Error ? err.message : "No se pudieron cargar las notas Shopify");
+      } finally {
+        if (!controller.signal.aborted) setNotesLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [tab, selectedStoreCode]);
 
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b border-border/50 bg-card/70 backdrop-blur">
-        <div className="container mx-auto flex items-center gap-4 px-4 py-4">
-          <Link href="/">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="mr-2 h-4 w-4" /> Dashboard
-            </Button>
-          </Link>
-          <div>
-            <h1 className="text-lg font-bold">Gestion de pedidos y rentabilidad</h1>
-            <p className="text-xs text-muted-foreground">
-              Liquidaciones, costos por SKU, gastos y utilidad neta
-            </p>
+        <div className="container mx-auto flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:gap-4 sm:px-4 sm:py-4">
+          <div className="flex min-w-0 items-center gap-1.5 sm:flex-1">
+            <Link href="/">
+              <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs sm:h-9 sm:text-sm">
+                <ArrowLeft className="h-4 w-4" /> Dashboard
+              </Button>
+            </Link>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-sm font-bold sm:text-lg">Gestion de pedidos y rentabilidad</h1>
+              <p className="hidden truncate text-xs text-muted-foreground sm:block">
+                Liquidaciones, costos por SKU, gastos y utilidad neta
+              </p>
+            </div>
           </div>
-          <div className="ml-auto flex items-center gap-3">
-            {lastRefreshedAt && (
-              <span className="hidden text-xs text-muted-foreground sm:inline">
-                Actualizado{" "}
-                {lastRefreshedAt.toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" })}
-              </span>
-            )}
+          <div className="flex items-center gap-1.5 sm:ml-auto sm:gap-2">
+            <select
+              value={selectedStore.code}
+              onChange={(event) => setSelectedStoreCode(event.target.value as FinanceStoreCode)}
+              aria-label="Tienda"
+              className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs font-semibold text-foreground outline-none focus:border-primary sm:h-9 sm:min-w-[190px] sm:flex-none sm:px-3 sm:text-sm"
+            >
+              {FINANCE_STORES.map((store) => (
+                <option key={store.code} value={store.code}>
+                  {store.label}
+                </option>
+              ))}
+            </select>
             <Button
               variant="outline"
               size="sm"
               onClick={() => {
                 refresh();
-                loadShopifyProducts();
+                if (tab === "products") loadShopifyProducts();
               }}
-              className="gap-2"
+              className="h-8 shrink-0 gap-1.5 px-2.5 sm:h-9"
             >
-              <RefreshCw className="h-3.5 w-3.5" /> Actualizar
+              <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Actualizar</span>
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto space-y-6 px-4 py-6">
+      <main className="container mx-auto space-y-4 px-4 py-4 sm:space-y-6 sm:py-6">
         {error && (
           <div className="border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-red-200">
-            {error.includes("Could not find the table") || error.includes("schema cache")
-              ? "Faltan tablas financieras en Supabase. Ejecuta supabase/migrations/0002_finance_schema.sql en SQL Editor."
-              : error}
-          </div>
-        )}
-
-        {shopifyHistoryLoading && (
-          <div className="flex flex-wrap items-center gap-2 border border-primary/30 bg-primary/10 px-4 py-2 text-sm text-primary">
-            <RefreshCw className="h-4 w-4 animate-spin" />
-            <span>
-              Cargando historico Shopify por lotes:{" "}
-              <span className="font-mono text-foreground">
-                {shopifyHistoryProgress.loaded}
-                {shopifyHistoryProgress.total ? `/${shopifyHistoryProgress.total}` : ""}
-              </span>
-            </span>
+            {formatFinancePageError(error)}
           </div>
         )}
 
@@ -1130,22 +1339,30 @@ export default function FinancePage() {
             </p>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-7">
+          <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4 xl:grid-cols-7">
             {operationalKpis.cards.map(({ id, ...card }) => (
-              <OperationalKpiCard key={id} loading={loading} {...card} />
+              <OperationalKpiCard key={id} loading={kpiLoading} {...card} />
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Alertas</span>
-            <AlertStat label="Reintentos" value={loading ? "..." : formatInt(orderStats.enRouteRetry)} tone="bad" />
-            <AlertStat label="Incidencias" value={loading ? "..." : formatInt(orderStats.incident)} tone="bad" />
-            <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(orderStats.liquidationAlerts)} tone="warn" />
-            <AlertStat
-              label="Anomalías"
-              value={loading ? "..." : formatInt(financeControl.anomalies.length)}
-              tone="warn"
-            />
+          <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Alertas</span>
+            {/* Carril 2 inc.2: alimentado de conteos server-side (period=all) en
+                lugar del snapshot en memoria. Reintentos/Incidencias vienen de
+                trackingCounts; Por reclamar de settlementCounts.to_claim. */}
+            <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
+              <AlertStat label="Reintentos" value={loading ? "..." : formatInt(alertCounts.trackingCounts.en_route_retry)} tone="bad" />
+              <AlertStat label="Incidencias" value={loading ? "..." : formatInt(alertCounts.trackingCounts.incident_solvable + alertCounts.trackingCounts.incident_unsolvable)} tone="bad" />
+              <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim)} tone="warn" />
+              <AlertStat
+                label="Anomalías"
+                // Equivale al calculo previo en cliente (liquidationAlertRows +
+                // doubleSettlementAnomalies): entregados sin liquidar (to_claim) +
+                // liquidaciones duplicadas (duplicate).
+                value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim + alertCounts.settlementCounts.duplicate)}
+                tone="warn"
+              />
+            </div>
           </div>
         </section>
 
@@ -1176,23 +1393,25 @@ export default function FinancePage() {
           </TabButton>
         </div>
 
-        {loading ? (
-          <div className="flex h-80 items-center justify-center border border-border bg-card text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-2">
+        <>
+          {/* El tab Pedidos ya carga server-side (tiene su propio loader); el
+              loader por bloques solo aplica a los tabs que dependen del dataset
+              en memoria. */}
+          {loading && tab !== "orders" && (
+            <div className="flex items-center gap-2 border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
               <RefreshCw className="h-4 w-4 animate-spin" />
-              Cargando datos base...
-            </span>
-          </div>
-        ) : (
-          <>
+              Cargando vista operativa por bloques...
+            </div>
+          )}
             {tab === "orders" && (
               <OrdersTab
+                selectedStore={selectedStore}
                 logisticsImports={logisticsImports}
-                rows={visibleOrderRows}
                 latestLogisticsImport={latestLogisticsImport}
-                settlementTraceByKey={settlementTraceByKey}
                 moovinByPackage={moovinByPackage}
+                forzaByGuide={forzaByGuide}
                 onReloadMoovin={reloadMoovin}
+                onReloadForza={reloadForza}
                 shopifyOrderCount={shopifyOrders.length}
                 shopifyCoverage={shopifyCoverage}
                 syncingShopify={syncingShopify}
@@ -1206,6 +1425,8 @@ export default function FinancePage() {
             {tab === "products" && (
               <ProductAnalysisTab
                 rows={productAnalysisRows}
+                rowsLoading={productAnalysisLoading}
+                rowsError={productAnalysisError}
                 costs={costs}
                 costVersions={costVersions}
                 products={shopifyProducts}
@@ -1216,16 +1437,18 @@ export default function FinancePage() {
               />
             )}
             {tab === "notes" && (
-              <ShopifyNotesTab orders={shopifyOrders} />
+              <ShopifyNotesTab
+                rows={noteAliasRows}
+                shopifyOrderCount={noteShopifyOrderCount}
+                loading={notesLoading}
+                error={notesError}
+              />
             )}
             {tab === "settlements" && (
               <SettlementsTab
+                storeCode={selectedStoreCode}
                 imports={imports}
                 shopifyCoverage={shopifyCoverage}
-                rows={matchedSettlementRows}
-                shopifyOrders={shopifyOrders}
-                liquidationAlertRows={liquidationAlertRows}
-                doubleSettlementAnomalies={doubleSettlementAnomalies}
                 importing={importing}
                 onImport={handleImport}
                 onDeleteImport={deleteSettlementImport}
@@ -1244,6 +1467,8 @@ export default function FinancePage() {
               <MonthlyCloseTab
                 rows={monthlyCloseRows}
                 control={financeControl}
+                loading={monthlyCloseLoading}
+                error={monthlyCloseError}
                 summary={summary}
                 costs={costs}
                 onSaveProductCost={saveProductCost}
@@ -1255,10 +1480,12 @@ export default function FinancePage() {
               <BoxfulFilesTab
                 files={boxfulFiles}
                 logisticsImports={logisticsImports}
+                rematching={rematching}
+                rematchMessage={rematchMessage}
+                onRematch={rematchImports}
               />
             )}
-          </>
-        )}
+        </>
       </main>
     </div>
   );
@@ -1335,12 +1562,13 @@ function FilterChip({
 }
 
 function OrdersTab({
+  selectedStore,
   logisticsImports,
-  rows,
   latestLogisticsImport,
-  settlementTraceByKey,
   moovinByPackage,
+  forzaByGuide,
   onReloadMoovin,
+  onReloadForza,
   shopifyOrderCount,
   shopifyCoverage,
   syncingShopify,
@@ -1349,12 +1577,16 @@ function OrdersTab({
   importingLogistics,
   onLogisticsImport,
 }: {
+  selectedStore: FinanceStorePublic;
   logisticsImports: LogisticsImport[];
-  rows: TrackableOrderRow[];
   latestLogisticsImport?: LogisticsImport;
-  settlementTraceByKey: Map<string, SettlementTrace[]>;
+  // moovinByPackage/forzaByGuide siguen en cliente: alimentan los botones de
+  // tracking en vivo y el estado de courier del export (cargas acotadas, NO las
+  // ~11k filas de Shopify).
   moovinByPackage: Map<string, MoovinTrackingRow>;
+  forzaByGuide: Map<string, ForzaTrackingRow>;
   onReloadMoovin: () => Promise<void>;
+  onReloadForza: () => Promise<void>;
   shopifyOrderCount: number;
   shopifyCoverage: { count: number; oldest: string | null; newest: string | null } | null;
   syncingShopify: boolean;
@@ -1372,69 +1604,139 @@ function OrdersTab({
   const [rangeEnd, setRangeEnd] = useState("");
   const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>("all");
   const [settlementFilter, setSettlementFilter] = useState<OrderSettlementFilter>("all");
+  // En mobile los filtros (periodo/estado/liquidacion) se colapsan detras de un
+  // boton para no saturar la vista; en desktop siempre se muestran.
+  const [showFilters, setShowFilters] = useState(false);
+  // Idem para los botones de accion (Sync/Importar/Actualizar): menu en mobile.
+  const [showActions, setShowActions] = useState(false);
+  // --- Datos server-side (Carril 2 inc.2) ---------------------------------
+  // La tabla de pedidos ya no consume el snapshot completo en memoria: pagina y
+  // filtra contra /api/finance/orders. Los conteos de los chips, el total y las
+  // guias para los botones de sync vienen en la misma respuesta.
+  const [page, setPage] = useState(1);
+  // Se incrementa tras un sync de courier para refrescar la tabla (el cache del
+  // dataset server-side tiene TTL corto; esto fuerza la relectura).
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [serverRows, setServerRows] = useState<OrderRowWithTraces[]>([]);
+  const [total, setTotal] = useState(0);
+  const [periodCount, setPeriodCount] = useState(0);
+  const [searchedCount, setSearchedCount] = useState(0);
+  const [trackingCounts, setTrackingCounts] = useState<Record<OrderTrackingFilter, number>>(EMPTY_TRACKING_COUNTS);
+  const [settlementCounts, setSettlementCounts] = useState<Record<OrderSettlementFilter, number>>(
+    EMPTY_SETTLEMENT_COUNTS
+  );
+  const [enRouteGuides, setEnRouteGuides] = useState<{
+    moovin: Array<{ idPackage: string; lastName: string }>;
+    forza: Array<{ guide: string }>;
+  }>({ moovin: [], forza: [] });
+  const [tableLoading, setTableLoading] = useState(true);
+  const [tableError, setTableError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  // Busqueda con debounce (~300ms) para no disparar un fetch por tecla.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  // Meses disponibles: derivados del rango de cobertura Shopify (oldest..newest)
+  // en vez de recorrer las ~11k filas en el navegador.
   const orderMonthOptions = useMemo(
-    () =>
-      uniqueKeys(rows.map((row) => getMonthKey(row.shopify_created_at)).filter(Boolean))
-        .sort((a, b) => b.localeCompare(a)),
-    [rows]
+    () => buildMonthOptionsFromCoverage(shopifyCoverage),
+    [shopifyCoverage]
   );
-  const periodFilteredRows = useMemo(
-    () =>
-      rows.filter((row) =>
-        matchesOrderPeriod(row, periodMode, selectedOrderMonth, rangeStart, rangeEnd)
-      ),
-    [periodMode, rangeEnd, rangeStart, rows, selectedOrderMonth]
-  );
-  const searchedRows = useMemo(
-    () => periodFilteredRows.filter((row) => matchesOrderSearch(row, orderSearch)),
-    [periodFilteredRows, orderSearch]
-  );
-  const trackingCounts = useMemo(() => {
-    const counts: Record<OrderTrackingFilter, number> = {
-      all: searchedRows.length,
-      pending: 0,
-      en_route: 0,
-      en_route_retry: 0,
-      incident_solvable: 0,
-      incident_unsolvable: 0,
-      annulled: 0,
-      delivered: 0,
-      not_delivered: 0,
-    };
 
-    for (const row of searchedRows) {
-      const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      counts[getTrackingFilterFromStatus(status, row)] += 1;
-    }
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedSearch(orderSearch.trim()), 300);
+    return () => clearTimeout(handle);
+  }, [orderSearch]);
 
-    return counts;
-  }, [searchedRows, settlementTraceByKey]);
-  const trackingFilteredRows = useMemo(
-    () =>
-      searchedRows.filter((row) => {
-        if (trackingFilter === "all") return true;
-        const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-        return getTrackingFilterFromStatus(status, row) === trackingFilter;
-      }),
-    [searchedRows, settlementTraceByKey, trackingFilter]
+  // Cualquier cambio de filtro vuelve a la primera pagina.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, trackingFilter, settlementFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code]);
+
+  // Query params compartidos por el fetch de la tabla y por el export.
+  const buildOrdersQuery = useCallback(
+    (extra: Record<string, string> = {}) => {
+      const params = new URLSearchParams();
+      params.set("period", periodMode);
+      if (periodMode === "month" && selectedOrderMonth) params.set("month", selectedOrderMonth);
+      if (periodMode === "range") {
+        if (rangeStart) params.set("start", rangeStart);
+        if (rangeEnd) params.set("end", rangeEnd);
+      }
+      if (debouncedSearch) params.set("q", debouncedSearch);
+      if (trackingFilter !== "all") params.set("status", trackingFilter);
+      if (settlementFilter !== "all") params.set("settlement", settlementFilter);
+      for (const [key, value] of Object.entries(extra)) params.set(key, value);
+      return params.toString();
+    },
+    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter]
   );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setTableLoading(true);
+    setTableError("");
+    (async () => {
+      try {
+        const query = buildOrdersQuery({ page: String(page), pageSize: String(ORDERS_PAGE_SIZE) });
+        const res = await fetch(withStore(`/api/finance/orders?${query}`, selectedStore.code), {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar los pedidos");
+        setServerRows(Array.isArray(json.rows) ? (json.rows as OrderRowWithTraces[]) : []);
+        setTotal(Number(json.total ?? 0));
+        setPeriodCount(Number(json.periodCount ?? 0));
+        setSearchedCount(Number(json.searchedCount ?? 0));
+        setTrackingCounts((json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS);
+        setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setServerRows([]);
+        setTotal(0);
+        setTableError(err instanceof Error ? err.message : "No se pudieron cargar los pedidos");
+      } finally {
+        if (!controller.signal.aborted) setTableLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [buildOrdersQuery, page, selectedStore.code, refreshKey]);
+
+  // Guias "en ruta" para los botones Moovin/Forza: dependen de la tienda (no de
+  // pagina/filtro), asi que se traen una sola vez por tienda con ?guides=1, en
+  // vez de viajar en cada fetch de la tabla.
+  useEffect(() => {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          withStore("/api/finance/orders?period=all&pageSize=1&guides=1", selectedStore.code),
+          { cache: "no-store", signal: controller.signal }
+        );
+        const json = await readApiJson(res);
+        if (!res.ok) return;
+        setEnRouteGuides(
+          (json.enRouteGuides as {
+            moovin: Array<{ idPackage: string; lastName: string }>;
+            forza: Array<{ guide: string }>;
+          }) ?? { moovin: [], forza: [] }
+        );
+      } catch {
+        // Los botones de sync no son criticos para la carga inicial.
+      }
+    })();
+    return () => controller.abort();
+  }, [selectedStore.code, refreshKey]);
+
   const [moovinSyncing, setMoovinSyncing] = useState(false);
   const [moovinMessage, setMoovinMessage] = useState("");
+  const [forzaSyncing, setForzaSyncing] = useState(false);
+  const [forzaMessage, setForzaMessage] = useState("");
 
-  // Pedidos Moovin no terminales (en ruta o incidencia) que vale la pena
-  // refrescar contra Moovin.
-  const enRouteMoovinGuides = useMemo(() => {
-    const byGuide = new Map<string, { idPackage: string; lastName: string }>();
-    for (const row of rows) {
-      if (!isMoovinCourier(row.courier) || !row.guide_number) continue;
-      const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
-      if (status !== "en_route" && status !== "en_route_retry" && status !== "incident" && status !== "pending") continue;
-      if (!byGuide.has(row.guide_number)) {
-        byGuide.set(row.guide_number, { idPackage: row.guide_number, lastName: row.last_name ?? "" });
-      }
-    }
-    return Array.from(byGuide.values());
-  }, [rows, settlementTraceByKey]);
+  // Guias no terminales para los botones de sync: vienen del endpoint (calculadas
+  // sobre el dataset completo server-side), no del snapshot en memoria.
+  const enRouteMoovinGuides = enRouteGuides.moovin;
+  const enRouteForzaGuides = enRouteGuides.forza;
 
   async function updateMoovinStatuses() {
     if (!enRouteMoovinGuides.length) return;
@@ -1462,6 +1764,7 @@ function OrdersTab({
         );
       }
       await onReloadMoovin();
+      setRefreshKey((key) => key + 1);
       setMoovinMessage(
         `Moovin actualizado: ${checked} consultados, ${delivered} entregados, ${incidents} con incidencia.`
       );
@@ -1472,39 +1775,45 @@ function OrdersTab({
     }
   }
 
-  const settlementCounts = useMemo(() => {
-    const counts: Record<OrderSettlementFilter, number> = {
-      all: trackingFilteredRows.length,
-      settled: 0,
-      unsettled: 0,
-      to_claim: 0,
-      duplicate: 0,
-    };
-
-    for (const row of trackingFilteredRows) {
-      const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
-      const trackingStatus = getEffectiveTrackingStatus(row, traces);
-      if (traces.length === 1) counts.settled += 1;
-      if (traces.length === 0) counts.unsettled += 1;
-      if (traces.length === 0 && trackingStatus === "delivered") counts.to_claim += 1;
-      if (traces.length > 1) counts.duplicate += 1;
+  async function updateForzaStatuses() {
+    if (!enRouteForzaGuides.length) return;
+    setForzaSyncing(true);
+    setForzaMessage(`Consultando Forza: 0/${enRouteForzaGuides.length}...`);
+    const chunkSize = 60;
+    let checked = 0;
+    let incidents = 0;
+    let delivered = 0;
+    try {
+      for (let i = 0; i < enRouteForzaGuides.length; i += chunkSize) {
+        const chunk = enRouteForzaGuides.slice(i, i + chunkSize);
+        const res = await fetch(withStore("/api/finance/forza-sync", selectedStore.code), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ store: selectedStore.code, guides: chunk }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? "No se pudo actualizar Forza");
+        checked += Number(json.checked ?? 0);
+        incidents += Number(json.incidents ?? 0);
+        delivered += Number(json.delivered ?? 0);
+        setForzaMessage(
+          `Consultando Forza: ${Math.min(i + chunkSize, enRouteForzaGuides.length)}/${enRouteForzaGuides.length}...`
+        );
+      }
+      await onReloadForza();
+      setRefreshKey((key) => key + 1);
+      setForzaMessage(
+        `Forza actualizado: ${checked} consultados, ${delivered} entregados, ${incidents} con incidencia.`
+      );
+    } catch (err) {
+      setForzaMessage(err instanceof Error ? err.message : "No se pudo actualizar Forza");
+    } finally {
+      setForzaSyncing(false);
     }
+  }
 
-    return counts;
-  }, [settlementTraceByKey, trackingFilteredRows]);
-  const filteredRows = useMemo(
-    () =>
-      trackingFilteredRows.filter((row) => {
-        if (settlementFilter === "all") return true;
-        const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
-        const trackingStatus = getEffectiveTrackingStatus(row, traces);
-        if (settlementFilter === "settled") return traces.length === 1;
-        if (settlementFilter === "unsettled") return traces.length === 0;
-        if (settlementFilter === "to_claim") return traces.length === 0 && trackingStatus === "delivered";
-        return traces.length > 1;
-      }),
-    [settlementFilter, settlementTraceByKey, trackingFilteredRows]
-  );
+  // total = filas que pasan TODOS los filtros (lo que antes era filteredRows.length).
+  const totalPages = Math.max(1, Math.ceil(total / ORDERS_PAGE_SIZE));
   const activeTrackingLabel =
     ORDER_TRACKING_FILTERS.find((filter) => filter.value === trackingFilter)?.label ?? "pedidos";
   const activeSettlementLabel =
@@ -1520,6 +1829,51 @@ function OrdersTab({
     }
   }, [orderMonthOptions, selectedOrderMonth]);
 
+  // Export: trae TODAS las filas filtradas (all=1, fuera de la vista paginada) y
+  // arma el XLSX con el mismo formato de columnas que antes. Las trazas vienen
+  // en cada fila; el estado de courier sigue saliendo de los mapas en cliente.
+  async function handleExport() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const query = buildOrdersQuery({ all: "1" });
+      const res = await fetch(withStore(`/api/finance/orders?${query}`, selectedStore.code), {
+        cache: "no-store",
+      });
+      const json = await readApiJson(res);
+      if (!res.ok) throw new Error(json.error ?? "No se pudo exportar");
+      const exportRows = (Array.isArray(json.rows) ? (json.rows as OrderRowWithTraces[]) : []).map((row) => {
+        const traces = row.traces ?? [];
+        const status = mergeDispatchIntoTracking(getEffectiveTrackingStatus(row, traces), row.dispatch_view ?? null, row);
+        const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
+        const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
+        return {
+          Orden: row.order_name || row.shopify_order_name,
+          Origen: row.source,
+          Guia: row.guide_number,
+          Transportadora: normalizeOperationalCourier(row.courier, selectedStore, row.guide_number),
+          "Estado courier": moovin?.latest_status ?? forza?.latest_status ?? "",
+          "Incidencia courier": moovin?.has_incident || forza?.has_incident ? "si" : "",
+          Cliente: row.customer_name,
+          Apellido: row.last_name ?? "",
+          Celular: row.phone ?? "",
+          "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
+          Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
+          Fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
+          "Estado liquidacion": traces.map((t) => t.settlement_status).join(" | ") || "sin liquidacion",
+          "A liquidar": traces.length ? sum(traces.map((t) => t.amount_to_liquidate)) : "",
+          COD: row.cod_amount,
+          Items: (row.package_items ?? []).map((item) => item.title).join("; "),
+        };
+      });
+      await exportXlsx(`pedidos-${new Date().toISOString().slice(0, 10)}.xlsx`, exportRows, "Pedidos");
+    } catch (err) {
+      setTableError(err instanceof Error ? err.message : "No se pudo exportar");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function handleModalLogisticsImport(event: FormEvent<HTMLFormElement>) {
     setLogisticsModalError("");
     const result = await onLogisticsImport(event);
@@ -1533,32 +1887,58 @@ function OrdersTab({
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="gap-4 space-y-0 sm:flex-row sm:items-center sm:justify-between">
+        <CardHeader className="gap-2 space-y-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="space-y-1">
             <CardTitle className="text-base">Seguimiento de pedidos</CardTitle>
-            <p className="text-xs text-muted-foreground">
+            <p className="hidden text-xs text-muted-foreground sm:block">
               Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.
             </p>
           </div>
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
-            {enRouteMoovinGuides.length > 0 && (
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full justify-center gap-2 sm:hidden"
+              onClick={() => setShowActions((value) => !value)}
+              aria-expanded={showActions}
+            >
+              Acciones {showActions ? "▴" : "▾"}
+            </Button>
+            <div className={`flex-col gap-2 [&>button]:w-full ${showActions ? "flex" : "hidden"} sm:flex sm:flex-row sm:flex-wrap sm:gap-2 sm:[&>button]:w-auto`}>
+            {selectedStore.logisticsProvider === "moovin" && enRouteMoovinGuides.length > 0 && (
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 disabled={moovinSyncing}
                 onClick={updateMoovinStatuses}
                 className="gap-2"
               >
                 {moovinSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                {moovinSyncing ? "Actualizando..." : `Actualizar Moovin (${enRouteMoovinGuides.length})`}
+                {moovinSyncing ? "Actualizando..." : `Moovin (${enRouteMoovinGuides.length})`}
               </Button>
             )}
-            <Button type="button" variant="outline" disabled={syncingShopify} onClick={onSyncShopify} className="gap-2">
+            {selectedStore.logisticsProvider === "forza" && enRouteForzaGuides.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={forzaSyncing}
+                onClick={updateForzaStatuses}
+                className="gap-2"
+              >
+                {forzaSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                {forzaSyncing ? "Actualizando..." : `Forza (${enRouteForzaGuides.length})`}
+              </Button>
+            )}
+            <Button type="button" variant="outline" size="sm" disabled={syncingShopify} onClick={onSyncShopify} className="gap-2">
               <Database className="h-4 w-4" />
               {syncingShopify ? "Sincronizando..." : "Sync Shopify"}
             </Button>
             <Button
               type="button"
+              size="sm"
               disabled={importingLogistics}
               onClick={() => {
                 setLogisticsModalError("");
@@ -1569,10 +1949,11 @@ function OrdersTab({
               {importingLogistics ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {importingLogistics ? "Importando..." : "Importar Boxful"}
             </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          {(syncMessage || moovinMessage) && (
+          {(syncMessage || moovinMessage || forzaMessage) && (
             <div className="space-y-1 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               {syncMessage && (
                 <p className="flex items-center gap-1.5">
@@ -1582,6 +1963,11 @@ function OrdersTab({
               {moovinMessage && (
                 <p className="flex items-center gap-1.5">
                   <Search className="h-3.5 w-3.5 shrink-0" /> {moovinMessage}
+                </p>
+              )}
+              {forzaMessage && (
+                <p className="flex items-center gap-1.5">
+                  <Search className="h-3.5 w-3.5 shrink-0" /> {forzaMessage}
                 </p>
               )}
             </div>
@@ -1608,51 +1994,42 @@ function OrdersTab({
               )}
             </div>
             <div className="flex items-center justify-between gap-3 sm:justify-end">
+              {tableLoading && (
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Actualizando...
+                </span>
+              )}
               <span className="whitespace-nowrap text-xs text-muted-foreground">
-                <span className="font-mono text-sm font-semibold text-foreground">{filteredRows.length}</span>{" "}
-                {orderSearch ? `de ${searchedRows.length}` : "pedidos"}
+                <span className="font-mono text-sm font-semibold text-foreground">{total}</span>{" "}
+                {orderSearch ? `de ${searchedCount}` : "pedidos"}
               </span>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                className="gap-2"
-                onClick={() =>
-                  exportXlsx(
-                    `pedidos-${new Date().toISOString().slice(0, 10)}.xlsx`,
-                    filteredRows.map((row) => {
-                      const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
-                      const status = getEffectiveTrackingStatus(row, traces);
-                      const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
-                      return {
-                        Orden: row.order_name || row.shopify_order_name,
-                        Origen: row.source,
-                        Guia: row.guide_number,
-                        Transportadora: row.courier ?? "",
-                        "Estado Moovin": moovin?.latest_status ?? "",
-                        "Incidencia Moovin": moovin?.has_incident ? "si" : "",
-                        Cliente: row.customer_name,
-                        Apellido: row.last_name ?? "",
-                        Celular: row.phone ?? "",
-                        "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
-                        Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
-                        Fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
-                        "Estado liquidacion": traces.map((t) => t.settlement_status).join(" | ") || "sin liquidacion",
-                        "A liquidar": traces.length ? sum(traces.map((t) => t.amount_to_liquidate)) : "",
-                        COD: row.cod_amount,
-                        Items: (row.package_items ?? []).map((item) => item.title).join("; "),
-                      };
-                    }),
-                    "Pedidos"
-                  )
-                }
+                className="gap-1.5 sm:hidden"
+                onClick={() => setShowFilters((value) => !value)}
+                aria-expanded={showFilters}
               >
-                <Download className="h-4 w-4" /> Exportar ({filteredRows.length})
+                Filtros {showFilters ? "▴" : "▾"}
+                {(periodMode !== "all" || trackingFilter !== "all" || settlementFilter !== "all") && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                disabled={exporting || !total}
+                onClick={handleExport}
+              >
+                <Download className="h-4 w-4" /> <span className="hidden sm:inline">{exporting ? "Exportando..." : `Exportar (${total})`}</span><span className="sm:hidden">{exporting ? "..." : total}</span>
               </Button>
             </div>
           </div>
 
-          <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+          <div className={`space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3 ${showFilters ? "" : "hidden"} sm:block`}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Periodo</span>
               <div className="inline-flex overflow-hidden rounded-md border border-border">
@@ -1706,48 +2083,52 @@ function OrdersTab({
               )}
               <span className="ml-auto text-xs text-muted-foreground">
                 Vista actual{" "}
-                <span className="font-mono text-sm font-semibold text-foreground">{periodFilteredRows.length}</span>
+                <span className="font-mono text-sm font-semibold text-foreground">{periodCount}</span>
               </span>
             </div>
 
             <div className="h-px bg-border/60" />
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Estado</span>
-              {ORDER_TRACKING_FILTERS.map((filter) => (
-                <FilterChip
-                  key={filter.value}
-                  label={filter.label}
-                  count={trackingCounts[filter.value]}
-                  active={trackingFilter === filter.value}
-                  onClick={() => setTrackingFilter(filter.value)}
-                  dotClass={filter.value === "all" ? undefined : TRACKING_DOT_COLORS[filter.value]}
-                />
-              ))}
+            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground sm:w-[4.5rem] sm:shrink-0">Estado</span>
+              <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [&>button]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+                {ORDER_TRACKING_FILTERS.map((filter) => (
+                  <FilterChip
+                    key={filter.value}
+                    label={filter.label}
+                    count={trackingCounts[filter.value]}
+                    active={trackingFilter === filter.value}
+                    onClick={() => setTrackingFilter(filter.value)}
+                    dotClass={filter.value === "all" ? undefined : TRACKING_DOT_COLORS[filter.value]}
+                  />
+                ))}
+              </div>
             </div>
 
             <div className="h-px bg-border/60" />
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Liquidacion</span>
-              {ORDER_SETTLEMENT_FILTERS.map((filter) => (
-                <FilterChip
-                  key={filter.value}
-                  label={filter.label}
-                  count={settlementCounts[filter.value]}
-                  active={settlementFilter === filter.value}
-                  onClick={() => setSettlementFilter(filter.value)}
-                />
-              ))}
-              {settlementFilter !== "all" && (
-                <button
-                  type="button"
-                  onClick={() => setSettlementFilter("all")}
-                  className="ml-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  Limpiar
-                </button>
-              )}
+            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground sm:w-[4.5rem] sm:shrink-0">Liquidacion</span>
+              <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1 [&>button]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+                {ORDER_SETTLEMENT_FILTERS.map((filter) => (
+                  <FilterChip
+                    key={filter.value}
+                    label={filter.label}
+                    count={settlementCounts[filter.value]}
+                    active={settlementFilter === filter.value}
+                    onClick={() => setSettlementFilter(filter.value)}
+                  />
+                ))}
+                {settlementFilter !== "all" && (
+                  <button
+                    type="button"
+                    onClick={() => setSettlementFilter("all")}
+                    className="ml-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -1758,10 +2139,21 @@ function OrdersTab({
               ? ` · Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match, ${latestLogisticsImport.unmatched_rows} sin match`
               : " · Sin Boxful importado"}
           </p>
+          {tableError && (
+            <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-red-200">
+              {tableError}
+            </div>
+          )}
+          <div
+            className={`transition-opacity ${tableLoading && serverRows.length > 0 ? "opacity-50" : ""}`}
+            aria-busy={tableLoading}
+          >
           <OrdersTable
-            rows={filteredRows}
-            settlementTraceByKey={settlementTraceByKey}
+            selectedStore={selectedStore}
+            rows={serverRows}
             moovinByPackage={moovinByPackage}
+            forzaByGuide={forzaByGuide}
+            loading={tableLoading}
             emptyLabel={
               orderSearch
                 ? "No encontramos pedidos con ese codigo y estado."
@@ -1774,6 +2166,35 @@ function OrdersTab({
                   : `No hay pedidos en ${activeTrackingLabel.toLowerCase()} con ${activeSettlementLabel.toLowerCase()}.`
             }
           />
+          </div>
+          {total > ORDERS_PAGE_SIZE && (
+            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>
+                Pagina <span className="font-semibold text-foreground">{page}</span> de {totalPages} ·{" "}
+                <span className="font-mono">{total}</span> pedidos
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1 || tableLoading}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= totalPages || tableLoading}
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                >
+                  Siguiente
+                </Button>
+              </div>
+            </div>
+          )}
           {logisticsImports.length > 1 && (
             <div className="border-t border-border pt-3">
               <p className="mb-2 text-xs font-medium text-muted-foreground">Historial de Boxful</p>
@@ -1853,20 +2274,127 @@ function OrdersTab({
   );
 }
 
+// Sub-línea de atribución bajo el badge de "Estado de seguimiento": solo cuando
+// el pedido está en el limbo de despacho (despacho_solicitado/standby), muestra
+// quién solicitó/confirmó (atribución de iComfly que viaja en la fila).
+function DispatchWho({
+  row,
+  status,
+}: {
+  row: Pick<OrderRowWithTraces, "dispatch_requested_by" | "dispatch_confirmed_by">;
+  status: string;
+}) {
+  if (status !== "despacho_solicitado" && status !== "standby") return null;
+  const who = row.dispatch_requested_by || row.dispatch_confirmed_by;
+  if (!who) return null;
+  const label = row.dispatch_requested_by ? "Solicito" : "Confirmo";
+  return (
+    <span className="max-w-[130px] truncate text-[10px] text-muted-foreground" title={`${label}: ${who}`}>
+      {label}: {who}
+    </span>
+  );
+}
+
 function OrdersTable({
+  selectedStore,
   rows,
-  settlementTraceByKey,
   moovinByPackage,
+  forzaByGuide,
+  loading = false,
   emptyLabel = "No hay pedidos para mostrar.",
 }: {
-  rows: TrackableOrderRow[];
-  settlementTraceByKey: Map<string, SettlementTrace[]>;
+  selectedStore: FinanceStorePublic;
+  // Filas server-side: ya traen las trazas de liquidacion resueltas (Carril 2
+  // inc.2), por eso no hace falta el settlementTraceByKey en cliente.
+  rows: OrderRowWithTraces[];
   moovinByPackage: Map<string, MoovinTrackingRow>;
+  forzaByGuide: Map<string, ForzaTrackingRow>;
+  loading?: boolean;
   emptyLabel?: string;
 }) {
   return (
-    <div className="max-h-[620px] overflow-auto border border-border">
-      <table className="w-full min-w-[1180px] text-sm">
+    <>
+      {/* Mobile: una tarjeta por pedido (la tabla de 13 columnas no entra en el cel). */}
+      <div className="space-y-2 md:hidden">
+        {rows.map((row) => {
+          const traces = row.traces ?? [];
+          const trackingStatus = mergeDispatchIntoTracking(getEffectiveTrackingStatus(row, traces), row.dispatch_view ?? null, row);
+          const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
+          const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
+          const itemsText = (row.package_items ?? []).map((item) => item.title).join(", ");
+          return (
+            <div key={row.row_key} className="rounded-lg border border-border bg-card p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-mono text-sm font-semibold">{row.order_name || row.shopify_order_name}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {row.customer_name || "Sin nombre"}
+                    {row.shopify_created_at ? ` · ${formatDate(row.shopify_created_at)}` : ""}
+                  </p>
+                </div>
+                <div className="flex flex-col items-end gap-0.5">
+                  <StatusBadge status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
+                  <DispatchWho row={row} status={trackingStatus} />
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                {row.guide_number ? (
+                  <>
+                    <span className="font-mono">{row.guide_number}</span>
+                    {displayCourier && <span className="text-muted-foreground">· {displayCourier}</span>}
+                    {isMoovinCourier(displayCourier, selectedStore) && (
+                      <MoovinTrackingButton
+                        idPackage={row.guide_number}
+                        lastName={row.last_name ?? ""}
+                        cached={moovinByPackage.get(row.guide_number)}
+                      />
+                    )}
+                    {isForzaCourier(displayCourier, selectedStore) && (
+                      <ForzaTrackingButton guide={row.guide_number} cached={forza} />
+                    )}
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">Sin guía</span>
+                )}
+              </div>
+              {itemsText && (
+                <p className="mt-1 truncate text-[11px] text-muted-foreground" title={itemsText}>
+                  {itemsText}
+                </p>
+              )}
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="font-mono text-sm font-semibold">{currency(row.cod_amount)}</span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge variant={row.source === "boxful" ? "success" : row.source === "liquidacion" ? "warning" : "muted"}>
+                    {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
+                  </Badge>
+                  <SettlementStatusBadge traces={traces} />
+                  {traces.length > 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      A liquidar {currency(sum(traces.map((trace) => trace.amount_to_liquidate)))}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {!rows.length && (
+          <div className="rounded-lg border border-border bg-card px-3 py-8 text-center text-sm text-muted-foreground">
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                <RefreshCw className="h-4 w-4 animate-spin" /> Cargando pedidos...
+              </span>
+            ) : (
+              emptyLabel
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop: tabla completa */}
+      <div className="hidden max-h-[620px] overflow-auto border border-border md:block">
+        <table className="w-full min-w-[1180px] text-sm">
         <thead className="sticky top-0 bg-card">
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
             <th className="px-2 py-1.5">Orden</th>
@@ -1885,9 +2413,11 @@ function OrdersTable({
           </tr>
         </thead>
         <tbody>
-          {rows.slice(0, 500).map((row) => {
-            const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
-            const trackingStatus = getEffectiveTrackingStatus(row, traces);
+          {rows.map((row) => {
+            const traces = row.traces ?? [];
+            const trackingStatus = mergeDispatchIntoTracking(getEffectiveTrackingStatus(row, traces), row.dispatch_view ?? null, row);
+            const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
+            const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
             return (
               <tr key={row.row_key} className="border-b border-border/50">
                 <td className="px-2 py-1.5 font-mono text-xs">{row.order_name}</td>
@@ -1898,15 +2428,18 @@ function OrdersTable({
                 </td>
                 <td className="px-2 py-1.5 font-mono text-xs">{row.guide_number || "-"}</td>
                 <td className="px-2 py-1.5 text-xs">
-                  {row.courier ? (
+                  {displayCourier ? (
                     <div className="flex flex-col items-start gap-0.5">
-                      <span>{row.courier}</span>
-                      {isMoovinCourier(row.courier) && row.guide_number && (
+                      <span>{displayCourier}</span>
+                      {isMoovinCourier(displayCourier, selectedStore) && row.guide_number && (
                         <MoovinTrackingButton
                           idPackage={row.guide_number}
                           lastName={row.last_name ?? ""}
                           cached={moovinByPackage.get(row.guide_number)}
                         />
+                      )}
+                      {isForzaCourier(displayCourier, selectedStore) && row.guide_number && (
+                        <ForzaTrackingButton guide={row.guide_number} cached={forza} />
                       )}
                     </div>
                   ) : (
@@ -1918,7 +2451,7 @@ function OrdersTable({
                     {row.customer_name || "Sin nombre"}
                   </span>
                   {row.last_name && (
-                    <span className="mt-0.5 block max-w-[150px] truncate text-[9px] text-muted-foreground">
+                    <span className="mt-0.5 block max-w-[150px] truncate text-[10px] text-muted-foreground">
                       Apellido: {row.last_name}
                     </span>
                   )}
@@ -1935,10 +2468,13 @@ function OrdersTable({
                   )}
                 </td>
                 <td className="px-2 py-1.5">
-                  <StatusBadge
-                    status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus}
-                    label={getTrackingStatusLabel(row, traces, trackingStatus)}
-                  />
+                  <div className="flex flex-col items-start gap-0.5">
+                    <StatusBadge
+                      status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus}
+                      label={getTrackingStatusLabel(row, traces, trackingStatus)}
+                    />
+                    <DispatchWho row={row} status={trackingStatus} />
+                  </div>
                 </td>
                 <td className="px-2 py-1.5">
                   <Badge variant={row.match_status === "matched" ? "success" : "warning"}>
@@ -1973,25 +2509,37 @@ function OrdersTable({
           })}
           {!rows.length && (
             <tr>
-              <td colSpan={13} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                {emptyLabel}
+              <td colSpan={14} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                {loading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <RefreshCw className="h-4 w-4 animate-spin" /> Cargando pedidos...
+                  </span>
+                ) : (
+                  emptyLabel
+                )}
               </td>
             </tr>
           )}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   );
 }
 
-function isMoovinCourier(courier: string | undefined): boolean {
+function isMoovinCourier(courier: string | undefined, store?: FinanceStorePublic): boolean {
+  if (store?.logisticsProvider === "forza") return false;
   return String(courier ?? "").toLowerCase().includes("moovin");
 }
 
-// EasySell/Shopify rotula el fulfillment con un valor generico ("Transportadora",
-// "Other", etc.) en vez del courier real. Moovin es la unica transportadora
-// activa, asi que esos valores (y los vacios) se muestran como "Moovin"; un
-// nombre real distinto se respeta tal cual.
+function isForzaCourier(courier: string | undefined, store?: FinanceStorePublic): boolean {
+  if (store?.logisticsProvider === "forza") return Boolean(String(courier ?? "").trim());
+  return String(courier ?? "").toLowerCase().includes("forza");
+}
+
+// EasySell/Shopify a veces rotula el fulfillment con un valor generico
+// ("Transportadora", "Other", etc.) en vez del courier real. La transportadora
+// por defecto depende de la tienda: Costa Rica usa Moovin, Honduras usa Forza.
 const GENERIC_COURIER_LABELS = new Set([
   "",
   "transportadora",
@@ -2006,10 +2554,63 @@ const GENERIC_COURIER_LABELS = new Set([
   "easysell",
 ]);
 
-function normalizeShopifyCourier(rawCompany: string | undefined): string {
+function getDefaultCourierForStore(store: FinanceStorePublic): string {
+  return store.logisticsProvider === "forza" ? "Forza" : "Moovin";
+}
+
+function normalizeShopifyCourier(rawCompany: string | undefined, store: FinanceStorePublic): string {
   const company = String(rawCompany ?? "").trim();
-  if (GENERIC_COURIER_LABELS.has(company.toLowerCase())) return "Moovin";
+  const lower = company.toLowerCase();
+  if (GENERIC_COURIER_LABELS.has(lower)) return getDefaultCourierForStore(store);
+  if (store.logisticsProvider === "forza") {
+    if (lower.includes("forza") || lower.includes("moovin")) return "Forza";
+  }
+  if (store.logisticsProvider === "moovin" && lower.includes("moovin")) return "Moovin";
   return company;
+}
+
+function normalizeOperationalCourier(
+  rawCompany: string | undefined,
+  store: FinanceStorePublic,
+  guide?: string
+): string {
+  const company = String(rawCompany ?? "").trim();
+  if (company) return normalizeShopifyCourier(company, store);
+  return guide ? getDefaultCourierForStore(store) : "";
+}
+
+function normalizeForzaGuide(guide: string): string {
+  const trimmed = String(guide ?? "").trim().toUpperCase();
+  if (!trimmed) return "";
+  return trimmed.startsWith("FD") ? trimmed : `FD${trimmed.replace(/^FD/i, "")}`;
+}
+
+function normalizeGuideForStore(guide: string | undefined, store: FinanceStorePublic): string {
+  const trimmed = String(guide ?? "").trim();
+  if (!trimmed) return "";
+  return store.logisticsProvider === "forza" ? normalizeForzaGuide(trimmed) : trimmed;
+}
+
+function buildForzaTrackingMap(rows: ForzaTrackingRow[]): Map<string, ForzaTrackingRow> {
+  const map = new Map<string, ForzaTrackingRow>();
+  for (const row of rows) {
+    const normalized = normalizeForzaGuide(row.guide_number || row.tracking_number);
+    if (!normalized) continue;
+    map.set(normalized, row);
+    map.set(normalized.replace(/^FD/i, ""), row);
+    if (row.guide_number) map.set(String(row.guide_number).trim().toUpperCase(), row);
+    if (row.tracking_number) map.set(String(row.tracking_number).trim().toUpperCase(), row);
+  }
+  return map;
+}
+
+function getForzaTrackingFromMap(
+  map: Map<string, ForzaTrackingRow>,
+  guide: string | undefined
+): ForzaTrackingRow | undefined {
+  const normalized = normalizeForzaGuide(String(guide ?? ""));
+  if (!normalized) return undefined;
+  return map.get(normalized) ?? map.get(normalized.replace(/^FD/i, "")) ?? map.get(String(guide).trim().toUpperCase());
 }
 
 interface MoovinTrackingEvent {
@@ -2222,10 +2823,70 @@ function formatMoovinDate(value: string): string {
   });
 }
 
+function ForzaTrackingButton({
+  guide,
+  cached,
+}: {
+  guide: string;
+  cached?: ForzaTrackingRow;
+}) {
+  const groupClass =
+    cached?.latest_group === "delivered"
+      ? "text-emerald-300"
+      : cached?.latest_group === "failed" || cached?.latest_group === "returned"
+        ? "text-red-300"
+        : "text-cyan-300";
+  const url = buildForzaTrackingUrl(guide);
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      title="Abrir rastreo Forza"
+      className="flex flex-col items-start text-left"
+    >
+      {cached?.latest_status ? (
+        <>
+          <span className={`text-[10px] font-medium ${groupClass}`}>
+            {cached.has_incident ? "!" : ""} {cached.latest_status}
+          </span>
+          {cached.latest_at && (
+            <span className="text-[9px] text-muted-foreground">{formatCourierDate(cached.latest_at, "es-HN")}</span>
+          )}
+        </>
+      ) : (
+        <span className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:border-primary/50">
+          <Search className="h-3 w-3" /> rastreo
+        </span>
+      )}
+    </a>
+  );
+}
+
+function buildForzaTrackingUrl(guide: string): string {
+  const normalized = normalizeForzaGuide(guide);
+  return `https://rastreo.forzadelivery.com/${encodeURIComponent(normalized || guide)}`;
+}
+
+function formatCourierDate(value: string, locale: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString(locale, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 type ProductColumnKey = "product_name" | "cost" | "orders" | "dispatch_rate" | "delivery_effectiveness";
 
 function ProductAnalysisTab({
   rows,
+  rowsLoading,
+  rowsError,
   costs,
   costVersions,
   products,
@@ -2235,6 +2896,8 @@ function ProductAnalysisTab({
   onReloadCosts,
 }: {
   rows: ProductAnalysisRow[];
+  rowsLoading: boolean;
+  rowsError: string;
   costs: ProductCost[];
   costVersions: ProductCostVersion[];
   products: ShopifyProductOption[];
@@ -2382,14 +3045,24 @@ function ProductAnalysisTab({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {rowsError && (
+          <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-200">
+            {rowsError}
+          </div>
+        )}
         {productsError && (
           <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-200">
             {productsError}
           </div>
         )}
+        {rowsLoading && (
+          <div className="flex items-center gap-2 border border-border bg-card/40 px-3 py-2 text-xs text-muted-foreground">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Cargando analisis de productos...
+          </div>
+        )}
         <ProductFunnelStats
           productsVisible={filteredRows.length}
-          productsLoading={productsLoading}
+          productsLoading={productsLoading || rowsLoading}
           summary={summary}
         />
         {unknownProductRow && (
@@ -3049,10 +3722,19 @@ function RateMeter({
   );
 }
 
-function ShopifyNotesTab({ orders }: { orders: ShopifyOrderSummary[] }) {
+function ShopifyNotesTab({
+  rows: noteAliasRows,
+  shopifyOrderCount,
+  loading,
+  error,
+}: {
+  rows: ShopifyNoteAliasRow[];
+  shopifyOrderCount: number;
+  loading: boolean;
+  error: string;
+}) {
   const [noteSearch, setNoteSearch] = useState("");
   const [onlyRowsWithCode, setOnlyRowsWithCode] = useState(true);
-  const noteAliasRows = useMemo(() => buildShopifyNoteAliasRows(orders), [orders]);
   const filteredRows = useMemo(
     () =>
       noteAliasRows.filter(
@@ -3093,8 +3775,18 @@ function ShopifyNotesTab({ orders }: { orders: ShopifyOrderSummary[] }) {
         </Button>
       </CardHeader>
       <CardContent className="space-y-4">
+        {error && (
+          <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-200">
+            {error}
+          </div>
+        )}
+        {loading && (
+          <div className="flex items-center gap-2 border border-border bg-card/40 px-3 py-2 text-xs text-muted-foreground">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Cargando notas Shopify...
+          </div>
+        )}
         <div className="grid gap-3 sm:grid-cols-3">
-          <MiniStat label="Pedidos Shopify" value={orders.length} />
+          <MiniStat label="Pedidos Shopify" value={shopifyOrderCount} />
           <MiniStat label="Pedidos con nota" value={noteOrderCount} />
           <MiniStat label="Alias extraidos" value={rowsWithCode} />
         </div>
@@ -3187,22 +3879,16 @@ function ShopifyNotesTab({ orders }: { orders: ShopifyOrderSummary[] }) {
 }
 
 function SettlementsTab({
+  storeCode,
   imports,
   shopifyCoverage,
-  rows,
-  shopifyOrders,
-  liquidationAlertRows,
-  doubleSettlementAnomalies,
   importing,
   onImport,
   onDeleteImport,
 }: {
+  storeCode: FinanceStoreCode;
   imports: SettlementImport[];
-  rows: SettlementRow[];
-  shopifyOrders: ShopifyOrderSummary[];
   shopifyCoverage: { count: number; oldest: string | null; newest: string | null } | null;
-  liquidationAlertRows: LogisticsRow[];
-  doubleSettlementAnomalies: DoubleSettlementAnomaly[];
   importing: boolean;
   onImport: (event: FormEvent<HTMLFormElement>) => void;
   onDeleteImport: (id: number) => Promise<void>;
@@ -3213,14 +3899,56 @@ function SettlementsTab({
   const [deletingImportId, setDeletingImportId] = useState<number | null>(null);
   const [showClaimList, setShowClaimList] = useState(false);
   const [showDoubleList, setShowDoubleList] = useState(false);
+  // Vista server-side (Carril 2 — ultimo tab): /api/finance/settlements-view trae
+  // las filas de liquidacion ya enriquecidas con Shopify, las alertas "entregados
+  // sin liquidar" y las anomalias de doble liquidacion ya calculadas. Asi el
+  // navegador ya NO carga el snapshot (~11k pedidos + logistica completa). Se
+  // refresca al cambiar de tienda y cada vez que cambian los imports (tras
+  // importar/eliminar una liquidacion).
+  const [rows, setRows] = useState<SettlementRow[]>([]);
+  const [liquidationAlertRows, setLiquidationAlertRows] = useState<LogisticsRow[]>([]);
+  const [doubleSettlementAnomalies, setDoubleSettlementAnomalies] = useState<DoubleSettlementAnomaly[]>([]);
+  const [viewLoading, setViewLoading] = useState(true);
+  const [viewError, setViewError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setViewLoading(true);
+    setViewError("");
+    (async () => {
+      try {
+        const res = await fetch(
+          withStore("/api/finance/settlements-view", storeCode),
+          { cache: "no-store", signal: controller.signal }
+        );
+        const json = await readApiJson(res);
+        if (!res.ok) throw new Error(json.error ?? "No se pudo cargar la vista de liquidaciones");
+        setRows(Array.isArray(json.rows) ? (json.rows as SettlementRow[]) : []);
+        setLiquidationAlertRows(Array.isArray(json.liquidationAlertRows) ? (json.liquidationAlertRows as LogisticsRow[]) : []);
+        setDoubleSettlementAnomalies(
+          Array.isArray(json.doubleSettlementAnomalies)
+            ? (json.doubleSettlementAnomalies as DoubleSettlementAnomaly[])
+            : []
+        );
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setRows([]);
+        setLiquidationAlertRows([]);
+        setDoubleSettlementAnomalies([]);
+        setViewError(err instanceof Error ? err.message : "No se pudo cargar la vista de liquidaciones");
+      } finally {
+        if (!controller.signal.aborted) setViewLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [storeCode, imports]);
+
   const fileByImportId = useMemo(
     () => new Map(imports.map((item) => [item.id, item.file_name])),
     [imports]
   );
-  const enrichedRows = useMemo(
-    () => enrichSettlementRowsWithShopify(rows, shopifyOrders),
-    [rows, shopifyOrders]
-  );
+  // Las filas ya vienen enriquecidas con Shopify desde el endpoint.
+  const enrichedRows = rows;
   const unmatchedByImport = useMemo(() => {
     const counts = new Map<number, number>();
     for (const row of rows) {
@@ -3290,6 +4018,17 @@ function SettlementsTab({
 
   return (
     <div className="space-y-4">
+      {viewError && (
+        <div className="border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-red-200">
+          {viewError}
+        </div>
+      )}
+      {viewLoading && (
+        <div className="flex items-center gap-2 border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          Cargando liquidaciones...
+        </div>
+      )}
       {(liquidationAlertRows.length > 0 || doubleSettlementAnomalies.length > 0) && (
         <Card className="border-amber-500/30">
           <CardHeader>
@@ -4127,6 +4866,7 @@ function ExpensesTab({
 }) {
   const [activeType, setActiveType] = useState<ExpenseType>("ads");
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null);
   const [staff, setStaff] = useState<PayrollStaff[]>([]);
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
 
@@ -4160,9 +4900,10 @@ function ExpensesTab({
   const platformFilterOptions = uniqueKeys(
     typeExpenses.map((expense) => expense.platform).filter(Boolean)
   ).sort((a, b) => a.localeCompare(b));
-  const categoryFilterOptions = uniqueKeys(
-    typeExpenses.map((expense) => expense.category).filter(Boolean)
-  ).sort((a, b) => a.localeCompare(b));
+  const categoryFilterOptions = uniqueKeys([
+    ...(activeType === "misc" ? [...MISC_EXPENSE_CATEGORIES] : []),
+    ...typeExpenses.map((expense) => expense.category).filter(Boolean),
+  ]).sort((a, b) => a.localeCompare(b));
   const hasExpenseFilters =
     filterMonth !== "all" || filterPlatform !== "all" || filterCategory !== "all";
 
@@ -4261,19 +5002,37 @@ function ExpensesTab({
 
   function selectExpenseType(type: ExpenseType) {
     setActiveType(type);
+    setEditingExpenseId(null);
     setForm(prepareExpenseFormForType(form, type));
     clearExpenseFilters();
   }
 
   function openExpenseModal(type: ExpenseType) {
     setActiveType(type);
+    setEditingExpenseId(null);
     setForm(prepareExpenseFormForType(form, type));
     setIsExpenseModalOpen(true);
   }
 
+  function openEditExpenseModal(expense: BusinessExpense) {
+    setActiveType(expense.type);
+    setEditingExpenseId(expense.id);
+    setForm(buildExpenseFormFromRecord(expense));
+    setIsExpenseModalOpen(true);
+  }
+
+  function closeExpenseModal() {
+    setIsExpenseModalOpen(false);
+    setEditingExpenseId(null);
+    setForm({ ...emptyExpense, type: activeType });
+  }
+
   async function handleExpenseSubmit(event: FormEvent<HTMLFormElement>) {
     const didSave = await onSave(event);
-    if (didSave) setIsExpenseModalOpen(false);
+    if (didSave) {
+      setIsExpenseModalOpen(false);
+      setEditingExpenseId(null);
+    }
   }
 
   return (
@@ -4444,14 +5203,26 @@ function ExpensesTab({
                       )}
                     </td>
                     <td className="px-3 py-2 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          aria-label="Editar gasto"
+                          onClick={() => openEditExpenseModal(expense)}
+                          className="text-muted-foreground transition-colors hover:text-primary"
+                          title="Editar gasto"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
                       <button
                         type="button"
                         aria-label="Eliminar gasto"
                         onClick={() => onDelete(expense.id)}
-                        className="text-muted-foreground hover:text-red-400"
+                          className="text-muted-foreground transition-colors hover:text-red-400"
+                          title="Eliminar gasto"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -4469,15 +5240,17 @@ function ExpensesTab({
       </Card>
 
       {isExpenseModalOpen && (
-        <ModalOverlay onClose={() => setIsExpenseModalOpen(false)} labelledBy="expense-modal-title">
+        <ModalOverlay onClose={closeExpenseModal} labelledBy="expense-modal-title">
           <div className="w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-2xl">
             <div className="mb-5 flex items-start justify-between gap-4">
               <div className="space-y-1">
                 <h3 id="expense-modal-title" className="text-base font-semibold">
-                  {activeView.modalTitle}
+                  {editingExpenseId ? `Editar ${activeView.label}` : activeView.modalTitle}
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  El gasto queda clasificado automaticamente en {activeView.label}.
+                  {editingExpenseId
+                    ? "Actualiza los datos del gasto registrado."
+                    : `El gasto queda clasificado automaticamente en ${activeView.label}.`}
                 </p>
               </div>
               <Button
@@ -4485,7 +5258,7 @@ function ExpensesTab({
                 variant="ghost"
                 size="icon"
                 aria-label="Cerrar registro de gasto"
-                onClick={() => setIsExpenseModalOpen(false)}
+                onClick={closeExpenseModal}
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -4496,7 +5269,16 @@ function ExpensesTab({
                   <Input
                     type="date"
                     value={form.expense_date}
-                    onChange={(e) => setForm({ ...form, expense_date: e.target.value, type: activeType })}
+                    onChange={(e) => {
+                      const expenseDate = e.target.value;
+                      const expenseMonth = monthFromDateInput(expenseDate);
+                      setForm({
+                        ...form,
+                        expense_date: expenseDate,
+                        ...(expenseMonth ? { month: expenseMonth } : {}),
+                        type: activeType,
+                      });
+                    }}
                   />
                 </LabeledField>
                 <LabeledField label="Mes contable">
@@ -4568,6 +5350,20 @@ function ExpensesTab({
                       {PAYROLL_PAYMENT_TYPES.map((paymentType) => (
                         <option key={paymentType} value={paymentType}>
                           {paymentType}
+                        </option>
+                      ))}
+                    </select>
+                  ) : activeType === "misc" ? (
+                    <select
+                      value={form.category}
+                      required
+                      onChange={(e) => setForm({ ...form, category: e.target.value, type: activeType })}
+                      className="h-10 w-full border border-input bg-background px-3 text-sm outline-none"
+                    >
+                      <option value="">Selecciona categoria...</option>
+                      {MISC_EXPENSE_CATEGORIES.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
                         </option>
                       ))}
                     </select>
@@ -4704,12 +5500,12 @@ function ExpensesTab({
               )}
 
               <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
-                <Button type="button" variant="outline" onClick={() => setIsExpenseModalOpen(false)}>
+                <Button type="button" variant="outline" onClick={closeExpenseModal}>
                   Cancelar
                 </Button>
                 <Button type="submit" className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  Guardar
+                  {editingExpenseId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                  {editingExpenseId ? "Guardar cambios" : "Guardar"}
                 </Button>
               </div>
             </form>
@@ -4886,6 +5682,24 @@ function prepareExpenseFormForType(form: typeof emptyExpense, type: ExpenseType)
   };
 }
 
+function buildExpenseFormFromRecord(expense: BusinessExpense): typeof emptyExpense {
+  const originalPayment = parseExpenseOriginalPayment(expense);
+  return {
+    ...emptyExpense,
+    id: expense.id,
+    type: expense.type,
+    expense_date: expense.expense_date || new Date().toISOString().slice(0, 10),
+    month: expense.month || new Date().toISOString().slice(0, 7),
+    platform: expense.platform || "",
+    category: expense.category || "",
+    description: expense.description || "",
+    amount: String(originalPayment?.amount ?? expense.amount ?? ""),
+    currency: originalPayment?.currency ?? normalizeExpenseOriginalCurrency(expense.currency),
+    exchange_rate: originalPayment?.exchangeRate ? String(originalPayment.exchangeRate) : "",
+    notes: originalPayment?.cleanNotes ?? expense.notes ?? "",
+  };
+}
+
 function normalizeExpenseOriginalCurrency(value: string): ExpenseOriginalCurrency {
   return isExpenseOriginalCurrency(value) ? value : "CRC";
 }
@@ -4917,17 +5731,39 @@ function getExchangeRateLabel(currencyCode: ExpenseOriginalCurrency): string {
 }
 
 function getExpenseOriginalPaymentLabel(expense: BusinessExpense): string {
-  const originalMatch = expense.notes.match(/Monto original:\s*([A-Z]{3})\s*([0-9.,]+)/i);
-  const originalCurrency = originalMatch?.[1]?.toUpperCase() ?? "";
-  const originalAmount = originalMatch?.[2];
-  const exchangeRate = expense.notes.match(/Tipo de cambio [A-Z]{3}->CRC:\s*([0-9.,]+)/i)?.[1];
-  if (!originalAmount && !exchangeRate) return "";
+  const originalPayment = parseExpenseOriginalPayment(expense);
+  if (!originalPayment) return "";
+  const amountLabel = formatOriginalCurrencyAmount(originalPayment.currency, originalPayment.amount);
+  return originalPayment.exchangeRate ? `${amountLabel} @ ${originalPayment.exchangeRate}` : amountLabel;
+}
 
-  const amount = Number(String(originalAmount ?? "").replace(",", "."));
-  const amountLabel = Number.isFinite(amount) && amount > 0
-    ? formatOriginalCurrencyAmount(originalCurrency, amount)
-    : originalCurrency || "Origen";
-  return exchangeRate ? `${amountLabel} @ ${exchangeRate}` : amountLabel;
+function parseExpenseOriginalPayment(expense: Pick<BusinessExpense, "notes">): {
+  currency: ExpenseOriginalCurrency;
+  amount: number;
+  exchangeRate: number;
+  cleanNotes: string;
+} | null {
+  const notes = expense.notes || "";
+  const originalMatch = notes.match(/Monto original:\s*([A-Z]{3})\s*([0-9.,]+)/i);
+  if (!originalMatch) return null;
+  const originalCurrency = normalizeExpenseOriginalCurrency(originalMatch[1].toUpperCase());
+  const amount = parseLocaleNumber(originalMatch[2]);
+  const exchangeRateMatch = notes.match(/Tipo de cambio [A-Z]{3}->CRC:\s*([0-9.,]+)/i);
+  const exchangeRate = exchangeRateMatch ? parseLocaleNumber(exchangeRateMatch[1]) : 0;
+  const cleanNotes =
+    notes
+      .split("\n")
+      .find((line) => line.startsWith("Nota:"))
+      ?.replace(/^Nota:\s*/i, "")
+      .trim() ?? "";
+
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return { currency: originalCurrency, amount, exchangeRate, cleanNotes };
+}
+
+function parseLocaleNumber(value: string): number {
+  const parsed = Number(String(value || "").replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function formatOriginalCurrencyAmount(currencyCode: string, amount: number): string {
@@ -5093,6 +5929,8 @@ const MONTH_ROW_GRID =
 function MonthlyCloseTab({
   rows,
   control,
+  loading,
+  error,
   summary,
   costs,
   onSaveProductCost,
@@ -5101,6 +5939,8 @@ function MonthlyCloseTab({
 }: {
   rows: MonthlyCloseRow[];
   control: FinanceControlCenter;
+  loading: boolean;
+  error: string;
   summary: ProfitabilitySummary | null;
   costs: ProductCost[];
   onSaveProductCost: (input: ProductCostSaveInput) => Promise<void>;
@@ -5256,6 +6096,17 @@ function MonthlyCloseTab({
           <Download className="h-4 w-4" /> Exportar cierre
         </Button>
       </div>
+
+      {error && (
+        <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-200">
+          {error}
+        </div>
+      )}
+      {loading && (
+        <div className="flex items-center gap-2 border border-border bg-card/40 px-3 py-2 text-xs text-muted-foreground">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Cargando cierre mensual...
+        </div>
+      )}
 
       {autoAlerts.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -6246,7 +7097,6 @@ function pctChange(current: number, previousValue?: number | null): number | nul
   return ((current - previousValue) / Math.abs(previousValue)) * 100;
 }
 
-
 function MonthOrdersModal({
   monthLabel,
   month,
@@ -6533,13 +7383,23 @@ function MonthlyOrdersTable({ rows }: { rows: OrderProfitabilityRow[] }) {
 function BoxfulFilesTab({
   files,
   logisticsImports,
+  rematching,
+  rematchMessage,
+  onRematch,
 }: {
   files: BoxfulFileControl[];
   logisticsImports: LogisticsImport[];
+  rematching: boolean;
+  rematchMessage: string;
+  onRematch: () => void;
 }) {
   const mergedFiles = useMemo(
     () => mergeLogisticsBoxfulFiles(files, logisticsImports),
     [files, logisticsImports]
+  );
+  const importById = useMemo(
+    () => new Map(logisticsImports.map((imp): [number, LogisticsImport] => [imp.id, imp])),
+    [logisticsImports]
   );
   const importedCount = mergedFiles.filter((file) => file.status === "importado").length;
   const expectedCount = mergedFiles.filter((file) => file.status === "esperado").length;
@@ -6578,37 +7438,79 @@ function BoxfulFilesTab({
                 Consolida los archivos logisticos que ya entraron por el flujo operativo de Pedidos.
               </p>
             </div>
+            {logisticsImports.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={rematching}
+                onClick={onRematch}
+                className="gap-2"
+                title="Vuelve a cruzar los Boxful/liquidaciones ya cargados con la base actual de Shopify"
+              >
+                <RefreshCw className={`h-4 w-4 ${rematching ? "animate-spin" : ""}`} />
+                {rematching ? "Re-emparejando..." : "Re-emparejar"}
+              </Button>
+            )}
           </div>
+          {rematchMessage && (
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <RefreshCw className="h-3.5 w-3.5 shrink-0" /> {rematchMessage}
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           <div className="max-h-[620px] overflow-auto border border-border">
-            <table className="w-full min-w-[920px] text-sm">
+            <table className="w-full min-w-[1040px] text-sm">
               <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2">Archivo</th>
                   <th className="px-3 py-2">Corte</th>
                   <th className="px-3 py-2">Estado</th>
                   <th className="px-3 py-2">Import ID</th>
+                  <th className="px-3 py-2">Filas</th>
+                  <th className="px-3 py-2">Match</th>
                   <th className="px-3 py-2">Notas</th>
                 </tr>
               </thead>
               <tbody>
-                {mergedFiles.map((file) => (
-                  <tr key={file.file_name} className="border-t border-border/50">
-                    <td className="max-w-[360px] truncate px-3 py-2" title={file.file_name}>{file.file_name}</td>
-                    <td className="px-3 py-2 font-mono text-xs">{file.cutoff_date ? formatDate(file.cutoff_date) : "-"}</td>
-                    <td className="px-3 py-2">
-                      <Badge variant={file.status === "faltante" ? "destructive" : file.status === "esperado" ? "warning" : "success"}>
-                        {file.status}
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs">{file.import_id ?? "-"}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{file.notes || "-"}</td>
-                  </tr>
-                ))}
+                {mergedFiles.map((file) => {
+                  const imp = file.import_id ? importById.get(file.import_id) : undefined;
+                  return (
+                    <tr key={file.file_name} className="border-t border-border/50">
+                      <td className="max-w-[360px] truncate px-3 py-2" title={file.file_name}>{file.file_name}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{file.cutoff_date ? formatDate(file.cutoff_date) : "-"}</td>
+                      <td className="px-3 py-2">
+                        <Badge variant={file.status === "faltante" ? "destructive" : file.status === "esperado" ? "warning" : "success"}>
+                          {file.status}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs">{file.import_id ?? "-"}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{imp ? imp.total_rows : "-"}</td>
+                      <td className="px-3 py-2">
+                        {imp ? (
+                          <Badge
+                            variant={
+                              imp.matched_rows === 0
+                                ? "destructive"
+                                : imp.matched_rows < imp.total_rows
+                                  ? "warning"
+                                  : "success"
+                            }
+                          >
+                            {imp.matched_rows}/{imp.total_rows} match
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">{file.notes || "-"}</td>
+                    </tr>
+                  );
+                })}
                 {!mergedFiles.length && (
                   <tr>
-                    <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
                       No hay archivos logisticos importados todavia.
                     </td>
                   </tr>
@@ -6669,6 +7571,25 @@ interface OpMetrics {
   leadSamples: number;
   ticket: number;
 }
+
+// Metrica vacia para pintar las tarjetas en cero mientras el endpoint responde.
+const EMPTY_OP_METRICS: OpMetrics = {
+  generated: 0,
+  dispatched: 0,
+  delivered: 0,
+  notDelivered: 0,
+  annulled: 0,
+  enRoute: 0,
+  enRouteRetry: 0,
+  resolved: 0,
+  deliveryRate: 0,
+  returnRate: 0,
+  dispatchRate: 0,
+  annulRate: 0,
+  leadAvg: null,
+  leadSamples: 0,
+  ticket: 0,
+};
 
 interface KpiCardVM {
   id: string;
@@ -6812,6 +7733,10 @@ function computeOpMetrics(orders: OrderProfitabilityRow[]): OpMetrics {
   };
 }
 
+// Nota (Carril 2 inc.2): computeOpMetricsFromTrackableRows se movio a
+// lib/finance-orders.ts y ahora lo usa /api/finance/kpis. La UI ya no calcula los
+// KPIs operativos en memoria.
+
 function formatInt(value: number): string {
   return Number(value || 0).toLocaleString("es-CR");
 }
@@ -6896,7 +7821,7 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCa
       tone: deliveryTone(cur.deliveryRate),
       deltaLabel: ppDelta(cur.deliveryRate, prev?.deliveryRate ?? null),
       deltaTone: deltaTone(cur.deliveryRate, prev?.deliveryRate ?? null, "up"),
-      sub: `${formatInt(cur.delivered)}/${formatInt(cur.resolved)} · Devol. ${cur.returnRate.toFixed(1)}%`,
+      sub: `${formatInt(cur.delivered)}/${formatInt(cur.dispatched)} despachados - No entr. ${cur.returnRate.toFixed(1)}%`,
     },
     {
       id: "annul",
@@ -6980,18 +7905,22 @@ function OperationalKpiCard({
         : "text-muted-foreground";
   return (
     <Card className={borderClass}>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-1">
-          <p className="truncate text-xs text-muted-foreground">{label}</p>
-          {star && <span className="shrink-0 text-[10px] text-primary">★</span>}
+      <CardContent className="p-2.5 sm:p-3">
+        <div className="flex items-baseline justify-between gap-1.5">
+          <p className="truncate text-[11px] text-muted-foreground">{label}</p>
+          <span className="flex shrink-0 items-baseline gap-1">
+            {star && <span className="text-[9px] text-primary">★</span>}
+            <span className={`text-base font-bold leading-none sm:text-xl ${valueClass}`}>{loading ? "..." : value}</span>
+          </span>
         </div>
-        <div className="mt-2 flex items-baseline justify-between gap-2">
-          <p className={`text-2xl font-bold ${valueClass}`}>{loading ? "..." : value}</p>
-          {deltaLabel && !loading && (
-            <span className={`shrink-0 text-[11px] font-medium ${deltaClass}`}>{deltaLabel}</span>
-          )}
-        </div>
-        {sub && <p className="mt-1 text-[11px] leading-tight text-muted-foreground">{sub}</p>}
+        {(sub || deltaLabel) && (
+          <div className="mt-0.5 flex items-baseline justify-between gap-1.5">
+            <p className="truncate text-[10px] leading-tight text-muted-foreground">{sub ?? ""}</p>
+            {deltaLabel && !loading && (
+              <span className={`shrink-0 text-[10px] font-medium ${deltaClass}`}>{deltaLabel}</span>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -7013,7 +7942,7 @@ function AlertStat({
         ? "border-amber-500/40 text-amber-200"
         : "border-border text-muted-foreground";
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-md border bg-card px-2.5 py-1 ${cls}`}>
+    <span className={`inline-flex items-center justify-between gap-1.5 rounded-md border bg-card px-2 py-1 text-[11px] ${cls}`}>
       <span className="text-muted-foreground">{label}</span>
       <span className="font-semibold text-foreground">{value}</span>
     </span>
@@ -7062,6 +7991,18 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   }
   if (status === "annulled") return <Badge variant="warning">Anulado</Badge>;
   if (status === "unmatched") return <Badge variant="warning">Sin match</Badge>;
+  if (status === "despacho_solicitado")
+    return (
+      <Badge variant="warning" className="border-yellow-500/40 bg-yellow-500/20 text-yellow-300">
+        {label || "Despacho solicitado"}
+      </Badge>
+    );
+  if (status === "standby")
+    return (
+      <Badge variant="destructive" className="border-rose-500/40 bg-rose-500/20 text-rose-300">
+        {label || "Standby"}
+      </Badge>
+    );
   if (status === "en_route") return <Badge variant="info">{label || "En ruta"}</Badge>;
   if (status === "en_route_retry")
     return (
@@ -7081,10 +8022,10 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   return <Badge variant="muted">{label || "Pendiente"}</Badge>;
 }
 
-function currency(value: number): string {
-  return new Intl.NumberFormat("es-CR", {
+function currency(value: number, store = FINANCE_STORES[0]): string {
+  return new Intl.NumberFormat(store.locale, {
     style: "currency",
-    currency: "CRC",
+    currency: store.currency,
     maximumFractionDigits: 0,
   }).format(Number(value || 0));
 }
@@ -7100,6 +8041,10 @@ function formatDate(value: string): string {
   return `${day}/${month}/${year}`;
 }
 
+function monthFromDateInput(value: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value.slice(0, 7) : "";
+}
+
 function money(value: number): number {
   return Math.round(Number(value || 0) * 100) / 100;
 }
@@ -7112,15 +8057,75 @@ function sum(values: number[]): number {
   return values.reduce((acc, value) => acc + Number(value || 0), 0);
 }
 
+function withStore(path: string, storeCode: FinanceStoreCode): string {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}store=${encodeURIComponent(storeCode)}`;
+}
+
+function buildLiveShopifyOrdersUrl(storeCode: FinanceStoreCode): string {
+  return withStore(
+    `/api/shopify/orders?status=any&limit=250&created_at_min=${encodeURIComponent(getShopifyCreatedAtMin(storeCode))}`,
+    storeCode
+  );
+}
+
+function getShopifyCreatedAtMin(storeCode: FinanceStoreCode): string {
+  return FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE[storeCode] ?? FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE["mireva-cr"];
+}
+
+function getShopifyNotesCreatedAtMin(storeCode: FinanceStoreCode): string {
+  const storeMin = new Date(getShopifyCreatedAtMin(storeCode)).getTime();
+  const lookbackMin = Date.now() - FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  return new Date(Math.max(storeMin, lookbackMin)).toISOString();
+}
+
 async function readApiJson(res: Response) {
   const text = await res.text();
   if (!text) return {};
   try {
     return JSON.parse(text);
   } catch {
-    const preview = text.replace(/\s+/g, " ").trim().slice(0, 180);
-    throw new Error(`El servidor devolvio una respuesta invalida (${res.status}). ${preview}`);
+    throw new Error(
+      sanitizeExternalError(
+        text,
+        `El servidor devolvio una respuesta invalida (${res.status}).`
+      )
+    );
   }
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`La solicitud supero ${Math.round(timeoutMs / 1000)}s de espera.`);
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function formatFinancePageError(error: string): string {
+  if (
+    error.includes("Could not find the table") ||
+    error.includes("schema cache") ||
+    (error.includes("store_id") && error.toLowerCase().includes("column"))
+  ) {
+    return "Faltan tablas financieras en Supabase. Ejecuta supabase/migrations/0002_finance_schema.sql y supabase/migrations/0010_multi_store_finance.sql en SQL Editor.";
+  }
+  return sanitizeExternalError(error, "Error al cargar finanzas.");
 }
 
 function buildExpensePayload(
@@ -7228,55 +8233,28 @@ function toCsv(rows: unknown[]): string {
   return [headers.join(","), ...records.map((row) => headers.map((header) => escape(row[header])).join(","))].join("\n");
 }
 
-async function fetchPersistedShopifySnapshot(
-  onProgress?: (snapshot: Record<string, unknown>) => void
-): Promise<Record<string, unknown>> {
-  const orders: Array<Record<string, unknown>> = [];
-  let coverage: { count: number; oldest: string | null; newest: string | null } | null = null;
-  let offset = 0;
-
-  while (orders.length < FINANCE_SHOPIFY_SYNC_MAX_ROWS) {
-    const res = await fetch(
-      `/api/finance/shopify-sync?limit=${FINANCE_SHOPIFY_SYNC_PAGE_SIZE}&offset=${offset}`,
-      { cache: "no-store" }
-    );
-    const json = await readApiJson(res);
-    if (!res.ok) throw new Error(json.error ?? "No se pudo leer el historico Shopify");
-
-    if (!coverage && json.coverage && typeof json.coverage === "object") {
-      coverage = json.coverage as { count: number; oldest: string | null; newest: string | null };
-    }
-
-    const pageOrders = Array.isArray(json.orders) ? json.orders as Array<Record<string, unknown>> : [];
-    orders.push(...pageOrders);
-    onProgress?.({ orders: [...orders], total: orders.length, coverage });
-
-    if (!json.has_more || !pageOrders.length) break;
-    const nextOffset = Number(json.next_offset ?? offset + pageOrders.length);
-    if (!Number.isFinite(nextOffset) || nextOffset <= offset) break;
-    offset = nextOffset;
-  }
-
-  return { orders, total: orders.length, coverage };
-}
-
-// Muchos checkouts de Costa Rica (COD) capturan el celular en un campo
-// personalizado del checkout (note_attributes: "Telefono", "Celular",
-// "WhatsApp"...) en vez del campo estandar de Shopify (que suele venir vacio).
-// Se rescata de ahi cuando el telefono plano no esta.
+// Rescata el celular de un campo personalizado del checkout (note_attributes)
+// cuando el telefono plano de Shopify viene vacio. Copia de la version en
+// lib/finance-orders.ts (mantener en sync): 1) campo nombrado como telefono con
+// 8+ digitos; 2) si no, cualquier valor con forma de telefono CR (8 digitos
+// 2/6/7/8 u 11 con 506), evitando confundir con cedula (9 digitos).
 function phoneFromNoteAttributes(
   attrs?: Array<{ name?: string | null; value?: string | null }>
 ): string | null {
   if (!attrs?.length) return null;
-  const keyRe = /tel|cel|phone|whats|m[oó]vil/i;
+  const keyRe = /tel|cel|phone|whats|m[oó]vil|contacto/i;
+  let shaped: string | null = null;
   for (const attr of attrs) {
     const name = String(attr.name ?? "");
     const value = String(attr.value ?? "").trim();
     if (!value) continue;
-    // Debe parecer un telefono: 8+ digitos (CR son 8, con codigo de pais mas).
-    if (keyRe.test(name) && value.replace(/\D/g, "").length >= 8) return value;
+    const digits = value.replace(/\D/g, "");
+    if (keyRe.test(name) && digits.length >= 8) return value;
+    if (!shaped && (/^[2678]\d{7}$/.test(digits) || /^506[2678]\d{7}$/.test(digits))) {
+      shaped = value;
+    }
   }
-  return null;
+  return shaped;
 }
 
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
@@ -7348,117 +8326,6 @@ function mergeShopifyOrderSummary(
     line_items: incoming.line_items?.length ? incoming.line_items : existing.line_items,
     created_at: incoming.created_at || existing.created_at,
   };
-}
-
-function buildMonthlyCloseRows(
-  orders: OrderProfitabilityRow[],
-  expenses: BusinessExpense[]
-): MonthlyCloseRow[] {
-  const byMonth = new Map<string, MonthlyCloseRow>();
-  const ensureMonth = (month: string) => {
-    const existing = byMonth.get(month);
-    if (existing) return existing;
-    const row: MonthlyCloseRow = {
-      month,
-      orders: 0,
-      delivered: 0,
-      not_delivered: 0,
-      annulled: 0,
-      pending: 0,
-      settled: 0,
-      unsettled: 0,
-      to_claim: 0,
-      to_claim_fresh: 0,
-      to_claim_overdue: 0,
-      duplicate_settlements: 0,
-      boxful_costs: 0,
-      boxful_cod_commission: 0,
-      boxful_card_commission: 0,
-      boxful_delivery_cost: 0,
-      boxful_pick_pack_cost: 0,
-      boxful_packaging_cost: 0,
-      cash_received: 0,
-      cash_pending: 0,
-      product_costs: 0,
-      ads: 0,
-      payroll: 0,
-      misc: 0,
-      contribution_margin: 0,
-      net_profit: 0,
-      misc_software: 0,
-      misc_other: 0,
-    };
-    byMonth.set(month, row);
-    return row;
-  };
-
-  for (const order of orders) {
-    const month = getMonthKey(order.created_at) || "sin-fecha";
-    const row = ensureMonth(month);
-    row.orders += 1;
-    if (order.tracking_status === "delivered") row.delivered += 1;
-    if (order.tracking_status === "not_delivered" || order.tracking_status === "returned") row.not_delivered += 1;
-    if (order.tracking_status === "annulled") row.annulled += 1;
-    if (isPendingLike(order.tracking_status)) row.pending += 1;
-    if (order.settlement_count === 1) row.settled += 1;
-    if (!order.settlement_count) row.unsettled += 1;
-    if (order.tracking_status === "delivered" && !order.settlement_count) {
-      row.to_claim += 1;
-      // <=7 dias desde la entrega: pendiente normal del proximo corte de
-      // Boxful; mas alla de eso ya es cobro por reclamar.
-      const daysWaiting = daysSince(order.delivered_on ?? order.created_at ?? "");
-      if (daysWaiting <= 7) row.to_claim_fresh += 1;
-      else row.to_claim_overdue += 1;
-    }
-    if (order.settlement_count > 1) row.duplicate_settlements += 1;
-    if (order.cash_status === "cobrado") row.cash_received += order.amount_to_liquidate;
-    if (order.cash_status === "por_cobrar") row.cash_pending += order.expected_cod;
-    row.boxful_costs += order.settlement_charged_costs;
-    row.boxful_cod_commission += order.settlement_cod_commission;
-    row.boxful_card_commission += order.settlement_card_commission;
-    row.boxful_delivery_cost += order.settlement_delivery_cost;
-    row.boxful_pick_pack_cost += order.settlement_pick_pack_cost;
-    row.boxful_packaging_cost += order.settlement_packaging_cost;
-    row.product_costs += order.product_cost;
-    row.contribution_margin += order.contribution_margin;
-  }
-
-  for (const expense of expenses) {
-    const month = expense.month || getMonthKey(expense.expense_date) || "sin-fecha";
-    const row = ensureMonth(month);
-    const amount = Number(expense.amount || 0);
-    if (expense.type === "ads") row.ads += amount;
-    if (expense.type === "payroll") row.payroll += amount;
-    if (expense.type === "misc") {
-      row.misc += amount;
-      // El desglose Software vs Otros sale de la categoria/descripcion del gasto.
-      const descriptor = `${expense.category} ${expense.description} ${expense.platform}`.toLowerCase();
-      if (/software|saas|suscrip|app|herramienta/.test(descriptor)) row.misc_software += amount;
-      else row.misc_other += amount;
-    }
-  }
-
-  return Array.from(byMonth.values())
-    .map((row) => ({
-      ...row,
-      cash_received: roundMoney(row.cash_received),
-      cash_pending: roundMoney(row.cash_pending),
-      boxful_costs: roundMoney(row.boxful_costs),
-      boxful_cod_commission: roundMoney(row.boxful_cod_commission),
-      boxful_card_commission: roundMoney(row.boxful_card_commission),
-      boxful_delivery_cost: roundMoney(row.boxful_delivery_cost),
-      boxful_pick_pack_cost: roundMoney(row.boxful_pick_pack_cost),
-      boxful_packaging_cost: roundMoney(row.boxful_packaging_cost),
-      product_costs: roundMoney(row.product_costs),
-      ads: roundMoney(row.ads),
-      payroll: roundMoney(row.payroll),
-      misc: roundMoney(row.misc),
-      contribution_margin: roundMoney(row.contribution_margin),
-      net_profit: roundMoney(row.contribution_margin - row.ads - row.payroll - row.misc),
-      misc_software: roundMoney(row.misc_software),
-      misc_other: roundMoney(row.misc_other),
-    }))
-    .sort((a, b) => b.month.localeCompare(a.month));
 }
 
 function getMonthlyOrderFilterCounts(orders: OrderProfitabilityRow[]): Record<MonthlyOrderFilter, number> {
@@ -7543,6 +8410,7 @@ function mergeLogisticsBoxfulFiles(
     if (byName.has(item.file_name)) continue;
     byName.set(item.file_name, {
       id: -item.id,
+      store_id: item.store_id,
       file_name: item.file_name,
       file_type: "logistica",
       cutoff_date: item.period_end,
@@ -7559,343 +8427,8 @@ function mergeLogisticsBoxfulFiles(
   );
 }
 
-function buildVisibleOrderRows(
-  logisticsRows: LogisticsRow[],
-  shopifyOrders: ShopifyOrderSummary[],
-  moovinByPackage: Map<string, MoovinTrackingRow>
-): TrackableOrderRow[] {
-  const shopifyByMatchKey = buildShopifyMatchIndex(shopifyOrders);
-  const logisticsDisplayRows = logisticsRows.map((row): TrackableOrderRow => {
-    const shopify = findShopifyOrderForRow(row, shopifyByMatchKey);
-    const shopifyItems = shopify
-      ? shopify.line_items.map((item) => ({
-          sku: item.sku,
-          title: `${item.quantity}x ${item.title}`,
-          quantity: Number(item.quantity || 0),
-          price: Number(item.price || 0),
-        }))
-      : [];
-
-    return {
-      ...row,
-      row_key: `boxful-${row.id}`,
-      source: "boxful" as const,
-      courier: row.courier,
-      moovin_group: row.guide_number ? deriveMoovinGroup(moovinByPackage.get(row.guide_number)) : undefined,
-      moovin_incidents: row.guide_number
-        ? countMoovinIncidents(moovinByPackage.get(row.guide_number)?.events)
-        : undefined,
-      moovin_route_attempts: row.guide_number
-        ? countMoovinRouteAttempts(moovinByPackage.get(row.guide_number)?.events)
-        : undefined,
-      customer_name: row.customer_name || shopify?.customer_name || "",
-      last_name: row.last_name || shopify?.last_name || "",
-      phone: shopify?.phone || row.customer_phone || null,
-      match_status: shopify ? "matched" : row.match_status,
-      cod_amount: row.cod_amount || Number(shopify?.total_price || parseMoneyText(shopify?.total ?? "")),
-      shopify_order_name: shopify?.name ?? row.shopify_order_name,
-      shopify_order_number: shopify?.order_number ?? row.shopify_order_number,
-      shopify_financial_status: shopify?.financial_status ?? row.shopify_financial_status,
-      shopify_fulfillment_status: shopify?.fulfillment_status ?? row.shopify_fulfillment_status,
-      shopify_cancelled_at: shopify?.cancelled_at ?? row.shopify_cancelled_at,
-      shopify_note: shopify?.note ?? "",
-      shopify_created_at: shopify?.created_at ?? row.shopify_created_at,
-      // Shopify manda: las lineas del pedido definen el producto; los
-      // "Paquete N" de Boxful quedan solo como respaldo sin match.
-      package_items: shopifyItems.length ? shopifyItems : row.package_items ?? [],
-    };
-  });
-  const consolidatedLogisticsRows = consolidateLogisticsRows(
-    logisticsDisplayRows.filter(isShopifyBackedLogisticsRow)
-  );
-
-  const existingKeys = new Set<string>();
-  for (const row of consolidatedLogisticsRows) {
-    for (const key of getOrderMatchKeys(row)) existingKeys.add(key);
-  }
-
-  const shopifyOnlyRows = shopifyOrders
-    .filter((order) => !getShopifyOrderMatchKeys(order).some((key) => existingKeys.has(key)))
-    .map((order): TrackableOrderRow => {
-    // Guia desde el fulfillment de Shopify: el pedido ya salio a reparto
-    // aunque aun no este en un Excel de Boxful. Moovin es la unica
-    // transportadora activa, asi que es el courier por defecto.
-    const shopifyGuide = String(order.tracking_number ?? "").trim();
-    // Se consulta primero el cache de Moovin: si Moovin ya reconoce la guia, el
-    // courier es Moovin sin lugar a dudas. Solo si aun no hay dato de Moovin se
-    // normaliza el rotulo generico de Shopify ("Transportadora" -> "Moovin").
-    const moovinHit = shopifyGuide ? moovinByPackage.get(shopifyGuide) : undefined;
-    const shopifyCourier = shopifyGuide
-      ? moovinHit
-        ? "Moovin"
-        : normalizeShopifyCourier(order.tracking_company)
-      : "";
-    return {
-      row_key: `shopify-${order.id}`,
-      source: "shopify",
-      guide_number: shopifyGuide,
-      courier: shopifyCourier,
-      moovin_group: deriveMoovinGroup(moovinHit),
-      moovin_incidents: moovinHit ? countMoovinIncidents(moovinHit.events) : undefined,
-      moovin_route_attempts: moovinHit ? countMoovinRouteAttempts(moovinHit.events) : undefined,
-      order_name: order.name,
-      customer_name: order.customer_name,
-      last_name: order.last_name || "",
-      phone: order.phone || null,
-      boxful_status: "",
-      internal_status:
-        order.cancelled_at || order.financial_status === "voided" ? "annulled" : "pending",
-      match_status: "matched",
-      cod_amount: Number(order.total_price || parseMoneyText(order.total)),
-      shopify_order_name: order.name,
-      shopify_order_number: order.order_number ?? null,
-      shopify_financial_status: order.financial_status,
-      shopify_fulfillment_status: order.fulfillment_status ?? "",
-      shopify_cancelled_at: order.cancelled_at,
-      shopify_note: order.note ?? "",
-      shopify_created_at: order.created_at,
-      package_items: (order.line_items ?? []).map((item) => ({
-        sku: item.sku,
-        title: `${item.quantity}x ${item.title}`,
-        quantity: Number(item.quantity || 0),
-        price: Number(item.price || 0),
-      })),
-    };
-  });
-
-  return [...consolidatedLogisticsRows, ...shopifyOnlyRows].sort((a, b) =>
-    String(b.shopify_created_at || "").localeCompare(String(a.shopify_created_at || ""))
-  );
-}
-
-function isShopifyBackedLogisticsRow(row: TrackableOrderRow): boolean {
-  if (row.match_status !== "matched") return false;
-  return Boolean(
-    normalizeMatchKey(row.shopify_order_name) ||
-      (row.shopify_order_number ? normalizeMatchKey(`#MCRC${row.shopify_order_number}`) : "")
-  );
-}
-
-function consolidateLogisticsRows(rows: TrackableOrderRow[]): TrackableOrderRow[] {
-  const byOrder = new Map<string, TrackableOrderRow>();
-
-  for (const row of rows) {
-    const key = getLogisticsConsolidationKey(row);
-    const current = byOrder.get(key);
-    byOrder.set(key, current ? pickBestLogisticsRow(current, row) : row);
-  }
-
-  return Array.from(byOrder.values());
-}
-
-function getLogisticsConsolidationKey(row: TrackableOrderRow): string {
-  return (
-    normalizeMatchKey(row.shopify_order_name) ||
-    (row.shopify_order_number ? normalizeMatchKey(`#MCRC${row.shopify_order_number}`) : "") ||
-    normalizeMatchKey(row.order_name) ||
-    normalizeMatchKey(row.guide_number) ||
-    row.row_key
-  );
-}
-
-function pickBestLogisticsRow(current: TrackableOrderRow, candidate: TrackableOrderRow): TrackableOrderRow {
-  const currentScore = getLogisticsTrackingScore(current);
-  const candidateScore = getLogisticsTrackingScore(candidate);
-  if (candidateScore !== currentScore) return candidateScore > currentScore ? candidate : current;
-
-  const currentDate = getLogisticsStatusDate(current);
-  const candidateDate = getLogisticsStatusDate(candidate);
-  if (candidateDate !== currentDate) return candidateDate > currentDate ? candidate : current;
-
-  const currentHasShopify = normalizeMatchKey(current.shopify_order_name) ? 1 : 0;
-  const candidateHasShopify = normalizeMatchKey(candidate.shopify_order_name) ? 1 : 0;
-  if (candidateHasShopify !== currentHasShopify) return candidateHasShopify > currentHasShopify ? candidate : current;
-
-  return candidate.id && current.id && candidate.id > current.id ? candidate : current;
-}
-
-function getLogisticsTrackingScore(row: TrackableOrderRow): number {
-  const inferredStatus = isFinalTrackingStatus(row.internal_status)
-    ? row.internal_status
-    : inferTrackingStatusFromText(row.boxful_status);
-  const status = getTrackingFilterFromStatus(inferredStatus);
-  if (status === "delivered" || status === "not_delivered") return 3;
-  if (row.source === "boxful" && row.guide_number) return 2;
-  return 1;
-}
-
-function getLogisticsStatusDate(row: TrackableOrderRow): string {
-  return String(row.finalized_on || row.created_on || row.shopify_created_at || row.created_at || "");
-}
-
-function enrichSettlementRowsWithShopify(
-  rows: SettlementRow[],
-  shopifyOrders: ShopifyOrderSummary[]
-): SettlementRow[] {
-  if (!rows.length || !shopifyOrders.length) return rows;
-
-  const shopifyByMatchKey = buildShopifyMatchIndex(shopifyOrders);
-  return rows.map((row) => {
-    const shopify = findShopifyOrderForRow(
-      {
-        order_name: row.order_name,
-        shopify_order_name: row.shopify_order_name,
-      },
-      shopifyByMatchKey
-    );
-    if (!shopify) return row;
-
-    return {
-      ...row,
-      match_status: "matched",
-      shopify_order_id: shopify.id,
-      shopify_order_name: shopify.name,
-      shopify_financial_status: shopify.financial_status,
-      shopify_fulfillment_status: shopify.fulfillment_status ?? "",
-      shopify_total: Number(shopify.total_price || parseMoneyText(shopify.total)),
-      shopify_created_at: shopify.created_at,
-      order_items: row.order_items?.length
-        ? row.order_items
-        : shopify.line_items.map((item) => ({
-            sku: String(item.sku ?? "").toLowerCase(),
-            title: String(item.title ?? ""),
-            quantity: Number(item.quantity || 0),
-            price: Number(item.price || 0),
-          })),
-    };
-  });
-}
-
 function uniqueKeys(keys: string[]): string[] {
   return Array.from(new Set(keys.filter(Boolean)));
-}
-
-function parseMoneyText(value: string): number {
-  return Number(String(value || "").replace(/,/g, "").replace(/[^0-9.-]/g, "")) || 0;
-}
-
-function buildFinanceControlCenter(
-  visibleOrders: TrackableOrderRow[],
-  settlementRows: SettlementRow[],
-  imports: SettlementImport[],
-  costs: ProductCost[],
-  costVersions: ProductCostVersion[],
-  settlementTraceByKey: Map<string, SettlementTrace[]>
-): FinanceControlCenter {
-  const fileByImportId = new Map(imports.map((item) => [item.id, item.file_name]));
-  const settlementRowsByKey = buildSettlementRowsByKey(settlementRows);
-  const costVersionsBySku = buildCostVersionsBySku(costs, costVersions);
-  const consumedSettlementIds = new Set<number>();
-  const orders: OrderProfitabilityRow[] = [];
-  const anomalies: FinancialAnomaly[] = [];
-
-  for (const order of visibleOrders) {
-    const matchedSettlementRows = getMatchedSettlementRowsForOrder(order, settlementRowsByKey);
-    matchedSettlementRows.forEach((row) => consumedSettlementIds.add(row.id));
-
-    const traces = getSettlementTracesForLogisticsRow(order, settlementTraceByKey);
-    const trackingStatus = getEffectiveTrackingStatus(order, traces);
-    const trackingBadgeStatus = getTrackingFilterFromStatus(trackingStatus, order);
-    const trackingLabel = getTrackingStatusLabel(order, traces, trackingStatus);
-    const financialRow = buildOrderProfitabilityRow({
-      order,
-      settlementRows: matchedSettlementRows,
-      fileByImportId,
-      costVersionsBySku,
-      trackingStatus,
-      trackingBadgeStatus,
-      trackingLabel,
-    });
-
-    orders.push(financialRow);
-    anomalies.push(...buildFinancialAnomalies(financialRow, matchedSettlementRows));
-  }
-
-  for (const settlementRow of settlementRows.filter((row) => !consumedSettlementIds.has(row.id))) {
-    anomalies.push(buildOrphanSettlementAnomaly(settlementRow, fileByImportId));
-  }
-
-  const uniqueAnomalies = uniqueFinancialAnomalies(anomalies).sort(sortAnomalies);
-  const sortedOrders = orders.sort((a, b) => {
-    if (b.issue_count !== a.issue_count) return b.issue_count - a.issue_count;
-    return String(b.created_at || "").localeCompare(String(a.created_at || ""));
-  });
-
-  return {
-    orders: sortedOrders,
-    anomalies: uniqueAnomalies,
-    cash_received: roundMoney(sum(orders.filter((row) => row.cash_status === "cobrado").map((row) => row.amount_to_liquidate))),
-    cash_pending: roundMoney(sum(orders.filter((row) => row.cash_status === "por_cobrar").map((row) => row.expected_cod))),
-    contribution_margin: roundMoney(sum(orders.map((row) => row.contribution_margin))),
-    missing_cost_count: orders.filter((row) => row.missing_cost_skus.length > 0).length,
-  };
-}
-
-function buildProductAnalysisRows(orders: OrderProfitabilityRow[]): ProductAnalysisRow[] {
-  const byProduct = new Map<string, ProductAnalysisRow>();
-
-  for (const order of orders) {
-    if (!isShopifyProductAnalysisOrder(order)) continue;
-
-    const itemsByProduct = new Map<string, { sku: string; title: string; quantity: number }>();
-    const items = getProductAnalysisItems(order);
-
-    for (const item of items) {
-      const normalized = normalizeProductLineItem(item);
-      const existing = itemsByProduct.get(normalized.key);
-      if (existing) {
-        existing.quantity += normalized.quantity;
-        if (!existing.sku && normalized.sku) existing.sku = normalized.sku;
-        continue;
-      }
-      itemsByProduct.set(normalized.key, {
-        sku: normalized.sku,
-        title: normalized.title,
-        quantity: normalized.quantity,
-      });
-    }
-
-    const status = getProductOrderAnalysisStatus(order);
-    for (const [key, item] of Array.from(itemsByProduct.entries())) {
-      const existing = byProduct.get(key) ?? {
-        key,
-        product_name: item.title,
-        sku: item.sku,
-        sample_orders: [],
-        orders: 0,
-        units: 0,
-        dispatched: 0,
-        dispatch_rate: 0,
-        delivery_effectiveness: 0,
-        delivered: 0,
-        not_delivered: 0,
-        annulled: 0,
-        pending: 0,
-      };
-
-      existing.orders += 1;
-      existing.units += item.quantity;
-      if (!existing.sku && item.sku) existing.sku = item.sku;
-      const sampleOrder = order.order_name || order.guide_number || order.customer_name;
-      if (sampleOrder && existing.sample_orders.length < 5 && !existing.sample_orders.includes(sampleOrder)) {
-        existing.sample_orders.push(sampleOrder);
-      }
-      existing[status] += 1;
-      if (hasBoxfulGuide(order)) existing.dispatched += 1;
-      existing.dispatch_rate = existing.orders ? (existing.dispatched / existing.orders) * 100 : 0;
-      existing.delivery_effectiveness = existing.dispatched
-        ? (existing.delivered / existing.dispatched) * 100
-        : 0;
-      byProduct.set(key, existing);
-    }
-  }
-
-  return Array.from(byProduct.values()).sort(
-    (a, b) =>
-      b.orders - a.orders ||
-      a.delivery_effectiveness - b.delivery_effectiveness ||
-      a.product_name.localeCompare(b.product_name)
-  );
 }
 
 function mergeProductAnalysisWithCatalog(
@@ -8064,53 +8597,6 @@ function getBetterProductName(current: string, incoming: string): string {
   return incoming.length > current.length ? incoming : current;
 }
 
-function getProductAnalysisItems(order: OrderProfitabilityRow): ProductLineItem[] {
-  if (order.items.length) return order.items;
-  const parsedSummaryItems = parseItemsSummary(order.items_summary);
-  if (parsedSummaryItems.length) return parsedSummaryItems;
-  return [{ title: UNKNOWN_PRODUCT_LABEL, quantity: 1, price: 0 }];
-}
-
-function parseItemsSummary(summary: string): ProductLineItem[] {
-  return String(summary || "")
-    .split(/\s*,\s*/)
-    .map((part): ProductLineItem | null => {
-      const trimmed = part.trim();
-      if (!trimmed) return null;
-
-      const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*x\s+(.+)$/i);
-      const quantity = match ? Math.max(1, Number(match[1] || 1)) : 1;
-      const title = cleanProductTitle(match?.[2] ?? trimmed);
-      if (!title || title === UNKNOWN_PRODUCT_LABEL) return null;
-
-      return {
-        sku: looksLikeSkuOnly(title) ? title.toLowerCase() : "",
-        title,
-        quantity,
-        price: 0,
-      };
-    })
-    .filter((item): item is ProductLineItem => Boolean(item));
-}
-
-function looksLikeSkuOnly(value: string): boolean {
-  const text = value.trim();
-  return Boolean(text && !/\s/.test(text) && /^[a-z0-9._-]{3,}$/i.test(text));
-}
-
-function normalizeProductLineItem(item: ProductLineItem): { key: string; sku: string; title: string; quantity: number } {
-  const sku = String(item.sku ?? "").trim();
-  const title = cleanProductTitle(item.title || sku || UNKNOWN_PRODUCT_LABEL);
-  const titleKey = getProductTitleCostKey(title);
-  const key = titleKey || (sku ? `sku:${sku.toLowerCase()}` : `title:${title.toLowerCase()}`);
-  return {
-    key,
-    sku,
-    title,
-    quantity: Math.max(1, Number(item.quantity || 1)),
-  };
-}
-
 function cleanProductTitle(title: string): string {
   return String(title || UNKNOWN_PRODUCT_LABEL)
     .replace(/^\s*\d+\s*x\s*/i, "")
@@ -8178,31 +8664,6 @@ function getProductTitleCostKey(title: string): string {
   return slug ? `producto:${slug}` : "";
 }
 
-function hasBoxfulGuide(order: Pick<OrderProfitabilityRow, "guide_number">): boolean {
-  const guide = String(order.guide_number || "").trim();
-  return Boolean(guide && guide !== "-" && guide !== "0");
-}
-
-function isShopifyProductAnalysisOrder(
-  order: Pick<
-    OrderProfitabilityRow,
-    "source" | "order_name" | "shopify_financial_status" | "shopify_cancelled_at" | "created_at"
-  >
-): boolean {
-  if (order.source === "shopify") return true;
-  if (order.shopify_financial_status || order.shopify_cancelled_at || order.created_at) return true;
-  return /^#?MCRC/i.test(order.order_name);
-}
-
-function getProductOrderAnalysisStatus(
-  row: Pick<OrderProfitabilityRow, "tracking_status" | "shopify_cancelled_at" | "shopify_financial_status">
-): "pending" | "annulled" | "delivered" | "not_delivered" {
-  if (isShopifyCancelled(row)) return "annulled";
-  if (row.tracking_status === "delivered") return "delivered";
-  if (row.tracking_status === "not_delivered" || row.tracking_status === "returned") return "not_delivered";
-  return "pending";
-}
-
 function matchesProductAnalysisFilter(
   row: ProductAnalysisRow,
   filter: ProductAnalysisFilter,
@@ -8258,524 +8719,11 @@ function getProductAnalysisFilterCounts(
   };
 }
 
-function buildSettlementRowsByKey(settlementRows: SettlementRow[]): Map<string, SettlementRow[]> {
-  const rowsByKey = new Map<string, SettlementRow[]>();
-  for (const row of settlementRows) {
-    for (const key of uniqueKeys([
-      normalizeMatchKey(row.order_name),
-      normalizeMatchKey(row.shopify_order_name),
-      normalizeMatchKey(row.guide_number),
-    ])) {
-      rowsByKey.set(key, [...(rowsByKey.get(key) ?? []), row]);
-    }
-  }
-  return rowsByKey;
-}
-
-function getMatchedSettlementRowsForOrder(
-  order: TrackableOrderRow,
-  rowsByKey: Map<string, SettlementRow[]>
-): SettlementRow[] {
-  const seen = new Set<number>();
-  const matches: SettlementRow[] = [];
-  const keys = uniqueKeys([
-    ...getOrderMatchKeys(order),
-    normalizeMatchKey(order.guide_number),
-  ]);
-
-  for (const key of keys) {
-    for (const row of rowsByKey.get(key) ?? []) {
-      if (seen.has(row.id)) continue;
-      seen.add(row.id);
-      matches.push(row);
-    }
-  }
-
-  return matches;
-}
-
-function buildOrderProfitabilityRow({
-  order,
-  settlementRows,
-  fileByImportId,
-  costVersionsBySku,
-  trackingStatus,
-  trackingBadgeStatus,
-  trackingLabel,
-}: {
-  order: TrackableOrderRow;
-  settlementRows: SettlementRow[];
-  fileByImportId: Map<number, string>;
-  costVersionsBySku: Map<string, ProductCostVersion[]>;
-  trackingStatus: string;
-  trackingBadgeStatus: string;
-  trackingLabel: string;
-}): OrderProfitabilityRow {
-  const settlementFiles = uniqueKeys(
-    settlementRows.map((row) => fileByImportId.get(row.import_id) || `Import #${row.import_id}`)
-  );
-  const settlementStatuses = uniqueKeys(settlementRows.map((row) => row.settlement_status || row.internal_status));
-  const amountToLiquidate = sum(settlementRows.map((row) => row.amount_to_liquidate));
-  const settlementCodCommission = sum(settlementRows.map((row) => Number(row.cod_commission || 0)));
-  const settlementCardCommission = sum(settlementRows.map((row) => Number(row.card_commission || 0)));
-  const settlementDeliveryCost = sum(settlementRows.map((row) => Number(row.delivery_cost || 0)));
-  const settlementPickPackCost = sum(settlementRows.map((row) => Number(row.pick_pack_cost || 0)));
-  const settlementPackagingCost = sum(settlementRows.map((row) => Number(row.packaging_cost || 0)));
-  const settlementChargedCosts =
-    settlementCodCommission +
-    settlementCardCommission +
-    settlementDeliveryCost +
-    settlementPickPackCost +
-    settlementPackagingCost;
-  const settlementCodAmount = sum(settlementRows.map((row) => row.cod_amount));
-  const expectedCod = order.cod_amount || sum(settlementRows.map((row) => row.cod_amount));
-  const items = getProfitabilityItems(order, settlementRows);
-  const orderValue =
-    sum(items.map((item) => Number(item.price || 0) * Number(item.quantity || 0))) || expectedCod;
-  const productCostResult = calculateProductCost(items, costVersionsBySku, trackingStatus, order.shopify_created_at);
-  const hasSettlement = settlementRows.length > 0;
-  const shopifyCancelledWithMovement = isShopifyCancelled(order) && (order.source !== "shopify" || hasSettlement);
-  const cashStatus =
-    hasSettlement ? "cobrado" : trackingStatus === "delivered" ? "por_cobrar" : "sin_caja";
-
-  const issueCount =
-    (trackingStatus === "delivered" && !hasSettlement ? 1 : 0) +
-    (settlementRows.length > 1 ? 1 : 0) +
-    (shopifyCancelledWithMovement ? 1 : 0) +
-    (productCostResult.missingCostSkus.length ? 1 : 0) +
-    (shouldFlagNegativeMargin(amountToLiquidate - productCostResult.productCost, settlementCodAmount) ? 1 : 0);
-
-  return {
-    order_key: order.row_key,
-    order_name: order.order_name || order.shopify_order_name,
-    guide_number: order.guide_number,
-    customer_name: order.customer_name,
-    source: order.source,
-    shopify_cancelled_at: order.shopify_cancelled_at,
-    shopify_financial_status: order.shopify_financial_status,
-    tracking_status: trackingStatus,
-    tracking_badge_status: trackingBadgeStatus,
-    tracking_label: trackingLabel,
-    settlement_status: settlementStatuses.join(", ") || "Sin liquidacion",
-    settlement_files: settlementFiles,
-    settlement_count: settlementRows.length,
-    settlement_charged_costs: roundMoney(settlementChargedCosts),
-    settlement_cod_commission: roundMoney(settlementCodCommission),
-    settlement_card_commission: roundMoney(settlementCardCommission),
-    settlement_delivery_cost: roundMoney(settlementDeliveryCost),
-    settlement_pick_pack_cost: roundMoney(settlementPickPackCost),
-    settlement_packaging_cost: roundMoney(settlementPackagingCost),
-    amount_to_liquidate: roundMoney(amountToLiquidate),
-    expected_cod: roundMoney(expectedCod),
-    order_value: roundMoney(orderValue),
-    product_cost: productCostResult.productCost,
-    contribution_margin: roundMoney(amountToLiquidate - productCostResult.productCost),
-    missing_cost_skus: productCostResult.missingCostSkus,
-    items,
-    items_summary: summarizeItems(items),
-    cash_status: cashStatus,
-    issue_count: issueCount,
-    created_at: order.shopify_created_at,
-    days_since_order: order.shopify_created_at ? daysSince(order.shopify_created_at) : null,
-    delivered_on: order.finalized_on ?? null,
-  };
-}
-
-function getProfitabilityItems(
-  order: TrackableOrderRow,
-  settlementRows: SettlementRow[]
-): Array<{ sku?: string; title: string; quantity: number; price: number }> {
-  const settlementItems = settlementRows.flatMap((row) => row.order_items ?? []);
-  if (settlementItems.length) return settlementItems;
-  return order.package_items ?? [];
-}
-
-function buildCostVersionsBySku(
-  costs: ProductCost[],
-  versions: ProductCostVersion[]
-): Map<string, ProductCostVersion[]> {
-  const bySku = new Map<string, ProductCostVersion[]>();
-  const allVersions: ProductCostVersion[] = [
-    ...versions,
-    ...costs
-      .filter((cost) => cost.active)
-      .map((cost) => ({
-        id: -cost.id,
-        sku: cost.sku,
-        product_name: cost.product_name,
-        unit_cost: cost.unit_cost,
-        packaging_cost: cost.packaging_cost,
-        currency: cost.currency,
-        effective_from: cost.effective_from || "1900-01-01",
-        created_at: "",
-      })),
-  ];
-
-  for (const version of allVersions) {
-    const key = version.sku.toLowerCase();
-    bySku.set(key, [...(bySku.get(key) ?? []), version]);
-
-    const titleKey = getProductTitleCostKey(version.product_name);
-    if (titleKey && titleKey !== key) bySku.set(titleKey, [...(bySku.get(titleKey) ?? []), version]);
-  }
-
-  for (const [sku, skuVersions] of Array.from(bySku.entries())) {
-    bySku.set(
-      sku,
-      skuVersions.sort((a, b) =>
-        b.effective_from.localeCompare(a.effective_from) || b.created_at.localeCompare(a.created_at)
-      )
-    );
-  }
-  return bySku;
-}
-
-function calculateProductCost(
-  items: Array<{ sku?: string; title: string; quantity: number; price: number }>,
-  costVersionsBySku: Map<string, ProductCostVersion[]>,
-  trackingStatus: string,
-  orderDate: string | null
-): { productCost: number; missingCostSkus: string[] } {
-  if (trackingStatus !== "delivered") return { productCost: 0, missingCostSkus: [] };
-
-  const missingCostSkus = new Set<string>();
-  let productCost = 0;
-
-  for (const item of items) {
-    const costKey = getProductItemCostKey(item);
-    if (!costKey) continue;
-    const cost = pickCostVersion(costVersionsBySku.get(costKey) ?? [], orderDate);
-    if (!cost) {
-      missingCostSkus.add(costKey);
-      continue;
-    }
-    productCost += (Number(cost.unit_cost || 0) + Number(cost.packaging_cost || 0)) * Number(item.quantity || 0);
-  }
-
-  return {
-    productCost: roundMoney(productCost),
-    missingCostSkus: Array.from(missingCostSkus),
-  };
-}
-
-function pickCostVersion(versions: ProductCostVersion[], orderDate: string | null): ProductCostVersion | undefined {
-  if (!versions.length) return undefined;
-  const date = (orderDate || new Date().toISOString()).slice(0, 10);
-  return versions.find((version) => version.effective_from <= date) ?? versions[versions.length - 1];
-}
-
-function buildFinancialAnomalies(
-  row: OrderProfitabilityRow,
-  settlementRows: SettlementRow[]
-): FinancialAnomaly[] {
-  const anomalies: FinancialAnomaly[] = [];
-  const hasSettlement = settlementRows.length > 0;
-  const sourceFile = row.settlement_files[0] ?? "";
-
-  if (row.tracking_status === "delivered" && !hasSettlement) {
-    anomalies.push({
-      id: `${row.order_key}-delivered-without-settlement`,
-      severity: "high",
-      type: "Entregado sin liquidacion",
-      order_name: row.order_name,
-      guide_number: row.guide_number,
-      amount: row.expected_cod,
-      source_file: sourceFile,
-      message: "Boxful/seguimiento indica entregado pero no aparece en liquidacion.",
-      action: "Reclamar liquidacion a Boxful y revisar el corte faltante.",
-    });
-  }
-
-  if (settlementRows.length > 1) {
-    anomalies.push({
-      id: `${row.order_key}-duplicate-settlement`,
-      severity: "high",
-      type: "Doble liquidacion",
-      order_name: row.order_name,
-      guide_number: row.guide_number,
-      amount: row.amount_to_liquidate,
-      source_file: sourceFile,
-      message: `El pedido aparece ${settlementRows.length} veces en liquidaciones.`,
-      action: "Validar que no exista cobro duplicado o archivo repetido.",
-    });
-  }
-
-  if (hasSettlement && row.tracking_status !== "delivered" && settlementRows.some((item) => item.internal_status === "delivered")) {
-    anomalies.push({
-      id: `${row.order_key}-settlement-without-delivery`,
-      severity: "medium",
-      type: "Liquidado sin entrega confirmada",
-      order_name: row.order_name,
-      guide_number: row.guide_number,
-      amount: row.amount_to_liquidate,
-      source_file: sourceFile,
-      message: "Liquidacion reporta entregado pero seguimiento no esta entregado.",
-      action: "Comparar Boxful logistico contra liquidacion y corregir estado.",
-    });
-  }
-
-  const shopifyCancelledWithMovement = isShopifyCancelled(row) && (row.source !== "shopify" || hasSettlement);
-  if (shopifyCancelledWithMovement) {
-    anomalies.push({
-      id: `${row.order_key}-cancelled-with-movement`,
-      severity: row.tracking_status === "delivered" ? "high" : "medium",
-      type: "Anulado Shopify con movimiento",
-      order_name: row.order_name,
-      guide_number: row.guide_number,
-      amount: row.amount_to_liquidate,
-      source_file: sourceFile,
-      message: "Shopify indica anulado/cancelado, pero Boxful o liquidacion muestran movimiento operativo.",
-      action: "No tratar como anulado puro; seguir estado Boxful. Si se entrego, contabilizar caja/margen; si no se entrego, reconocer costos logisticos.",
-    });
-  }
-
-  if (row.missing_cost_skus.length) {
-    anomalies.push({
-      id: `${row.order_key}-missing-cost`,
-      severity: "medium",
-      type: "SKU sin costo",
-      order_name: row.order_name,
-      guide_number: row.guide_number,
-      amount: row.amount_to_liquidate,
-      source_file: sourceFile,
-      message: `Falta costo para ${row.missing_cost_skus.join(", ")}.`,
-      action: "Completar costo unitario/empaque en Costos SKU para cerrar margen.",
-    });
-  }
-
-  const settlementCodAmount = sum(settlementRows.map((item) => item.cod_amount));
-
-  if (hasSettlement && shouldFlagNegativeMargin(row.contribution_margin, settlementCodAmount)) {
-    anomalies.push({
-      id: `${row.order_key}-negative-margin`,
-      severity: "medium",
-      type: "Margen negativo",
-      order_name: row.order_name,
-      guide_number: row.guide_number,
-      amount: row.contribution_margin,
-      source_file: sourceFile,
-      message: `El pedido queda con margen ${currency(row.contribution_margin)} antes de ads/planilla.`,
-      action: "Revisar precio, costo SKU, cobros logisticos y promociones.",
-    });
-  }
-
-  if (row.source === "shopify" && row.tracking_status === "pending" && Number(row.days_since_order ?? 0) >= 2) {
-    anomalies.push({
-      id: `${row.order_key}-shopify-without-boxful`,
-      severity: "low",
-      type: "Shopify sin Boxful",
-      order_name: row.order_name,
-      guide_number: row.guide_number,
-      amount: row.expected_cod,
-      source_file: sourceFile,
-      message: "Pedido Shopify sigue sin guia Boxful despues de 2 dias.",
-      action: "Confirmar si se despacho, si falta importar el archivo logistico o si fue anulado manualmente.",
-    });
-  }
-
-  return anomalies;
-}
-
-function buildOrphanSettlementAnomaly(
-  row: SettlementRow,
-  fileByImportId: Map<number, string>
-): FinancialAnomaly {
-  const sourceFile = fileByImportId.get(row.import_id) || `Import #${row.import_id}`;
-  const orderName = row.shopify_order_name || row.order_name || "-";
-
-  return {
-    id: `settlement-${row.id}-without-shopify-order`,
-    severity: "high",
-    type: "Liquidacion sin pedido Shopify",
-    order_name: orderName,
-    guide_number: row.guide_number || "-",
-    amount: row.amount_to_liquidate,
-    source_file: sourceFile,
-    message: "Esta fila de liquidacion no se asigno a ningun pedido base Shopify visible.",
-    action: "Corregir el match por nota, guia, telefono o cliente. No se contabiliza como pedido hasta que apunte a Shopify.",
-  };
-}
-
-function shouldFlagNegativeMargin(contributionMargin: number, settlementCodAmount: number): boolean {
-  if (contributionMargin >= 0) return false;
-  return settlementCodAmount > 0;
-}
-
-function uniqueFinancialAnomalies(anomalies: FinancialAnomaly[]): FinancialAnomaly[] {
-  const seen = new Set<string>();
-  const unique: FinancialAnomaly[] = [];
-  for (const anomaly of anomalies) {
-    if (seen.has(anomaly.id)) continue;
-    seen.add(anomaly.id);
-    unique.push(anomaly);
-  }
-  return unique;
-}
-
-function sortAnomalies(a: FinancialAnomaly, b: FinancialAnomaly): number {
-  const severityRank = { high: 3, medium: 2, low: 1 };
-  return severityRank[b.severity] - severityRank[a.severity] || a.type.localeCompare(b.type);
-}
-
-function summarizeItems(items: Array<{ sku?: string; title: string; quantity: number }>): string {
-  return items
-    .slice(0, 2)
-    .map((item) => `${item.quantity || 1}x ${item.sku || item.title}`)
-    .join(", ");
-}
-
 function daysSince(value: string): number {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return 0;
   const diff = Date.now() - parsed.getTime();
   return Math.max(0, Math.floor(diff / (24 * 60 * 60 * 1000)));
-}
-
-function getDeliveredWithoutSettlement(
-  logisticsRows: LogisticsRow[],
-  settlementRows: SettlementRow[]
-): LogisticsRow[] {
-  const settledOrderKeys = new Set<string>();
-  const settledGuideKeys = new Set<string>();
-
-  for (const row of settlementRows) {
-    const orderKey = normalizeMatchKey(row.order_name || row.shopify_order_name);
-    const guideKey = normalizeMatchKey(row.guide_number);
-    if (orderKey) settledOrderKeys.add(orderKey);
-    if (guideKey) settledGuideKeys.add(guideKey);
-  }
-
-  return logisticsRows.filter((row) => {
-    if (row.internal_status !== "delivered") return false;
-    const orderKey = normalizeMatchKey(row.order_name || row.shopify_order_name);
-    const guideKey = normalizeMatchKey(row.guide_number);
-    return !((orderKey && settledOrderKeys.has(orderKey)) || (guideKey && settledGuideKeys.has(guideKey)));
-  });
-}
-
-function buildSettlementTraceByKey(
-  settlementRows: SettlementRow[],
-  imports: SettlementImport[]
-): Map<string, SettlementTrace[]> {
-  const fileByImportId = new Map(imports.map((item) => [item.id, item.file_name]));
-  const traceByKey = new Map<string, SettlementTrace[]>();
-
-  for (const row of settlementRows) {
-    const trace: SettlementTrace = {
-      file_name: fileByImportId.get(row.import_id) || `Import #${row.import_id}`,
-      amount_to_liquidate: row.amount_to_liquidate,
-      settlement_status: row.settlement_status,
-      internal_status: row.internal_status,
-    };
-    addSettlementTrace(traceByKey, normalizeMatchKey(row.order_name || row.shopify_order_name), trace);
-    addSettlementTrace(traceByKey, normalizeMatchKey(row.guide_number), trace);
-  }
-
-  return traceByKey;
-}
-
-function addSettlementTrace(
-  traceByKey: Map<string, SettlementTrace[]>,
-  key: string,
-  trace: SettlementTrace
-) {
-  if (!key) return;
-  const existing = traceByKey.get(key) ?? [];
-  if (
-    existing.some(
-      (item) =>
-        item.file_name === trace.file_name &&
-        item.amount_to_liquidate === trace.amount_to_liquidate &&
-        item.settlement_status === trace.settlement_status
-    )
-  ) {
-    return;
-  }
-  traceByKey.set(key, [...existing, trace]);
-}
-
-function getSettlementTracesForLogisticsRow(
-  row: OrderMatchKeySource & Pick<TrackableOrderRow, "guide_number">,
-  settlementTraceByKey: Map<string, SettlementTrace[]>
-): SettlementTrace[] {
-  const seen = new Set<string>();
-  const traces: SettlementTrace[] = [];
-  const keys = [
-    ...getOrderMatchKeys(row),
-    normalizeMatchKey(row.guide_number),
-  ];
-
-  for (const key of uniqueKeys(keys)) {
-    for (const trace of settlementTraceByKey.get(key) ?? []) {
-      const traceKey = `${trace.file_name}|${trace.amount_to_liquidate}|${trace.settlement_status}`;
-      if (seen.has(traceKey)) continue;
-      seen.add(traceKey);
-      traces.push(trace);
-    }
-  }
-
-  return traces;
-}
-
-function getDoubleSettlementAnomalies(
-  settlementTraceByKey: Map<string, SettlementTrace[]>
-): DoubleSettlementAnomaly[] {
-  const anomalies: DoubleSettlementAnomaly[] = [];
-
-  for (const [key, traces] of Array.from(settlementTraceByKey.entries())) {
-    const uniqueTraces = uniqueSettlementTraces(traces);
-    if (uniqueTraces.length < 2) continue;
-
-    anomalies.push({
-      key,
-      kind: /^\d{6,}$/.test(key) ? "guide" : "order",
-      traces: uniqueTraces,
-    });
-  }
-
-  return anomalies
-    .sort((a, b) => b.traces.length - a.traces.length || a.key.localeCompare(b.key))
-    .slice(0, 250);
-}
-
-function uniqueSettlementTraces(traces: SettlementTrace[]): SettlementTrace[] {
-  const seen = new Set<string>();
-  const unique: SettlementTrace[] = [];
-  for (const trace of traces) {
-    const key = `${trace.file_name}|${trace.amount_to_liquidate}|${trace.settlement_status}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(trace);
-  }
-  return unique;
-}
-
-function buildShopifyNoteAliasRows(orders: ShopifyOrderSummary[]): ShopifyNoteAliasRow[] {
-  return orders
-    .flatMap((order) => {
-      const note = getShopifyNoteText(order).trim();
-      if (!note) return [];
-
-      const externalCodes = extractExternalOrderCodesFromText(note);
-      if (!externalCodes.length) {
-        return [{
-          row_key: `${order.id}-note`,
-          shopify_order_name: order.name,
-          note_order_number: "",
-          note,
-          created_at: order.created_at,
-        }];
-      }
-
-      return externalCodes.map((code, index) => ({
-        row_key: `${order.id}-${code}-${index}`,
-        shopify_order_name: order.name,
-        note_order_number: code,
-        note,
-        created_at: order.created_at,
-      }));
-    })
-    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
 }
 
 function matchesShopifyNoteAliasSearch(row: ShopifyNoteAliasRow, query: string): boolean {
@@ -8825,33 +8773,213 @@ function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {
   });
 }
 
-function matchesOrderPeriod(
-  row: TrackableOrderRow,
-  mode: OrderPeriodMode,
-  month: string,
-  startDate: string,
-  endDate: string
-): boolean {
-  if (mode === "all") return true;
-  const orderDate = getOrderDateKey(row);
-  if (!orderDate) return false;
+// Nota (Carril 2 inc.2): el filtro de periodo del tab Pedidos (matchesOrderPeriod)
+// ahora vive en /api/finance/orders; la tabla pagina server-side.
 
-  if (mode === "month") {
-    if (!month) return true;
-    return getMonthKey(orderDate) === month;
+function getEffectiveTrackingStatus(
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "guide_number">,
+  traces: SettlementTrace[]
+): string {
+  // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
+  const moovinStatus = moovinGroupToStatus(row.moovin_group);
+  if (moovinStatus) {
+    if ((row.moovin_incidents ?? 0) >= 1 && !isFinalTrackingStatus(moovinStatus)) {
+      // Hubo "Incidencia en la entrega": si el ultimo evento volvio a "En ruta
+      // para entregar" (in_progress -> en_route) es un reintento; si el ultimo
+      // evento sigue siendo la incidencia (FAILED -> incident) queda como
+      // incidencia activa.
+      return moovinStatus === "en_route" ? "en_route_retry" : "incident";
+    }
+    return moovinStatus;
   }
 
-  if (startDate && orderDate < startDate) return false;
-  if (endDate && orderDate > endDate) return false;
-  return true;
+  const forzaStatus = forzaGroupToStatus(row.forza_group);
+  if (forzaStatus) {
+    if ((row.forza_incidents ?? 0) >= 1 && !isFinalTrackingStatus(forzaStatus)) {
+      return forzaStatus === "en_route" ? "en_route_retry" : "incident";
+    }
+    return forzaStatus;
+  }
+
+  if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
+
+  const boxfulStatus = inferTrackingStatusFromText(row.boxful_status);
+  if (isFinalTrackingStatus(boxfulStatus)) return boxfulStatus;
+
+  const settlementStatus = traces.find((trace) => isFinalTrackingStatus(trace.internal_status));
+  if (settlementStatus) return settlementStatus.internal_status;
+
+  // Tiene guia (Boxful, liquidacion o el fulfillment de Shopify) = despachado.
+  const hasOperationalMovement = row.source !== "shopify" || traces.length > 0 || Boolean(row.guide_number);
+  if (isShopifyCancelled(row) && !hasOperationalMovement) return "annulled";
+  // Con guia/courier (movimiento logistico) y sin estado final = en reparto.
+  if (hasOperationalMovement) return "en_route";
+
+  return "pending";
 }
 
-function getOrderDateKey(row: Pick<TrackableOrderRow, "shopify_created_at">): string {
-  return row.shopify_created_at ? row.shopify_created_at.slice(0, 10) : "";
+// "Pendiente operativo" para agregaciones: incluye en ruta (despachado pero
+// aun sin entregar) y pendiente (sin despachar).
+function isPendingLike(status: string): boolean {
+  return (
+    status === "pending" ||
+    status === "en_route" ||
+    status === "en_route_retry" ||
+    status === "incident"
+  );
 }
 
-// La maquina de estados de seguimiento (getEffectiveTrackingStatus,
-// moovinGroupToStatus, isFinalTrackingStatus, isPendingLike, ...) y la
-// clasificacion de incidencias (countMoovinIncidents, countMoovinRouteAttempts,
-// classifyIncident, getTrackingFilterFromStatus, getTrackingStatusLabel) viven
-// en lib/order-tracking.ts (fuente unica, testeable). Se importan al inicio.
+function inferTrackingStatusFromText(status: string): string {
+  const lower = status.toLowerCase();
+  if (lower.includes("no entregado") || lower.includes("devuelto")) return "not_delivered";
+  if (lower.includes("entregado")) return "delivered";
+  return "pending";
+}
+
+function getTrackingFilterFromStatus(
+  status: string,
+  row?: Pick<TrackableOrderRow, "moovin_incidents" | "moovin_route_attempts">
+): Exclude<OrderTrackingFilter, "all"> {
+  if (status === "annulled") return "annulled";
+  if (status === "delivered") return "delivered";
+  if (status === "not_delivered" || status === "returned") return "not_delivered";
+  if (status === "despacho_solicitado") return "despacho_solicitado";
+  if (status === "standby") return "standby";
+  if (status === "en_route") return "en_route";
+  if (status === "en_route_retry") return "en_route_retry";
+  if (status === "incident") return classifyIncident(row);
+  return "pending";
+}
+
+// Divide las incidencias en dos clasificaciones:
+// - Solucionable: a lo sumo una "Incidencia en la entrega"; aun se puede
+//   reagendar/corregir la entrega.
+// - No solucionable: dos o mas "Incidencia en la entrega" y dos o mas eventos
+//   "En ruta para entregar a lo largo del dia" de Moovin; el courier salio a
+//   entregar varias veces y fallo de forma repetida.
+function classifyIncident(
+  row?: Pick<TrackableOrderRow, "moovin_incidents" | "moovin_route_attempts">
+): "incident_solvable" | "incident_unsolvable" {
+  const incidents = row?.moovin_incidents ?? 0;
+  const routeAttempts = row?.moovin_route_attempts ?? 0;
+  return incidents >= 2 && routeAttempts >= 2 ? "incident_unsolvable" : "incident_solvable";
+}
+
+function getTrackingStatusLabel(
+  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents" | "moovin_route_attempts" | "forza_incidents">,
+  traces: SettlementTrace[],
+  status: string
+): string {
+  if (status === "annulled") return "Anulado";
+  if (status === "despacho_solicitado") return "Despacho solicitado";
+  if (status === "standby") return "Standby";
+  if (isFinalTrackingStatus(row.internal_status)) {
+    return status === "not_delivered" || status === "returned" ? "No entregado" : row.boxful_status || "Entregado";
+  }
+
+  const settlementTrace = traces.find((trace) => trace.internal_status === status);
+  if (settlementTrace?.settlement_status) return settlementTrace.settlement_status;
+  if (status === "delivered") return "Entregado";
+  if (status === "not_delivered" || status === "returned") return "No entregado";
+  if (status === "en_route") return row.boxful_status || "En ruta";
+  if (status === "en_route_retry") {
+    const retries = Math.max(row.moovin_incidents ?? 0, row.forza_incidents ?? 0, 1);
+    return retries > 1 ? `Reintento (${retries})` : "Reintento";
+  }
+  if (status === "incident")
+    return classifyIncident(row) === "incident_unsolvable"
+      ? "Incidencia no solucionable"
+      : "Incidencia solucionable";
+  return "Pendiente";
+}
+
+function isFinalTrackingStatus(status: string): boolean {
+  return status === "delivered" || status === "not_delivered" || status === "returned";
+}
+
+// Mapea el ultimo grupo de Moovin al estado de seguimiento. Vacio si no hay
+// dato de Moovin (cae a la logica de Boxful/sistema).
+function moovinGroupToStatus(group: string | undefined): string {
+  switch (group) {
+    case "delivered":
+      return "delivered";
+    case "returned":
+      return "not_delivered";
+    case "failed":
+      return "incident";
+    case "in_progress":
+      return "en_route";
+    default:
+      return "";
+  }
+}
+
+function forzaGroupToStatus(group: string | undefined): string {
+  switch (group) {
+    case "delivered":
+      return "delivered";
+    case "returned":
+      return "not_delivered";
+    case "failed":
+      return "incident";
+    case "in_progress":
+      return "en_route";
+    default:
+      return "";
+  }
+}
+
+// Cuenta las incidencias de entrega ("Incidencia en la entrega", codigo FAILED)
+// de Moovin. Con >=1 incidencia sin cierre final: queda como "Incidencia" si el
+// ultimo evento sigue siendo la incidencia, o como "Reintento" si el ultimo
+// evento volvio a "En ruta para entregar" (ver getEffectiveTrackingStatus).
+function countMoovinIncidents(events: MoovinTrackingRow["events"] | undefined): number {
+  if (!events?.length) return 0;
+  return events.filter(
+    (event) =>
+      String(event.code ?? "").toUpperCase() === "FAILED" ||
+      String(event.title ?? "").toLowerCase().includes("incidencia en la entrega")
+  ).length;
+}
+
+// Cuenta las salidas a reparto de Moovin ("En ruta para entregar a lo largo del
+// dia"). Varias salidas indican intentos de entrega repetidos. Match por la
+// frase distintiva "a lo largo del" para tolerar variaciones (entregar/la
+// entrega, con o sin tilde en "dia").
+function countMoovinRouteAttempts(events: MoovinTrackingRow["events"] | undefined): number {
+  if (!events?.length) return 0;
+  return events.filter((event) => {
+    const title = String(event.title ?? "").toLowerCase();
+    return title.includes("en ruta para") && title.includes("a lo largo del");
+  }).length;
+}
+
+function countForzaIncidents(events: ForzaTrackingRow["events"] | undefined): number {
+  if (!events?.length) return 0;
+  return events.filter((event) => {
+    const text = `${event.code ?? ""} ${event.title ?? ""} ${event.description ?? ""}`.toLowerCase();
+    return text.includes("fall") || text.includes("incid") || text.includes("no entreg");
+  }).length;
+}
+
+// Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"
+// (p.ej. supera intentos de entrega) quedaba como en ruta y debe ser No
+// entregado. Los demas estados conservan su grupo ya calculado.
+function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
+  if (!row) return "";
+  const code = String(row.latest_code ?? "").toUpperCase();
+  const title = String(row.latest_status ?? "").toLowerCase();
+  if (code.startsWith("CANCEL") || title.includes("cancelado")) return "returned";
+  return row.latest_group ?? "";
+}
+
+function deriveForzaGroup(row: ForzaTrackingRow | undefined): string {
+  if (!row) return "";
+  return row.latest_group ?? "";
+}
+
+function isShopifyCancelled(
+  row: Pick<TrackableOrderRow, "shopify_cancelled_at" | "shopify_financial_status"> | Pick<OrderProfitabilityRow, "shopify_cancelled_at" | "shopify_financial_status">
+): boolean {
+  return Boolean(row.shopify_cancelled_at || row.shopify_financial_status === "voided");
+}

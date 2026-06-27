@@ -1,29 +1,57 @@
 import { NextRequest } from "next/server";
 
+import { getShopifyOAuthCredentials, getStoreConfig, parseFinanceStoreCode } from "@/lib/stores";
+
 // Shopify redirects here after merchant approves the app.
 // This exchanges the code for a permanent access token and displays it once.
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const code = searchParams.get("code");
-  const shop = searchParams.get("shop") ?? process.env.SHOPIFY_SHOP_DOMAIN ?? "";
+  const shop = searchParams.get("shop") ?? "";
+  const storeCode = getStoreCodeFromOAuthState(searchParams.get("state"));
+  if (!storeCode) {
+    return textResponse("Error: estado OAuth invalido o sin tienda.", 400);
+  }
+  const store = getStoreConfig(storeCode);
+  const tokenEnv = store.accessTokenEnv;
 
   if (!code) {
     return textResponse("Error: no se recibio el codigo de autorizacion.", 400);
   }
 
-  const clientId = process.env.SHOPIFY_CLIENT_ID;
-  const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+  if (!shop) {
+    return textResponse("Error: no se recibio la tienda Shopify.", 400);
+  }
 
-  if (!shop || !clientId || !clientSecret) {
+  const { clientId, clientSecret, missing } = getShopifyOAuthCredentials(store);
+  const expectedShop =
+    process.env[store.shopDomainEnv] ||
+    (store.legacyShopDomainEnv ? process.env[store.legacyShopDomainEnv] : "") ||
+    "";
+  if (!expectedShop) missing.push(store.shopDomainEnv);
+
+  if (missing.length > 0) {
     return textResponse(
       [
         "Faltan variables para completar OAuth de Shopify.",
         "",
-        `SHOPIFY_SHOP_DOMAIN: ${shop ? "ok" : "faltante"}`,
-        `SHOPIFY_CLIENT_ID: ${clientId ? "ok" : "faltante"}`,
-        `SHOPIFY_CLIENT_SECRET: ${clientSecret ? "ok" : "faltante"}`,
+        `Tienda: ${store.label}`,
+        `Variables faltantes: ${missing.join(", ")}`,
       ].join("\n"),
       500
+    );
+  }
+
+  if (normalizeShopDomain(shop) !== normalizeShopDomain(expectedShop)) {
+    return textResponse(
+      [
+        "Error: la tienda Shopify devuelta no coincide con la tienda seleccionada.",
+        "",
+        `Tienda seleccionada: ${store.label}`,
+        `Shop esperado: ${expectedShop}`,
+        `Shop recibido: ${shop}`,
+      ].join("\n"),
+      400
     );
   }
 
@@ -39,7 +67,7 @@ export async function GET(req: NextRequest) {
       [
         `Error al obtener token de Shopify (${tokenRes.status}).`,
         "",
-        "Revisa que SHOPIFY_CLIENT_ID y SHOPIFY_CLIENT_SECRET correspondan a la misma app que autorizaste.",
+        `Revisa que ${store.clientIdEnv} y ${store.clientSecretEnv} correspondan a la misma app que autorizaste.`,
         "Si agregaste nuevos scopes, reautoriza la app desde /api/shopify/auth.",
         "",
         err.slice(0, 1200),
@@ -74,7 +102,7 @@ export async function GET(req: NextRequest) {
 <body>
   <h1>Token obtenido exitosamente</h1>
   <div class="box">
-    <div class="label">SHOPIFY_ACCESS_TOKEN</div>
+    <div class="label">${escapeHtml(tokenEnv)}</div>
     <div class="token">${escapeHtml(access_token)}</div>
   </div>
   <div class="box">
@@ -89,7 +117,7 @@ export async function GET(req: NextRequest) {
   <h2>Proximos pasos</h2>
   <div class="step">1. Copia el token de arriba.</div>
   <div class="step">2. Ve a <code>Vercel -> kairoai -> Settings -> Environment Variables</code>.</div>
-  <div class="step">3. Actualiza <code>SHOPIFY_ACCESS_TOKEN</code> con ese valor.</div>
+  <div class="step">3. Actualiza <code>${escapeHtml(tokenEnv)}</code> con ese valor.</div>
   <div class="step">4. Haz redeploy sin cache.</div>
   <div class="step">5. Guarda el token en un lugar seguro. Shopify no lo vuelve a mostrar.</div>
 </body>
@@ -98,6 +126,10 @@ export async function GET(req: NextRequest) {
   return new Response(html, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
+}
+
+function getStoreCodeFromOAuthState(state: string | null) {
+  return parseFinanceStoreCode(state?.split(":")[0]);
 }
 
 function textResponse(message: string, status: number) {
@@ -113,4 +145,8 @@ function escapeHtml(value: string) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function normalizeShopDomain(value: string): string {
+  return value.trim().replace(/^https?:\/\//i, "").replace(/\/+$/g, "").toLowerCase();
 }

@@ -12,17 +12,21 @@ import {
   insertLogisticsRows,
   listLogisticsImports,
   listLogisticsRows,
+  listLogisticsRowsPage,
   upsertBoxfulFileControl,
   type InternalOrderStatus,
   type LogisticsPackageItem,
   type LogisticsRow,
 } from "@/lib/finance";
+import { toFriendlyErrorMessage } from "@/lib/api-errors";
+import { getRequiredStoreConfig, getRequiredStoreFromSearchParams } from "@/lib/stores";
+import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const INSERT_BATCH_SIZE = 250;
-const INSERT_CONCURRENCY = 4;
+const INSERT_BATCH_SIZE = 500;
+const INSERT_CONCURRENCY = 3;
 
 interface ParsedLogisticsRow {
   raw: Record<string, unknown>;
@@ -48,15 +52,59 @@ interface ParsedLogisticsRow {
 }
 
 export async function GET(req: NextRequest) {
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) return missingStoreResponse();
   try {
-    const importId = Number(req.nextUrl.searchParams.get("import_id"));
-    const [imports, rows] = await Promise.all([
-      listLogisticsImports(),
-      listLogisticsRows(importId || undefined),
+    const rawImportId = Number(req.nextUrl.searchParams.get("import_id"));
+    const importId = Number.isFinite(rawImportId) && rawImportId > 0 ? rawImportId : undefined;
+    const includeRows = req.nextUrl.searchParams.get("include_rows") !== "0";
+    const includeImports = req.nextUrl.searchParams.get("include_imports") !== "0";
+    const limit = Number(req.nextUrl.searchParams.get("limit") ?? 1000);
+    const offset = Number(req.nextUrl.searchParams.get("offset") ?? 0);
+    const slim = req.nextUrl.searchParams.get("slim") === "1";
+    // all=1: trae TODAS las filas en una sola respuesta (el servidor pagina
+    // internamente). Evita que el navegador encadene lotes que se cortan por
+    // timeout y dejan fuera los pedidos viejos.
+    const all = req.nextUrl.searchParams.get("all") === "1";
+    const importsPromise = includeImports
+      ? listLogisticsImports(store.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof listLogisticsImports>>);
+    if (!includeRows) {
+      return NextResponse.json({
+        imports: await importsPromise,
+        rows: [],
+        has_more: false,
+        next_offset: null,
+      });
+    }
+    if (all) {
+      const [imports, rows] = await Promise.all([
+        importsPromise,
+        listLogisticsRows(importId, store.id, { slim }),
+      ]);
+      return NextResponse.json({ imports, rows, has_more: false, next_offset: null });
+    }
+    // imports + primera página de filas en paralelo (antes eran dos awaits en serie).
+    const [imports, page] = await Promise.all([
+      importsPromise,
+      listLogisticsRowsPage({
+        importId,
+        storeId: store.id,
+        limit,
+        offset,
+        slim,
+      }),
     ]);
-    return NextResponse.json({ imports, rows });
+    return NextResponse.json({
+      imports,
+      rows: page.rows,
+      has_more: page.hasMore,
+      next_offset: page.nextOffset,
+      limit,
+      offset,
+    });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al leer logistica";
+    const message = toFriendlyErrorMessage(err, "Error al leer logistica");
     return NextResponse.json({ imports: [], rows: [], error: message }, { status: 500 });
   }
 }
@@ -64,6 +112,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
+    const store = getRequiredStoreConfig(form.get("store"));
+    if (!store) return missingStoreResponse();
     const file = form.get("file");
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "Archivo requerido" }, { status: 400 });
@@ -80,7 +130,15 @@ export async function POST(req: NextRequest) {
     }
 
     const shopifyOrders = await loadShopifyOrdersForMatching(
-      periodStart ?? inferEarliestDate(boxfulRows)
+      periodStart ?? inferEarliestDate(boxfulRows),
+      store.id,
+      {
+        // La carga de Excel debe ser deterministica y rapida. El boton Sync
+        // Shopify mantiene la base de pedidos; durante el import no llamamos a
+        // Shopify porque un archivo grande puede pasar el timeout de Vercel.
+        includeFreshShopify: false,
+        fallbackToShopify: false,
+      }
     );
     const matchIndex = buildShopifyMatchIndex(shopifyOrders);
     const statusSummary: Record<string, { count: number }> = {};
@@ -97,31 +155,37 @@ export async function POST(req: NextRequest) {
       return { row, shopify };
     });
 
-    const logisticsImport = await createLogisticsImport({
-      file_name: file.name,
-      period_label: periodLabel,
-      period_start: periodStart,
-      period_end: periodEnd,
-      total_rows: boxfulRows.length,
-      matched_rows: matchedRows,
-      unmatched_rows: boxfulRows.length - matchedRows,
-      status_summary: statusSummary,
-    });
-    try {
-      await upsertBoxfulFileControl({
+    const logisticsImport = await createLogisticsImport(
+      {
         file_name: file.name,
-        file_type: "logistica",
-        cutoff_date: periodEnd,
-        status: "importado",
-        import_id: logisticsImport.id,
-        imported_at: logisticsImport.created_at,
-      });
+        period_label: periodLabel,
+        period_start: periodStart,
+        period_end: periodEnd,
+        total_rows: boxfulRows.length,
+        matched_rows: matchedRows,
+        unmatched_rows: boxfulRows.length - matchedRows,
+        status_summary: statusSummary,
+      },
+      store.id
+    );
+    try {
+      await upsertBoxfulFileControl(
+        {
+          file_name: file.name,
+          file_type: "logistica",
+          cutoff_date: periodEnd,
+          status: "importado",
+          import_id: logisticsImport.id,
+          imported_at: logisticsImport.created_at,
+        },
+        store.id
+      );
     } catch (fileControlError) {
       console.warn("[finance/logistics file control]", fileControlError);
     }
 
     const rowsToInsert = pendingRows.map(({ row, shopify }) =>
-      buildLogisticsRow(logisticsImport.id, row, shopify)
+      buildLogisticsRow(logisticsImport.id, row, store.id, shopify)
     );
 
     // Si las filas no entran, el import se revierte: un archivo nunca debe
@@ -135,10 +199,17 @@ export async function POST(req: NextRequest) {
         await Promise.all(batches.slice(i, i + INSERT_CONCURRENCY).map(insertLogisticsRows));
       }
     } catch (insertError) {
-      await deleteLogisticsImport(logisticsImport.id).catch(() => undefined);
+      await deleteLogisticsImport(logisticsImport.id, store.id).catch(() => undefined);
       const detail = insertError instanceof Error ? insertError.message : String(insertError);
       throw new Error(`No se pudieron guardar las filas (import revertido): ${detail}`);
     }
+
+    // El import muto logistics_rows: refresca la cache durable del dataset para
+    // que el dashboard refleje el cambio sin esperar al cron. Defensivo: nunca
+    // debe romper el import si la cache falla.
+    await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+      console.warn("[finance/logistics POST cache]", cacheErr)
+    );
 
     return NextResponse.json({
       import: logisticsImport,
@@ -147,23 +218,35 @@ export async function POST(req: NextRequest) {
       status_summary: statusSummary,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al importar logistica";
+    const message = toFriendlyErrorMessage(err, "Error al importar logistica");
     console.error("[finance/logistics POST]", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function DELETE(req: NextRequest) {
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) return missingStoreResponse();
   const id = Number(req.nextUrl.searchParams.get("id"));
   if (!id) return NextResponse.json({ error: "id requerido" }, { status: 400 });
 
   try {
-    await deleteLogisticsImport(id);
+    await deleteLogisticsImport(id, store.id);
+    await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+      console.warn("[finance/logistics DELETE cache]", cacheErr)
+    );
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al eliminar logistica";
+    const message = toFriendlyErrorMessage(err, "Error al eliminar logistica");
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+function missingStoreResponse() {
+  return NextResponse.json(
+    { error: "store requerido: usa mireva-cr o mireva-hn" },
+    { status: 400 }
+  );
 }
 
 function parseBoxfulRows(workbook: XLSX.WorkBook): ParsedLogisticsRow[] {
@@ -220,10 +303,12 @@ function parsePackageItems(raw: Record<string, unknown>): LogisticsPackageItem[]
 function buildLogisticsRow(
   importId: number,
   row: ParsedLogisticsRow,
+  storeId: number,
   shopify?: ShopifyOrder
 ): Omit<LogisticsRow, "id" | "created_at"> {
   const internalStatus = mapInternalStatus(row.boxful_status, shopify);
   return {
+    store_id: storeId,
     import_id: importId,
     guide_number: row.guide_number,
     order_name: row.order_name,
