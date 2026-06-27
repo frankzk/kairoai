@@ -1164,14 +1164,16 @@ export async function upsertIcomflyAgents(
 
 // Claves de pedido (normalizeMatchKey) que ya tienen guia en la data de Boxful
 // importada (logistics_rows con guide_number). Senal de respaldo de guia final.
-export async function getDispatchedBoxfulKeys(): Promise<Set<string>> {
+export async function getDispatchedBoxfulKeys(storeId?: number): Promise<Set<string>> {
   const keys = new Set<string>();
   const pageSize = 1000;
   for (let from = 0; from < 100000; from += pageSize) {
-    const { data, error } = await getDB()
+    let query = getDB()
       .from("logistics_rows")
       .select("order_name, guide_number")
       .range(from, from + pageSize - 1);
+    if (storeId != null) query = query.eq("store_id", storeId);
+    const { data, error } = await query;
     if (error) throw new Error(`getDispatchedBoxfulKeys: ${error.message}`);
     const page = (data ?? []) as Array<{ order_name: string | null; guide_number: string | null }>;
     for (const row of page) {

@@ -9,7 +9,7 @@ import {
   getDispatchedBoxfulKeys,
   type IcomflyOrderRecord,
 } from "@/lib/finance";
-import { listOrdersWithAttribution, listAgents, defaultStoreId } from "@/lib/icomfly";
+import { listOrdersWithAttribution, listAgents, resolveIcomflyStoreContext } from "@/lib/icomfly";
 import {
   buildIcomflyOrderRow,
   matchStaff,
@@ -18,6 +18,7 @@ import {
   type NormalizedIcomflyOrder,
   type DispatchState,
 } from "@/lib/dispatch";
+import type { FinanceStoreCode } from "@/lib/store-config";
 
 const DEFAULT_MAX_PAGES = 5;
 const MAX_MAX_PAGES = 20;
@@ -41,19 +42,26 @@ export interface DispatchSummary {
 }
 
 export async function runIcomflySync(opts: {
+  store?: FinanceStoreCode | string;
   storeId?: number;
+  externalStoreId?: number;
   maxPages?: number;
   startPage?: number;
   now?: Date;
 } = {}): Promise<SyncResult> {
-  const storeId = opts.storeId ?? defaultStoreId();
+  const { store, externalStoreId } = resolveIcomflyStoreContext({
+    store: opts.store,
+    storeId: opts.storeId,
+    externalStoreId: opts.externalStoreId,
+  });
+  const storeId = store.id;
   const maxPages = Math.min(Math.max(opts.maxPages ?? DEFAULT_MAX_PAGES, 1), MAX_MAX_PAGES);
   const startPage = Math.max(opts.startPage ?? 1, 1);
   const now = opts.now ?? new Date();
 
   const [staff, boxfulDispatched] = await Promise.all([
     listPayrollStaff(),
-    getDispatchedBoxfulKeys().catch(() => new Set<string>()),
+    getDispatchedBoxfulKeys(storeId).catch(() => new Set<string>()),
   ]);
   const staffLikes: StaffLike[] = staff.map((s) => ({
     id: s.id,
@@ -65,7 +73,7 @@ export async function runIcomflySync(opts: {
   // ── Agentes (catalogo) ────────────────────────────────────────────────────
   let agentsSynced = 0;
   try {
-    const agents = await listAgents({ storeId });
+    const agents = await listAgents({ storeId, externalStoreId });
     if (agents.length) {
       await upsertIcomflyAgents(
         agents.map((a) => ({
@@ -94,7 +102,7 @@ export async function runIcomflySync(opts: {
   let hasMore = false;
   let page = startPage;
   for (let i = 0; i < maxPages; i++) {
-    const res = await listOrdersWithAttribution({ storeId, page, limit: PAGE_LIMIT });
+    const res = await listOrdersWithAttribution({ storeId, externalStoreId, page, limit: PAGE_LIMIT });
     allOrders.push(...res.orders);
     pagesFetched += 1;
     hasMore = res.hasMore;

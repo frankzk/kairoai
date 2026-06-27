@@ -50,3 +50,7 @@ export function getFinanceStore(value?: string | null): FinanceStorePublic {
   return FINANCE_STORES.find((store) => store.code === code) ?? FINANCE_STORES[0];
 }
 
+export function getFinanceStoreById(id: number): FinanceStorePublic | null {
+  return FINANCE_STORES.find((store) => store.id === id) ?? null;
+}
+

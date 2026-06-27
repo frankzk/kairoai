@@ -4,7 +4,7 @@ import {
   listIcomflyAgents,
   listPayrollStaff,
 } from "@/lib/finance";
-import { defaultStoreId } from "@/lib/icomfly";
+import { getStoreFromBody, getStoreFromSearchParams } from "@/lib/stores";
 import { runIcomflySync, summarizeRows } from "@/lib/icomfly-sync";
 
 export const runtime = "nodejs";
@@ -13,10 +13,10 @@ export const maxDuration = 60;
 // GET: lee lo persistido + un resumen para el tablero/atribucion/productividad.
 export async function GET(req: NextRequest) {
   try {
-    const storeId = Number(req.nextUrl.searchParams.get("store_id") || defaultStoreId());
+    const store = getStoreFromSearchParams(req.nextUrl.searchParams);
     const [orders, agents, staff] = await Promise.all([
-      listIcomflyOrders({ storeId }),
-      listIcomflyAgents(storeId),
+      listIcomflyOrders({ storeId: store.id }),
+      listIcomflyAgents(store.id),
       listPayrollStaff(),
     ]);
     return NextResponse.json({ orders, agents, staff, summary: summarizeRows(orders) });
@@ -33,8 +33,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
+    const store = getStoreFromBody(body);
     const result = await runIcomflySync({
-      storeId: body.store_id != null ? Number(body.store_id) : undefined,
+      store: store.code,
       maxPages: body.max_pages != null ? Number(body.max_pages) : undefined,
       startPage: body.page != null ? Number(body.page) : undefined,
     });
