@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getIncident, patchIncident, recordIncidentEvent } from "@/lib/incidents";
 import type { Incident } from "@/lib/incidents-types";
 import { addOrderTag, cancelOrder } from "@/lib/shopify";
-import { FINANCE_STORES, getShopifyCredentials, getStoreConfig, getStoreFromSearchParams } from "@/lib/stores";
+import { FINANCE_STORES, getRequiredStoreFromSearchParams, getShopifyCredentials, getStoreConfig } from "@/lib/stores";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,14 @@ export async function POST(req: NextRequest) {
   const id = Number(body.id);
 
   try {
-    const storeId = getStoreFromSearchParams(req.nextUrl.searchParams).id;
+    const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+    if (!store) {
+      return NextResponse.json(
+        { error: "store requerido: usa mireva-cr o mireva-hn" },
+        { status: 400 }
+      );
+    }
+    const storeId = store.id;
     const incident = await getIncident(id, storeId);
     if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
 

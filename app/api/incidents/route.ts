@@ -13,7 +13,7 @@ import {
   updateIncident,
 } from "@/lib/incidents";
 import { getForzaTrackingByGuide, getMoovinTrackingByPackage } from "@/lib/finance";
-import { getStoreFromSearchParams } from "@/lib/stores";
+import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import type { Incident, IncidentCategory, IncidentSource, IncidentStatus, TrackingEvent } from "@/lib/incidents-types";
 
 export const runtime = "nodejs";
@@ -60,12 +60,19 @@ async function trackingEventsFor(incident: Incident): Promise<TrackingEvent[]> {
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
+  const store = getRequiredStoreFromSearchParams(sp);
+  if (!store) {
+    return NextResponse.json(
+      { error: "store requerido: usa mireva-cr o mireva-hn" },
+      { status: 400 }
+    );
+  }
   const idParam = sp.get("id");
 
   try {
     if (idParam) {
       const id = Number(idParam);
-      const incident = await getIncident(id, getStoreFromSearchParams(sp).id);
+      const incident = await getIncident(id, store.id);
       if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
       const events = await listIncidentEvents(id);
       const tracking_events = await trackingEventsFor(incident);
@@ -76,7 +83,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ incident, events, tracking_events, order_products });
     }
 
-    const store = getStoreFromSearchParams(sp);
     const storeId = store.id;
     const [incidents, counts, category_counts, exec] = await Promise.all([
       listIncidents({
@@ -105,6 +111,13 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) {
+    return NextResponse.json(
+      { error: "store requerido: usa mireva-cr o mireva-hn" },
+      { status: 400 }
+    );
+  }
   const body = await req.json().catch(() => null);
   if (!body || (!body.order_name && !body.guide_number && !body.customer_name && !body.customer_phone)) {
     return NextResponse.json(
@@ -121,7 +134,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const incident = await createIncident({
-      store_id: getStoreFromSearchParams(req.nextUrl.searchParams).id,
+      store_id: store.id,
       source: "manual",
       order_name: body.order_name ?? "",
       guide_number: body.guide_number ?? "",
@@ -143,6 +156,13 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) {
+    return NextResponse.json(
+      { error: "store requerido: usa mireva-cr o mireva-hn" },
+      { status: 400 }
+    );
+  }
   const body = await req.json().catch(() => null);
   if (!body?.id) return NextResponse.json({ error: "id requerido" }, { status: 400 });
   if (body.status && !STATUSES.has(body.status)) {
@@ -161,7 +181,7 @@ export async function PATCH(req: NextRequest) {
     const incident = await updateIncident(
       Number(body.id),
       updates,
-      getStoreFromSearchParams(req.nextUrl.searchParams).id
+      store.id
     );
     return NextResponse.json({ incident });
   } catch (err) {
