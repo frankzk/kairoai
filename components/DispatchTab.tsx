@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { AlertTriangle, Boxes, RefreshCw, Truck, UserCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { IcomflyOrderRecord, PayrollStaff } from "@/lib/finance-types";
+import type { FinanceStoreCode } from "@/lib/store-config";
 
 type DispatchState = IcomflyOrderRecord["dispatch_state"];
 
@@ -65,16 +66,16 @@ function StateBadge({ row }: { row: IcomflyOrderRecord }) {
   return <Badge variant="muted">Pendiente</Badge>;
 }
 
-export default function DispatchTab() {
+export default function DispatchTab({ storeCode }: { storeCode: FinanceStoreCode }) {
   const [data, setData] = useState<SyncResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<string>("");
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/icomfly/sync", { cache: "no-store" });
+      const res = await fetch(`/api/icomfly/sync?store=${encodeURIComponent(storeCode)}`, { cache: "no-store" });
       const body = (await res.json()) as SyncResponse;
       setData(body);
       if (body.error) setMessage(body.error);
@@ -83,11 +84,11 @@ export default function DispatchTab() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [storeCode]);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   async function sync() {
     setSyncing(true);
@@ -96,7 +97,7 @@ export default function DispatchTab() {
       const res = await fetch("/api/icomfly/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_pages: 10 }),
+        body: JSON.stringify({ store: storeCode, max_pages: 10 }),
       });
       const body = await res.json();
       if (body.error) {
