@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 
 const upsertProductCost = vi.fn();
 
@@ -74,6 +76,20 @@ describe("store-aware API route guards", () => {
     );
   });
 
+  it("requires store for iComfly manual sync route", async () => {
+    const route = await import("@/app/api/icomfly/sync/route");
+
+    await expectStoreRequired(await route.GET(req("http://test.local/api/icomfly/sync")));
+    await expectStoreRequired(
+      await route.POST(
+        req("http://test.local/api/icomfly/sync", {
+          method: "POST",
+          body: JSON.stringify({ max_pages: 1 }),
+        })
+      )
+    );
+  });
+
   it("requires store for bulk product costs and passes store id when present", async () => {
     const route = await import("@/app/api/finance/product-costs/bulk/route");
 
@@ -104,5 +120,27 @@ describe("store-aware API route guards", () => {
       expect.objectContaining({ sku: "ABC", unit_cost: 10 }),
       2
     );
+  });
+});
+
+function walkFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry);
+    return statSync(full).isDirectory() ? walkFiles(full) : [full];
+  });
+}
+
+describe("store-aware API audit", () => {
+  it("does not use soft default-store helpers inside API routes", () => {
+    const apiDir = path.join(process.cwd(), "app", "api");
+    const offenders = walkFiles(apiDir)
+      .filter((file) => file.endsWith(".ts") || file.endsWith(".tsx"))
+      .filter((file) => {
+        const text = readFileSync(file, "utf8");
+        return /\bgetStoreFrom(?:SearchParams|Body)\b/.test(text);
+      })
+      .map((file) => path.relative(process.cwd(), file));
+
+    expect(offenders).toEqual([]);
   });
 });

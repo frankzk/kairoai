@@ -1421,7 +1421,7 @@ export default function FinancePage() {
                 onLogisticsImport={handleLogisticsImport}
               />
             )}
-            {tab === "dispatch" && <DispatchTab />}
+            {tab === "dispatch" && <DispatchTab storeCode={selectedStore.code} />}
             {tab === "products" && (
               <ProductAnalysisTab
                 storeCode={selectedStore.code}
