@@ -6,13 +6,77 @@
 // token en memoria. (Mismo flujo que scripts/icomfly-probe.mjs.)
 
 import type { AttributionActor, NormalizedIcomflyOrder } from "./dispatch";
+import {
+  DEFAULT_FINANCE_STORE_CODE,
+  DEFAULT_FINANCE_STORE_ID,
+  FINANCE_STORES,
+  getFinanceStore,
+  getFinanceStoreById,
+  type FinanceStoreCode,
+  type FinanceStorePublic,
+} from "./store-config";
 
 const BASE = process.env.ICOMFLY_BASE || "https://api.icomfly.com/api";
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
+const ICOMFLY_STORE_ENV_BY_CODE: Record<FinanceStoreCode, string[]> = {
+  "mireva-cr": ["ICOMFLY_CR_STORE_ID", "ICOMFLY_STORE_ID"],
+  "mireva-hn": ["ICOMFLY_HN_STORE_ID"],
+};
+
 export function defaultStoreId(): number {
-  return Number(process.env.ICOMFLY_STORE_ID || 71);
+  const raw = process.env.ICOMFLY_STORE_ID;
+  return raw && !Number.isNaN(Number(raw)) ? Number(raw) : 71;
+}
+
+export interface IcomflyStoreContext {
+  store: FinanceStorePublic;
+  externalStoreId: number;
+}
+
+export function getIcomflyExternalStoreId(storeCode: FinanceStoreCode): number | null {
+  const envNames = ICOMFLY_STORE_ENV_BY_CODE[storeCode] ?? [];
+  for (const envName of envNames) {
+    const raw = process.env[envName];
+    if (raw != null && raw !== "" && !Number.isNaN(Number(raw))) return Number(raw);
+  }
+  if (storeCode === DEFAULT_FINANCE_STORE_CODE) return defaultStoreId();
+  return null;
+}
+
+export function resolveIcomflyStoreContext(opts: {
+  store?: string | null;
+  storeId?: number | null;
+  externalStoreId?: number | null;
+} = {}): IcomflyStoreContext {
+  let store: FinanceStorePublic;
+  if (opts.storeId != null) {
+    const internalStore = getFinanceStoreById(opts.storeId);
+    const externalStore = FINANCE_STORES.find(
+      (candidate) => getIcomflyExternalStoreId(candidate.code) === opts.storeId
+    );
+    const resolvedStore = internalStore ?? externalStore;
+    if (!resolvedStore) {
+      throw new Error(`Tienda iComfly no reconocida para store_id=${opts.storeId}. Envia store=mireva-cr o store=mireva-hn.`);
+    }
+    store = resolvedStore;
+  } else {
+    store = getFinanceStore(opts.store ?? DEFAULT_FINANCE_STORE_CODE);
+  }
+  const externalStoreId = opts.externalStoreId ?? getIcomflyExternalStoreId(store.code);
+  if (externalStoreId == null) {
+    const expectedEnv = ICOMFLY_STORE_ENV_BY_CODE[store.code]?.[0] ?? "ICOMFLY_STORE_ID";
+    throw new Error(`iComfly no configurado para ${store.label}: define ${expectedEnv}.`);
+  }
+  return { store, externalStoreId };
+}
+
+export function listConfiguredIcomflyStoreContexts(): IcomflyStoreContext[] {
+  return FINANCE_STORES.flatMap((store) => {
+    const externalStoreId = getIcomflyExternalStoreId(store.code);
+    return externalStoreId == null ? [] : [{ store, externalStoreId }];
+  });
 }
 
 async function getToken(): Promise<string> {
@@ -85,14 +149,16 @@ export interface IcomflyOrdersPage {
 
 export async function listOrdersWithAttribution(opts: {
   storeId?: number;
+  externalStoreId?: number;
   page?: number;
   limit?: number;
 }): Promise<IcomflyOrdersPage> {
-  const storeId = opts.storeId ?? defaultStoreId();
+  const storeId = opts.storeId ?? DEFAULT_FINANCE_STORE_ID;
+  const externalStoreId = opts.externalStoreId ?? defaultStoreId();
   const page = opts.page ?? 1;
   const limit = opts.limit ?? 100;
   const params = new URLSearchParams({
-    store_id: String(storeId),
+    store_id: String(externalStoreId),
     withAttribution: "1",
     page: String(page),
     limit: String(limit),
@@ -114,11 +180,12 @@ export interface IcomflyAgent {
 
 export async function listAgents(opts: {
   storeId?: number;
+  externalStoreId?: number;
   from?: string;
   to?: string;
 }): Promise<IcomflyAgent[]> {
-  const storeId = opts.storeId ?? defaultStoreId();
-  const params = new URLSearchParams({ store_id: String(storeId) });
+  const externalStoreId = opts.externalStoreId ?? defaultStoreId();
+  const params = new URLSearchParams({ store_id: String(externalStoreId) });
   if (opts.from) params.set("from", opts.from);
   if (opts.to) params.set("to", opts.to);
   const body = await icomflyFetch(`/metrics/agents?${params.toString()}`);
