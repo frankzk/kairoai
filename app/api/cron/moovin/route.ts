@@ -46,7 +46,9 @@ async function run(chainDetect: boolean) {
 
   for (let i = 0; i < candidates.length; i++) {
     if (i > 0) await sleep(PER_REQUEST_DELAY_MS);
-    const tracking = await fetchMoovinTracking(candidates[i].idPackage, candidates[i].lastName);
+    const tracking = await fetchMoovinTracking(candidates[i].idPackage, candidates[i].lastName, {
+      fullName: candidates[i].fullName,
+    });
     if (!tracking.ok || !tracking.latest_status) {
       failed += 1;
       continue;

@@ -1627,7 +1627,7 @@ function OrdersTab({
     EMPTY_SETTLEMENT_COUNTS
   );
   const [enRouteGuides, setEnRouteGuides] = useState<{
-    moovin: Array<{ idPackage: string; lastName: string }>;
+    moovin: Array<{ idPackage: string; lastName: string; fullName: string }>;
     forza: Array<{ guide: string }>;
   }>({ moovin: [], forza: [] });
   const [tableLoading, setTableLoading] = useState(true);
@@ -1718,7 +1718,7 @@ function OrdersTab({
         if (!res.ok) return;
         setEnRouteGuides(
           (json.enRouteGuides as {
-            moovin: Array<{ idPackage: string; lastName: string }>;
+            moovin: Array<{ idPackage: string; lastName: string; fullName: string }>;
             forza: Array<{ guide: string }>;
           }) ?? { moovin: [], forza: [] }
         );
@@ -2347,6 +2347,7 @@ function OrdersTable({
                       <MoovinTrackingButton
                         idPackage={row.guide_number}
                         lastName={row.last_name ?? ""}
+                        fullName={row.customer_name ?? ""}
                         cached={moovinByPackage.get(row.guide_number)}
                       />
                     )}
@@ -2436,6 +2437,7 @@ function OrdersTable({
                         <MoovinTrackingButton
                           idPackage={row.guide_number}
                           lastName={row.last_name ?? ""}
+                          fullName={row.customer_name ?? ""}
                           cached={moovinByPackage.get(row.guide_number)}
                         />
                       )}
@@ -2626,6 +2628,7 @@ interface MoovinTrackingEvent {
 interface MoovinTrackingResult {
   ok?: boolean;
   error?: string;
+  last_name?: string;
   tracking_number?: string;
   latest_status?: string | null;
   latest_group?: MoovinTrackingEvent["group"] | null;
@@ -2637,10 +2640,12 @@ interface MoovinTrackingResult {
 function MoovinTrackingButton({
   idPackage,
   lastName,
+  fullName,
   cached,
 }: {
   idPackage: string;
   lastName: string;
+  fullName?: string;
   cached?: MoovinTrackingRow;
 }) {
   const [open, setOpen] = useState(false);
@@ -2678,7 +2683,12 @@ function MoovinTrackingButton({
         </button>
       )}
       {open && (
-        <MoovinTrackingModal idPackage={idPackage} lastName={lastName} onClose={() => setOpen(false)} />
+        <MoovinTrackingModal
+          idPackage={idPackage}
+          lastName={lastName}
+          fullName={fullName}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );
@@ -2687,10 +2697,12 @@ function MoovinTrackingButton({
 function MoovinTrackingModal({
   idPackage,
   lastName,
+  fullName,
   onClose,
 }: {
   idPackage: string;
   lastName: string;
+  fullName?: string;
   onClose: () => void;
 }) {
   const [loading, setLoading] = useState(true);
@@ -2701,10 +2713,9 @@ function MoovinTrackingModal({
     let cancelled = false;
     setLoading(true);
     setError("");
-    fetch(
-      `/api/finance/moovin-tracking?idPackage=${encodeURIComponent(idPackage)}&lastName=${encodeURIComponent(lastName)}`,
-      { cache: "no-store" }
-    )
+    const params = new URLSearchParams({ idPackage, lastName });
+    if (fullName) params.set("fullName", fullName);
+    fetch(`/api/finance/moovin-tracking?${params.toString()}`, { cache: "no-store" })
       .then((res) => res.json())
       .then((json: MoovinTrackingResult) => {
         if (cancelled) return;
@@ -2723,9 +2734,12 @@ function MoovinTrackingModal({
     return () => {
       cancelled = true;
     };
-  }, [idPackage, lastName]);
+  }, [idPackage, lastName, fullName]);
 
   const events = data?.events ?? [];
+  // Apellido que finalmente resolvio el lookup: puede diferir del enviado cuando
+  // se reintento con un candidato derivado del nombre completo.
+  const matchedLastName = data?.last_name?.trim() || lastName;
 
   return (
     <ModalOverlay onClose={onClose} labelledBy="moovin-tracking-title">
@@ -2737,7 +2751,7 @@ function MoovinTrackingModal({
             </h3>
             <p className="font-mono text-xs text-muted-foreground">
               Guia {idPackage}
-              {lastName ? ` · ${lastName}` : ""}
+              {matchedLastName ? ` · ${matchedLastName}` : ""}
             </p>
           </div>
           <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>

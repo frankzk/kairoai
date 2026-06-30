@@ -51,12 +51,85 @@ export interface MoovinTracking {
   raw?: string;
 }
 
+// Espera entre reintentos con apellidos alternativos. Solo se aplica cuando
+// Moovin respondio pero no se pudo interpretar (apellido equivocado), no en la
+// via feliz, asi que casi nunca corre. Corto para no demorar el modal.
+const MOOVIN_RETRY_DELAY_MS = 300;
+// Tope de apellidos a probar por guia: protege el maxDuration de la ruta si
+// Moovin contestara rapido pero ilegible en cada intento.
+const MOOVIN_MAX_CANDIDATES = 5;
+
+function moovinSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Apellidos candidatos para el lookup, en orden de prioridad. Moovin indexa por
+// el apellido tal cual lo registro Boxful; Shopify a veces mete el nombre
+// completo en last_name o parte mal los dos apellidos ticos, asi que cuando el
+// valor principal no resuelve probamos variantes derivadas del nombre.
+export function moovinLastNameCandidates(lastName: string, fullName?: string): string[] {
+  const norm = (v: string) => v.trim().replace(/\s+/g, " ");
+  const ln = norm(lastName ?? "");
+  const fn = norm(fullName ?? "");
+  const lastTokens = (s: string, n: number) => {
+    const parts = s.split(" ");
+    return parts.length > n ? parts.slice(-n).join(" ") : "";
+  };
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: string) => {
+    const t = norm(value);
+    if (!t) return;
+    const key = t.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(t);
+  };
+
+  push(ln); // 1. Boxful Apellido / valor actual
+  if (fn) push(lastTokens(fn, 2)); // 2. dos apellidos ticos del nombre completo (fix mas comun)
+  push(lastTokens(ln, 2)); // 3. por si last_name trae el nombre completo
+  push(lastTokens(ln, 1)); // 4. un solo apellido
+  if (fn) push(lastTokens(fn, 1)); // 5. ultimo token del nombre completo
+  if (fn) push(fn); // 6. ultimo recurso: nombre completo
+  return out.slice(0, MOOVIN_MAX_CANDIDATES);
+}
+
+interface MoovinAttempt {
+  tracking: MoovinTracking;
+  // Se interpreto un payload con listStatus: es una respuesta util, no se sigue
+  // probando apellidos.
+  parsed: boolean;
+  // Moovin no respondio (timeout/red): no insistir con mas candidatos, solo
+  // multiplicaria la espera.
+  networkError: boolean;
+}
+
+// Consulta Moovin probando los apellidos candidatos hasta que uno devuelva un
+// tracking interpretable. Conserva en `last_name` el apellido que funciono para
+// que la cache y la UI queden con el valor correcto.
 export async function fetchMoovinTracking(
   idPackage: string,
   lastName: string,
-  options: { includeRaw?: boolean } = {}
+  options: { includeRaw?: boolean; fullName?: string } = {}
 ): Promise<MoovinTracking> {
-  const base: MoovinTracking = {
+  const candidates = moovinLastNameCandidates(lastName, options.fullName);
+  const attempts = candidates.length ? candidates : [lastName.trim()];
+
+  let lastTracking: MoovinTracking | null = null;
+  for (let i = 0; i < attempts.length; i++) {
+    if (i > 0) await moovinSleep(MOOVIN_RETRY_DELAY_MS);
+    const attempt = await attemptMoovinFetch(idPackage, attempts[i], options);
+    if (attempt.parsed) return attempt.tracking;
+    lastTracking = attempt.tracking;
+    if (attempt.networkError) break;
+  }
+  return lastTracking ?? attemptBase(idPackage, lastName);
+}
+
+function attemptBase(idPackage: string, lastName: string): MoovinTracking {
+  return {
     ok: false,
     http_status: 0,
     id_package: idPackage,
@@ -72,6 +145,14 @@ export async function fetchMoovinTracking(
     incident_reason: "",
     events: [],
   };
+}
+
+async function attemptMoovinFetch(
+  idPackage: string,
+  lastName: string,
+  options: { includeRaw?: boolean } = {}
+): Promise<MoovinAttempt> {
+  const base = attemptBase(idPackage, lastName);
 
   const pageUrl = `${MOOVIN_BASE}/?tracking/lastName=${encodeURIComponent(
     lastName
@@ -111,36 +192,52 @@ export async function fetchMoovinTracking(
     const detail = parseMoovinResponse(text);
     if (!detail) {
       return {
-        ...base,
-        http_status: res.status,
-        error: "No se pudo interpretar la respuesta de Moovin",
-        ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
+        tracking: {
+          ...base,
+          http_status: res.status,
+          error: "No se pudo interpretar la respuesta de Moovin",
+          ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
+        },
+        parsed: false,
+        networkError: false,
       };
     }
 
     const latest = detail.events[0] ?? null;
     const incident = computeIncident(detail.events);
     return {
-      ...base,
-      ok: res.ok,
-      http_status: res.status,
-      tracking_number: detail.tracking_number,
-      profile: detail.profile,
-      latest_status: latest?.title ?? null,
-      latest_status_code: latest?.code ?? null,
-      latest_group: latest?.group ?? null,
-      latest_at: latest?.date ?? null,
-      delivery_address: detail.delivery_address,
-      has_incident: incident.active,
-      incident_reason: incident.reason,
-      events: detail.events,
-      ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
+      tracking: {
+        ...base,
+        ok: res.ok,
+        http_status: res.status,
+        tracking_number: detail.tracking_number,
+        profile: detail.profile,
+        latest_status: latest?.title ?? null,
+        latest_status_code: latest?.code ?? null,
+        latest_group: latest?.group ?? null,
+        latest_at: latest?.date ?? null,
+        delivery_address: detail.delivery_address,
+        has_incident: incident.active,
+        incident_reason: incident.reason,
+        events: detail.events,
+        ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
+      },
+      parsed: true,
+      networkError: false,
     };
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      return { ...base, error: "Moovin no respondio a tiempo (timeout)." };
+      return {
+        tracking: { ...base, error: "Moovin no respondio a tiempo (timeout)." },
+        parsed: false,
+        networkError: true,
+      };
     }
-    return { ...base, error: err instanceof Error ? err.message : "Error consultando Moovin" };
+    return {
+      tracking: { ...base, error: err instanceof Error ? err.message : "Error consultando Moovin" },
+      parsed: false,
+      networkError: true,
+    };
   } finally {
     clearTimeout(abortTimer);
   }

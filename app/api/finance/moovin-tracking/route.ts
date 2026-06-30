@@ -10,12 +10,15 @@ export const maxDuration = 30;
 export async function GET(req: NextRequest) {
   const idPackage = (req.nextUrl.searchParams.get("idPackage") || "").trim();
   const lastName = (req.nextUrl.searchParams.get("lastName") || "").trim();
+  // Nombre completo del cliente: permite derivar los dos apellidos ticos cuando
+  // el last_name (de Shopify) viene mal partido y el principal no resuelve.
+  const fullName = (req.nextUrl.searchParams.get("fullName") || "").trim();
   const includeRaw = req.nextUrl.searchParams.get("raw") === "1";
   if (!idPackage) {
     return NextResponse.json({ error: "idPackage requerido" }, { status: 400 });
   }
 
-  const tracking = await fetchMoovinTracking(idPackage, lastName, { includeRaw });
+  const tracking = await fetchMoovinTracking(idPackage, lastName, { includeRaw, fullName });
 
   if (tracking.ok && tracking.latest_status) {
     try {

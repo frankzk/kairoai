@@ -34,6 +34,7 @@ const FRESH_WINDOW_MINUTES = Number(process.env.MOOVIN_FRESH_WINDOW_MIN ?? 20);
 interface RequestedPackage {
   idPackage: string;
   lastName: string;
+  fullName?: string;
 }
 
 export async function GET() {
@@ -59,7 +60,11 @@ export async function POST(req: NextRequest) {
     }
 
     const valid = requested
-      .map((p) => ({ idPackage: String(p.idPackage ?? "").trim(), lastName: String(p.lastName ?? "").trim() }))
+      .map((p) => ({
+        idPackage: String(p.idPackage ?? "").trim(),
+        lastName: String(p.lastName ?? "").trim(),
+        fullName: String(p.fullName ?? "").trim(),
+      }))
       .filter((p) => p.idPackage)
       .slice(0, MAX_PACKAGES_PER_CALL);
 
@@ -74,7 +79,9 @@ export async function POST(req: NextRequest) {
 
     for (let i = 0; i < toCheck.length; i++) {
       if (i > 0) await sleep(PER_REQUEST_DELAY_MS);
-      const tracking = await fetchMoovinTracking(toCheck[i].idPackage, toCheck[i].lastName);
+      const tracking = await fetchMoovinTracking(toCheck[i].idPackage, toCheck[i].lastName, {
+        fullName: toCheck[i].fullName,
+      });
       if (!tracking.ok || !tracking.latest_status) {
         failedLookups += 1;
         continue;
