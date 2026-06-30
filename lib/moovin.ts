@@ -1,13 +1,17 @@
 // Cliente y parser del tracking de Moovin, compartido por el endpoint bajo
-// demanda y el lote. La pagina publica de Moovin es Next.js: renderiza el
-// tracking server-side a partir de los searchParams (?tracking/lastName&idPackage),
-// asi que un GET normal ya trae los datos incrustados en el HTML. Esa es la via
-// principal porque NO depende del id de Server Action, que cambia en cada
-// redespliegue de Moovin y deja el lookup ciego. El POST con next-action queda
-// como respaldo por compatibilidad (configurable por env).
+// demanda y el lote. La pagina publica de Moovin es Next.js y hace bailout a
+// client-side rendering: el HTML solo trae "Cargando..." y los datos los pide el
+// navegador con un POST de Server Action (body [idPackage,"",""], el apellido va
+// solo en la URL). Por eso replicamos ese POST con el header next-action.
+//
+// El id de la accion cambia en CADA redespliegue de Moovin y entonces Next.js no
+// ejecuta la accion -> respuesta sin listStatus -> "No se pudo interpretar". Para
+// que el lookup se auto-repare sin tocar env vars, si el id conocido falla se
+// descubre el id vigente leyendo los chunks JS del bundle (ver discoverActionIds)
+// y se cachea el que funciona. MOOVIN_NEXT_ACTION es solo la semilla por defecto.
 const MOOVIN_BASE = "https://utilities.moovin.me";
 const MOOVIN_NEXT_ACTION =
-  process.env.MOOVIN_NEXT_ACTION || "7fae531bab4ee20b1f874b0fafcfa412a52a5a165f";
+  process.env.MOOVIN_NEXT_ACTION || "7f6d3afc07259da244f5fca31a6a6122df262750a5";
 const MOOVIN_COOKIE = process.env.MOOVIN_COOKIE || "";
 const MOOVIN_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -152,28 +156,20 @@ function attemptBase(idPackage: string, lastName: string): MoovinTracking {
   };
 }
 
-// GET a la pagina publica: Moovin renderiza el tracking server-side desde la URL,
-// asi que el HTML ya trae el payload incrustado. No depende del next-action.
-function moovinGet(pageUrl: string, signal: AbortSignal): Promise<Response> {
-  return fetch(pageUrl, {
-    method: "GET",
-    signal,
-    headers: {
-      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "accept-language": "es,es-419;q=0.9",
-      "user-agent": MOOVIN_UA,
-      ...(MOOVIN_COOKIE ? { cookie: MOOVIN_COOKIE } : {}),
-    },
-    cache: "no-store",
-  });
-}
+// El id de Server Action vigente cambia en cada redespliegue de Moovin. Se cachea
+// el ultimo que devolvio datos (cachedGoodActionId) para usarlo de primero; si
+// deja de servir, se redescubre del bundle. discoveredIds cachea el resultado del
+// scrape unos segundos para no rebajar el bundle por cada guia de un lote.
+let cachedGoodActionId: string | null = null;
+let discoveredIds: string[] = [];
+let discoveredAt = 0;
+const DISCOVERY_TTL_MS = 60_000;
 
-// POST de Server Action (via legada). Solo sirve si MOOVIN_NEXT_ACTION coincide
-// con el id desplegado en Moovin; queda como respaldo del GET.
 function moovinPostAction(
   idPackage: string,
   lastName: string,
   pageUrl: string,
+  actionId: string,
   signal: AbortSignal
 ): Promise<Response> {
   const routerStateTree = JSON.stringify([
@@ -189,7 +185,7 @@ function moovinPostAction(
     headers: {
       accept: "text/x-component",
       "content-type": "text/plain;charset=UTF-8",
-      "next-action": MOOVIN_NEXT_ACTION,
+      "next-action": actionId,
       "next-router-state-tree": routerStateTree,
       origin: MOOVIN_BASE,
       referer: pageUrl,
@@ -199,6 +195,70 @@ function moovinPostAction(
     body: JSON.stringify([idPackage, "", ""]),
     cache: "no-store",
   });
+}
+
+// Un POST con un id de accion concreto, ya interpretado a MoovinAttempt.
+async function postMoovinAction(
+  idPackage: string,
+  lastName: string,
+  pageUrl: string,
+  actionId: string,
+  base: MoovinTracking,
+  options: { includeRaw?: boolean }
+): Promise<MoovinAttempt> {
+  // Corte duro: Moovin scrapea su web publica y puede colgarse; sin timeout el
+  // modal gira hasta que muere la funcion serverless (~30s).
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const res = await moovinPostAction(idPackage, lastName, pageUrl, actionId, controller.signal);
+    const text = await res.text();
+    const detail = parseMoovinResponse(text);
+    if (!detail) {
+      return {
+        tracking: {
+          ...base,
+          http_status: res.status,
+          error: "No se pudo interpretar la respuesta de Moovin",
+          ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
+        },
+        parsed: false,
+        networkError: false,
+      };
+    }
+    const latest = detail.events[0] ?? null;
+    const incident = computeIncident(detail.events);
+    return {
+      tracking: {
+        ...base,
+        ok: res.ok,
+        http_status: res.status,
+        tracking_number: detail.tracking_number,
+        profile: detail.profile,
+        latest_status: latest?.title ?? null,
+        latest_status_code: latest?.code ?? null,
+        latest_group: latest?.group ?? null,
+        latest_at: latest?.date ?? null,
+        delivery_address: detail.delivery_address,
+        has_incident: incident.active,
+        incident_reason: incident.reason,
+        events: detail.events,
+        ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
+      },
+      parsed: true,
+      networkError: false,
+    };
+  } catch (err) {
+    const error =
+      err instanceof Error && err.name === "AbortError"
+        ? "Moovin no respondio a tiempo (timeout)."
+        : err instanceof Error
+          ? err.message
+          : "Error consultando Moovin";
+    return { tracking: { ...base, error }, parsed: false, networkError: true };
+  } finally {
+    clearTimeout(abortTimer);
+  }
 }
 
 async function attemptMoovinFetch(
@@ -211,80 +271,124 @@ async function attemptMoovinFetch(
     lastName
   )}&idPackage=${encodeURIComponent(idPackage)}`;
 
-  // Orden de robustez: primero el GET (a prueba de redespliegues), luego el POST
-  // legado. La primera estrategia que devuelva un payload interpretable gana.
-  const strategies: Array<(signal: AbortSignal) => Promise<Response>> = [
-    (signal) => moovinGet(pageUrl, signal),
-    (signal) => moovinPostAction(idPackage, lastName, pageUrl, signal),
-  ];
+  // Ids a probar, en orden: el ultimo que funciono y el configurado/por defecto.
+  // Si todos fallan en interpretar, se descubre el id vigente del bundle.
+  const ids: string[] = [];
+  const addId = (id: string | null | undefined) => {
+    if (id && !ids.includes(id)) ids.push(id);
+  };
+  addId(cachedGoodActionId);
+  addId(MOOVIN_NEXT_ACTION);
 
   let unparsed: MoovinAttempt | null = null;
   let networkErr: MoovinAttempt | null = null;
+  let discovered = false;
 
-  for (const run of strategies) {
-    // Corte duro por estrategia: Moovin scrapea su web publica y puede colgarse;
-    // sin timeout el modal gira hasta que muere la funcion serverless (~30s).
-    const controller = new AbortController();
-    const abortTimer = setTimeout(() => controller.abort(), 12000);
-    try {
-      const res = await run(controller.signal);
-      const text = await res.text();
-      const detail = parseMoovinResponse(text);
-      if (!detail) {
-        // Se conserva el PRIMER no-interpretable (el GET, via principal) para que
-        // el modo debug (?raw=1) muestre la respuesta que deberia traer los datos.
-        unparsed ??= {
-          tracking: {
-            ...base,
-            http_status: res.status,
-            error: "No se pudo interpretar la respuesta de Moovin",
-            ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
-          },
-          parsed: false,
-          networkError: false,
-        };
-        continue;
-      }
+  for (let i = 0; i < ids.length; i++) {
+    const result = await postMoovinAction(idPackage, lastName, pageUrl, ids[i], base, options);
+    if (result.parsed) {
+      cachedGoodActionId = ids[i];
+      return result;
+    }
+    if (result.networkError) networkErr = result;
+    else unparsed ??= result; // se conserva el primer "no interpretable" para ?raw=1
 
-      const latest = detail.events[0] ?? null;
-      const incident = computeIncident(detail.events);
-      return {
-        tracking: {
-          ...base,
-          ok: res.ok,
-          http_status: res.status,
-          tracking_number: detail.tracking_number,
-          profile: detail.profile,
-          latest_status: latest?.title ?? null,
-          latest_status_code: latest?.code ?? null,
-          latest_group: latest?.group ?? null,
-          latest_at: latest?.date ?? null,
-          delivery_address: detail.delivery_address,
-          has_incident: incident.active,
-          incident_reason: incident.reason,
-          events: detail.events,
-          ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
-        },
-        parsed: true,
-        networkError: false,
-      };
-    } catch (err) {
-      const error =
-        err instanceof Error && err.name === "AbortError"
-          ? "Moovin no respondio a tiempo (timeout)."
-          : err instanceof Error
-            ? err.message
-            : "Error consultando Moovin";
-      networkErr = { tracking: { ...base, error }, parsed: false, networkError: true };
-    } finally {
-      clearTimeout(abortTimer);
+    // Agotados los ids conocidos sin exito: descubrir el id vigente y seguir.
+    if (i === ids.length - 1 && !discovered) {
+      discovered = true;
+      for (const id of await getDiscoveredActionIds()) addId(id);
     }
   }
 
-  // Ninguna estrategia interpreto: preferimos reportar "no interpretable" (hubo
-  // respuesta) sobre el error de red, y solo marcamos networkError si TODAS
-  // fallaron por red (para que el reintento por apellidos no insista en vano).
+  // Se prefiere reportar "no interpretable" (hubo respuesta) sobre el error de
+  // red, y solo se marca networkError si NINGUN intento obtuvo respuesta (para
+  // que el reintento por apellidos no insista en vano).
   return unparsed ?? networkErr ?? { tracking: base, parsed: false, networkError: true };
+}
+
+// Ids de Server Action descubiertos del bundle, con cache corta para no rebajar
+// los chunks por cada guia de un lote tras un redespliegue.
+async function getDiscoveredActionIds(): Promise<string[]> {
+  const now = Date.now();
+  if (discoveredIds.length && now - discoveredAt < DISCOVERY_TTL_MS) return discoveredIds;
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const ids = await discoverActionIds(controller.signal);
+    if (ids.length) {
+      discoveredIds = ids;
+      discoveredAt = now;
+    }
+    return ids;
+  } catch {
+    return discoveredIds;
+  } finally {
+    clearTimeout(abortTimer);
+  }
+}
+
+// Descubre los ids de Server Action vigentes leyendo los chunks JS del App Router
+// de Moovin: baja la pagina, ordena los chunks por probabilidad de contener la
+// accion y los escanea hasta el primer hallazgo. Asi el lookup se auto-repara
+// cuando Moovin redespliega, sin actualizar la env var a mano.
+async function discoverActionIds(signal: AbortSignal): Promise<string[]> {
+  const pageRes = await fetch(`${MOOVIN_BASE}/`, {
+    method: "GET",
+    signal,
+    headers: {
+      accept: "text/html",
+      "user-agent": MOOVIN_UA,
+      ...(MOOVIN_COOKIE ? { cookie: MOOVIN_COOKIE } : {}),
+    },
+    cache: "no-store",
+  });
+  const html = await pageRes.text();
+  const chunks = Array.from(
+    new Set(
+      Array.from(html.matchAll(/\/_next\/static\/chunks\/[A-Za-z0-9._/-]+?\.js(?:\?[^"']*)?/g)).map(
+        (m) => m[0]
+      )
+    )
+  ).sort((a, b) => actionChunkScore(b) - actionChunkScore(a));
+
+  const ids = new Set<string>();
+  for (const path of chunks.slice(0, 8)) {
+    try {
+      const url = path.startsWith("http") ? path : `${MOOVIN_BASE}${path}`;
+      const res = await fetch(url, { signal, headers: { "user-agent": MOOVIN_UA }, cache: "no-store" });
+      const js = await res.text();
+      for (const id of extractActionIds(js)) ids.add(id);
+      if (ids.size) break;
+    } catch {
+      // Chunk inaccesible; se sigue con el resto.
+    }
+  }
+  return Array.from(ids);
+}
+
+// Heuristica de prioridad: el page chunk y los vendor numerados (p.ej. 684-*)
+// referencian la accion; webpack/polyfills/main-app casi nunca.
+function actionChunkScore(path: string): number {
+  if (path.includes("/app/page-")) return 3;
+  if (/\/chunks\/\d+-/.test(path)) return 2;
+  if (path.includes("webpack") || path.includes("polyfills") || path.includes("main-app")) return 0;
+  return 1;
+}
+
+// Extrae ids de Server Action de un bundle JS. Next.js los pasa como literal a
+// createServerReference("<id>", ...); el id es hex (~42 chars). Exportado para
+// tests.
+export function extractActionIds(js: string): string[] {
+  const ids = new Set<string>();
+  for (const m of Array.from(js.matchAll(/createServerReference\)?\(\s*"([0-9a-f]{30,50})"/g))) {
+    ids.add(m[1]);
+  }
+  // Respaldo por si la minificacion oculta el nombre: literales hex del tamano
+  // tipico del id de accion.
+  if (!ids.size) {
+    for (const m of Array.from(js.matchAll(/"([0-9a-f]{40,44})"/g))) ids.add(m[1]);
+  }
+  return Array.from(ids);
 }
 
 // Incidencia activa = el evento mas reciente es FAILED. Si despues hubo una
@@ -327,14 +431,10 @@ function classifyMoovinGroup(code: string, title: string): MoovinGroup {
   return "in_progress";
 }
 
-// Exportado para tests: interpreta tanto la respuesta RSC del Server Action como
-// el HTML del GET a la pagina.
+// Exportado para tests. La respuesta del Server Action es un stream RSC con
+// lineas "<n>:{...}"; el tracking viene en la linea cuyo objeto trae listStatus.
 export function parseMoovinResponse(raw: string): MoovinDetail | null {
-  // Dos formatos posibles: (1) respuesta RSC / Server Action, con lineas
-  // "<n>:{...}" directas; (2) HTML del GET a la pagina, con el stream RSC
-  // incrustado en <script>self.__next_f.push([1,"..."])</script>. Reensamblar el
-  // segundo produce el mismo formato del primero, asi que se reusa el parser.
-  const payload = findTrackingPayload(raw) ?? findTrackingPayload(extractNextFlight(raw));
+  const payload = findTrackingPayload(raw);
   if (!payload || !Array.isArray(payload.listStatus)) return null;
 
   const events: MoovinEvent[] = payload.listStatus
@@ -382,23 +482,4 @@ function findTrackingPayload(raw: string): RawPayload | null {
     }
   }
   return null;
-}
-
-// Reensambla el stream RSC que Next.js incrusta en el HTML como
-// self.__next_f.push([1,"<chunk>"]). Cada chunk es un literal JSON string; al
-// concatenarlos en orden se reconstruye el mismo flight con lineas "<n>:{...}"
-// que devuelve el Server Action, asi findTrackingPayload lo procesa igual.
-function extractNextFlight(html: string): string {
-  if (!html.includes("self.__next_f")) return "";
-  const chunks: string[] = [];
-  const re = /self\.__next_f\.push\(\[1,\s*("(?:[^"\\]|\\.)*")\]\)/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(html)) !== null) {
-    try {
-      chunks.push(JSON.parse(match[1]) as string);
-    } catch {
-      // Chunk truncado o no parseable; se ignora.
-    }
-  }
-  return chunks.join("");
 }

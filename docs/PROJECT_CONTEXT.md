@@ -809,9 +809,14 @@ Build in this order:
   sortable by header.
 
 ### Moovin courier tracking (lib/moovin.ts, migration 0006)
-- Moovin's public tracking is a Next.js Server Action; replicated server-side with
-  the `next-action` header (configurable via `MOOVIN_NEXT_ACTION` env because it
-  rotates on Moovin redeploys; optional `MOOVIN_COOKIE`).
+- Moovin's public tracking is a Next.js Server Action (the page bails out to CSR, so
+  the data only comes from the action POST, body `[idPackage,"",""]` — the lastName
+  rides in the URL only). Replicated server-side with the `next-action` header.
+- The action id rotates on every Moovin redeploy, which silently broke every lookup
+  ("No se pudo interpretar"). It now **self-heals**: if the known id fails to parse,
+  `discoverActionIds` scrapes the current id from Moovin's JS bundle, caches the one
+  that works, and retries. `MOOVIN_NEXT_ACTION` is just the seed default (optional
+  `MOOVIN_COOKIE`).
 - `GET /api/finance/moovin-tracking?idPackage=&lastName=` — on-demand lookup, caches
   result. `POST/GET /api/finance/moovin-sync` — batch update of en-route Moovin
   orders (rate-limited, skips guides checked within 6h) and cache read.
