@@ -1,11 +1,16 @@
 // Cliente y parser del tracking de Moovin, compartido por el endpoint bajo
-// demanda y el lote. La pagina publica de Moovin es Next.js con Server Actions;
-// se replica el POST con el header next-action. El id de la accion cambia
-// cuando Moovin redespliega, por eso es configurable por env.
+// demanda y el lote. La pagina publica de Moovin es Next.js: renderiza el
+// tracking server-side a partir de los searchParams (?tracking/lastName&idPackage),
+// asi que un GET normal ya trae los datos incrustados en el HTML. Esa es la via
+// principal porque NO depende del id de Server Action, que cambia en cada
+// redespliegue de Moovin y deja el lookup ciego. El POST con next-action queda
+// como respaldo por compatibilidad (configurable por env).
 const MOOVIN_BASE = "https://utilities.moovin.me";
 const MOOVIN_NEXT_ACTION =
   process.env.MOOVIN_NEXT_ACTION || "7fae531bab4ee20b1f874b0fafcfa412a52a5a165f";
 const MOOVIN_COOKIE = process.env.MOOVIN_COOKIE || "";
+const MOOVIN_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const MOOVIN_STATUS_GROUP: Record<string, MoovinGroup> = {
   DELIVERED: "delivered",
@@ -147,16 +152,30 @@ function attemptBase(idPackage: string, lastName: string): MoovinTracking {
   };
 }
 
-async function attemptMoovinFetch(
+// GET a la pagina publica: Moovin renderiza el tracking server-side desde la URL,
+// asi que el HTML ya trae el payload incrustado. No depende del next-action.
+function moovinGet(pageUrl: string, signal: AbortSignal): Promise<Response> {
+  return fetch(pageUrl, {
+    method: "GET",
+    signal,
+    headers: {
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "accept-language": "es,es-419;q=0.9",
+      "user-agent": MOOVIN_UA,
+      ...(MOOVIN_COOKIE ? { cookie: MOOVIN_COOKIE } : {}),
+    },
+    cache: "no-store",
+  });
+}
+
+// POST de Server Action (via legada). Solo sirve si MOOVIN_NEXT_ACTION coincide
+// con el id desplegado en Moovin; queda como respaldo del GET.
+function moovinPostAction(
   idPackage: string,
   lastName: string,
-  options: { includeRaw?: boolean } = {}
-): Promise<MoovinAttempt> {
-  const base = attemptBase(idPackage, lastName);
-
-  const pageUrl = `${MOOVIN_BASE}/?tracking/lastName=${encodeURIComponent(
-    lastName
-  )}&idPackage=${encodeURIComponent(idPackage)}`;
+  pageUrl: string,
+  signal: AbortSignal
+): Promise<Response> {
   const routerStateTree = JSON.stringify([
     "",
     { children: ["__PAGE__", {}, `/?tracking/lastName=${lastName}&idPackage=${idPackage}`, "refresh"] },
@@ -164,83 +183,108 @@ async function attemptMoovinFetch(
     null,
     true,
   ]);
+  return fetch(pageUrl, {
+    method: "POST",
+    signal,
+    headers: {
+      accept: "text/x-component",
+      "content-type": "text/plain;charset=UTF-8",
+      "next-action": MOOVIN_NEXT_ACTION,
+      "next-router-state-tree": routerStateTree,
+      origin: MOOVIN_BASE,
+      referer: pageUrl,
+      "user-agent": MOOVIN_UA,
+      ...(MOOVIN_COOKIE ? { cookie: MOOVIN_COOKIE } : {}),
+    },
+    body: JSON.stringify([idPackage, "", ""]),
+    cache: "no-store",
+  });
+}
 
-  // Corte duro: Moovin scrapea su web pública y puede colgarse; sin timeout el
-  // modal gira hasta que muere la función serverless (~30s).
-  const controller = new AbortController();
-  const abortTimer = setTimeout(() => controller.abort(), 12000);
-  try {
-    const res = await fetch(pageUrl, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        accept: "text/x-component",
-        "content-type": "text/plain;charset=UTF-8",
-        "next-action": MOOVIN_NEXT_ACTION,
-        "next-router-state-tree": routerStateTree,
-        origin: MOOVIN_BASE,
-        referer: pageUrl,
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        ...(MOOVIN_COOKIE ? { cookie: MOOVIN_COOKIE } : {}),
-      },
-      body: JSON.stringify([idPackage, "", ""]),
-      cache: "no-store",
-    });
+async function attemptMoovinFetch(
+  idPackage: string,
+  lastName: string,
+  options: { includeRaw?: boolean } = {}
+): Promise<MoovinAttempt> {
+  const base = attemptBase(idPackage, lastName);
+  const pageUrl = `${MOOVIN_BASE}/?tracking/lastName=${encodeURIComponent(
+    lastName
+  )}&idPackage=${encodeURIComponent(idPackage)}`;
 
-    const text = await res.text();
-    const detail = parseMoovinResponse(text);
-    if (!detail) {
+  // Orden de robustez: primero el GET (a prueba de redespliegues), luego el POST
+  // legado. La primera estrategia que devuelva un payload interpretable gana.
+  const strategies: Array<(signal: AbortSignal) => Promise<Response>> = [
+    (signal) => moovinGet(pageUrl, signal),
+    (signal) => moovinPostAction(idPackage, lastName, pageUrl, signal),
+  ];
+
+  let unparsed: MoovinAttempt | null = null;
+  let networkErr: MoovinAttempt | null = null;
+
+  for (const run of strategies) {
+    // Corte duro por estrategia: Moovin scrapea su web publica y puede colgarse;
+    // sin timeout el modal gira hasta que muere la funcion serverless (~30s).
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 12000);
+    try {
+      const res = await run(controller.signal);
+      const text = await res.text();
+      const detail = parseMoovinResponse(text);
+      if (!detail) {
+        // Se conserva el PRIMER no-interpretable (el GET, via principal) para que
+        // el modo debug (?raw=1) muestre la respuesta que deberia traer los datos.
+        unparsed ??= {
+          tracking: {
+            ...base,
+            http_status: res.status,
+            error: "No se pudo interpretar la respuesta de Moovin",
+            ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
+          },
+          parsed: false,
+          networkError: false,
+        };
+        continue;
+      }
+
+      const latest = detail.events[0] ?? null;
+      const incident = computeIncident(detail.events);
       return {
         tracking: {
           ...base,
+          ok: res.ok,
           http_status: res.status,
-          error: "No se pudo interpretar la respuesta de Moovin",
+          tracking_number: detail.tracking_number,
+          profile: detail.profile,
+          latest_status: latest?.title ?? null,
+          latest_status_code: latest?.code ?? null,
+          latest_group: latest?.group ?? null,
+          latest_at: latest?.date ?? null,
+          delivery_address: detail.delivery_address,
+          has_incident: incident.active,
+          incident_reason: incident.reason,
+          events: detail.events,
           ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
         },
-        parsed: false,
+        parsed: true,
         networkError: false,
       };
+    } catch (err) {
+      const error =
+        err instanceof Error && err.name === "AbortError"
+          ? "Moovin no respondio a tiempo (timeout)."
+          : err instanceof Error
+            ? err.message
+            : "Error consultando Moovin";
+      networkErr = { tracking: { ...base, error }, parsed: false, networkError: true };
+    } finally {
+      clearTimeout(abortTimer);
     }
-
-    const latest = detail.events[0] ?? null;
-    const incident = computeIncident(detail.events);
-    return {
-      tracking: {
-        ...base,
-        ok: res.ok,
-        http_status: res.status,
-        tracking_number: detail.tracking_number,
-        profile: detail.profile,
-        latest_status: latest?.title ?? null,
-        latest_status_code: latest?.code ?? null,
-        latest_group: latest?.group ?? null,
-        latest_at: latest?.date ?? null,
-        delivery_address: detail.delivery_address,
-        has_incident: incident.active,
-        incident_reason: incident.reason,
-        events: detail.events,
-        ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
-      },
-      parsed: true,
-      networkError: false,
-    };
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      return {
-        tracking: { ...base, error: "Moovin no respondio a tiempo (timeout)." },
-        parsed: false,
-        networkError: true,
-      };
-    }
-    return {
-      tracking: { ...base, error: err instanceof Error ? err.message : "Error consultando Moovin" },
-      parsed: false,
-      networkError: true,
-    };
-  } finally {
-    clearTimeout(abortTimer);
   }
+
+  // Ninguna estrategia interpreto: preferimos reportar "no interpretable" (hubo
+  // respuesta) sobre el error de red, y solo marcamos networkError si TODAS
+  // fallaron por red (para que el reintento por apellidos no insista en vano).
+  return unparsed ?? networkErr ?? { tracking: base, parsed: false, networkError: true };
 }
 
 // Incidencia activa = el evento mas reciente es FAILED. Si despues hubo una
@@ -283,8 +327,14 @@ function classifyMoovinGroup(code: string, title: string): MoovinGroup {
   return "in_progress";
 }
 
-function parseMoovinResponse(raw: string): MoovinDetail | null {
-  const payload = findTrackingPayload(raw);
+// Exportado para tests: interpreta tanto la respuesta RSC del Server Action como
+// el HTML del GET a la pagina.
+export function parseMoovinResponse(raw: string): MoovinDetail | null {
+  // Dos formatos posibles: (1) respuesta RSC / Server Action, con lineas
+  // "<n>:{...}" directas; (2) HTML del GET a la pagina, con el stream RSC
+  // incrustado en <script>self.__next_f.push([1,"..."])</script>. Reensamblar el
+  // segundo produce el mismo formato del primero, asi que se reusa el parser.
+  const payload = findTrackingPayload(raw) ?? findTrackingPayload(extractNextFlight(raw));
   if (!payload || !Array.isArray(payload.listStatus)) return null;
 
   const events: MoovinEvent[] = payload.listStatus
@@ -318,6 +368,7 @@ function parseMoovinResponse(raw: string): MoovinDetail | null {
 }
 
 function findTrackingPayload(raw: string): RawPayload | null {
+  if (!raw) return null;
   for (const line of raw.split("\n")) {
     const colon = line.indexOf(":");
     if (colon === -1) continue;
@@ -331,4 +382,23 @@ function findTrackingPayload(raw: string): RawPayload | null {
     }
   }
   return null;
+}
+
+// Reensambla el stream RSC que Next.js incrusta en el HTML como
+// self.__next_f.push([1,"<chunk>"]). Cada chunk es un literal JSON string; al
+// concatenarlos en orden se reconstruye el mismo flight con lineas "<n>:{...}"
+// que devuelve el Server Action, asi findTrackingPayload lo procesa igual.
+function extractNextFlight(html: string): string {
+  if (!html.includes("self.__next_f")) return "";
+  const chunks: string[] = [];
+  const re = /self\.__next_f\.push\(\[1,\s*("(?:[^"\\]|\\.)*")\]\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(html)) !== null) {
+    try {
+      chunks.push(JSON.parse(match[1]) as string);
+    } catch {
+      // Chunk truncado o no parseable; se ignora.
+    }
+  }
+  return chunks.join("");
 }
