@@ -71,10 +71,11 @@ const CACHE_TTL_MS = 60_000;
 const datasetCache = new Map<string, CacheEntry>();
 
 // L2: cache durable y compartida en Postgres (tabla finance_dataset_cache,
-// migracion 0013). Frescura de 10 min: si la fila es mas vieja, se reconstruye
-// on-read. El cron (cada ~10 min) y las mutaciones llaman refreshFinanceDatasetCache
-// para mantenerla fresca, asi el "cold build" no cae en el path del request.
-const DATASET_CACHE_TTL_MS = 10 * 60_000;
+// migracion 0013). Frescura de 60 min: el payload es grande y Postgres puede
+// cancelar escrituras durante incidentes de Supabase. Las lecturas de usuario
+// deben servir la ultima cache buena; los refrescos pesados quedan para crons o
+// mutaciones controladas.
+const DATASET_CACHE_TTL_MS = 60 * 60_000;
 const DATASET_CACHE_TABLE = "finance_dataset_cache";
 
 // El unico campo de OrdersDataset que no es JSON nativo es settlementTraceByKey
@@ -260,18 +261,6 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
 // El valor devuelto es identico al de buildDataset (caso L1/build directos) o a
 // uno reconstruido byte a byte desde JSONB (caso L2). Esto es solo cache: si L2
 // falla o la tabla no existe, cae a armar en memoria — el dashboard no se rompe.
-// Refrescos en vuelo por tienda: evita que varios requests con cache vencida
-// disparen rebuilds simultaneos (thundering herd) en la misma instancia.
-const refreshingStores = new Set<string>();
-
-function refreshDatasetInBackground(store: FinanceStorePublic): void {
-  if (refreshingStores.has(store.code)) return;
-  refreshingStores.add(store.code);
-  void refreshFinanceDatasetCache(store)
-    .catch((err) => console.warn(`[orders-dataset bg refresh] ${store.code}:`, err))
-    .finally(() => refreshingStores.delete(store.code));
-}
-
 export async function getOrdersDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   const cached = datasetCache.get(store.code);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
@@ -281,10 +270,12 @@ export async function getOrdersDataset(store: FinanceStorePublic): Promise<Order
   const fromL2 = await readDatasetCache(store);
   if (fromL2) {
     datasetCache.set(store.code, { at: Date.now(), data: fromL2.data });
-    // Serve-stale: si la fila esta vencida se sirve igual y se reconstruye en
-    // segundo plano. El request responde rapido (lee una fila) y NUNCA hace el
-    // cold build inline, que es lo que disparaba el FUNCTION_INVOCATION_TIMEOUT.
-    if (fromL2.stale) refreshDatasetInBackground(store);
+    // Serve-stale: aunque la fila este vencida, la servimos igual. No lanzamos
+    // refresh pesado desde requests de usuario; en serverless eso multiplica
+    // rebuilds por instancia y puede saturar Supabase durante degradaciones.
+    if (fromL2.stale) {
+      console.warn(`[orders-dataset L2 stale] ${store.code}: serving stale cache`);
+    }
     return fromL2.data;
   }
 
