@@ -444,6 +444,8 @@ const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
 const FINANCE_LOGISTICS_INITIAL_PAGE_SIZE = 500;
 const FINANCE_FAST_FETCH_TIMEOUT_MS = 20000;
 const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
+const FINANCE_FETCH_RETRIES = 1;
+const FINANCE_FETCH_RETRY_DELAY_MS = 700;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
@@ -507,6 +509,7 @@ export default function FinancePage() {
   const [rematchMessage, setRematchMessage] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
+  const refreshStoreRef = useRef<FinanceStoreCode | null>(null);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
 
   const latestLogisticsImport = logisticsImports[0];
@@ -520,12 +523,16 @@ export default function FinancePage() {
     refreshRunRef.current = refreshRun;
     const isCurrentRun = () => refreshRunRef.current === refreshRun;
     const activeStoreCode = selectedStore.code;
+    const switchingStore = refreshStoreRef.current !== activeStoreCode;
     setLoading(true);
     setError("");
-    setImports([]);
-    setLogisticsImports([]);
-    setShopifyOrders([]);
-    setShopifyCoverage(null);
+    if (switchingStore) {
+      setImports([]);
+      setLogisticsImports([]);
+      setShopifyOrders([]);
+      setShopifyCoverage(null);
+      refreshStoreRef.current = activeStoreCode;
+    }
     try {
       const safeJson = async (input: Promise<Response>, label: string): Promise<Record<string, any>> => {
         try {
@@ -548,8 +555,12 @@ export default function FinancePage() {
           if (options.delayMs) await delay(options.delayMs);
           const json = await safeJson(request(), label);
           if (!isCurrentRun()) return;
+          if (json.error) {
+            if (options.critical) reportCriticalError(json.error);
+            console.warn(`[finance refresh] ${json.error}`);
+            return;
+          }
           apply(json);
-          if (options.critical) reportCriticalError(json.error);
         })();
         return task;
       };
@@ -612,6 +623,10 @@ export default function FinancePage() {
           "logistica Boxful"
         );
         if (!isCurrentRun()) return;
+        if (logisticsJson.error) {
+          console.warn(`[finance refresh] ${logisticsJson.error}`);
+          return;
+        }
         setLogisticsImports(logisticsJson.imports ?? []);
       })();
 
@@ -735,6 +750,10 @@ export default function FinancePage() {
           "liquidaciones"
         );
         if (!isCurrentRun()) return;
+        if (settlementsJson.error) {
+          console.warn(`[finance refresh] ${settlementsJson.error}`);
+          return;
+        }
         setImports(settlementsJson.imports ?? []);
       })();
     } catch (err) {
@@ -1121,9 +1140,10 @@ export default function FinancePage() {
     setKpiLoading(true);
     (async () => {
       try {
-        const res = await fetch(
+        const res = await fetchWithTimeout(
           withStore(`/api/finance/kpis?period=${kpiRange}`, selectedStoreCode),
-          { cache: "no-store", signal: controller.signal }
+          { cache: "no-store", signal: controller.signal },
+          FINANCE_FAST_FETCH_TIMEOUT_MS
         );
         const json = await readApiJson(res);
         if (!res.ok) throw new Error(json.error ?? "No se pudieron calcular los KPIs");
@@ -1133,8 +1153,9 @@ export default function FinancePage() {
         setKpiCards(buildOperationalKpiCards(current, previous));
       } catch (err) {
         if (controller.signal.aborted) return;
-        // No bloqueamos la pantalla por los KPIs; quedan vacios y la tabla sigue.
-        setKpiCards([]);
+        // No bloqueamos la pantalla por los KPIs; conservamos la ultima lectura
+        // buena para evitar que un timeout temporal pinte todo en cero.
+        console.warn("[finance kpis]", err);
       } finally {
         if (!controller.signal.aborted) setKpiLoading(false);
       }
@@ -1150,9 +1171,10 @@ export default function FinancePage() {
     const controller = new AbortController();
     (async () => {
       try {
-        const res = await fetch(
+        const res = await fetchWithTimeout(
           withStore("/api/finance/orders?period=all&pageSize=1", selectedStoreCode),
-          { cache: "no-store", signal: controller.signal }
+          { cache: "no-store", signal: controller.signal },
+          FINANCE_FAST_FETCH_TIMEOUT_MS
         );
         const json = await readApiJson(res);
         if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar las alertas");
@@ -1162,9 +1184,8 @@ export default function FinancePage() {
         });
       } catch {
         if (controller.signal.aborted) return;
-        // Las alertas son informativas; si fallan dejamos los conteos en cero y
-        // la tabla de pedidos sigue funcionando.
-        setAlertCounts({ trackingCounts: EMPTY_TRACKING_COUNTS, settlementCounts: EMPTY_SETTLEMENT_COUNTS });
+        // Las alertas son informativas; si fallan, mantenemos la ultima lectura
+        // buena y la tabla de pedidos sigue funcionando.
       }
     })();
     return () => controller.abort();
@@ -1180,16 +1201,16 @@ export default function FinancePage() {
     setProductAnalysisError("");
     (async () => {
       try {
-        const res = await fetch(
+        const res = await fetchWithTimeout(
           withStore("/api/finance/product-analysis", selectedStoreCode),
-          { cache: "no-store", signal: controller.signal }
+          { cache: "no-store", signal: controller.signal },
+          FINANCE_FAST_FETCH_TIMEOUT_MS
         );
         const json = await readApiJson(res);
         if (!res.ok) throw new Error(json.error ?? "No se pudo analizar productos");
         setProductAnalysisRows(Array.isArray(json.rows) ? (json.rows as ProductAnalysisRow[]) : []);
       } catch (err) {
         if (controller.signal.aborted) return;
-        setProductAnalysisRows([]);
         setProductAnalysisError(err instanceof Error ? err.message : "No se pudo analizar productos");
       } finally {
         if (!controller.signal.aborted) setProductAnalysisLoading(false);
@@ -1207,9 +1228,10 @@ export default function FinancePage() {
     setMonthlyCloseError("");
     (async () => {
       try {
-        const res = await fetch(
+        const res = await fetchWithTimeout(
           withStore("/api/finance/monthly-close", selectedStoreCode),
-          { cache: "no-store", signal: controller.signal }
+          { cache: "no-store", signal: controller.signal },
+          FINANCE_FAST_FETCH_TIMEOUT_MS
         );
         const json = await readApiJson(res);
         if (!res.ok) throw new Error(json.error ?? "No se pudo calcular el cierre mensual");
@@ -1217,8 +1239,6 @@ export default function FinancePage() {
         setFinanceControl((json.control as FinanceControlCenter) ?? EMPTY_FINANCE_CONTROL_CENTER);
       } catch (err) {
         if (controller.signal.aborted) return;
-        setMonthlyCloseRows([]);
-        setFinanceControl(EMPTY_FINANCE_CONTROL_CENTER);
         setMonthlyCloseError(err instanceof Error ? err.message : "No se pudo calcular el cierre mensual");
       } finally {
         if (!controller.signal.aborted) setMonthlyCloseLoading(false);
@@ -1237,9 +1257,10 @@ export default function FinancePage() {
     setNotesError("");
     (async () => {
       try {
-        const res = await fetch(
+        const res = await fetchWithTimeout(
           withStore("/api/finance/notes", selectedStoreCode),
-          { cache: "no-store", signal: controller.signal }
+          { cache: "no-store", signal: controller.signal },
+          FINANCE_FAST_FETCH_TIMEOUT_MS
         );
         const json = await readApiJson(res);
         if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar las notas Shopify");
@@ -1247,8 +1268,6 @@ export default function FinancePage() {
         setNoteShopifyOrderCount(Number(json.shopifyOrderCount ?? 0));
       } catch (err) {
         if (controller.signal.aborted) return;
-        setNoteAliasRows([]);
-        setNoteShopifyOrderCount(0);
         setNotesError(err instanceof Error ? err.message : "No se pudieron cargar las notas Shopify");
       } finally {
         if (!controller.signal.aborted) setNotesLoading(false);
@@ -1653,6 +1672,17 @@ function OrdersTab({
     setPage(1);
   }, [debouncedSearch, trackingFilter, settlementFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code]);
 
+  useEffect(() => {
+    setServerRows([]);
+    setTotal(0);
+    setPeriodCount(0);
+    setSearchedCount(0);
+    setTrackingCounts(EMPTY_TRACKING_COUNTS);
+    setSettlementCounts(EMPTY_SETTLEMENT_COUNTS);
+    setEnRouteGuides({ moovin: [], forza: [] });
+    setTableError("");
+  }, [selectedStore.code]);
+
   // Query params compartidos por el fetch de la tabla y por el export.
   const buildOrdersQuery = useCallback(
     (extra: Record<string, string> = {}) => {
@@ -1679,10 +1709,14 @@ function OrdersTab({
     (async () => {
       try {
         const query = buildOrdersQuery({ page: String(page), pageSize: String(ORDERS_PAGE_SIZE) });
-        const res = await fetch(withStore(`/api/finance/orders?${query}`, selectedStore.code), {
-          cache: "no-store",
-          signal: controller.signal,
-        });
+        const res = await fetchWithTimeout(
+          withStore(`/api/finance/orders?${query}`, selectedStore.code),
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          },
+          FINANCE_FAST_FETCH_TIMEOUT_MS
+        );
         const json = await readApiJson(res);
         if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar los pedidos");
         setServerRows(Array.isArray(json.rows) ? (json.rows as OrderRowWithTraces[]) : []);
@@ -1693,8 +1727,6 @@ function OrdersTab({
         setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
       } catch (err) {
         if (controller.signal.aborted) return;
-        setServerRows([]);
-        setTotal(0);
         setTableError(err instanceof Error ? err.message : "No se pudieron cargar los pedidos");
       } finally {
         if (!controller.signal.aborted) setTableLoading(false);
@@ -1710,9 +1742,10 @@ function OrdersTab({
     const controller = new AbortController();
     (async () => {
       try {
-        const res = await fetch(
+        const res = await fetchWithTimeout(
           withStore("/api/finance/orders?period=all&pageSize=1&guides=1", selectedStore.code),
-          { cache: "no-store", signal: controller.signal }
+          { cache: "no-store", signal: controller.signal },
+          FINANCE_FAST_FETCH_TIMEOUT_MS
         );
         const json = await readApiJson(res);
         if (!res.ok) return;
@@ -8106,20 +8139,48 @@ async function readApiJson(res: Response) {
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit = {},
-  timeoutMs = FINANCE_BACKGROUND_FETCH_TIMEOUT_MS
+  timeoutMs = FINANCE_BACKGROUND_FETCH_TIMEOUT_MS,
+  retries = FINANCE_FETCH_RETRIES
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error(`La solicitud supero ${Math.round(timeoutMs / 1000)}s de espera.`);
+  const method = String(init.method ?? "GET").toUpperCase();
+  const canRetry = method === "GET" || method === "HEAD";
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const externalSignal = init.signal;
+    const abortFromCaller = () => controller.abort();
+    if (externalSignal?.aborted) controller.abort();
+    else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const { signal: _signal, ...fetchInit } = init;
+      const response = await fetch(input, { ...fetchInit, signal: controller.signal });
+      if (canRetry && isRetryableFinanceResponse(response) && attempt < retries && !externalSignal?.aborted) {
+        await delay(FINANCE_FETCH_RETRY_DELAY_MS * (attempt + 1));
+        continue;
+      }
+      return response;
+    } catch (err) {
+      if (externalSignal?.aborted) throw err;
+      lastError =
+        err instanceof DOMException && err.name === "AbortError"
+          ? new Error(`La solicitud supero ${Math.round(timeoutMs / 1000)}s de espera.`)
+          : err;
+      if (!canRetry || attempt >= retries) throw lastError;
+      await delay(FINANCE_FETCH_RETRY_DELAY_MS * (attempt + 1));
+    } finally {
+      window.clearTimeout(timeout);
+      externalSignal?.removeEventListener("abort", abortFromCaller);
     }
-    throw err;
-  } finally {
-    window.clearTimeout(timeout);
   }
+
+  throw lastError instanceof Error ? lastError : new Error("No se pudo completar la solicitud.");
+}
+
+function isRetryableFinanceResponse(response: Response): boolean {
+  return response.status === 408 || response.status === 502 || response.status === 503 || response.status === 504;
 }
 
 function delay(ms: number): Promise<void> {
