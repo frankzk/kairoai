@@ -189,12 +189,25 @@ interface MoovinDetail {
   events: MoovinEvent[];
 }
 
-// Clasifica el grupo por codigo; si el codigo es desconocido, rescata las
-// cancelaciones por titulo ("Cancelado") para que cuenten como no entregado.
-function classifyMoovinGroup(code: string, title: string): MoovinGroup {
+// Clasifica el grupo por codigo; si el codigo es desconocido, rescata por texto.
+// Moovin usa varios titulos/codigos para la ENTREGA ("Entregado por el Moover",
+// "Entrega completa", ...) y todos comparten la descripcion "...ha sido entregado
+// en la direccion de destino". Sin este rescate, una entrega con codigo no
+// mapeado queda como in_progress y la novedad nunca se auto-resuelve. Las
+// cancelaciones ("Cancelado") cuentan como no entregado (returned).
+export function classifyMoovinGroup(code: string, title: string, description = ""): MoovinGroup {
   const mapped = MOOVIN_STATUS_GROUP[code];
   if (mapped) return mapped;
-  if (title.toLowerCase().includes("cancelado")) return "returned";
+  const t = title.toLowerCase();
+  const d = description.toLowerCase();
+  if (
+    t.includes("entrega completa") ||
+    (t.includes("entregado") && !t.includes("no entreg")) ||
+    d.includes("ha sido entregado")
+  ) {
+    return "delivered";
+  }
+  if (t.includes("cancelado")) return "returned";
   return "in_progress";
 }
 
@@ -211,7 +224,7 @@ function parseMoovinResponse(raw: string): MoovinDetail | null {
         .join(" | ");
       return {
         code,
-        group: classifyMoovinGroup(code, String(status.title ?? "")),
+        group: classifyMoovinGroup(code, String(status.title ?? ""), String(status.description ?? "")),
         title: String(status.title ?? ""),
         description: String(status.description ?? ""),
         date: status.date ?? null,
