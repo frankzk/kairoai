@@ -422,10 +422,12 @@ function isCaptchaResponse(raw: string): boolean {
 
 function classifyForzaGroup(status: string): ForzaGroup {
   const lower = status.toLowerCase();
-  if (lower.includes("entregado")) return "delivered";
-  if (lower.includes("reproceso")) return "in_progress";
+  // Fallas/devoluciones ANTES que la entrega: "no entregado" contiene "entregado"
+  // y no debe clasificarse como delivered.
+  if (lower.includes("no entreg") || lower.includes("fall") || lower.includes("incid")) return "failed";
   if (lower.includes("devuelto") || lower.includes("retorno") || lower.includes("retornado")) return "returned";
-  if (lower.includes("fall") || lower.includes("incid") || lower.includes("no entreg")) return "failed";
+  if (lower.includes("reproceso")) return "in_progress";
+  if (lower.includes("entrega completa") || lower.includes("entregado")) return "delivered";
   return "in_progress";
 }
 

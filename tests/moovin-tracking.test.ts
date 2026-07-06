@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeIncident, effectiveLatestMoovin, type MoovinEvent } from "../lib/moovin";
+import { classifyMoovinGroup as classifyMoovinReal, computeIncident, effectiveLatestMoovin, type MoovinEvent } from "../lib/moovin";
 
 // Replica del parser de app/api/finance/moovin-tracking/route.ts para fijar el
 // comportamiento sobre la estructura RSC real de Moovin (linea "1:{...}").
@@ -166,5 +166,30 @@ describe("entrega es terminal (delivered prevails)", () => {
   it("lista vacia -> null y sin incidencia", () => {
     expect(effectiveLatestMoovin([])).toBeNull();
     expect(computeIncident([]).active).toBe(false);
+  });
+});
+
+// Moovin usa titulos/codigos distintos para la entrega ("Entrega completa" con un
+// codigo no mapeado). Sin rescate por texto quedaba in_progress y la novedad
+// nunca se resolvia (guia entregada pero incidencia atascada en "Reprogramada").
+describe("classifyMoovinGroup - entregas con titulo/codigo no estandar", () => {
+  it("'Entrega completa' con codigo no mapeado se clasifica delivered", () => {
+    expect(
+      classifyMoovinReal("COMPLETED", "Entrega completa", "El paquete ha sido entregado en la direccion de destino.")
+    ).toBe("delivered");
+  });
+
+  it("'Entregado por el Moover' (codigo DELIVERED) sigue delivered", () => {
+    expect(classifyMoovinReal("DELIVERED", "Entregado por el Moover", "")).toBe("delivered");
+  });
+
+  it("un evento en ruta ('...para ser entregado') NO es delivered", () => {
+    expect(
+      classifyMoovinReal("INROUTE", "En ruta para entregar a lo largo del dia", "El envio esta en poder de un Moover para ser entregado.")
+    ).toBe("in_progress");
+  });
+
+  it("'No entregado' no se confunde con una entrega", () => {
+    expect(classifyMoovinReal("WEIRD", "No entregado", "")).not.toBe("delivered");
   });
 });
