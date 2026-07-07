@@ -739,6 +739,17 @@ Build in this order:
 
 ### Session 2026-06-15 hotfixes
 
+- Finance load hotfix 2026-07-07: `/admin/finance` now keeps the last visible
+  operational data when refreshing the same store. It only clears state on an
+  actual store switch, which protects Costa Rica/Honduras isolation while
+  avoiding the "0 pedidos" blank state if Vercel/Supabase times out mid-refresh.
+- Shopify/logistics background reads now fail soft: a timed-out page stops that
+  enrichment pass and keeps partial data already loaded instead of throwing away
+  the operational table. Shopify sync chunks were reduced to smaller batches to
+  avoid Vercel function timeouts.
+- Timeout errors from Vercel (`FUNCTION_INVOCATION_TIMEOUT`) and provider HTML
+  pages are normalized into short user-facing messages. Raw deployment/HTML
+  errors should no longer appear in the finance banner.
 - Finance API routes now sanitize external HTML errors before returning them to the UI. A Supabase/Cloudflare `522 Connection timed out` page must be shown as a short actionable message, not as raw `<!DOCTYPE html>`.
 - `/admin/finance` also sanitizes malformed or HTML API responses client-side via `sanitizeExternalError`, so a future provider timeout cannot fill the error banner with a full HTML page.
 - Supabase reads now retry transient read-only failures (`522`, `503`, `504`, etc.) at the shared DB client level. The finance page also staggers heavy base loads instead of firing settlements, logistics, costs, expenses, and summary all at once; settlement/logistics API reads fetch imports and rows sequentially to reduce Supabase pressure.

@@ -20,6 +20,7 @@ import {
   sleep,
 } from "@/lib/shopify-sync";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
+import { toFriendlyErrorMessage } from "@/lib/api-errors";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -51,7 +52,7 @@ export async function GET(req: NextRequest) {
       next_offset: hasMore ? offset + pageOrders.length : null,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al leer pedidos Shopify sincronizados";
+    const message = toFriendlyErrorMessage(err, "Error al leer pedidos Shopify sincronizados");
     return NextResponse.json({ orders: [], total: 0, coverage: null, error: message }, { status: 500 });
   }
 }
@@ -148,7 +149,7 @@ export async function POST(req: NextRequest) {
       store: store.code,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error sincronizando Shopify";
+    const message = toFriendlyErrorMessage(err, "Error sincronizando Shopify");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

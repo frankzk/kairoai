@@ -5,8 +5,8 @@ export const DEFAULT_CREATED_AT_MIN_BY_STORE: Record<string, string> = {
   "mireva-cr": "2026-01-01T00:00:00-06:00",
   "mireva-hn": "2025-12-01T00:00:00-06:00",
 };
-export const DEFAULT_SYNC_PAGES_PER_REQUEST = 8;
-export const MAX_SYNC_PAGES_PER_REQUEST = 12;
+export const DEFAULT_SYNC_PAGES_PER_REQUEST = 3;
+export const MAX_SYNC_PAGES_PER_REQUEST = 6;
 // Shopify REST permite ~2 req/s; un respiro entre paginas evita 429 en rafaga.
 export const PAGE_DELAY_MS = 350;
 

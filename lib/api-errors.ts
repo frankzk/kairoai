@@ -8,6 +8,15 @@ export function sanitizeExternalError(raw: unknown, fallback = "Error inesperado
   if (!text) return fallback;
 
   const lower = text.toLowerCase();
+  if (
+    lower.includes("function_invocation_timeout") ||
+    lower.includes("edge_function_invocation_timeout") ||
+    (lower.includes("deployment") && lower.includes("timeout")) ||
+    lower.includes("the serverless function has timed out")
+  ) {
+    return "Vercel corto una consulta por timeout. La vista conserva la ultima data disponible; vuelve a intentar o filtra por un rango mas pequeno.";
+  }
+
   const looksLikeHtml =
     lower.includes("<!doctype html") ||
     lower.includes("<html") ||

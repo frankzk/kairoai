@@ -438,6 +438,8 @@ const FINANCE_SHOPIFY_CREATED_AT_MIN_BY_STORE: Record<FinanceStoreCode, string> 
 // Solo la primera pagina (Shopify base + logistica): el resto de tabs cargan
 // server-side, asi que ya NO se pagina hacia el snapshot completo en el navegador.
 const FINANCE_SHOPIFY_SYNC_INITIAL_PAGE_SIZE = 250;
+const FINANCE_SHOPIFY_SYNC_PAGES_PER_CHUNK = 3;
+const FINANCE_SHOPIFY_SYNC_CHUNK_TIMEOUT_MS = 30000;
 // Ventana de "pedidos actualizados recientemente" leida en vivo de Shopify.
 const FINANCE_SHOPIFY_RECENT_UPDATES_DAYS = 7;
 const FINANCE_SHOPIFY_NOTES_LOOKBACK_DAYS = 90;
@@ -507,6 +509,7 @@ export default function FinancePage() {
   const [rematchMessage, setRematchMessage] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
+  const loadedStoreRef = useRef<FinanceStoreCode | null>(null);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
 
   const latestLogisticsImport = logisticsImports[0];
@@ -520,12 +523,24 @@ export default function FinancePage() {
     refreshRunRef.current = refreshRun;
     const isCurrentRun = () => refreshRunRef.current === refreshRun;
     const activeStoreCode = selectedStore.code;
+    const switchingStore = loadedStoreRef.current !== activeStoreCode;
+    loadedStoreRef.current = activeStoreCode;
     setLoading(true);
     setError("");
-    setImports([]);
-    setLogisticsImports([]);
-    setShopifyOrders([]);
-    setShopifyCoverage(null);
+    if (switchingStore) {
+      setImports([]);
+      setLogisticsImports([]);
+      setShopifyOrders([]);
+      setShopifyCoverage(null);
+      setCosts([]);
+      setCostVersions([]);
+      setClaims([]);
+      setBoxfulFiles([]);
+      setExpenses([]);
+      setSummary(null);
+      setMoovinByPackage(new Map());
+      setForzaByGuide(new Map());
+    }
     try {
       const safeJson = async (input: Promise<Response>, label: string): Promise<Record<string, any>> => {
         try {
@@ -548,8 +563,11 @@ export default function FinancePage() {
           if (options.delayMs) await delay(options.delayMs);
           const json = await safeJson(request(), label);
           if (!isCurrentRun()) return;
+          if (json.error) {
+            if (options.critical) reportCriticalError(json.error);
+            return;
+          }
           apply(json);
-          if (options.critical) reportCriticalError(json.error);
         })();
         return task;
       };
@@ -612,6 +630,7 @@ export default function FinancePage() {
           "logistica Boxful"
         );
         if (!isCurrentRun()) return;
+        if (logisticsJson.error) return;
         setLogisticsImports(logisticsJson.imports ?? []);
       })();
 
@@ -735,6 +754,7 @@ export default function FinancePage() {
           "liquidaciones"
         );
         if (!isCurrentRun()) return;
+        if (settlementsJson.error) return;
         setImports(settlementsJson.imports ?? []);
       })();
     } catch (err) {
@@ -970,16 +990,20 @@ export default function FinancePage() {
     try {
       let nextUrl: string | null = null;
       for (let batch = 0; batch < 40; batch++) {
-        const res = await fetch(withStore("/api/finance/shopify-sync", activeStoreCode), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            store: activeStoreCode,
-            created_at_min: shopifyCreatedAtMin,
-            max_pages: 8,
-            next_url: nextUrl,
-          }),
-        });
+        const res = await fetchWithTimeout(
+          withStore("/api/finance/shopify-sync", activeStoreCode),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              store: activeStoreCode,
+              created_at_min: shopifyCreatedAtMin,
+              max_pages: FINANCE_SHOPIFY_SYNC_PAGES_PER_CHUNK,
+              next_url: nextUrl,
+            }),
+          },
+          FINANCE_SHOPIFY_SYNC_CHUNK_TIMEOUT_MS
+        );
         const json = await readApiJson(res);
         if (!res.ok) throw new Error(json.error ?? "No se pudo sincronizar Shopify");
         totalSynced += Number(json.synced ?? 0);
@@ -999,16 +1023,20 @@ export default function FinancePage() {
     try {
       let oldestReached: string | null = null;
       for (let batch = 0; batch < 80; batch++) {
-        const res = await fetch(withStore("/api/finance/shopify-sync", activeStoreCode), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            store: activeStoreCode,
-            created_at_min: shopifyCreatedAtMin,
-            max_pages: 8,
-            mode: "backfill",
-          }),
-        });
+        const res = await fetchWithTimeout(
+          withStore("/api/finance/shopify-sync", activeStoreCode),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              store: activeStoreCode,
+              created_at_min: shopifyCreatedAtMin,
+              max_pages: FINANCE_SHOPIFY_SYNC_PAGES_PER_CHUNK,
+              mode: "backfill",
+            }),
+          },
+          FINANCE_SHOPIFY_SYNC_CHUNK_TIMEOUT_MS
+        );
         const json = await readApiJson(res);
         if (!res.ok) throw new Error(json.error ?? "No se pudo completar el historico");
         const synced = Number(json.synced ?? 0);
