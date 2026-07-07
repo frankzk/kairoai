@@ -27,6 +27,10 @@ import {
   normalizeSearchText,
   type OrderMatchKeySource,
 } from "@/lib/order-matching";
+import {
+  extractPhoneFromNoteAttributes,
+  extractPhoneFromShopifyOrderRaw,
+} from "@/lib/shopify-phone";
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -905,6 +909,9 @@ export function buildEnRouteGuides(
 export function phoneFromNoteAttributes(
   attrs?: Array<{ name?: string | null; value?: string | null }>
 ): string | null {
+  const extractedPhone = extractPhoneFromNoteAttributes(attrs);
+  if (extractedPhone || !attrs?.length) return extractedPhone;
+
   if (!attrs?.length) return null;
   const keyRe = /tel|cel|phone|whats|m[oó]vil/i;
   for (const attr of attrs) {
@@ -939,7 +946,10 @@ export function persistedOrderToSummary(order: Record<string, unknown>): Shopify
     name: String(order.name ?? ""),
     customer_name: String(order.customer_name ?? "Sin nombre"),
     last_name: String(order.last_name ?? ""),
-    phone: (order.phone as string | null) || phoneFromNoteAttributes(noteAttributes),
+    phone:
+      (order.phone as string | null) ||
+      phoneFromNoteAttributes(noteAttributes) ||
+      extractPhoneFromShopifyOrderRaw(rawOrder),
     products: lineItems.map((item) => `${item.quantity}x ${item.title}`).join(", "),
     total: `${order.total_price ?? 0} ${order.currency ?? "CRC"}`,
     total_price: Number(order.total_price ?? 0),

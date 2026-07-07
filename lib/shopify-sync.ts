@@ -1,5 +1,6 @@
 import { getShopifyCredentials, type FinanceStoreConfig } from "@/lib/stores";
 import { type PersistedShopifyOrder } from "@/lib/finance";
+import { extractPhoneFromShopifyOrderRaw } from "@/lib/shopify-phone";
 
 export const DEFAULT_CREATED_AT_MIN_BY_STORE: Record<string, string> = {
   "mireva-cr": "2026-01-01T00:00:00-06:00",
@@ -111,12 +112,7 @@ export function mapShopifyOrder(
 
   const firstName = (customer?.first_name as string) ?? (billing?.first_name as string) ?? "";
   const lastName = (customer?.last_name as string) ?? (billing?.last_name as string) ?? "";
-  const phone =
-    (order.phone as string | null) ??
-    (shipping?.phone as string | null) ??
-    (billing?.phone as string | null) ??
-    (customer?.phone as string | null) ??
-    null;
+  const phone = extractPhoneFromShopifyOrderRaw(order);
 
   // Guia/transportadora del fulfillment mas reciente con tracking.
   const fulfillments = ((order.fulfillments as Array<Record<string, unknown>>) ?? [])
