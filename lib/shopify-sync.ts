@@ -103,7 +103,8 @@ export function buildUpdatedUrl(updatedAtMin: string, store: FinanceStoreConfig)
 }
 
 export function mapShopifyOrder(
-  order: Record<string, unknown>
+  order: Record<string, unknown>,
+  store?: Pick<FinanceStoreConfig, "countryCode">
 ): Omit<PersistedShopifyOrder, "id" | "synced_at" | "store_id"> {
   const customer = order.customer as Record<string, unknown> | undefined;
   const billing = order.billing_address as Record<string, unknown> | undefined;
@@ -112,7 +113,7 @@ export function mapShopifyOrder(
 
   const firstName = (customer?.first_name as string) ?? (billing?.first_name as string) ?? "";
   const lastName = (customer?.last_name as string) ?? (billing?.last_name as string) ?? "";
-  const phone = extractPhoneFromShopifyOrderRaw(order);
+  const phone = extractPhoneFromShopifyOrderRaw(order, { countryCode: store?.countryCode });
 
   // Guia/transportadora del fulfillment mas reciente con tracking.
   const fulfillments = ((order.fulfillments as Array<Record<string, unknown>>) ?? [])

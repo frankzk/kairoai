@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { extractPhoneFromShopifyOrderRaw } from "@/lib/shopify-phone";
 import { getRequiredStoreFromSearchParams, getShopifyCredentials } from "@/lib/stores";
 
 export const runtime = "nodejs";
@@ -117,12 +118,7 @@ export async function GET(req: NextRequest) {
         const firstName = (customer?.first_name as string) ?? (billing?.first_name as string) ?? "";
         const lastName = (customer?.last_name as string) ?? (billing?.last_name as string) ?? "";
 
-        const phone =
-          (o.phone as string | null) ??
-          (shipping?.phone as string | null) ??
-          (billing?.phone as string | null) ??
-          (customer?.phone as string | null) ??
-          null;
+        const phone = extractPhoneFromShopifyOrderRaw(o, { countryCode: store.countryCode });
 
         const lineItems = (o.line_items as Array<Record<string, unknown>>) ?? [];
         const noteAttributes = (o.note_attributes as Array<Record<string, unknown>>) ?? [];

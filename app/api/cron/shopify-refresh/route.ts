@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
 
         const data = await res.json();
         const rawOrders = (data.orders as Array<Record<string, unknown>>) ?? [];
-        const orders = rawOrders.map(mapShopifyOrder);
+        const orders = rawOrders.map((order) => mapShopifyOrder(order, store));
         await upsertPersistedShopifyOrders(orders, store.id);
         synced += orders.length;
         pages += 1;

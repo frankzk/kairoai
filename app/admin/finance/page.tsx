@@ -30,6 +30,8 @@ import { normalizeSearchText } from "@/lib/order-matching";
 import {
   extractPhoneFromNoteAttributes,
   extractPhoneFromShopifyOrderRaw,
+  pickBestPhone,
+  type PhoneCountryCode,
 } from "@/lib/shopify-phone";
 import {
   type FinanceControlCenter,
@@ -8269,11 +8271,20 @@ function toCsv(rows: unknown[]): string {
 // personalizado del checkout (note_attributes: "Telefono", "Celular",
 // "WhatsApp"...) en vez del campo estandar de Shopify (que suele venir vacio).
 // Se rescata de ahi cuando el telefono plano no esta.
+function phoneCountryFromStoreId(storeId: unknown): PhoneCountryCode {
+  const id = Number(storeId);
+  if (id === 1) return "CR";
+  if (id === 2) return "HN";
+  return undefined;
+}
+
 function phoneFromNoteAttributes(
-  attrs?: Array<{ name?: string | null; value?: string | null }>
+  attrs?: Array<{ name?: string | null; value?: string | null }>,
+  countryCode?: PhoneCountryCode
 ): string | null {
-  const extractedPhone = extractPhoneFromNoteAttributes(attrs);
+  const extractedPhone = extractPhoneFromNoteAttributes(attrs, { countryCode });
   if (extractedPhone || !attrs?.length) return extractedPhone;
+  if (countryCode) return null;
 
   if (!attrs?.length) return null;
   const keyRe = /tel|cel|phone|whats|m[oó]vil/i;
@@ -8282,7 +8293,10 @@ function phoneFromNoteAttributes(
     const value = String(attr.value ?? "").trim();
     if (!value) continue;
     // Debe parecer un telefono: 8+ digitos (CR son 8, con codigo de pais mas).
-    if (keyRe.test(name) && value.replace(/\D/g, "").length >= 8) return value;
+    if (keyRe.test(name)) {
+      const phone = pickBestPhone([value]);
+      if (phone) return phone;
+    }
   }
   return null;
 }
@@ -8303,16 +8317,22 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     (order.note_attributes as ShopifyOrderSummary["note_attributes"]) ??
     (rawOrder.note_attributes as ShopifyOrderSummary["note_attributes"]) ??
     [];
+  const countryCode = phoneCountryFromStoreId(order.store_id);
+  const phone = pickBestPhone(
+    [
+      extractPhoneFromShopifyOrderRaw(rawOrder, { countryCode }),
+      phoneFromNoteAttributes(noteAttributes, countryCode),
+      order.phone,
+    ],
+    { countryCode }
+  );
   return {
     id: String(order.shopify_order_id ?? order.id ?? ""),
     order_number: Number(order.order_number ?? 0),
     name: String(order.name ?? ""),
     customer_name: String(order.customer_name ?? "Sin nombre"),
     last_name: String(order.last_name ?? ""),
-    phone:
-      (order.phone as string | null) ||
-      phoneFromNoteAttributes(noteAttributes) ||
-      extractPhoneFromShopifyOrderRaw(rawOrder),
+    phone,
     products: lineItems.map((item) => `${item.quantity}x ${item.title}`).join(", "),
     total: `${order.total_price ?? 0} ${order.currency ?? "CRC"}`,
     total_price: Number(order.total_price ?? 0),

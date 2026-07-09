@@ -30,6 +30,8 @@ import {
 import {
   extractPhoneFromNoteAttributes,
   extractPhoneFromShopifyOrderRaw,
+  pickBestPhone,
+  type PhoneCountryCode,
 } from "@/lib/shopify-phone";
 
 // ---------------------------------------------------------------------------
@@ -74,6 +76,13 @@ export interface ShopifyOrderSummary {
   tracking_company?: string;
   created_at: string;
   line_items: ProductLineItem[];
+}
+
+function phoneCountryFromStoreId(storeId: unknown): PhoneCountryCode {
+  const id = Number(storeId);
+  if (id === 1) return "CR";
+  if (id === 2) return "HN";
+  return undefined;
 }
 
 export interface TrackableOrderRow {
@@ -459,7 +468,9 @@ export function buildVisibleOrderRows(
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
-      phone: shopify?.phone || row.customer_phone || null,
+      phone: pickBestPhone([shopify?.phone, row.customer_phone], {
+        countryCode: selectedStore.countryCode,
+      }),
       match_status: shopify ? "matched" : row.match_status,
       cod_amount: row.cod_amount || Number(shopify?.total_price || parseMoneyText(shopify?.total ?? "")),
       shopify_order_name: shopify?.name ?? row.shopify_order_name,
@@ -515,7 +526,7 @@ export function buildVisibleOrderRows(
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
-      phone: order.phone || null,
+      phone: pickBestPhone([order.phone], { countryCode: selectedStore.countryCode }),
       boxful_status: "",
       internal_status:
         order.cancelled_at || order.financial_status === "voided" ? "annulled" : "pending",
@@ -907,10 +918,12 @@ export function buildEnRouteGuides(
 // "WhatsApp"...) en vez del campo estandar de Shopify (que suele venir vacio).
 // Se rescata de ahi cuando el telefono plano no esta.
 export function phoneFromNoteAttributes(
-  attrs?: Array<{ name?: string | null; value?: string | null }>
+  attrs?: Array<{ name?: string | null; value?: string | null }>,
+  countryCode?: PhoneCountryCode
 ): string | null {
-  const extractedPhone = extractPhoneFromNoteAttributes(attrs);
+  const extractedPhone = extractPhoneFromNoteAttributes(attrs, { countryCode });
   if (extractedPhone || !attrs?.length) return extractedPhone;
+  if (countryCode) return null;
 
   if (!attrs?.length) return null;
   const keyRe = /tel|cel|phone|whats|m[oó]vil/i;
@@ -919,7 +932,10 @@ export function phoneFromNoteAttributes(
     const value = String(attr.value ?? "").trim();
     if (!value) continue;
     // Debe parecer un telefono: 8+ digitos (CR son 8, con codigo de pais mas).
-    if (keyRe.test(name) && value.replace(/\D/g, "").length >= 8) return value;
+    if (keyRe.test(name)) {
+      const phone = pickBestPhone([value]);
+      if (phone) return phone;
+    }
   }
   return null;
 }
@@ -940,16 +956,22 @@ export function persistedOrderToSummary(order: Record<string, unknown>): Shopify
     (order.note_attributes as ShopifyOrderSummary["note_attributes"]) ??
     (rawOrder.note_attributes as ShopifyOrderSummary["note_attributes"]) ??
     [];
+  const countryCode = phoneCountryFromStoreId(order.store_id);
+  const phone = pickBestPhone(
+    [
+      extractPhoneFromShopifyOrderRaw(rawOrder, { countryCode }),
+      phoneFromNoteAttributes(noteAttributes, countryCode),
+      order.phone,
+    ],
+    { countryCode }
+  );
   return {
     id: String(order.shopify_order_id ?? order.id ?? ""),
     order_number: Number(order.order_number ?? 0),
     name: String(order.name ?? ""),
     customer_name: String(order.customer_name ?? "Sin nombre"),
     last_name: String(order.last_name ?? ""),
-    phone:
-      (order.phone as string | null) ||
-      phoneFromNoteAttributes(noteAttributes) ||
-      extractPhoneFromShopifyOrderRaw(rawOrder),
+    phone,
     products: lineItems.map((item) => `${item.quantity}x ${item.title}`).join(", "),
     total: `${order.total_price ?? 0} ${order.currency ?? "CRC"}`,
     total_price: Number(order.total_price ?? 0),

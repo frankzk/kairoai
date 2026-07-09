@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
       url = nextMatch?.[1] ?? "";
     }
 
-    const orders = rawOrders.map(mapShopifyOrder);
+    const orders = rawOrders.map((order) => mapShopifyOrder(order, store));
     await upsertPersistedShopifyOrders(orders, store.id);
 
     // El sync muto shopify_orders: refresca la cache durable del dataset (solo si
