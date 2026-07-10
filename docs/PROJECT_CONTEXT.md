@@ -813,9 +813,10 @@ Build in this order:
 - **Provider failure handling (2026-07-10 hotfix):** Moovin can return plain text
   or HTML instead of tracking, including `503 DEPLOYMENT_PAUSED`. `lib/moovin.ts`
   now classifies those responses before parsing. The on-demand modal falls back
-  to the last `moovin_tracking` cache row for the guide and labels it as
-  "Ultimo estado guardado"; if no cache exists, the UI shows the provider-level
-  message instead of the old generic "No se pudo interpretar" error.
+  to the last `moovin_tracking` cache row for the guide, labels it as
+  "Ultimo estado guardado", and shows a subdued informational notice; if no
+  cache exists, the UI shows the provider-level message instead of the old
+  generic "No se pudo interpretar" error.
 
 ### iComfly Estado de Despacho (lib/icomfly.ts, lib/dispatch.ts, migration 0010)
 Supervisa el despacho de pedidos COD en dos momentos atribuibles a personas:

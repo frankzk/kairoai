@@ -2790,10 +2790,13 @@ function MoovinTrackingModal({
         ) : (
           <>
             {data?.warning && (
-              <p className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                {data.warning}
-                {data.checked_at ? ` Ultimo guardado: ${formatMoovinDate(data.checked_at)}.` : ""}
-              </p>
+              <div className="mb-3 border border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+                <span className="font-medium text-foreground">Usando estado guardado.</span>{" "}
+                <span>Moovin no devolvio datos nuevos ahora.</span>
+                {data.checked_at ? (
+                  <span> Ultima consulta guardada: {formatMoovinDate(data.checked_at)}.</span>
+                ) : null}
+              </div>
             )}
             <div className="mb-3 border border-border bg-background p-3">
               <p className="text-[11px] text-muted-foreground">
