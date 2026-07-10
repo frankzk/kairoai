@@ -74,38 +74,41 @@ describe("isMoovinPickedUp", () => {
 });
 
 describe("resolveDispatchState", () => {
-  it("Moovin manda: 'Recolección Solicitada' => solicitado aunque iComfly diga despachado", () => {
+  it("Moovin manda: 'Recolección Solicitada' => despacho_solicitado aunque iComfly diga despachado", () => {
     const rec = icomfly({ dispatch_state: "despachado" });
     const state = resolveDispatchState(rec, moovin({ latest_status: "Recolección Solicitada" }), "2547531");
-    expect(state).toBe("solicitado");
+    expect(state).toBe("despacho_solicitado");
   });
 
-  it("'Sede de Moovin' => despachado", () => {
+  it("'Sede de Moovin' => recolectado (ya recogido, aún en la red)", () => {
     const rec = icomfly({ dispatch_state: "despacho_solicitado" });
-    expect(resolveDispatchState(rec, moovin({ latest_status: "Sede de Moovin" }), "2547807")).toBe("despachado");
+    expect(resolveDispatchState(rec, moovin({ latest_status: "Sede de Moovin" }), "2547807")).toBe("recolectado");
+  });
+
+  it("'En ruta para entregar' => en_route", () => {
+    expect(
+      resolveDispatchState(undefined, moovin({ latest_status: "En ruta para entregar a lo largo del día", latest_code: "INROUTE" }), "G")
+    ).toBe("en_route");
+  });
+
+  it("Moovin terminal (entregado/incidencia) => despachado (el estado final lo maneja otra capa)", () => {
+    expect(resolveDispatchState(undefined, moovin({ latest_group: "delivered" }), "G")).toBe("despachado");
+    expect(resolveDispatchState(undefined, moovin({ latest_group: "failed" }), "G")).toBe("despachado");
   });
 
   it("rescata pedidos con guía Moovin sin match en iComfly", () => {
     const state = resolveDispatchState(undefined, moovin({ latest_status: "Recolección Solicitada" }), "2548059");
-    expect(state).toBe("solicitado");
+    expect(state).toBe("despacho_solicitado");
   });
 
   it("sin dato de Moovin cae al estado de iComfly (sin regresión)", () => {
     expect(resolveDispatchState(icomfly({ dispatch_state: "despachado" }), undefined, "G1")).toBe("despachado");
-    expect(resolveDispatchState(icomfly({ dispatch_state: "despacho_solicitado" }), undefined, "")).toBe("solicitado");
+    expect(resolveDispatchState(icomfly({ dispatch_state: "despacho_solicitado" }), undefined, "")).toBe("despacho_solicitado");
     expect(resolveDispatchState(icomfly({ dispatch_state: "pendiente" }), undefined, "")).toBe("pendiente");
   });
 
   it("null cuando no hay ni pedido de iComfly ni guía", () => {
     expect(resolveDispatchState(undefined, undefined, "")).toBeNull();
-  });
-
-  it("standby override solo en el limbo 'solicitado'", () => {
-    const standbyRec = icomfly({ dispatch_state: "despacho_solicitado", is_standby: true });
-    // sin recoger + standby => standby
-    expect(resolveDispatchState(standbyRec, moovin({ latest_status: "Recolección Solicitada" }), "G")).toBe("standby");
-    // ya recogido => despachado (el flag de standby no aplica)
-    expect(resolveDispatchState(standbyRec, moovin({ latest_status: "Sede de Moovin" }), "G")).toBe("despachado");
   });
 });
 
@@ -113,33 +116,31 @@ describe("mergeDispatchIntoTracking", () => {
   const ok = { shopify_cancelled_at: null, shopify_financial_status: "paid" };
   const cancelled = { shopify_cancelled_at: "2026-06-20T00:00:00Z", shopify_financial_status: "voided" };
 
-  it("solicitado pisa el engañoso 'en_route' / 'pending'", () => {
-    expect(mergeDispatchIntoTracking("en_route", "solicitado", ok)).toBe("despacho_solicitado");
-    expect(mergeDispatchIntoTracking("pending", "solicitado", ok)).toBe("despacho_solicitado");
+  it("la fase de Moovin pisa el base 'en_route' / 'pending'", () => {
+    expect(mergeDispatchIntoTracking("en_route", "despacho_solicitado", ok)).toBe("despacho_solicitado");
+    expect(mergeDispatchIntoTracking("pending", "despacho_solicitado", ok)).toBe("despacho_solicitado");
+    expect(mergeDispatchIntoTracking("en_route", "recolectado", ok)).toBe("recolectado");
+    expect(mergeDispatchIntoTracking("en_route", "en_route", ok)).toBe("en_route");
   });
 
-  it("standby pisa 'en_route'", () => {
-    expect(mergeDispatchIntoTracking("en_route", "standby", ok)).toBe("standby");
-  });
-
-  it("despachado (ya recogido) NO crea estado nuevo: cae al base", () => {
+  it("despachado/pendiente (sin fase de transito) NO crean estado nuevo: cae al base", () => {
     expect(mergeDispatchIntoTracking("en_route", "despachado", ok)).toBe("en_route");
+    expect(mergeDispatchIntoTracking("pending", "pendiente", ok)).toBe("pending");
   });
 
   it("no pisa estados terminales (entregado/no entregado/incidencia/reintento)", () => {
-    expect(mergeDispatchIntoTracking("delivered", "solicitado", ok)).toBe("delivered");
-    expect(mergeDispatchIntoTracking("not_delivered", "solicitado", ok)).toBe("not_delivered");
-    expect(mergeDispatchIntoTracking("incident", "solicitado", ok)).toBe("incident");
-    expect(mergeDispatchIntoTracking("en_route_retry", "solicitado", ok)).toBe("en_route_retry");
+    expect(mergeDispatchIntoTracking("delivered", "recolectado", ok)).toBe("delivered");
+    expect(mergeDispatchIntoTracking("not_delivered", "despacho_solicitado", ok)).toBe("not_delivered");
+    expect(mergeDispatchIntoTracking("incident", "despacho_solicitado", ok)).toBe("incident");
+    expect(mergeDispatchIntoTracking("en_route_retry", "recolectado", ok)).toBe("en_route_retry");
   });
 
   it("no pisa pedidos anulados", () => {
-    expect(mergeDispatchIntoTracking("en_route", "solicitado", cancelled)).toBe("en_route");
+    expect(mergeDispatchIntoTracking("en_route", "recolectado", cancelled)).toBe("en_route");
     expect(mergeDispatchIntoTracking("annulled", null, ok)).toBe("annulled");
   });
 
   it("sin estado de despacho devuelve el base", () => {
     expect(mergeDispatchIntoTracking("en_route", null, ok)).toBe("en_route");
-    expect(mergeDispatchIntoTracking("pending", "pendiente", ok)).toBe("pending");
   });
 });

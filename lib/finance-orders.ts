@@ -145,7 +145,7 @@ type OrderTrackingFilter =
   | "all"
   | "pending"
   | "despacho_solicitado"
-  | "standby"
+  | "recolectado"
   | "en_route"
   | "en_route_retry"
   | "incident_solvable"
@@ -709,7 +709,7 @@ export function getTrackingFilterFromStatus(
   if (status === "delivered") return "delivered";
   if (status === "not_delivered" || status === "returned") return "not_delivered";
   if (status === "despacho_solicitado") return "despacho_solicitado";
-  if (status === "standby") return "standby";
+  if (status === "recolectado") return "recolectado";
   if (status === "en_route") return "en_route";
   if (status === "en_route_retry") return "en_route_retry";
   if (status === "incident") return classifyIncident(row);

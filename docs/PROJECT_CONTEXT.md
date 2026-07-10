@@ -818,6 +818,16 @@ Build in this order:
 - Orders table "Transportadora" column shows the cached Moovin status (colored,
   incident-flagged) with a button to open the full timeline; "Actualizar Moovin"
   batch-updates all en-route Moovin orders.
+- **Estado de seguimiento buckets** for in-transit orders are driven by the latest
+  Moovin state via `moovinTransitPhase` (`lib/moovin-status.ts`, pure/tested):
+  `despacho_solicitado` (Registrado · Por preparar · Recolección solicitada/programada),
+  `recolectado` (Recolectado · Precoordinación · Sede de Moovin · En sede local),
+  `en_route` (Coordinado · En ruta a lo largo del día). Applied in
+  `resolveDispatchState`/`mergeDispatchIntoTracking` (`lib/dispatch.ts`); an
+  uncatalogued in-transit state defaults to `en_route` and logs a warn. This
+  replaced the old time-based "Standby" tracking bucket (the iComfly `is_standby`
+  marker and its Despacho tab are unaffected). Terminal states (delivered/incident/
+  cancelled/returned) and Pendientes are unchanged.
 - **Reconciliation** (`lib/moovin-reconcile.ts`, tested): flags Moovin-vs-system
   mismatches (Moovin delivered but unrecorded, returned not reflected, unresolved
   incident, system-delivered while Moovin not confirmed) as a clickable alert +

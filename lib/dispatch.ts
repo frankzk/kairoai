@@ -5,6 +5,7 @@
 // Reusada por la ruta de sync (servidor) y testeable de forma aislada.
 
 import { normalizeMatchKey } from "./order-matching";
+import { moovinTransitPhase } from "./moovin-status";
 import type { MoovinTrackingRow, IcomflyOrderRecord } from "./finance-types";
 
 // ─── Configuracion (pendiente de confirmar con iComfly) ──────────────────────
@@ -321,48 +322,51 @@ export function isMoovinPickedUp(row: MoovinTrackingRow | undefined): boolean | 
   return undefined;
 }
 
-export type DispatchView = "despachado" | "solicitado" | "pendiente" | "standby";
+// Los 3 primeros valores son las FASES DE TRANSITO derivadas del estado de
+// Moovin (agrupan el "Estado de seguimiento"); "despachado"/"pendiente" son el
+// fallback de iComfly cuando no hay dato de Moovin.
+export type DispatchView =
+  | "despacho_solicitado"
+  | "recolectado"
+  | "en_route"
+  | "despachado"
+  | "pendiente";
 
-// Resuelve el estado de la columna "Despacho" combinando la recoleccion fisica
-// de Moovin (senal primaria) con la atribucion de iComfly. Si hay dato de Moovin
-// manda este; si no, cae al dispatch_state de iComfly (no regresa
-// historicos/entregados sin row de Moovin). null si no hay ni pedido ni guia.
+// Resuelve el estado de la columna "Despacho" / bucket de seguimiento. Señal
+// primaria: la FASE DE TRANSITO segun el ultimo estado de Moovin
+// (moovinTransitPhase). Si Moovin no da fase (estado final/incidencia o sin
+// dato), cae a la recoleccion fisica y luego a la atribucion de iComfly. null si
+// no hay ni pedido ni guia.
 export function resolveDispatchState(
   rec: IcomflyOrderRecord | undefined,
   moovin: MoovinTrackingRow | undefined,
   guideNumber: string | undefined
 ): DispatchView | null {
+  // Moovin manda: su estado clasifica el bucket de tránsito directamente.
+  const phase = moovin ? moovinTransitPhase(moovin) : null;
+  if (phase) return phase; // despacho_solicitado | recolectado | en_route
+
+  // Sin fase de transito: Moovin final/incidencia (ya recogido) o sin dato.
   const pickedUp = isMoovinPickedUp(moovin);
+  if (pickedUp === true) return "despachado"; // el estado final lo maneja getEffectiveTrackingStatus
+
   const hasGuide = Boolean(guideNumber && String(guideNumber).trim());
-
-  let state: DispatchView | null;
-  if (pickedUp === true) {
-    state = "despachado";
-  } else if (pickedUp === false) {
-    state = "solicitado"; // Moovin confirma que sigue en el almacen
-  } else if (rec) {
-    state =
-      rec.dispatch_state === "despachado"
-        ? "despachado"
-        : rec.dispatch_state === "despacho_solicitado"
-          ? "solicitado"
-          : "pendiente";
-  } else if (hasGuide) {
-    state = "despachado";
-  } else {
-    return null;
+  if (rec) {
+    return rec.dispatch_state === "despachado"
+      ? "despachado"
+      : rec.dispatch_state === "despacho_solicitado"
+        ? "despacho_solicitado"
+        : "pendiente";
   }
-
-  // Standby solo aplica al limbo "solicitado" (guia hecha, sin recoger).
-  if (state === "solicitado" && rec?.is_standby) return "standby";
-  return state;
+  if (hasGuide) return "despachado";
+  return null;
 }
 
-// Funde el hito de despacho dentro del "Estado de seguimiento": el limbo previo
-// al movimiento real del courier (solicitado/standby) reemplaza al engañoso
-// "En ruta"/"Pendiente". El "despachado" (ya recogido) NO genera estado nuevo:
-// cae al estado base (en_route/delivered/etc.). No pisa estados terminales ni
-// pedidos anulados.
+// Funde el hito de despacho dentro del "Estado de seguimiento": la fase de
+// transito de Moovin (despacho_solicitado/recolectado/en_route) reemplaza al
+// base "En ruta"/"Pendiente". El "despachado" (ya recogido, estado final) y
+// "pendiente" NO generan estado nuevo: cae al base. No pisa estados terminales
+// ni pedidos anulados.
 export function mergeDispatchIntoTracking(
   baseStatus: string,
   dispatchState: DispatchView | null,
@@ -374,7 +378,14 @@ export function mergeDispatchIntoTracking(
   // Solo aplica al limbo previo al movimiento real (no pisa entregado, no
   // entregado, incidencia, reintento ni anulado).
   if (baseStatus !== "pending" && baseStatus !== "en_route") return baseStatus;
-  if (dispatchState === "standby") return "standby";
-  if (dispatchState === "solicitado") return "despacho_solicitado";
-  return baseStatus;
+  switch (dispatchState) {
+    case "despacho_solicitado":
+      return "despacho_solicitado";
+    case "recolectado":
+      return "recolectado";
+    case "en_route":
+      return "en_route";
+    default:
+      return baseStatus; // despachado, pendiente, null
+  }
 }
