@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { classifyMoovinGroup as classifyMoovinReal, computeIncident, effectiveLatestMoovin, type MoovinEvent } from "../lib/moovin";
+import {
+  classifyMoovinFetchFailure,
+  classifyMoovinGroup as classifyMoovinReal,
+  computeIncident,
+  effectiveLatestMoovin,
+  type MoovinEvent,
+} from "../lib/moovin";
 
 // Replica del parser de app/api/finance/moovin-tracking/route.ts para fijar el
 // comportamiento sobre la estructura RSC real de Moovin (linea "1:{...}").
@@ -108,6 +114,24 @@ describe("parseMoovinResponse", () => {
 
   it("devuelve null si no hay listStatus", () => {
     expect(parseMoovinResponse('0:{"a":"x"}\n')).toBeNull();
+  });
+});
+
+describe("classifyMoovinFetchFailure", () => {
+  it("detecta el despliegue pausado de Moovin antes de intentar parsear tracking", () => {
+    expect(
+      classifyMoovinFetchFailure(
+        "The deployment is currently unavailable\n\nDEPLOYMENT_PAUSED",
+        503,
+        "text/plain"
+      )
+    ).toContain("DEPLOYMENT_PAUSED");
+  });
+
+  it("detecta HTML inesperado como pantalla intermedia o cambio de pagina", () => {
+    expect(classifyMoovinFetchFailure("<!DOCTYPE html><html></html>", 200, "text/html")).toContain(
+      "HTML"
+    );
   });
 });
 

@@ -108,12 +108,27 @@ export async function fetchMoovinTracking(
     });
 
     const text = await res.text();
+    const fetchFailure = classifyMoovinFetchFailure(
+      text,
+      res.status,
+      res.headers.get("content-type") ?? ""
+    );
+    if (fetchFailure) {
+      return {
+        ...base,
+        http_status: res.status,
+        error: fetchFailure,
+        ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
+      };
+    }
+
     const detail = parseMoovinResponse(text);
     if (!detail) {
       return {
         ...base,
         http_status: res.status,
-        error: "No se pudo interpretar la respuesta de Moovin",
+        error:
+          "Moovin devolvio una respuesta inesperada. Revisa si cambio la accion publica o intenta mas tarde.",
         ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
       };
     }
@@ -144,6 +159,37 @@ export async function fetchMoovinTracking(
   } finally {
     clearTimeout(abortTimer);
   }
+}
+
+export function classifyMoovinFetchFailure(raw: string, status: number, contentType = ""): string | null {
+  const body = raw.slice(0, 4000).toLowerCase();
+  const type = contentType.toLowerCase();
+
+  if (
+    status === 503 ||
+    body.includes("deployment_paused") ||
+    body.includes("deployment is currently unavailable")
+  ) {
+    return "Moovin no esta disponible en este momento (DEPLOYMENT_PAUSED). Intenta mas tarde o usa el ultimo estado guardado.";
+  }
+
+  if (status === 502 || status === 504 || body.includes("connection timed out")) {
+    return "Moovin no respondio a tiempo. Intenta mas tarde o usa el ultimo estado guardado.";
+  }
+
+  if (status >= 500) {
+    return `Moovin respondio con error ${status}. Intenta mas tarde.`;
+  }
+
+  if (
+    type.includes("text/html") ||
+    body.includes("<!doctype html") ||
+    body.includes("<html")
+  ) {
+    return "Moovin devolvio HTML en vez de tracking. Puede haber cambiado su pagina publica o estar mostrando una pantalla intermedia.";
+  }
+
+  return null;
 }
 
 // Estado efectivo: la entrega es terminal. Si la guia tiene un evento delivered,

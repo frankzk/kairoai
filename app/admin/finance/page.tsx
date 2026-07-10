@@ -2659,6 +2659,9 @@ interface MoovinTrackingEvent {
 interface MoovinTrackingResult {
   ok?: boolean;
   error?: string;
+  warning?: string;
+  from_cache?: boolean;
+  checked_at?: string;
   tracking_number?: string;
   latest_status?: string | null;
   latest_group?: MoovinTrackingEvent["group"] | null;
@@ -2786,8 +2789,16 @@ function MoovinTrackingModal({
           <p className="border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{error}</p>
         ) : (
           <>
+            {data?.warning && (
+              <p className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                {data.warning}
+                {data.checked_at ? ` Ultimo guardado: ${formatMoovinDate(data.checked_at)}.` : ""}
+              </p>
+            )}
             <div className="mb-3 border border-border bg-background p-3">
-              <p className="text-[11px] text-muted-foreground">Ultimo estado</p>
+              <p className="text-[11px] text-muted-foreground">
+                {data?.from_cache ? "Ultimo estado guardado" : "Ultimo estado"}
+              </p>
               <p
                 className={`mt-0.5 text-sm font-semibold ${
                   data?.latest_group === "delivered"

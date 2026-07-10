@@ -810,6 +810,12 @@ Build in this order:
   mismatches (Moovin delivered but unrecorded, returned not reflected, unresolved
   incident, system-delivered while Moovin not confirmed) as a clickable alert +
   modal in Pedidos.
+- **Provider failure handling (2026-07-10 hotfix):** Moovin can return plain text
+  or HTML instead of tracking, including `503 DEPLOYMENT_PAUSED`. `lib/moovin.ts`
+  now classifies those responses before parsing. The on-demand modal falls back
+  to the last `moovin_tracking` cache row for the guide and labels it as
+  "Ultimo estado guardado"; if no cache exists, the UI shows the provider-level
+  message instead of the old generic "No se pudo interpretar" error.
 
 ### iComfly Estado de Despacho (lib/icomfly.ts, lib/dispatch.ts, migration 0010)
 Supervisa el despacho de pedidos COD en dos momentos atribuibles a personas:

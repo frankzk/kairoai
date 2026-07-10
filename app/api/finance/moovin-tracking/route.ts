@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchMoovinTracking } from "@/lib/moovin";
-import { upsertMoovinTracking } from "@/lib/finance";
+import { fetchMoovinTracking, type MoovinTracking } from "@/lib/moovin";
+import { getMoovinTrackingByPackage, upsertMoovinTracking } from "@/lib/finance";
+import type { MoovinTrackingRow } from "@/lib/finance-types";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -13,6 +14,13 @@ export async function GET(req: NextRequest) {
   const includeRaw = req.nextUrl.searchParams.get("raw") === "1";
   if (!idPackage) {
     return NextResponse.json({ error: "idPackage requerido" }, { status: 400 });
+  }
+
+  let cached: MoovinTrackingRow | null = null;
+  try {
+    cached = await getMoovinTrackingByPackage(idPackage);
+  } catch (err) {
+    console.warn("[moovin-tracking cache read]", err);
   }
 
   const tracking = await fetchMoovinTracking(idPackage, lastName, { includeRaw });
@@ -39,5 +47,35 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  if ((!tracking.ok || !tracking.latest_status) && cached?.latest_status) {
+    return NextResponse.json(cachedMoovinTracking(cached, tracking.error));
+  }
+
   return NextResponse.json(tracking);
+}
+
+function cachedMoovinTracking(
+  row: MoovinTrackingRow,
+  warning = "Moovin no devolvio datos nuevos."
+): MoovinTracking & { checked_at: string; from_cache: true; stale: true; warning: string } {
+  return {
+    ok: true,
+    http_status: 200,
+    id_package: row.id_package,
+    last_name: row.last_name,
+    tracking_number: row.tracking_number,
+    profile: "",
+    latest_status: row.latest_status,
+    latest_status_code: row.latest_code,
+    latest_group: row.latest_group as MoovinTracking["latest_group"],
+    latest_at: row.latest_at,
+    delivery_address: row.delivery_address,
+    has_incident: row.has_incident,
+    incident_reason: row.incident_reason,
+    events: row.events as MoovinTracking["events"],
+    checked_at: row.checked_at,
+    from_cache: true,
+    stale: true,
+    warning,
+  };
 }
