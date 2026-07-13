@@ -6,7 +6,7 @@ import type { LogisticsRow, SettlementRow } from "@/lib/finance-types";
 import { getOrdersDataset } from "../_shared/orders-dataset";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 // Vista del tab Liquidaciones server-side (Carril 2 — ultimo tab). Devuelve lo que
 // la UI necesita ya calculado desde el dataset cacheado: las filas de liquidacion

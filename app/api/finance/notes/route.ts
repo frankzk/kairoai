@@ -5,7 +5,7 @@ import { buildShopifyNoteAliasRows, type ShopifyNoteAliasRow } from "@/lib/finan
 import { getOrdersDataset } from "../_shared/orders-dataset";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 // Cache simple por tienda (TTL ~30s) de los alias de notas. La lista es pequena;
 // el cliente hace la busqueda de texto + el filtro "solo con codigo" en memoria.

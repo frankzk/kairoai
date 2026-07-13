@@ -11,7 +11,7 @@ import {
 import { getOrdersDataset } from "../_shared/orders-dataset";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 const KPI_RANGES: KpiRange[] = ["today", "7d", "30d", "month", "all"];
 

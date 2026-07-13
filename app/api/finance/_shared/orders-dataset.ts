@@ -261,29 +261,54 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
 // El valor devuelto es identico al de buildDataset (caso L1/build directos) o a
 // uno reconstruido byte a byte desde JSONB (caso L2). Esto es solo cache: si L2
 // falla o la tabla no existe, cae a armar en memoria — el dashboard no se rompe.
+//
+// Single-flight por tienda: al abrir el dashboard, varias rutas (orders/, kpis/,
+// summary/, settlements-view/, ...) piden el dataset a la vez. En una instancia
+// fria (L1 vacia) cada una repetia la parte cara — descargar el payload L2 de
+// decenas de MB, gunzip y JSON.parse — en paralelo sobre el mismo proceso, y esa
+// competencia de CPU empujaba a la ruta de pedidos por encima de su maxDuration
+// (FUNCTION_INVOCATION_TIMEOUT en cada cold start). Con una unica promesa en
+// vuelo por tienda, el primer request hace el trabajo y el resto espera el mismo
+// resultado.
+const inFlightLoads = new Map<string, Promise<OrdersDataset>>();
+
 export async function getOrdersDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   const cached = datasetCache.get(store.code);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
     return cached.data;
   }
 
-  const fromL2 = await readDatasetCache(store);
-  if (fromL2) {
-    datasetCache.set(store.code, { at: Date.now(), data: fromL2.data });
-    // Serve-stale: aunque la fila este vencida, la servimos igual. No lanzamos
-    // refresh pesado desde requests de usuario; en serverless eso multiplica
-    // rebuilds por instancia y puede saturar Supabase durante degradaciones.
-    if (fromL2.stale) {
-      console.warn(`[orders-dataset L2 stale] ${store.code}: serving stale cache`);
-    }
-    return fromL2.data;
-  }
+  const inFlight = inFlightLoads.get(store.code);
+  if (inFlight) return inFlight;
 
-  // Solo el primerisimo build (sin ninguna fila en L2) reconstruye on-request.
-  const data = await buildDataset(store);
-  datasetCache.set(store.code, { at: Date.now(), data });
-  await writeDatasetCache(store, data);
-  return data;
+  const load = (async () => {
+    const fromL2 = await readDatasetCache(store);
+    if (fromL2) {
+      datasetCache.set(store.code, { at: Date.now(), data: fromL2.data });
+      // Serve-stale: aunque la fila este vencida, la servimos igual. No lanzamos
+      // refresh pesado desde requests de usuario; en serverless eso multiplica
+      // rebuilds por instancia y puede saturar Supabase durante degradaciones.
+      if (fromL2.stale) {
+        console.warn(`[orders-dataset L2 stale] ${store.code}: serving stale cache`);
+      }
+      return fromL2.data;
+    }
+
+    // Solo el primerisimo build (sin ninguna fila en L2) reconstruye on-request.
+    const data = await buildDataset(store);
+    datasetCache.set(store.code, { at: Date.now(), data });
+    await writeDatasetCache(store, data);
+    return data;
+  })();
+
+  inFlightLoads.set(store.code, load);
+  try {
+    return await load;
+  } finally {
+    // Se limpia siempre (exito o error) para que un fallo no deje pegada una
+    // promesa rechazada: el siguiente request reintenta desde cero.
+    inFlightLoads.delete(store.code);
+  }
 }
 
 // Reconstruye el dataset de una tienda y refresca ambas caches (L2 upsert + L1).

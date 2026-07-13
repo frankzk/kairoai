@@ -11,7 +11,7 @@ import {
 import { getOrdersDataset } from "../_shared/orders-dataset";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 // Cache simple por tienda (TTL ~30s) del cierre mensual + centro de control. El
 // dataset ya cachea su ensamblado; este evita recomputar en rafagas.

@@ -10,7 +10,7 @@ import {
 import { getOrdersDataset } from "../_shared/orders-dataset";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 // Cache simple a nivel de modulo del analisis de productos por tienda (TTL ~30s),
 // igual que kpis/. El dataset ensamblado ya tiene su propio cache; este evita
