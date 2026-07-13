@@ -14,7 +14,7 @@ import { mergeDispatchIntoTracking } from "@/lib/dispatch";
 import { getOrdersDataset, type OrdersDataset } from "../_shared/orders-dataset";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 500;
