@@ -1276,22 +1276,31 @@ export async function getRecentlyCheckedMoovinPackages(maxAgeMinutes: number): P
 export async function listMoovinSyncCandidates(
   limit: number,
   freshWindowMinutes: number
-): Promise<Array<{ idPackage: string; lastName: string }>> {
-  // 1) Guias Moovin con guia, desde logistics_rows.
-  const byGuide = new Map<string, string>();
+): Promise<Array<{ idPackage: string; lastName: string; fullName: string }>> {
+  // 1) Guias Moovin con guia, desde logistics_rows. Se trae tambien customer_name
+  // para que fetchMoovinTracking pueda derivar los dos apellidos ticos si el
+  // last_name (Apellido de Boxful) no resuelve por si solo.
+  const byGuide = new Map<string, { lastName: string; fullName: string }>();
   const pageSize = 1000;
   for (let from = 0; from < 50000; from += pageSize) {
     const { data, error } = await getDB()
       .from("logistics_rows")
-      .select("guide_number, last_name, courier")
+      .select("guide_number, last_name, customer_name, courier")
       .ilike("courier", "%moovin%")
       .neq("guide_number", "")
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`listMoovinSyncCandidates: ${error.message}`);
-    const page = (data ?? []) as Array<{ guide_number: string; last_name: string | null }>;
+    const page = (data ?? []) as Array<{
+      guide_number: string;
+      last_name: string | null;
+      customer_name: string | null;
+    }>;
     for (const row of page) {
       if (row.guide_number && !byGuide.has(row.guide_number)) {
-        byGuide.set(row.guide_number, row.last_name ?? "");
+        byGuide.set(row.guide_number, {
+          lastName: row.last_name ?? "",
+          fullName: row.customer_name ?? "",
+        });
       }
     }
     if (page.length < pageSize) break;
@@ -1312,10 +1321,10 @@ export async function listMoovinSyncCandidates(
   }
   const fresh = await getRecentlyCheckedMoovinPackages(freshWindowMinutes);
 
-  const candidates: Array<{ idPackage: string; lastName: string }> = [];
-  for (const [guide, lastName] of Array.from(byGuide.entries())) {
+  const candidates: Array<{ idPackage: string; lastName: string; fullName: string }> = [];
+  for (const [guide, names] of Array.from(byGuide.entries())) {
     if (terminal.has(guide) || fresh.has(guide)) continue;
-    candidates.push({ idPackage: guide, lastName });
+    candidates.push({ idPackage: guide, lastName: names.lastName, fullName: names.fullName });
     if (candidates.length >= limit) break;
   }
   return candidates;

@@ -852,7 +852,7 @@ export function matchesOrderSearch(row: TrackableOrderRow, query: string): boole
 // ---------------------------------------------------------------------------
 
 export interface EnRouteGuides {
-  moovin: Array<{ idPackage: string; lastName: string }>;
+  moovin: Array<{ idPackage: string; lastName: string; fullName: string }>;
   forza: Array<{ guide: string }>;
 }
 
@@ -870,13 +870,17 @@ export function buildEnRouteGuides(
     status === "en_route" || status === "en_route_retry" || status === "incident" || status === "pending";
 
   if (store.logisticsProvider === "moovin") {
-    const byGuide = new Map<string, { idPackage: string; lastName: string }>();
+    const byGuide = new Map<string, { idPackage: string; lastName: string; fullName: string }>();
     for (const row of rows) {
       if (!isMoovinCourier(row.courier, store) || !row.guide_number) continue;
       const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
       if (!isOpenStatus(status)) continue;
       if (!byGuide.has(row.guide_number)) {
-        byGuide.set(row.guide_number, { idPackage: row.guide_number, lastName: row.last_name ?? "" });
+        byGuide.set(row.guide_number, {
+          idPackage: row.guide_number,
+          lastName: row.last_name ?? "",
+          fullName: row.customer_name ?? "",
+        });
       }
     }
     return { moovin: Array.from(byGuide.values()), forza: [] };
