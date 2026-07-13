@@ -28,7 +28,7 @@ type TrackingFilter =
   | "all"
   | "pending"
   | "despacho_solicitado"
-  | "standby"
+  | "recolectado"
   | "en_route"
   | "en_route_retry"
   | "incident_solvable"
@@ -43,7 +43,7 @@ const TRACKING_FILTERS: TrackingFilter[] = [
   "all",
   "pending",
   "despacho_solicitado",
-  "standby",
+  "recolectado",
   "en_route",
   "en_route_retry",
   "incident_solvable",
@@ -184,7 +184,7 @@ export async function GET(req: NextRequest) {
       all: withMeta.length,
       pending: 0,
       despacho_solicitado: 0,
-      standby: 0,
+      recolectado: 0,
       en_route: 0,
       en_route_retry: 0,
       incident_solvable: 0,
