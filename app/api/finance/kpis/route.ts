@@ -13,10 +13,17 @@ import { getOrdersDataset } from "../_shared/orders-dataset";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const KPI_RANGES: KpiRange[] = ["today", "7d", "30d", "month", "all"];
+const KPI_RANGES: KpiRange[] = ["today", "yesterday", "7d", "30d", "month", "all", "custom"];
 
 function parsePeriod(value: string | null): KpiRange {
   return KPI_RANGES.includes(value as KpiRange) ? (value as KpiRange) : "all";
+}
+
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseDateKey(value: string | null): string {
+  const trimmed = (value || "").trim();
+  return DATE_KEY_RE.test(trimmed) ? trimmed : "";
 }
 
 // Replica el filtro `inWindow` del useMemo operationalKpis de page.tsx (~1230):
@@ -46,7 +53,20 @@ export async function GET(req: NextRequest) {
   }
 
   const period = parsePeriod(params.get("period"));
-  const cacheKey = `${store.code}|${period}`;
+  // Rango custom: start/end YYYY-MM-DD inclusivos. Si faltan o estan invertidos
+  // se responde 400 (la UI no consulta hasta tener ambas fechas validas).
+  const customStart = parseDateKey(params.get("start"));
+  const customEnd = parseDateKey(params.get("end"));
+  if (period === "custom" && (!customStart || !customEnd || customStart > customEnd)) {
+    return NextResponse.json(
+      { error: "period=custom requiere start y end (YYYY-MM-DD, start <= end)" },
+      { status: 400 }
+    );
+  }
+  const cacheKey =
+    period === "custom"
+      ? `${store.code}|custom|${customStart}|${customEnd}`
+      : `${store.code}|${period}`;
 
   try {
     const cached = kpisCache.get(cacheKey);
@@ -59,7 +79,7 @@ export async function GET(req: NextRequest) {
     // Misma logica que el useMemo operationalKpis de page.tsx: ventana actual y
     // ventana previa "like-for-like", filtrando por shopify_created_at antes de
     // computeOpMetricsFromTrackableRows.
-    const win = getKpiWindows(period, new Date());
+    const win = getKpiWindows(period, new Date(), { start: customStart, end: customEnd });
     const current = computeOpMetricsFromTrackableRows(
       rows.filter((row: TrackableOrderRow) => inWindow(row.shopify_created_at, win.curStart, win.curEnd)),
       settlementTraceByKey
@@ -75,6 +95,14 @@ export async function GET(req: NextRequest) {
         : null;
 
     const data: KpisPayload = { current, previous };
+    // Poda de vencidos: las claves de rango custom son abiertas (una por par de
+    // fechas) y sin esto el mapa creceria sin tope en instancias longevas.
+    if (kpisCache.size > 50) {
+      const now = Date.now();
+      for (const [key, entry] of Array.from(kpisCache.entries())) {
+        if (now - entry.at >= KPIS_TTL_MS) kpisCache.delete(key);
+      }
+    }
     kpisCache.set(cacheKey, { at: Date.now(), data });
     return NextResponse.json(data);
   } catch (err) {

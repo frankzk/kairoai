@@ -259,7 +259,14 @@ function getForzaTrackingFromMap(
 
 // Rango y ventana de KPIs. Copiados VERBATIM de page.tsx (~7032-7143) para que
 // la ruta kpis/ calcule current+previous con la misma logica que la UI.
-export type KpiRange = "today" | "7d" | "30d" | "month" | "all";
+// "yesterday" = ayer completo (dia cerrado); "custom" = rango elegido por el
+// usuario (start/end YYYY-MM-DD, ambos inclusivos).
+export type KpiRange = "today" | "yesterday" | "7d" | "30d" | "month" | "all" | "custom";
+
+export interface KpiCustomRange {
+  start?: string; // YYYY-MM-DD
+  end?: string; // YYYY-MM-DD
+}
 
 export interface KpiWindow {
   curStart: number;
@@ -275,11 +282,25 @@ function startOfDayMs(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
+// Fecha YYYY-MM-DD -> medianoche local en ms, o null si no parsea. Se usa para
+// el rango custom de KPIs; medianoche local para ser consistente con
+// startOfDayMs (hoy/ayer/7d/30d usan el dia local del proceso).
+function parseDateKeyMs(value: string | undefined): number | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [y, m, d] = value.split("-").map(Number);
+  const time = new Date(y, m - 1, d).getTime();
+  return Number.isNaN(time) ? null : time;
+}
+
+function formatDateKeyLabel(value: string): string {
+  return `${value.slice(8, 10)}/${value.slice(5, 7)}/${value.slice(0, 4)}`;
+}
+
 // Ventana actual + ventana previa "like-for-like" (mismo largo, inmediatamente
 // anterior). "Mes" compara MTD contra el mismo tramo del mes anterior, no contra
 // el mes completo. `maturing` marca rangos donde la tasa de entrega aun no madura
 // por el lag logistico del COD (un pedido de hoy no se entrega hoy).
-export function getKpiWindows(range: KpiRange, now: Date): KpiWindow {
+export function getKpiWindows(range: KpiRange, now: Date, custom?: KpiCustomRange): KpiWindow {
   const end = now.getTime();
   const dayStart = startOfDayMs(now);
   const DAY = 24 * 60 * 60 * 1000;
@@ -294,6 +315,27 @@ export function getKpiWindows(range: KpiRange, now: Date): KpiWindow {
       maturing: false,
     };
   }
+  if (range === "custom") {
+    const startMs = parseDateKeyMs(custom?.start);
+    const endDayMs = parseDateKeyMs(custom?.end);
+    // Rango invalido o incompleto: cae a "Todo" para no romper la vista (la UI
+    // no consulta hasta tener ambas fechas; esto es solo red de seguridad).
+    if (startMs == null || endDayMs == null || startMs > endDayMs) {
+      return getKpiWindows("all", now);
+    }
+    const curEnd = endDayMs + DAY; // fin inclusivo: el dia completo del "hasta"
+    const span = curEnd - startMs;
+    return {
+      curStart: startMs,
+      curEnd,
+      prevStart: startMs - span,
+      prevEnd: startMs,
+      rangeLabel: `${formatDateKeyLabel(custom!.start!)} – ${formatDateKeyLabel(custom!.end!)}`,
+      compareLabel: "vs. periodo previo (mismo largo)",
+      // Rangos que terminan hace poco aun no maduran (lag logistico del COD).
+      maturing: curEnd > end - 7 * DAY,
+    };
+  }
   if (range === "today") {
     return {
       curStart: dayStart,
@@ -302,6 +344,17 @@ export function getKpiWindows(range: KpiRange, now: Date): KpiWindow {
       prevEnd: dayStart,
       rangeLabel: "Hoy",
       compareLabel: "vs. ayer",
+      maturing: true,
+    };
+  }
+  if (range === "yesterday") {
+    return {
+      curStart: dayStart - DAY,
+      curEnd: dayStart,
+      prevStart: dayStart - 2 * DAY,
+      prevEnd: dayStart - DAY,
+      rangeLabel: "Ayer",
+      compareLabel: "vs. anteayer",
       maturing: true,
     };
   }

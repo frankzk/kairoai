@@ -448,6 +448,9 @@ const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
   const [kpiRange, setKpiRange] = useState<KpiRange>("30d");
+  // Rango custom de KPIs (YYYY-MM-DD, inclusivos). Solo aplica con kpiRange="custom".
+  const [kpiCustomStart, setKpiCustomStart] = useState("");
+  const [kpiCustomEnd, setKpiCustomEnd] = useState("");
   // KPIs operativos: ahora se calculan server-side (Carril 2 inc.2) en
   // /api/finance/kpis para no depender de cargar las ~11k filas en el navegador.
   const [kpiCards, setKpiCards] = useState<KpiCardVM[]>([]);
@@ -1108,21 +1111,33 @@ export default function FinancePage() {
   // 7 tarjetas en cero para conservar el layout (OperationalKpiCard pinta "...").
   const operationalKpis = useMemo(
     () => ({
-      win: getKpiWindows(kpiRange, new Date()),
+      win: getKpiWindows(kpiRange, new Date(), { start: kpiCustomStart, end: kpiCustomEnd }),
       cards: kpiCards.length ? kpiCards : buildOperationalKpiCards(EMPTY_OP_METRICS, null),
     }),
-    [kpiRange, kpiCards]
+    [kpiRange, kpiCustomStart, kpiCustomEnd, kpiCards]
   );
 
   // Fetch de KPIs server-side: current + previous por tienda y periodo. Reemplaza
   // el calculo en memoria sobre visibleOrderRows (Carril 2 inc.2).
   useEffect(() => {
+    // Rango custom incompleto: no consultamos hasta tener ambas fechas; las
+    // tarjetas quedan en cero con la etiqueta "elegí desde y hasta".
+    if (kpiRange === "custom" && (!kpiCustomStart || !kpiCustomEnd || kpiCustomStart > kpiCustomEnd)) {
+      setKpiCards([]);
+      setKpiLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setKpiLoading(true);
     (async () => {
       try {
+        const kpiParams = new URLSearchParams({ period: kpiRange });
+        if (kpiRange === "custom") {
+          kpiParams.set("start", kpiCustomStart);
+          kpiParams.set("end", kpiCustomEnd);
+        }
         const res = await fetch(
-          withStore(`/api/finance/kpis?period=${kpiRange}`, selectedStoreCode),
+          withStore(`/api/finance/kpis?${kpiParams.toString()}`, selectedStoreCode),
           { cache: "no-store", signal: controller.signal }
         );
         const json = await readApiJson(res);
@@ -1140,7 +1155,7 @@ export default function FinancePage() {
       }
     })();
     return () => controller.abort();
-  }, [selectedStoreCode, kpiRange]);
+  }, [selectedStoreCode, kpiRange, kpiCustomStart, kpiCustomEnd]);
 
   // Conteos para la barra de Alertas (Carril 2 inc.2). period=all para que las
   // alertas reflejen todo el historico, no solo la ventana del selector. Una
@@ -1326,6 +1341,36 @@ export default function FinancePage() {
                   {option.label}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setKpiRange("custom")}
+                className={`rounded-md border px-2.5 py-1 text-xs transition ${
+                  kpiRange === "custom"
+                    ? "border-primary/60 bg-primary/15 text-primary"
+                    : "border-border bg-card text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Rango
+              </button>
+              {kpiRange === "custom" && (
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    type="date"
+                    value={kpiCustomStart}
+                    onChange={(event) => setKpiCustomStart(event.target.value)}
+                    className="h-7 w-[140px] text-xs"
+                    aria-label="KPIs desde"
+                  />
+                  <span className="text-xs text-muted-foreground">a</span>
+                  <Input
+                    type="date"
+                    value={kpiCustomEnd}
+                    onChange={(event) => setKpiCustomEnd(event.target.value)}
+                    className="h-7 w-[140px] text-xs"
+                    aria-label="KPIs hasta"
+                  />
+                </div>
+              )}
             </div>
             <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
               <span>
@@ -7555,12 +7600,15 @@ function BreakdownLine({ label, value }: { label: string; value: number }) {
   );
 }
 
-type KpiRange = "today" | "7d" | "30d" | "month" | "all";
+type KpiRange = "today" | "yesterday" | "7d" | "30d" | "month" | "all" | "custom";
 type KpiTone = "neutral" | "good" | "warn" | "bad";
 type DeltaTone = "good" | "bad" | "muted";
 
+// "custom" no va en esta lista: se activa con el control de rango de fechas que
+// vive al lado de "Todo".
 const KPI_RANGE_OPTIONS: { value: KpiRange; label: string }[] = [
   { value: "today", label: "Hoy" },
+  { value: "yesterday", label: "Ayer" },
   { value: "7d", label: "7 días" },
   { value: "30d", label: "30 días" },
   { value: "month", label: "Mes" },
@@ -7629,11 +7677,28 @@ function startOfDayMs(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
+// Fecha YYYY-MM-DD -> medianoche local en ms, o null si no parsea (copiado
+// VERBATIM de lib/finance-orders para el rango custom de KPIs).
+function parseDateKeyMs(value: string | undefined): number | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [y, m, d] = value.split("-").map(Number);
+  const time = new Date(y, m - 1, d).getTime();
+  return Number.isNaN(time) ? null : time;
+}
+
+function formatDateKeyLabel(value: string): string {
+  return `${value.slice(8, 10)}/${value.slice(5, 7)}/${value.slice(0, 4)}`;
+}
+
 // Ventana actual + ventana previa "like-for-like" (mismo largo, inmediatamente
 // anterior). "Mes" compara MTD contra el mismo tramo del mes anterior, no contra
 // el mes completo. `maturing` marca rangos donde la tasa de entrega aun no madura
 // por el lag logistico del COD (un pedido de hoy no se entrega hoy).
-function getKpiWindows(range: KpiRange, now: Date): KpiWindow {
+function getKpiWindows(
+  range: KpiRange,
+  now: Date,
+  custom?: { start?: string; end?: string }
+): KpiWindow {
   const end = now.getTime();
   const dayStart = startOfDayMs(now);
   const DAY = 24 * 60 * 60 * 1000;
@@ -7648,6 +7713,33 @@ function getKpiWindows(range: KpiRange, now: Date): KpiWindow {
       maturing: false,
     };
   }
+  if (range === "custom") {
+    const startMs = parseDateKeyMs(custom?.start);
+    const endDayMs = parseDateKeyMs(custom?.end);
+    if (startMs == null || endDayMs == null || startMs > endDayMs) {
+      // Rango incompleto: etiqueta neutral mientras el usuario elige fechas.
+      return {
+        curStart: 0,
+        curEnd: end,
+        prevStart: null,
+        prevEnd: null,
+        rangeLabel: "Rango: elegí desde y hasta",
+        compareLabel: "sin comparativo",
+        maturing: false,
+      };
+    }
+    const curEnd = endDayMs + DAY; // fin inclusivo: el dia completo del "hasta"
+    const span = curEnd - startMs;
+    return {
+      curStart: startMs,
+      curEnd,
+      prevStart: startMs - span,
+      prevEnd: startMs,
+      rangeLabel: `${formatDateKeyLabel(custom!.start!)} – ${formatDateKeyLabel(custom!.end!)}`,
+      compareLabel: "vs. periodo previo (mismo largo)",
+      maturing: curEnd > end - 7 * DAY,
+    };
+  }
   if (range === "today") {
     return {
       curStart: dayStart,
@@ -7656,6 +7748,17 @@ function getKpiWindows(range: KpiRange, now: Date): KpiWindow {
       prevEnd: dayStart,
       rangeLabel: "Hoy",
       compareLabel: "vs. ayer",
+      maturing: true,
+    };
+  }
+  if (range === "yesterday") {
+    return {
+      curStart: dayStart - DAY,
+      curEnd: dayStart,
+      prevStart: dayStart - 2 * DAY,
+      prevEnd: dayStart - DAY,
+      rangeLabel: "Ayer",
+      compareLabel: "vs. anteayer",
       maturing: true,
     };
   }
