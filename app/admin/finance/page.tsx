@@ -447,7 +447,8 @@ const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
-  const [kpiRange, setKpiRange] = useState<KpiRange>("30d");
+  // Arranca en "Ayer": el ultimo dia completo cerrado es lo que se revisa a diario.
+  const [kpiRange, setKpiRange] = useState<KpiRange>("yesterday");
   // Rango custom de KPIs (YYYY-MM-DD, inclusivos). Solo aplica con kpiRange="custom".
   const [kpiCustomStart, setKpiCustomStart] = useState("");
   const [kpiCustomEnd, setKpiCustomEnd] = useState("");
