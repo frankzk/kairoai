@@ -1015,3 +1015,46 @@ Shopify; 5 de ellos tienen guia y constan como entregados. Se incluyen en el
 total general, pero no en el ranking provincial. El corte es una fotografia al
 15 de julio de 2026 y puede cambiar si se corrigen direcciones o estados
 historicos del courier.
+
+## Escaneo de segmentos con entrega menor a 50% - junio 2026 (2026-07-15)
+
+Auditoria exploratoria de solo lectura sobre Mireva Costa Rica. Se mantuvo el
+mismo universo de junio y la formula `entregados / pedidos con guia`; cada
+pedido Shopify se conto una sola vez dentro de cada segmento. Solo se aceptaron
+segmentos con al menos 50 pedidos despachados.
+
+Variables revisadas: provincia, canton/ciudad, dia y hora de creacion, semana,
+quincena, unidades, cantidad de productos distintos, ticket, canal Shopify,
+codigo externo en nota, descuento, metodo de pago, etiquetas, producto, SKU,
+provincia por quincena y provincia por producto.
+
+El unico segmento observado por debajo de 50% fue:
+
+| Segmento | Despachados | Entregados | No entregados | Abiertos | Tasa |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| San Jose / Snap Smile - Carillas Dentales Removibles para una Sonrisa Mas Uniforme | 115 | 53 | 61 | 1 | 46.1% |
+
+Controles para interpretar el resultado:
+
+- `Snap Smile` en todo Costa Rica: 367 despachados, 187 entregados, 171 no
+  entregados y 9 abiertos; tasa 51.0%.
+- Todos los demas productos: tasa 67.8%. La diferencia contra `Snap Smile` es
+  estadisticamente fuerte (`p < 0.001`), por lo que el producto merece revision
+  operativa/comercial.
+- `Snap Smile` fuera de San Jose: tasa 53.2%. La diferencia entre San Jose y el
+  resto del pais para este producto no es concluyente (`p = 0.208`); no debe
+  atribuirse causalidad a la provincia con esta muestra.
+- San Jose sin `Snap Smile`: tasa 67.7%. El problema no parece ser San Jose por
+  si solo.
+- Alajuela / `Snap Smile` quedo exactamente en 50.0% (76 despachados) y se deja
+  como segmento de vigilancia, no como hallazgo bajo el umbral.
+
+La tasa observada de San Jose / `Snap Smile` tiene intervalo Wilson 95% de
+37.3%-55.2%; cruza 50%, asi que el dato observado cumple el filtro, pero todavia
+no prueba que su tasa poblacional real sea menor a 50%. No se encontro otro
+segmento con al menos 50 despachos y tasa observada inferior a 50%.
+
+Snapshot utilizado: cache financiero refrescado el 2026-07-15 17:50 UTC. En
+esa fotografia habia 3,070 pedidos de junio, 2,244 con guia y 1,460 entregados
+(65.1%). Los totales pueden variar marginalmente cuando el courier cierra o
+corrige estados abiertos.
