@@ -987,3 +987,31 @@ data-completeness and reconciliation report.
   (guia `2348502`) tienen match correcto en Shopify, logistica y liquidacion.
   Ambos son `not_delivered`, tienen una sola liquidacion y no requieren accion
   manual. La inconsistencia estaba en el filtro del cierre mensual.
+
+# Auditoria regional de entrega - junio 2026 (2026-07-15)
+
+Alcance: Mireva Costa Rica. El universo contiene una sola fila por pedido
+Shopify creado en junio de 2026. Boxful/Moovin se usa unicamente para enriquecer
+la guia y el estado operativo; sus filas historicas no crean pedidos nuevos.
+
+- Tasa de entrega = pedidos entregados / pedidos despachados.
+- Despachado = pedido Shopify con numero de guia, sin importar si termino
+  entregado, no entregado o continua abierto.
+- Totales: 3,070 pedidos Shopify, 2,244 despachados, 1,461 entregados,
+  750 no entregados y 33 todavia abiertos. Tasa general: 65.1%.
+
+| Provincia | Pedidos | Despachados | Entregados | No entregados | Abiertos | Tasa entrega |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| San Jose | 910 | 641 | 409 | 228 | 4 | 63.8% |
+| Alajuela | 623 | 457 | 285 | 159 | 13 | 62.4% |
+| Cartago | 232 | 169 | 105 | 64 | 0 | 62.1% |
+| Heredia | 308 | 220 | 149 | 70 | 1 | 67.7% |
+| Guanacaste | 393 | 301 | 210 | 89 | 2 | 69.8% |
+| Puntarenas | 333 | 249 | 173 | 65 | 11 | 69.5% |
+| Limon | 263 | 202 | 125 | 75 | 2 | 61.9% |
+
+Control de calidad: 8 pedidos (0.3% del mes) no tienen provincia asignable en
+Shopify; 5 de ellos tienen guia y constan como entregados. Se incluyen en el
+total general, pero no en el ranking provincial. El corte es una fotografia al
+15 de julio de 2026 y puede cambiar si se corrigen direcciones o estados
+historicos del courier.
