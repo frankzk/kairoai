@@ -40,6 +40,7 @@ import {
   type OrderProfitabilityRow,
   type ProductAnalysisRow,
   type ShopifyNoteAliasRow,
+  getReportingTrackingStatus,
 } from "@/lib/finance-orders";
 import { mergeDispatchIntoTracking } from "@/lib/dispatch";
 import { reconcileMoovin, type MoovinDiscrepancy } from "@/lib/moovin-reconcile";
@@ -6504,7 +6505,8 @@ function MonthCloseDetail({
       monthOrders
         .filter(
           (order) =>
-            order.tracking_status === "not_delivered" || order.tracking_status === "returned"
+            getReportingTrackingStatus(order) === "not_delivered" ||
+            getReportingTrackingStatus(order) === "returned"
         )
         .map((order) => order.settlement_charged_costs)
     )
@@ -6516,7 +6518,7 @@ function MonthCloseDetail({
       late: { count: 0, amount: 0 },
     };
     for (const order of monthOrders) {
-      if (order.tracking_status !== "delivered" || order.settlement_count !== 0) continue;
+      if (getReportingTrackingStatus(order) !== "delivered" || order.settlement_count !== 0) continue;
       const days = daysSince(order.delivered_on ?? order.created_at ?? "");
       const bucket = days <= 7 ? buckets.fresh : days <= 15 ? buckets.warn : buckets.late;
       bucket.count += 1;
@@ -6539,11 +6541,13 @@ function MonthCloseDetail({
   // Mes sin liquidaciones (tipicamente el mes en curso): se muestra la foto
   // operativa y una proyeccion con la tasa de entrega y margen historicos.
   const hasSettlementData = close.settled > 0 || close.cash_received > 0;
-  const pendingOrders = monthOrders.filter((order) => isPendingLike(order.tracking_status));
+  const pendingOrders = monthOrders.filter((order) =>
+    isPendingLike(getReportingTrackingStatus(order))
+  );
   const pipelineCod = sum(pendingOrders.map((order) => order.expected_cod));
   const annulledCod = sum(
     monthOrders
-      .filter((order) => order.tracking_status === "annulled")
+      .filter((order) => getReportingTrackingStatus(order) === "annulled")
       .map((order) => order.expected_cod)
   );
   const annulledRate = close.orders ? (close.annulled / close.orders) * 100 : 0;
@@ -8423,16 +8427,17 @@ function getMonthlyOrderFilterCounts(orders: OrderProfitabilityRow[]): Record<Mo
 }
 
 function matchesMonthlyOrderFilter(order: OrderProfitabilityRow, filter: MonthlyOrderFilter): boolean {
+  const trackingStatus = getReportingTrackingStatus(order);
   if (filter === "all") return true;
-  if (filter === "pending") return isPendingLike(order.tracking_status);
-  if (filter === "delivered") return order.tracking_status === "delivered";
+  if (filter === "pending") return isPendingLike(trackingStatus);
+  if (filter === "delivered") return trackingStatus === "delivered";
   if (filter === "not_delivered") {
-    return order.tracking_status === "not_delivered" || order.tracking_status === "returned";
+    return trackingStatus === "not_delivered" || trackingStatus === "returned";
   }
-  if (filter === "annulled") return order.tracking_status === "annulled";
+  if (filter === "annulled") return trackingStatus === "annulled";
   if (filter === "settled") return order.settlement_count === 1;
   if (filter === "unsettled") return order.settlement_count === 0;
-  if (filter === "to_claim") return order.tracking_status === "delivered" && order.settlement_count === 0;
+  if (filter === "to_claim") return trackingStatus === "delivered" && order.settlement_count === 0;
   return order.settlement_count > 1;
 }
 

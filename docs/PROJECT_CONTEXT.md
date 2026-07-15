@@ -862,9 +862,128 @@ At the time of writing these were not yet confirmed applied in production — ch
 - `0010_icomfly_dispatch.sql` — Estado de Despacho (icomfly_orders / icomfly_agents
   + columnas en payroll_staff). Hasta aplicarla, el tab “Despacho” queda vacío.
 
+## P&G readiness audit (2026-07-15)
+
+The current finance module is an operational profitability model, not yet a
+formal accounting profit-and-loss statement. Its main calculation is:
+
+```text
+contribution_margin = Boxful amount_to_liquidate - delivered product cost
+net_profit = contribution_margin - ads - payroll - misc
+```
+
+`amount_to_liquidate` is already net of Boxful COD commission, delivery,
+Pick&Pack, and packaging. This is useful for cash and contribution control, but
+it must not be presented as revenue because it nets sales and fulfillment fees,
+does not represent all prepaid/card sales, and follows settlement availability
+rather than a consistent accounting recognition date.
+
+### Required P&G structure
+
+1. Gross product sales.
+2. Discounts, refunds, returns, and sales taxes excluded from revenue.
+3. Net revenue.
+4. Cost of goods sold using the SKU cost version effective at delivery.
+5. Gross profit.
+6. Fulfillment, logistics, reverse logistics, retries, storage, COD commission,
+   and payment-gateway fees shown separately.
+7. Contribution margin.
+8. Operating expenses by account: ads, payroll/benefits/contractors,
+   software/SaaS, professional fees, rent/warehouse/utilities, bank fees,
+   fraud/chargebacks, taxes/licenses, office/communications/travel, and other
+   operating costs.
+9. EBITDA, depreciation/amortization, EBIT, interest and FX differences,
+   profit before income tax, income tax, and net profit.
+
+### Missing source registers / fields
+
+- Sales ledger: order and accounting document IDs; order, delivery/control
+  transfer, return, cancellation, and recognition dates; gross sales,
+  discounts, refunds, shipping income, sales tax, and net sales.
+- Payment reconciliation: payment method/gateway, processor settlement ID and
+  date, gateway fees, chargebacks, bank deposit, and reconciliation status.
+- Multi-currency: original currency, functional currency, historical exchange
+  rate, rate date, and rate source on every transaction.
+- Inventory/COGS: purchase and landed cost, inbound freight, import duties,
+  internal packaging, cost-version effective date, purchases, sales, returns,
+  write-offs/shrinkage, and opening/closing inventory.
+- Supplier expenses: supplier/employee, invoice or receipt number, account and
+  subaccount, accrual and payment dates, net/tax/gross amounts, supporting
+  document, approval state, store, and cost center.
+- Accounting controls: chart of accounts/general ledger, immutable monthly
+  close snapshot, unique source/deduplication key, reconciliation owner/status,
+  and created/approved-by audit timestamps.
+
+Monthly results currently group orders by Shopify creation month. A formal P&G
+must use the selected accounting policy consistently, normally the date control
+of the delivered goods transfers for revenue/COGS, and keep cash/settlement date
+as a separate view.
+
+### Live data audit snapshot
+
+Read-only production audit performed on 2026-07-15. Shopify gross values below
+are coverage controls, not recognized revenue.
+
+**Mireva Costa Rica**
+
+- 14,382 Shopify orders; 11,149 non-cancelled.
+- 5,970 delivered Shopify orders with CRC 142,474,798 gross order value.
+- Settlement COD total is CRC 143,871,535.01, 100.98% of delivered Shopify
+  gross. The 0.98% excess is a reconciliation exception, not confirmed income.
+- 15 duplicate settlement match groups (31 rows, 16 excess rows).
+- 14 unmatched settlement rows and one settlement formula inconsistency:
+  `#MCRC11661` stores zero while the row formula produces CRC -3,477.
+- 11 imports have a difference between the import header/consolidated total and
+  the sum of detailed rows. These require source-file reconciliation; the
+  importer may intentionally use the workbook `Resumen` total.
+- 13 sold SKUs lack an active cost; four affect delivered sales. The largest
+  delivered gaps are `her.loss` (713 units), `645731546` (515),
+  `liver.cleanse` (123), and `bee.venom` (4).
+- 53 expenses total CRC 44,907,159.24; 19 records lack a description.
+- No store-ID contamination was detected in the audited Shopify/logistics/
+  settlement relationships, and no duplicate Shopify order names were found.
+
+**Mireva Honduras**
+
+- 14,113 Shopify orders; 11,531 non-cancelled.
+- 5,536 delivered Shopify orders with HNL 6,406,578 gross order value, but
+  settlement COD coverage is only HNL 294,703 (4.6%). The P&G is incomplete.
+- All 17 expense rows are recorded as CRC although the store currency is HNL;
+  they must not enter the Honduras P&G until original currency and FX conversion
+  are corrected.
+- 101 sold SKUs lack an active cost; 27 affect delivered sales.
+- Expense coverage contains payroll only: no ads or miscellaneous operating
+  expenses are recorded.
+- One unmatched settlement row and one import header/detail difference of
+  HNL 854.40 were detected.
+- No core cross-store relationship failure was detected.
+
+Repeated logistics rows across historical imports are snapshots and are not
+automatically financial duplicates. They become an anomaly only if the system
+counts them as additional Shopify orders or additional charges instead of using
+the latest shipment state.
+
+### Presentation gate
+
+Do not label the current number `Utilidad neta` in partner-facing EEFF until the
+sales ledger, delivered-date recognition, SKU cost coverage, inventory/COGS,
+multi-currency expenses, bank/payment reconciliation, and period lock are in
+place. Until then label it `Margen operativo estimado` and accompany it with a
+data-completeness and reconciliation report.
+
 ## Open Questions
 
 - Should product cost be counted only when an order is delivered?
 - How should inventory loss be handled for not-delivered orders?
 - Are numeric-only settlement orders from another store/source?
 - Should weekly settlements map to a calendar week, a custom date range, or both?
+# Correccion de estados en cierre mensual (2026-07-15)
+
+- El estado operativo mostrado y el usado por los filtros mensuales ahora se
+  resuelven con una unica regla: un resultado final consolidado (`delivered`,
+  `not_delivered` o `annulled`) siempre prevalece sobre un estado operativo
+  cacheado como pendiente/en ruta.
+- Auditoria puntual en produccion: `#MCRC2274` (guia `2350056`) y `#MCRC2194`
+  (guia `2348502`) tienen match correcto en Shopify, logistica y liquidacion.
+  Ambos son `not_delivered`, tienen una sola liquidacion y no requieren accion
+  manual. La inconsistencia estaba en el filtro del cierre mensual.

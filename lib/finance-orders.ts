@@ -5,6 +5,8 @@
 // El de-duplicado contra page.tsx es un paso posterior.
 
 import { FINANCE_STORES, type FinanceStorePublic } from "@/lib/store-config";
+import { getReportingTrackingStatus } from "@/lib/reporting-tracking-status";
+export { getReportingTrackingStatus } from "@/lib/reporting-tracking-status";
 import type {
   BusinessExpense,
   ForzaTrackingRow,
@@ -1961,14 +1963,15 @@ export function buildMonthlyCloseRows(
   for (const order of orders) {
     const month = getMonthKey(order.created_at) || "sin-fecha";
     const row = ensureMonth(month);
+    const trackingStatus = getReportingTrackingStatus(order);
     row.orders += 1;
-    if (order.tracking_status === "delivered") row.delivered += 1;
-    if (order.tracking_status === "not_delivered" || order.tracking_status === "returned") row.not_delivered += 1;
-    if (order.tracking_status === "annulled") row.annulled += 1;
-    if (isPendingLike(order.tracking_status)) row.pending += 1;
+    if (trackingStatus === "delivered") row.delivered += 1;
+    if (trackingStatus === "not_delivered" || trackingStatus === "returned") row.not_delivered += 1;
+    if (trackingStatus === "annulled") row.annulled += 1;
+    if (isPendingLike(trackingStatus)) row.pending += 1;
     if (order.settlement_count === 1) row.settled += 1;
     if (!order.settlement_count) row.unsettled += 1;
-    if (order.tracking_status === "delivered" && !order.settlement_count) {
+    if (trackingStatus === "delivered" && !order.settlement_count) {
       row.to_claim += 1;
       // <=7 dias desde la entrega: pendiente normal del proximo corte de
       // Boxful; mas alla de eso ya es cobro por reclamar.
