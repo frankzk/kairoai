@@ -108,6 +108,16 @@ type SettlementShopifyFilter = "all" | "matched" | "unmatched";
 type ProductLineItem = { sku?: string; title: string; quantity: number; price: number };
 type ImportResult = { ok: boolean; error?: string };
 
+function getExactGuideSearch(value: string): string {
+  const compact = value.trim().replace(/\s+/g, "").toUpperCase();
+  if (!compact || /^#?M(?:CRC|IRH)\d+$/.test(compact)) return "";
+
+  if (/^\d{6,20}$/.test(compact)) return compact;
+  if (/^(?:FD|BFT)[A-Z0-9-]{6,24}$/.test(compact)) return compact;
+
+  return "";
+}
+
 interface SettlementTrace {
   file_name: string;
   amount_to_liquidate: number;
@@ -1853,6 +1863,13 @@ function OrdersTab({
     ORDER_TRACKING_FILTERS.find((filter) => filter.value === trackingFilter)?.label ?? "pedidos";
   const activeSettlementLabel =
     ORDER_SETTLEMENT_FILTERS.find((filter) => filter.value === settlementFilter)?.label ?? "liquidacion";
+  const exactGuideSearch = useMemo(() => getExactGuideSearch(debouncedSearch), [debouncedSearch]);
+  const showMissingGuideDiagnostic = Boolean(
+    exactGuideSearch && !tableLoading && !tableError && searchedCount === 0
+  );
+  const latestLogisticsCutoff = latestLogisticsImport?.period_end
+    ? formatDate(latestLogisticsImport.period_end)
+    : latestLogisticsImport?.period_label || "sin fecha de corte";
 
   useEffect(() => {
     if (!orderMonthOptions.length) {
@@ -2174,6 +2191,38 @@ function OrdersTab({
               ? ` · Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match, ${latestLogisticsImport.unmatched_rows} sin match`
               : " · Sin Boxful importado"}
           </p>
+          {showMissingGuideDiagnostic && (
+            <div className="flex flex-col gap-3 border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                <div className="space-y-1">
+                  <p className="font-semibold text-amber-100">
+                    Guia {exactGuideSearch} sin pedido Shopify vinculado
+                  </p>
+                  <p className="text-xs leading-5 text-amber-100/80">
+                    Kairo no encuentra esta guia en Shopify ni en los archivos logisticos visibles.
+                    {latestLogisticsImport
+                      ? ` El ultimo corte Boxful importado llega hasta ${latestLogisticsCutoff} (${latestLogisticsImport.file_name}).`
+                      : " Todavia no hay un archivo logistico Boxful importado para esta tienda."}
+                    {" "}Si Boxful ya la muestra, importa un archivo actualizado que la incluya. Kairo intentara
+                    vincularla al pedido Shopify correcto y no creara un pedido nuevo por la guia sola.
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 gap-2 border-amber-500/50 text-amber-100 hover:bg-amber-500/10"
+                onClick={() => {
+                  setLogisticsModalError("");
+                  setIsLogisticsModalOpen(true);
+                }}
+              >
+                <Upload className="h-4 w-4" /> Importar actualizacion
+              </Button>
+            </div>
+          )}
           {tableError && (
             <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-red-200">
               {tableError}
@@ -2190,7 +2239,9 @@ function OrdersTab({
             forzaByGuide={forzaByGuide}
             loading={tableLoading}
             emptyLabel={
-              orderSearch
+              showMissingGuideDiagnostic
+                ? "La guia aun no esta vinculada a un pedido Shopify."
+                : orderSearch
                 ? "No encontramos pedidos con ese codigo y estado."
                 : trackingFilter === "all" && settlementFilter === "all"
                   ? "No hay pedidos para mostrar."

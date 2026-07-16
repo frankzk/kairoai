@@ -1074,3 +1074,20 @@ corrige estados abiertos.
   `Despacho solicitado`, evitando que reaparezca la etiqueta obsoleta.
 - Los estados terminales (`Entregado`, `No entregado`, `Anulado`) siempre
   prevalecen sobre `Recolectado` y sobre cualquier alerta interna de despacho.
+
+# Diagnostico de guias Boxful no sincronizadas (2026-07-16)
+
+- Shopify sigue siendo la unica fuente que crea pedidos. Una guia encontrada
+  solamente en Boxful o en un courier nunca crea una fila nueva ni incrementa
+  los totales de pedidos.
+- La busqueda exacta de una guia consulta el dataset operativo vinculado a
+  Shopify. Si no existe una vinculacion, Pedidos muestra un aviso con el ultimo
+  corte logistico Boxful importado y un acceso directo a `Importar Boxful`.
+- Al importar una actualizacion, Kairo intenta vincular la guia con el pedido
+  Shopify correcto. Las filas sin match quedan para revision y no se convierten
+  en pedidos independientes.
+- Caso auditado: la guia `2581128` no estaba en `shopify_orders`,
+  `logistics_rows`, `moovin_tracking` ni en los fulfillments actuales de
+  Shopify. Tampoco aparecia en los archivos locales con corte del 09 al 15 de
+  julio. Boxful ya la mostraba en su portal, por lo que corresponde importar un
+  export logistico posterior que incluya la guia.
