@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isMoovinPickedUp, mergeDispatchIntoTracking, resolveDispatchState } from "../lib/dispatch";
+import {
+  isMoovinCollected,
+  isMoovinPickedUp,
+  mergeDispatchIntoTracking,
+  resolveDispatchState,
+} from "../lib/dispatch";
 import type { MoovinTrackingRow, IcomflyOrderRecord } from "../lib/finance-types";
 
 function moovin(over: Partial<MoovinTrackingRow> = {}): MoovinTrackingRow {
@@ -80,9 +85,15 @@ describe("resolveDispatchState", () => {
     expect(state).toBe("solicitado");
   });
 
-  it("'Sede de Moovin' => despachado", () => {
+  it("'Sede de Moovin' => recolectado", () => {
     const rec = icomfly({ dispatch_state: "despacho_solicitado" });
-    expect(resolveDispatchState(rec, moovin({ latest_status: "Sede de Moovin" }), "2547807")).toBe("despachado");
+    expect(resolveDispatchState(rec, moovin({ latest_status: "Sede de Moovin" }), "2547807")).toBe("collected");
+  });
+
+  it("reconoce variantes reales del hito recolectado", () => {
+    expect(isMoovinCollected(moovin({ latest_status: "Recolectado" }))).toBe(true);
+    expect(isMoovinCollected(moovin({ latest_status: "Recogido por Moovin" }))).toBe(true);
+    expect(isMoovinCollected(moovin({ latest_status: "En ruta para entregar" }))).toBe(false);
   });
 
   it("rescata pedidos con guía Moovin sin match en iComfly", () => {
@@ -104,8 +115,8 @@ describe("resolveDispatchState", () => {
     const standbyRec = icomfly({ dispatch_state: "despacho_solicitado", is_standby: true });
     // sin recoger + standby => standby
     expect(resolveDispatchState(standbyRec, moovin({ latest_status: "Recolección Solicitada" }), "G")).toBe("standby");
-    // ya recogido => despachado (el flag de standby no aplica)
-    expect(resolveDispatchState(standbyRec, moovin({ latest_status: "Sede de Moovin" }), "G")).toBe("despachado");
+    // ya recogido => recolectado (el flag de standby no aplica)
+    expect(resolveDispatchState(standbyRec, moovin({ latest_status: "Sede de Moovin" }), "G")).toBe("collected");
   });
 });
 
@@ -118,8 +129,13 @@ describe("mergeDispatchIntoTracking", () => {
     expect(mergeDispatchIntoTracking("pending", "solicitado", ok)).toBe("despacho_solicitado");
   });
 
-  it("standby pisa 'en_route'", () => {
-    expect(mergeDispatchIntoTracking("en_route", "standby", ok)).toBe("standby");
+  it("standby interno se muestra como despacho solicitado", () => {
+    expect(mergeDispatchIntoTracking("en_route", "standby", ok)).toBe("despacho_solicitado");
+  });
+
+  it("recolectado crea un estado operativo visible", () => {
+    expect(mergeDispatchIntoTracking("en_route", "collected", ok)).toBe("collected");
+    expect(mergeDispatchIntoTracking("pending", "collected", ok)).toBe("collected");
   });
 
   it("despachado (ya recogido) NO crea estado nuevo: cae al base", () => {

@@ -28,7 +28,7 @@ type TrackingFilter =
   | "all"
   | "pending"
   | "despacho_solicitado"
-  | "standby"
+  | "collected"
   | "en_route"
   | "en_route_retry"
   | "incident_solvable"
@@ -43,7 +43,7 @@ const TRACKING_FILTERS: TrackingFilter[] = [
   "all",
   "pending",
   "despacho_solicitado",
-  "standby",
+  "collected",
   "en_route",
   "en_route_retry",
   "incident_solvable",
@@ -60,6 +60,9 @@ function parsePeriod(value: string | null): PeriodMode {
 }
 
 function parseTrackingFilter(value: string | null): TrackingFilter {
+  // Compatibilidad con URLs/cache anteriores: standby ya no es un estado
+  // visible; sigue siendo una alerta interna de despacho solicitado vencido.
+  if (value === "standby") return "despacho_solicitado";
   return TRACKING_FILTERS.includes(value as TrackingFilter) ? (value as TrackingFilter) : "all";
 }
 
@@ -184,7 +187,7 @@ export async function GET(req: NextRequest) {
       all: withMeta.length,
       pending: 0,
       despacho_solicitado: 0,
-      standby: 0,
+      collected: 0,
       en_route: 0,
       en_route_retry: 0,
       incident_solvable: 0,

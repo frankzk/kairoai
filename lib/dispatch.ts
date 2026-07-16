@@ -296,6 +296,11 @@ export const DISPATCH_STATE_LABELS: Record<DispatchState, string> = {
 // (recoleccion pedida pero no concretada).
 const MOOVIN_PRE_PICKUP_TITLES = ["recolec", "por preparar", "registrad"];
 
+// Estados que confirman que Moovin ya retiro el paquete del almacen, pero aun
+// no lo ha puesto en ruta de entrega. Se muestran como "Recolectado" para no
+// confundir este hito fisico con el estado interno de alerta "standby".
+const MOOVIN_COLLECTED_TITLES = ["sede de moovin", "recolectado", "recogido", "en sede"];
+
 // Replica de deriveMoovinGroup (lib/finance-orders) para no arrastrar ese modulo
 // (usa alias @/ que vitest no resuelve). Logica identica.
 function moovinGroup(row: MoovinTrackingRow): string {
@@ -321,7 +326,13 @@ export function isMoovinPickedUp(row: MoovinTrackingRow | undefined): boolean | 
   return undefined;
 }
 
-export type DispatchView = "despachado" | "solicitado" | "pendiente" | "standby";
+export function isMoovinCollected(row: MoovinTrackingRow | undefined): boolean {
+  if (!row || moovinGroup(row) !== "in_progress") return false;
+  const title = String(row.latest_status ?? "").toLowerCase();
+  return MOOVIN_COLLECTED_TITLES.some((candidate) => title.includes(candidate));
+}
+
+export type DispatchView = "despachado" | "solicitado" | "pendiente" | "standby" | "collected";
 
 // Resuelve el estado de la columna "Despacho" combinando la recoleccion fisica
 // de Moovin (senal primaria) con la atribucion de iComfly. Si hay dato de Moovin
@@ -333,10 +344,13 @@ export function resolveDispatchState(
   guideNumber: string | undefined
 ): DispatchView | null {
   const pickedUp = isMoovinPickedUp(moovin);
+  const collected = isMoovinCollected(moovin);
   const hasGuide = Boolean(guideNumber && String(guideNumber).trim());
 
   let state: DispatchView | null;
-  if (pickedUp === true) {
+  if (collected) {
+    state = "collected";
+  } else if (pickedUp === true) {
     state = "despachado";
   } else if (pickedUp === false) {
     state = "solicitado"; // Moovin confirma que sigue en el almacen
@@ -353,16 +367,15 @@ export function resolveDispatchState(
     return null;
   }
 
-  // Standby solo aplica al limbo "solicitado" (guia hecha, sin recoger).
+  // Standby sigue siendo una alerta interna del flujo de despacho. No se
+  // presenta como estado operativo del pedido.
   if (state === "solicitado" && rec?.is_standby) return "standby";
   return state;
 }
 
 // Funde el hito de despacho dentro del "Estado de seguimiento": el limbo previo
-// al movimiento real del courier (solicitado/standby) reemplaza al engañoso
-// "En ruta"/"Pendiente". El "despachado" (ya recogido) NO genera estado nuevo:
-// cae al estado base (en_route/delivered/etc.). No pisa estados terminales ni
-// pedidos anulados.
+// se muestra como "Despacho solicitado", y la recoleccion confirmada como
+// "Recolectado". Los estados posteriores conservan prioridad.
 export function mergeDispatchIntoTracking(
   baseStatus: string,
   dispatchState: DispatchView | null,
@@ -374,7 +387,8 @@ export function mergeDispatchIntoTracking(
   // Solo aplica al limbo previo al movimiento real (no pisa entregado, no
   // entregado, incidencia, reintento ni anulado).
   if (baseStatus !== "pending" && baseStatus !== "en_route") return baseStatus;
-  if (dispatchState === "standby") return "standby";
+  if (dispatchState === "standby") return "despacho_solicitado";
   if (dispatchState === "solicitado") return "despacho_solicitado";
+  if (dispatchState === "collected") return "collected";
   return baseStatus;
 }

@@ -160,7 +160,7 @@ type OrderTrackingFilter =
   | "all"
   | "pending"
   | "despacho_solicitado"
-  | "standby"
+  | "collected"
   | "en_route"
   | "en_route_retry"
   | "incident_solvable"
@@ -684,6 +684,7 @@ export function getEffectiveTrackingStatus(
 
   const boxfulStatus = inferTrackingStatusFromText(row.boxful_status);
   if (isFinalTrackingStatus(boxfulStatus)) return boxfulStatus;
+  if (boxfulStatus === "collected") return boxfulStatus;
 
   const settlementStatus = traces.find((trace) => isFinalTrackingStatus(trace.internal_status));
   if (settlementStatus) return settlementStatus.internal_status;
@@ -702,6 +703,9 @@ export function getEffectiveTrackingStatus(
 export function isPendingLike(status: string): boolean {
   return (
     status === "pending" ||
+    status === "despacho_solicitado" ||
+    status === "collected" ||
+    status === "standby" ||
     status === "en_route" ||
     status === "en_route_retry" ||
     status === "incident"
@@ -712,6 +716,7 @@ export function inferTrackingStatusFromText(status: string): string {
   const lower = status.toLowerCase();
   if (lower.includes("no entregado") || lower.includes("devuelto")) return "not_delivered";
   if (lower.includes("entregado")) return "delivered";
+  if (lower.includes("recolectado") || lower.includes("recogido")) return "collected";
   return "pending";
 }
 
@@ -726,7 +731,8 @@ export function getTrackingFilterFromStatus(
   if (status === "delivered") return "delivered";
   if (status === "not_delivered" || status === "returned") return "not_delivered";
   if (status === "despacho_solicitado") return "despacho_solicitado";
-  if (status === "standby") return "standby";
+  if (status === "standby") return "despacho_solicitado";
+  if (status === "collected") return "collected";
   if (status === "en_route") return "en_route";
   if (status === "en_route_retry") return "en_route_retry";
   if (status === "incident") return classifyIncident(row);

@@ -81,7 +81,7 @@ type Tab = "orders" | "dispatch" | "products" | "notes" | "settlements" | "expen
 // endpoints, asi que el navegador ya NO ensambla el snapshot pesado (historico
 // Shopify ~11k + logistica completa) para ningun tab.
 
-type OrderTrackingFilter = "all" | "pending" | "despacho_solicitado" | "standby" | "en_route" | "en_route_retry" | "incident_solvable" | "incident_unsolvable" | "annulled" | "delivered" | "not_delivered";
+type OrderTrackingFilter = "all" | "pending" | "despacho_solicitado" | "collected" | "en_route" | "en_route_retry" | "incident_solvable" | "incident_unsolvable" | "annulled" | "delivered" | "not_delivered";
 type ProductAnalysisFilter =
   | "all"
   | "no_cost"
@@ -175,7 +175,7 @@ interface TrackableOrderRow {
   package_items: ProductLineItem[];
   // Hito de despacho precalculado en el server (iComfly + recoleccion Moovin),
   // que se funde en el "Estado de seguimiento" via mergeDispatchIntoTracking.
-  dispatch_view?: "despachado" | "solicitado" | "pendiente" | "standby" | null;
+  dispatch_view?: "despachado" | "solicitado" | "pendiente" | "standby" | "collected" | null;
   dispatch_requested_by?: string;
   dispatch_confirmed_by?: string;
 }
@@ -258,7 +258,7 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "all", label: "Todos" },
   { value: "pending", label: "Pendientes" },
   { value: "despacho_solicitado", label: "Despacho solicitado" },
-  { value: "standby", label: "Standby" },
+  { value: "collected", label: "Recolectado" },
   { value: "en_route", label: "En ruta" },
   { value: "en_route_retry", label: "Reintento" },
   { value: "incident_solvable", label: "Inc. solucionable" },
@@ -273,7 +273,7 @@ const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   all: "bg-muted-foreground/40",
   pending: "bg-slate-400",
   despacho_solicitado: "bg-yellow-400",
-  standby: "bg-rose-600",
+  collected: "bg-sky-400",
   en_route: "bg-cyan-400",
   en_route_retry: "bg-orange-500",
   // Solucionable (incidencia leve) en ambar; no solucionable (fallos repetidos)
@@ -323,7 +323,7 @@ const EMPTY_TRACKING_COUNTS: Record<OrderTrackingFilter, number> = {
   all: 0,
   pending: 0,
   despacho_solicitado: 0,
-  standby: 0,
+  collected: 0,
   en_route: 0,
   en_route_retry: 0,
   incident_solvable: 0,
@@ -2310,7 +2310,7 @@ function OrdersTab({
 }
 
 // Sub-línea de atribución bajo el badge de "Estado de seguimiento": solo cuando
-// el pedido está en el limbo de despacho (despacho_solicitado/standby), muestra
+// el pedido esta en el limbo de despacho solicitado, muestra
 // quién solicitó/confirmó (atribución de iComfly que viaja en la fila).
 function DispatchWho({
   row,
@@ -2319,7 +2319,7 @@ function DispatchWho({
   row: Pick<OrderRowWithTraces, "dispatch_requested_by" | "dispatch_confirmed_by">;
   status: string;
 }) {
-  if (status !== "despacho_solicitado" && status !== "standby") return null;
+  if (status !== "despacho_solicitado") return null;
   const who = row.dispatch_requested_by || row.dispatch_confirmed_by;
   if (!who) return null;
   const label = row.dispatch_requested_by ? "Solicito" : "Confirmo";
@@ -8049,10 +8049,18 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
         {label || "Despacho solicitado"}
       </Badge>
     );
+  if (status === "collected")
+    return (
+      <Badge variant="info" className="border-sky-500/40 bg-sky-500/20 text-sky-300">
+        {label || "Recolectado"}
+      </Badge>
+    );
+  // Datos cacheados de versiones anteriores pueden conservar "standby". Se
+  // presenta como despacho solicitado; la alerta sigue disponible internamente.
   if (status === "standby")
     return (
-      <Badge variant="destructive" className="border-rose-500/40 bg-rose-500/20 text-rose-300">
-        {label || "Standby"}
+      <Badge variant="warning" className="border-yellow-500/40 bg-yellow-500/20 text-yellow-300">
+        {label || "Despacho solicitado"}
       </Badge>
     );
   if (status === "en_route") return <Badge variant="info">{label || "En ruta"}</Badge>;
@@ -8877,6 +8885,7 @@ function getEffectiveTrackingStatus(
 
   const boxfulStatus = inferTrackingStatusFromText(row.boxful_status);
   if (isFinalTrackingStatus(boxfulStatus)) return boxfulStatus;
+  if (boxfulStatus === "collected") return boxfulStatus;
 
   const settlementStatus = traces.find((trace) => isFinalTrackingStatus(trace.internal_status));
   if (settlementStatus) return settlementStatus.internal_status;
@@ -8895,6 +8904,9 @@ function getEffectiveTrackingStatus(
 function isPendingLike(status: string): boolean {
   return (
     status === "pending" ||
+    status === "despacho_solicitado" ||
+    status === "collected" ||
+    status === "standby" ||
     status === "en_route" ||
     status === "en_route_retry" ||
     status === "incident"
@@ -8905,6 +8917,7 @@ function inferTrackingStatusFromText(status: string): string {
   const lower = status.toLowerCase();
   if (lower.includes("no entregado") || lower.includes("devuelto")) return "not_delivered";
   if (lower.includes("entregado")) return "delivered";
+  if (lower.includes("recolectado") || lower.includes("recogido")) return "collected";
   return "pending";
 }
 
@@ -8916,7 +8929,8 @@ function getTrackingFilterFromStatus(
   if (status === "delivered") return "delivered";
   if (status === "not_delivered" || status === "returned") return "not_delivered";
   if (status === "despacho_solicitado") return "despacho_solicitado";
-  if (status === "standby") return "standby";
+  if (status === "standby") return "despacho_solicitado";
+  if (status === "collected") return "collected";
   if (status === "en_route") return "en_route";
   if (status === "en_route_retry") return "en_route_retry";
   if (status === "incident") return classifyIncident(row);
@@ -8944,7 +8958,8 @@ function getTrackingStatusLabel(
 ): string {
   if (status === "annulled") return "Anulado";
   if (status === "despacho_solicitado") return "Despacho solicitado";
-  if (status === "standby") return "Standby";
+  if (status === "standby") return "Despacho solicitado";
+  if (status === "collected") return "Recolectado";
   if (isFinalTrackingStatus(row.internal_status)) {
     return status === "not_delivered" || status === "returned" ? "No entregado" : row.boxful_status || "Entregado";
   }

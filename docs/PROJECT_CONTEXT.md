@@ -1058,3 +1058,19 @@ Snapshot utilizado: cache financiero refrescado el 2026-07-15 17:50 UTC. En
 esa fotografia habia 3,070 pedidos de junio, 2,244 con guia y 1,460 entregados
 (65.1%). Los totales pueden variar marginalmente cuando el courier cierra o
 corrige estados abiertos.
+
+# Estado visible Recolectado (2026-07-16)
+
+- La secuencia operativa visible en Pedidos es: `Pendiente`, `Despacho
+  solicitado`, `Recolectado`, `En ruta`, incidencias/reintentos y estados
+  finales.
+- `Recolectado` requiere evidencia real del courier. En Moovin se reconoce por
+  estados como `Sede de Moovin`, `Recolectado`, `Recogido` o `En sede`; en los
+  archivos Boxful se reconoce por la columna Estado con valor `Recolectado`.
+- `Standby` no es un estado logistico. Es una alerta interna de despacho
+  solicitado que supero el corte sin recoleccion. La alerta y su auditoria se
+  conservan, pero el pedido sigue visible como `Despacho solicitado`.
+- Una URL o dato cacheado con el filtro historico `standby` se normaliza a
+  `Despacho solicitado`, evitando que reaparezca la etiqueta obsoleta.
+- Los estados terminales (`Entregado`, `No entregado`, `Anulado`) siempre
+  prevalecen sobre `Recolectado` y sobre cualquier alerta interna de despacho.
