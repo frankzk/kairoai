@@ -17,6 +17,7 @@ import type {
   SettlementRow,
   WynTrackingRow,
 } from "@/lib/finance-types";
+import { mergeDispatchIntoTracking } from "@/lib/dispatch";
 import { isWynGuide, normalizeWynGuide } from "@/lib/wyn";
 import {
   buildShopifyMatchIndex,
@@ -145,7 +146,7 @@ export interface MoovinTrackingEvent {
 
 // Estados de tracking (filtro). El score de consolidacion lo usa via
 // getTrackingFilterFromStatus. Copiado VERBATIM de page.tsx ~71.
-type OrderTrackingFilter =
+export type OrderTrackingFilter =
   | "all"
   | "pending"
   | "despacho_solicitado"
@@ -157,6 +158,27 @@ type OrderTrackingFilter =
   | "annulled"
   | "delivered"
   | "not_delivered";
+
+export type CourierPerformanceId = "moovin" | "wyn";
+export type CourierKairoStatus = Exclude<OrderTrackingFilter, "all">;
+
+export interface CourierPerformanceRow {
+  id: CourierPerformanceId;
+  label: string;
+  dispatched: number;
+  delivered: number;
+  notDelivered: number;
+  deliveryRate: number;
+  statusCounts: Record<CourierKairoStatus, number>;
+}
+
+export interface CourierPerformanceReport {
+  periodLabel: string;
+  totalShopifyOrders: number;
+  withGuide: number;
+  unassignedGuides: number;
+  rows: CourierPerformanceRow[];
+}
 
 // isShopifyCancelled acepta en page.tsx una union de Pick<TrackableOrderRow, ...>
 // y Pick<OrderProfitabilityRow, ...>; ambas resuelven estructuralmente a estos
@@ -182,7 +204,12 @@ function isForzaCourier(courier: string | undefined, store?: FinanceStorePublic)
 }
 
 function isWynCourier(courier: string | undefined, guide?: string): boolean {
-  return isWynGuide(guide) || String(courier ?? "").toLowerCase().includes("wyn");
+  const normalizedCourier = String(courier ?? "").toLowerCase();
+  return (
+    isWynGuide(guide) ||
+    normalizedCourier.includes("wyn") ||
+    normalizedCourier.includes("mailamerica")
+  );
 }
 
 // EasySell/Shopify a veces rotula el fulfillment con un valor generico
@@ -488,6 +515,141 @@ export function computeOpMetricsFromTrackableRows(
     leadAvg: leadDays.length ? leadDays.reduce((acc, value) => acc + value, 0) / leadDays.length : null,
     leadSamples: leadDays.length,
     ticket: valueOrders ? revenue / valueOrders : 0,
+  };
+}
+
+const COURIER_KAIRO_STATUSES: CourierKairoStatus[] = [
+  "pending",
+  "despacho_solicitado",
+  "recolectado",
+  "en_route",
+  "en_route_retry",
+  "incident_solvable",
+  "incident_unsolvable",
+  "annulled",
+  "delivered",
+  "not_delivered",
+];
+
+function createCourierStatusCounts(): Record<CourierKairoStatus, number> {
+  return Object.fromEntries(COURIER_KAIRO_STATUSES.map((status) => [status, 0])) as Record<
+    CourierKairoStatus,
+    number
+  >;
+}
+
+function getCourierPerformanceOrderKey(row: TrackableOrderRow): string {
+  return (
+    normalizeMatchKey(row.shopify_order_name) ||
+    (row.shopify_order_number ? `shopify-number:${row.shopify_order_number}` : "")
+  );
+}
+
+function pickCourierPerformanceRow(
+  current: TrackableOrderRow,
+  candidate: TrackableOrderRow
+): TrackableOrderRow {
+  const currentHasGuide = Boolean(String(current.guide_number ?? "").trim());
+  const candidateHasGuide = Boolean(String(candidate.guide_number ?? "").trim());
+  if (currentHasGuide !== candidateHasGuide) return candidateHasGuide ? candidate : current;
+  return pickBestLogisticsRow(current, candidate);
+}
+
+/**
+ * Compara paqueterias sobre una unica cohorte Shopify. Las filas Boxful/WYN
+ * solo enriquecen el pedido; nunca aumentan el denominador de pedidos.
+ */
+export function buildCourierPerformanceReport(
+  rows: TrackableOrderRow[],
+  settlementTraceByKey: Map<string, SettlementTrace[]>,
+  window: Pick<KpiWindow, "curStart" | "curEnd" | "rangeLabel">
+): CourierPerformanceReport {
+  const byShopifyOrder = new Map<string, TrackableOrderRow>();
+
+  for (const row of rows) {
+    const createdAt = row.shopify_created_at
+      ? new Date(row.shopify_created_at).getTime()
+      : Number.NaN;
+    if (Number.isNaN(createdAt) || createdAt < window.curStart || createdAt >= window.curEnd) {
+      continue;
+    }
+    const orderKey = getCourierPerformanceOrderKey(row);
+    if (!orderKey) continue;
+    const current = byShopifyOrder.get(orderKey);
+    byShopifyOrder.set(orderKey, current ? pickCourierPerformanceRow(current, row) : row);
+  }
+
+  const reportRows = new Map<CourierPerformanceId, CourierPerformanceRow>([
+    [
+      "moovin",
+      {
+        id: "moovin",
+        label: "Moovin",
+        dispatched: 0,
+        delivered: 0,
+        notDelivered: 0,
+        deliveryRate: 0,
+        statusCounts: createCourierStatusCounts(),
+      },
+    ],
+    [
+      "wyn",
+      {
+        id: "wyn",
+        label: "WYN / MailAmericas",
+        dispatched: 0,
+        delivered: 0,
+        notDelivered: 0,
+        deliveryRate: 0,
+        statusCounts: createCourierStatusCounts(),
+      },
+    ],
+  ]);
+
+  let withGuide = 0;
+  let unassignedGuides = 0;
+
+  for (const row of Array.from(byShopifyOrder.values())) {
+    const guide = String(row.guide_number ?? "").trim();
+    if (!guide) continue;
+    withGuide += 1;
+
+    const courierText = String(row.courier ?? "").toLowerCase();
+    const courierId: CourierPerformanceId | null = isWynCourier(row.courier, guide)
+      ? "wyn"
+      : courierText.includes("moovin")
+        ? "moovin"
+        : null;
+    if (!courierId) {
+      unassignedGuides += 1;
+      continue;
+    }
+
+    const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
+    const effectiveStatus = mergeDispatchIntoTracking(
+      getEffectiveTrackingStatus(row, traces),
+      row.dispatch_view ?? null,
+      row
+    );
+    const status = getTrackingFilterFromStatus(effectiveStatus, row);
+    const courierRow = reportRows.get(courierId) as CourierPerformanceRow;
+    courierRow.dispatched += 1;
+    courierRow.statusCounts[status] += 1;
+    if (status === "delivered") courierRow.delivered += 1;
+    if (status === "not_delivered") courierRow.notDelivered += 1;
+  }
+
+  const normalizedRows = Array.from(reportRows.values()).map((row) => ({
+    ...row,
+    deliveryRate: row.dispatched ? (row.delivered / row.dispatched) * 100 : 0,
+  }));
+
+  return {
+    periodLabel: window.rangeLabel,
+    totalShopifyOrders: byShopifyOrder.size,
+    withGuide,
+    unassignedGuides,
+    rows: normalizedRows,
   };
 }
 

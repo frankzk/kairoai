@@ -792,6 +792,7 @@ Build in this order:
   `raw_order` by using real `note`/`note_attributes`/`line_items` columns.
 
 ### Finance/logistics features
+- **Comparativo por periodo y paqueteria**: la tarjeta `Entrega por paqueteria` y su detalle usan exactamente la misma cohorte temporal seleccionada en los KPIs (`Hoy`, `Ayer`, `7 dias`, `30 dias`, `Mes`, `Todo` o `Rango`). El filtro se aplica sobre `shopify_created_at` con limite superior exclusivo; Shopify sigue siendo la fuente unica y las filas logisticas solo enriquecen guia, transportadora y estado.
 - **En ruta** tracking status: an order with a Boxful guide/courier is "En ruta"
   (dispatched, in transit), distinct from "Pendiente" (confirmed, not shipped).
   Aggregations treat en_route as pending-like via `isPendingLike`.
@@ -857,6 +858,26 @@ Build in this order:
 - Para habilitar cache persistente se debe ejecutar
   `supabase/migrations/0020_wyn_tracking.sql`. Sin la migracion, la consulta en vivo
   sigue funcionando, pero el estado no queda guardado para la siguiente carga.
+
+### Comparativo por periodo y paqueteria
+
+- En Mireva Costa Rica, la tarjeta superior que antes mostraba un lead time sin
+  muestras ahora resume la efectividad de entrega de **WYN / MailAmericas** y
+  **Moovin**. Al abrirla muestra la comparacion completa por estados Kairo.
+- El reporte usa la misma cohorte Shopify elegida en los KPIs superiores: `Hoy`,
+  `Ayer`, `7 dias`, `30 dias`, `Mes`, `Todo` o las fechas de `Rango`. Shopify es
+  la unica fuente de pedidos: las filas logisticas solo agregan guia, paqueteria y
+  estado. Una fila WYN/Boxful sin pedido Shopify asociado no aumenta ningun conteo.
+- Cada pedido se deduplica por codigo Shopify. `Despachados` significa pedidos de
+  la cohorte con guia identificada para esa paqueteria. `Efectividad` se calcula
+  como `Entregados / Despachados`, no como entregados entre casos finalizados.
+- Los estados se muestran normalizados al flujo Kairo: Pendiente, Despacho
+  solicitado, Recolectado, En ruta, Reintento, incidencias solucionables/no
+  solucionables, Anulado, Entregado y No entregado.
+- Una guia con transportadora desconocida queda en el contador de auditoria
+  `Guias sin paqueteria identificada`; nunca se asigna por aproximacion.
+- El calculo se incorpora a `GET /api/finance/kpis` y reutiliza el dataset operativo
+  ya cargado. No crea una lectura historica adicional de Supabase.
 
 ### iComfly Estado de Despacho (lib/icomfly.ts, lib/dispatch.ts, migration 0010)
 Supervisa el despacho de pedidos COD en dos momentos atribuibles a personas:

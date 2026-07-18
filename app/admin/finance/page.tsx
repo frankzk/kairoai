@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import { normalizeSearchText } from "@/lib/order-matching";
 import {
+  type CourierKairoStatus,
+  type CourierPerformanceReport,
   type FinanceControlCenter,
   type FinancialAnomaly,
   type MonthlyCloseRow,
@@ -473,6 +475,8 @@ export default function FinancePage() {
   // /api/finance/kpis para no depender de cargar las ~11k filas en el navegador.
   const [kpiCards, setKpiCards] = useState<KpiCardVM[]>([]);
   const [kpiLoading, setKpiLoading] = useState(true);
+  const [courierPerformance, setCourierPerformance] = useState<CourierPerformanceReport | null>(null);
+  const [courierReportOpen, setCourierReportOpen] = useState(false);
   // La barra de alertas se actualiza con la metadata de la primera respuesta de
   // Pedidos. Asi no abre otra lectura concurrente del historico operativo.
   const [alertCounts, setAlertCounts] = useState<{
@@ -1156,6 +1160,8 @@ export default function FinancePage() {
   useEffect(() => {
     if (tab === "orders" && ordersDatasetReadyStore !== selectedStoreCode) {
       setKpiCards([]);
+      setCourierPerformance(null);
+      setCourierReportOpen(false);
       setKpiLoading(true);
       return;
     }
@@ -1163,6 +1169,8 @@ export default function FinancePage() {
     // tarjetas quedan en cero con la etiqueta "elegí desde y hasta".
     if (kpiRange === "custom" && (!kpiCustomStart || !kpiCustomEnd || kpiCustomStart > kpiCustomEnd)) {
       setKpiCards([]);
+      setCourierPerformance(null);
+      setCourierReportOpen(false);
       setKpiLoading(false);
       return;
     }
@@ -1185,10 +1193,15 @@ export default function FinancePage() {
         const previous = (json.previous as OpMetrics | null | undefined) ?? null;
         if (!current) throw new Error("Respuesta de KPIs invalida");
         setKpiCards(buildOperationalKpiCards(current, previous));
+        setCourierPerformance(
+          (json.courierPerformance as CourierPerformanceReport | null | undefined) ?? null
+        );
       } catch (err) {
         if (controller.signal.aborted) return;
         // No bloqueamos la pantalla por los KPIs; quedan vacios y la tabla sigue.
         setKpiCards([]);
+        setCourierPerformance(null);
+        setCourierReportOpen(false);
       } finally {
         if (!controller.signal.aborted) setKpiLoading(false);
       }
@@ -1396,9 +1409,18 @@ export default function FinancePage() {
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4 xl:grid-cols-7">
-            {operationalKpis.cards.map(({ id, ...card }) => (
-              <OperationalKpiCard key={id} loading={kpiLoading} {...card} />
-            ))}
+            {operationalKpis.cards.map(({ id, ...card }) =>
+              id === "lead" && selectedStoreCode === "mireva-cr" && courierPerformance ? (
+                <CourierPerformanceKpiCard
+                  key={id}
+                  report={courierPerformance}
+                  loading={kpiLoading}
+                  onClick={() => setCourierReportOpen(true)}
+                />
+              ) : (
+                <OperationalKpiCard key={id} loading={kpiLoading} {...card} />
+              )
+            )}
           </div>
 
           <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
@@ -1545,6 +1567,12 @@ export default function FinancePage() {
                 onRematch={rematchImports}
               />
             )}
+          {courierReportOpen && courierPerformance && (
+            <CourierPerformanceModal
+              report={courierPerformance}
+              onClose={() => setCourierReportOpen(false)}
+            />
+          )}
         </>
       </main>
     </div>
@@ -8272,6 +8300,165 @@ function OperationalKpiCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+const COURIER_STATUS_LABELS: Array<[CourierKairoStatus, string]> = [
+  ["pending", "Pendientes"],
+  ["despacho_solicitado", "Despacho solicitado"],
+  ["recolectado", "Recolectado"],
+  ["en_route", "En ruta"],
+  ["en_route_retry", "Reintento"],
+  ["incident_solvable", "Inc. solucionable"],
+  ["incident_unsolvable", "Inc. no solucionable"],
+  ["annulled", "Anulados"],
+  ["delivered", "Entregados"],
+  ["not_delivered", "No entregados"],
+];
+
+function CourierPerformanceKpiCard({
+  report,
+  loading,
+  onClick,
+}: {
+  report: CourierPerformanceReport;
+  loading: boolean;
+  onClick: () => void;
+}) {
+  const wyn = report.rows.find((row) => row.id === "wyn");
+  const moovin = report.rows.find((row) => row.id === "moovin");
+  const hasDispatches = report.rows.some((row) => row.dispatched > 0);
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="min-w-0 rounded-md border border-border bg-card p-2.5 text-left transition-colors hover:border-primary/50 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-3"
+      aria-label={`Ver efectividad por paqueteria del periodo ${report.periodLabel}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="truncate text-[11px] text-muted-foreground">Entrega por paqueteria</p>
+        <Truck className="h-3.5 w-3.5 shrink-0 text-primary" />
+      </div>
+      <p className="mt-1 truncate text-base font-bold leading-none text-foreground sm:text-xl">
+        {loading ? "..." : hasDispatches ? `WYN ${wyn?.deliveryRate.toFixed(1) ?? "0.0"}%` : "Sin despachos"}
+      </p>
+      <p className="mt-1 truncate text-[10px] leading-tight text-muted-foreground">
+        {loading
+          ? "Calculando comparativo"
+          : `${report.periodLabel} | Moovin ${moovin?.deliveryRate.toFixed(1) ?? "0.0"}%`}
+      </p>
+    </button>
+  );
+}
+
+function CourierPerformanceModal({
+  report,
+  onClose,
+}: {
+  report: CourierPerformanceReport;
+  onClose: () => void;
+}) {
+  const titleId = "courier-performance-title";
+
+  return (
+    <ModalOverlay onClose={onClose} labelledBy={titleId}>
+      <section className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-md border border-border bg-card shadow-2xl">
+        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+          <div className="min-w-0">
+            <h2 id={titleId} className="text-base font-semibold text-foreground">
+              Efectividad por paqueteria
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Periodo seleccionado: {report.periodLabel}. Un pedido Shopify se cuenta una sola vez.
+            </p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Cerrar reporte">
+            <X className="h-4 w-4" />
+          </Button>
+        </header>
+
+        <div className="space-y-5 px-5 py-4">
+          <div className="grid grid-cols-1 border border-border sm:grid-cols-3">
+            <MiniStat label="Pedidos Shopify del periodo" value={report.totalShopifyOrders} />
+            <MiniStat label="Pedidos con guia" value={report.withGuide} />
+            <MiniStat label="Guias sin paqueteria identificada" value={report.unassignedGuides} />
+          </div>
+
+          {report.unassignedGuides > 0 && (
+            <div className="flex gap-2 border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                {report.unassignedGuides} guias no se atribuyeron a WYN/MailAmericas ni a Moovin. Se excluyen del
+                comparativo hasta identificar la paqueteria.
+              </p>
+            </div>
+          )}
+
+          <div className="overflow-x-auto border border-border">
+            <table className="w-full min-w-[680px] text-sm">
+              <thead className="bg-muted/20 text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Paqueteria</th>
+                  <th className="px-3 py-2 text-right font-medium">Despachados</th>
+                  <th className="px-3 py-2 text-right font-medium">Entregados</th>
+                  <th className="px-3 py-2 text-right font-medium">No entregados</th>
+                  <th className="px-3 py-2 text-right font-medium">Efectividad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.rows.map((row) => (
+                  <tr key={row.id} className="border-t border-border">
+                    <td className="px-3 py-3 font-medium text-foreground">{row.label}</td>
+                    <td className="px-3 py-3 text-right font-mono">{row.dispatched}</td>
+                    <td className="px-3 py-3 text-right font-mono text-emerald-300">{row.delivered}</td>
+                    <td className="px-3 py-3 text-right font-mono text-red-300">{row.notDelivered}</td>
+                    <td className="px-3 py-3 text-right font-mono font-semibold text-foreground">
+                      {row.deliveryRate.toFixed(1)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <h3 className="mb-2 text-sm font-semibold text-foreground">Estados de seguimiento Kairo</h3>
+            <div className="overflow-x-auto border border-border">
+              <table className="w-full min-w-[560px] text-sm">
+                <thead className="bg-muted/20 text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Estado</th>
+                    {report.rows.map((row) => (
+                      <th key={row.id} className="px-3 py-2 text-right font-medium">
+                        {row.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {COURIER_STATUS_LABELS.map(([status, label]) => (
+                    <tr key={status} className="border-t border-border">
+                      <td className="px-3 py-2 text-muted-foreground">{label}</td>
+                      {report.rows.map((row) => (
+                        <td key={row.id} className="px-3 py-2 text-right font-mono text-foreground">
+                          {row.statusCounts[status]}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Efectividad = pedidos entregados / pedidos con guia de la paqueteria. Los estados mostrados son los
+            estados normalizados de Kairo, no las etiquetas originales de cada transportadora.
+          </p>
+        </div>
+      </section>
+    </ModalOverlay>
   );
 }
 
