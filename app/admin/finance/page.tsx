@@ -342,6 +342,15 @@ const EMPTY_SETTLEMENT_COUNTS: Record<OrderSettlementFilter, number> = {
   duplicate: 0,
 };
 
+interface OrdersOperationalMetadata {
+  trackingCounts: Record<OrderTrackingFilter, number>;
+  settlementCounts: Record<OrderSettlementFilter, number>;
+  enRouteGuides: {
+    moovin: Array<{ idPackage: string; lastName: string; fullName: string }>;
+    forza: Array<{ guide: string }>;
+  };
+}
+
 // Meses disponibles para el selector, derivados del rango de cobertura Shopify
 // (oldest..newest) en vez de recorrer el snapshot completo. Devuelve YYYY-MM
 // desc.
@@ -464,14 +473,13 @@ export default function FinancePage() {
   // /api/finance/kpis para no depender de cargar las ~11k filas en el navegador.
   const [kpiCards, setKpiCards] = useState<KpiCardVM[]>([]);
   const [kpiLoading, setKpiLoading] = useState(true);
-  // Carril 2 inc.2: la barra de Alertas se alimenta de conteos server-side
-  // (period=all) en vez del snapshot en memoria, que ya no se carga en el tab
-  // Pedidos. Pedimos /api/finance/orders con pageSize=1 (el dataset esta cacheado
-  // 30s en el server, asi que es barato) solo para leer tracking/settlement counts.
+  // La barra de alertas se actualiza con la metadata de la primera respuesta de
+  // Pedidos. Asi no abre otra lectura concurrente del historico operativo.
   const [alertCounts, setAlertCounts] = useState<{
     trackingCounts: Record<OrderTrackingFilter, number>;
     settlementCounts: Record<OrderSettlementFilter, number>;
   }>({ trackingCounts: EMPTY_TRACKING_COUNTS, settlementCounts: EMPTY_SETTLEMENT_COUNTS });
+  const [ordersDatasetReadyStore, setOrdersDatasetReadyStore] = useState<FinanceStoreCode | null>(null);
   // Carril 2 inc.2 (tabs restantes): Productos, Cierre mensual y Notas cargan
   // server-side. Cada uno trae sus filas ya calculadas desde su endpoint, asi que
   // estos tabs ya no dependen del snapshot pesado (~11k pedidos) en el navegador.
@@ -520,6 +528,24 @@ export default function FinancePage() {
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
+
+  const handleOrdersOperationalMetadata = useCallback(
+    (storeCode: FinanceStoreCode, metadata: OrdersOperationalMetadata) => {
+      if (storeCode !== selectedStoreCode) return;
+      setAlertCounts({
+        trackingCounts: metadata.trackingCounts ?? EMPTY_TRACKING_COUNTS,
+        settlementCounts: metadata.settlementCounts ?? EMPTY_SETTLEMENT_COUNTS,
+      });
+    },
+    [selectedStoreCode]
+  );
+
+  const handleOrdersDatasetReady = useCallback(
+    (storeCode: FinanceStoreCode) => {
+      if (storeCode === selectedStoreCode) setOrdersDatasetReadyStore(storeCode);
+    },
+    [selectedStoreCode]
+  );
 
   const latestLogisticsImport = logisticsImports[0];
   const claimByAnomalyKey = useMemo(
@@ -1109,10 +1135,8 @@ export default function FinancePage() {
     await refresh();
   }
 
-  // Carril 2 inc.2: la barra de Alertas ya NO se calcula sobre visibleOrderRows
-  // (que en el tab Pedidos queda vacio porque el snapshot pesado esta diferido).
-  // Sus conteos vienen del estado `alertCounts`, alimentado por el efecto
-  // server-side de mas abajo (/api/finance/orders?period=all).
+  // La barra de alertas usa los metadatos devueltos junto con la primera pagina
+  // de pedidos. Asi la vista operativa necesita una sola carga inicial.
 
   // La ventana (etiqueta de rango / comparativo / "tasas en maduracion") es
   // pura y barata: se calcula en cliente. Las tarjetas de KPIs vienen del
@@ -1125,10 +1149,16 @@ export default function FinancePage() {
     }),
     [kpiRange, kpiCustomStart, kpiCustomEnd, kpiCards]
   );
+  const operationalCountsLoading = ordersDatasetReadyStore !== selectedStoreCode;
 
   // Fetch de KPIs server-side: current + previous por tienda y periodo. Reemplaza
   // el calculo en memoria sobre visibleOrderRows (Carril 2 inc.2).
   useEffect(() => {
+    if (tab === "orders" && ordersDatasetReadyStore !== selectedStoreCode) {
+      setKpiCards([]);
+      setKpiLoading(true);
+      return;
+    }
     // Rango custom incompleto: no consultamos hasta tener ambas fechas; las
     // tarjetas quedan en cero con la etiqueta "elegí desde y hasta".
     if (kpiRange === "custom" && (!kpiCustomStart || !kpiCustomEnd || kpiCustomStart > kpiCustomEnd)) {
@@ -1164,35 +1194,7 @@ export default function FinancePage() {
       }
     })();
     return () => controller.abort();
-  }, [selectedStoreCode, kpiRange, kpiCustomStart, kpiCustomEnd]);
-
-  // Conteos para la barra de Alertas (Carril 2 inc.2). period=all para que las
-  // alertas reflejen todo el historico, no solo la ventana del selector. Una
-  // sola request barata (pageSize=1; el server cachea el dataset 30s) por tienda
-  // o cuando se actualiza. No reintroduce el snapshot pesado en el tab Pedidos.
-  useEffect(() => {
-    const controller = new AbortController();
-    (async () => {
-      try {
-        const res = await fetch(
-          withStore("/api/finance/orders?period=all&pageSize=1", selectedStoreCode),
-          { cache: "no-store", signal: controller.signal }
-        );
-        const json = await readApiJson(res);
-        if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar las alertas");
-        setAlertCounts({
-          trackingCounts: (json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS,
-          settlementCounts: (json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS,
-        });
-      } catch {
-        if (controller.signal.aborted) return;
-        // Las alertas son informativas; si fallan dejamos los conteos en cero y
-        // la tabla de pedidos sigue funcionando.
-        setAlertCounts({ trackingCounts: EMPTY_TRACKING_COUNTS, settlementCounts: EMPTY_SETTLEMENT_COUNTS });
-      }
-    })();
-    return () => controller.abort();
-  }, [selectedStoreCode]);
+  }, [selectedStoreCode, kpiRange, kpiCustomStart, kpiCustomEnd, tab, ordersDatasetReadyStore]);
 
   // Productos server-side (Carril 2 inc.2): /api/finance/product-analysis devuelve
   // las filas ya agregadas (buildFinanceControlCenter + buildProductAnalysisRows en
@@ -1401,19 +1403,19 @@ export default function FinancePage() {
 
           <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
             <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Alertas</span>
-            {/* Carril 2 inc.2: alimentado de conteos server-side (period=all) en
-                lugar del snapshot en memoria. Reintentos/Incidencias vienen de
-                trackingCounts; Por reclamar de settlementCounts.to_claim. */}
+            {/* Los conteos llegan con la primera pagina operativa. Reintentos e
+                incidencias vienen de trackingCounts; Por reclamar de
+                settlementCounts.to_claim. */}
             <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
-              <AlertStat label="Reintentos" value={loading ? "..." : formatInt(alertCounts.trackingCounts.en_route_retry)} tone="bad" />
-              <AlertStat label="Incidencias" value={loading ? "..." : formatInt(alertCounts.trackingCounts.incident_solvable + alertCounts.trackingCounts.incident_unsolvable)} tone="bad" />
-              <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim)} tone="warn" />
+              <AlertStat label="Reintentos" value={operationalCountsLoading ? "..." : formatInt(alertCounts.trackingCounts.en_route_retry)} tone="bad" />
+              <AlertStat label="Incidencias" value={operationalCountsLoading ? "..." : formatInt(alertCounts.trackingCounts.incident_solvable + alertCounts.trackingCounts.incident_unsolvable)} tone="bad" />
+              <AlertStat label="Por reclamar" value={operationalCountsLoading ? "..." : formatInt(alertCounts.settlementCounts.to_claim)} tone="warn" />
               <AlertStat
                 label="Anomalías"
                 // Equivale al calculo previo en cliente (liquidationAlertRows +
                 // doubleSettlementAnomalies): entregados sin liquidar (to_claim) +
                 // liquidaciones duplicadas (duplicate).
-                value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim + alertCounts.settlementCounts.duplicate)}
+                value={operationalCountsLoading ? "..." : formatInt(alertCounts.settlementCounts.to_claim + alertCounts.settlementCounts.duplicate)}
                 tone="warn"
               />
             </div>
@@ -1459,6 +1461,7 @@ export default function FinancePage() {
           )}
             {tab === "orders" && (
               <OrdersTab
+                key={selectedStore.code}
                 selectedStore={selectedStore}
                 logisticsImports={logisticsImports}
                 latestLogisticsImport={latestLogisticsImport}
@@ -1473,6 +1476,8 @@ export default function FinancePage() {
                 onSyncShopify={syncShopifyHistory}
                 importingLogistics={importingLogistics}
                 onLogisticsImport={handleLogisticsImport}
+                onOperationalMetadata={handleOrdersOperationalMetadata}
+                onDatasetReady={handleOrdersDatasetReady}
               />
             )}
             {tab === "dispatch" && <DispatchTab storeCode={selectedStore.code} />}
@@ -1631,6 +1636,8 @@ function OrdersTab({
   onSyncShopify,
   importingLogistics,
   onLogisticsImport,
+  onOperationalMetadata,
+  onDatasetReady,
 }: {
   selectedStore: FinanceStorePublic;
   logisticsImports: LogisticsImport[];
@@ -1649,6 +1656,8 @@ function OrdersTab({
   onSyncShopify: () => void;
   importingLogistics: boolean;
   onLogisticsImport: (event: FormEvent<HTMLFormElement>) => Promise<ImportResult>;
+  onOperationalMetadata: (storeCode: FinanceStoreCode, metadata: OrdersOperationalMetadata) => void;
+  onDatasetReady: (storeCode: FinanceStoreCode) => void;
 }) {
   const [isLogisticsModalOpen, setIsLogisticsModalOpen] = useState(false);
   const [logisticsModalError, setLogisticsModalError] = useState("");
@@ -1689,6 +1698,7 @@ function OrdersTab({
   const [exporting, setExporting] = useState(false);
   // Busqueda con debounce (~300ms) para no disparar un fetch por tecla.
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const metadataLoadedStoreRef = useRef("");
 
   // Meses disponibles: derivados del rango de cobertura Shopify (oldest..newest)
   // en vez de recorrer las ~11k filas en el navegador.
@@ -1732,7 +1742,12 @@ function OrdersTab({
     setTableError("");
     (async () => {
       try {
-        const query = buildOrdersQuery({ page: String(page), pageSize: String(ORDERS_PAGE_SIZE) });
+        const includeMetadata = metadataLoadedStoreRef.current !== selectedStore.code;
+        const query = buildOrdersQuery({
+          page: String(page),
+          pageSize: String(ORDERS_PAGE_SIZE),
+          ...(includeMetadata ? { metadata: "1" } : {}),
+        });
         const res = await fetch(withStore(`/api/finance/orders?${query}`, selectedStore.code), {
           cache: "no-store",
           signal: controller.signal,
@@ -1745,43 +1760,22 @@ function OrdersTab({
         setSearchedCount(Number(json.searchedCount ?? 0));
         setTrackingCounts((json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS);
         setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
+        if (json.operationalMetadata) {
+          const metadata = json.operationalMetadata as OrdersOperationalMetadata;
+          metadataLoadedStoreRef.current = selectedStore.code;
+          setEnRouteGuides(metadata.enRouteGuides ?? { moovin: [], forza: [] });
+          onOperationalMetadata(selectedStore.code, metadata);
+        }
+        onDatasetReady(selectedStore.code);
       } catch (err) {
         if (controller.signal.aborted) return;
-        setServerRows([]);
-        setTotal(0);
         setTableError(err instanceof Error ? err.message : "No se pudieron cargar los pedidos");
       } finally {
         if (!controller.signal.aborted) setTableLoading(false);
       }
     })();
     return () => controller.abort();
-  }, [buildOrdersQuery, page, selectedStore.code, refreshKey]);
-
-  // Guias "en ruta" para los botones Moovin/Forza: dependen de la tienda (no de
-  // pagina/filtro), asi que se traen una sola vez por tienda con ?guides=1, en
-  // vez de viajar en cada fetch de la tabla.
-  useEffect(() => {
-    const controller = new AbortController();
-    (async () => {
-      try {
-        const res = await fetch(
-          withStore("/api/finance/orders?period=all&pageSize=1&guides=1", selectedStore.code),
-          { cache: "no-store", signal: controller.signal }
-        );
-        const json = await readApiJson(res);
-        if (!res.ok) return;
-        setEnRouteGuides(
-          (json.enRouteGuides as {
-            moovin: Array<{ idPackage: string; lastName: string; fullName: string }>;
-            forza: Array<{ guide: string }>;
-          }) ?? { moovin: [], forza: [] }
-        );
-      } catch {
-        // Los botones de sync no son criticos para la carga inicial.
-      }
-    })();
-    return () => controller.abort();
-  }, [selectedStore.code, refreshKey]);
+  }, [buildOrdersQuery, page, selectedStore.code, refreshKey, onOperationalMetadata, onDatasetReady]);
 
   const [moovinSyncing, setMoovinSyncing] = useState(false);
   const [moovinMessage, setMoovinMessage] = useState("");
@@ -1819,6 +1813,7 @@ function OrdersTab({
         );
       }
       await onReloadMoovin();
+      metadataLoadedStoreRef.current = "";
       setRefreshKey((key) => key + 1);
       setMoovinMessage(
         `Moovin actualizado: ${checked} consultados, ${delivered} entregados, ${incidents} con incidencia.`
@@ -1856,6 +1851,7 @@ function OrdersTab({
         );
       }
       await onReloadForza();
+      metadataLoadedStoreRef.current = "";
       setRefreshKey((key) => key + 1);
       setForzaMessage(
         `Forza actualizado: ${checked} consultados, ${delivered} entregados, ${incidents} con incidencia.`

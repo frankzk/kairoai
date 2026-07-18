@@ -36,6 +36,10 @@ import {
 } from "@/lib/finance-orders";
 import type { LogisticsRow, SettlementImport, SettlementRow } from "@/lib/finance-types";
 import type { FinanceStorePublic } from "@/lib/store-config";
+import {
+  decideDatasetLoad,
+  type DatasetCacheReadStatus,
+} from "./orders-dataset-policy";
 
 export interface OrdersDataset {
   rows: TrackableOrderRow[];
@@ -79,6 +83,46 @@ const datasetCache = new Map<string, CacheEntry>();
 // mutaciones controladas.
 const DATASET_CACHE_TTL_MS = 60 * 60_000;
 const DATASET_CACHE_TABLE = "finance_dataset_cache";
+const L2_READ_TIMEOUT_MS = 4_000;
+const L2_WRITE_TIMEOUT_MS = 8_000;
+const DATASET_BUILD_TIMEOUT_MS = 45_000;
+const L2_FAILURE_BACKOFF_MS = 15_000;
+
+export class OrdersDatasetUnavailableError extends Error {
+  readonly code = "ORDERS_DATASET_UNAVAILABLE";
+
+  constructor(message = "La base operativa no esta disponible temporalmente") {
+    super(message);
+    this.name = "OrdersDatasetUnavailableError";
+  }
+}
+
+export function isOrdersDatasetUnavailableError(
+  error: unknown
+): error is OrdersDatasetUnavailableError {
+  return (
+    error instanceof OrdersDatasetUnavailableError ||
+    (error instanceof Error && error.name === "OrdersDatasetUnavailableError")
+  );
+}
+
+function withTimeout<T>(
+  operation: PromiseLike<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<T>((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error(`${label} supero ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+
+  return Promise.race([Promise.resolve(operation), deadline]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
 
 // El unico campo de OrdersDataset que no es JSON nativo es settlementTraceByKey
 // (un Map). JSON no representa Maps, asi que se serializa como arreglo de
@@ -130,30 +174,42 @@ interface CachedDataset {
   stale: boolean;
 }
 
-// Lee la fila de cache L2 de una tienda. Devuelve null solo si NO existe o si el
-// acceso falla (p. ej. la migracion 0013 aun no se aplico): el llamador entonces
-// reconstruye en memoria. Si la fila existe pero esta vencida, se devuelve igual
-// marcada como `stale` (serve-stale): el llamador la sirve y refresca en segundo
-// plano, asi el cold build pesado nunca cae en el path del request. Nunca lanza.
-async function readDatasetCache(store: FinanceStorePublic): Promise<CachedDataset | null> {
+type DatasetCacheReadResult =
+  | { status: "hit"; value: CachedDataset }
+  | { status: "miss" }
+  | { status: "error"; error: string };
+
+// Distingue un miss real de una falla de Supabase. Solo un miss confirmado puede
+// iniciar un cold build; ante error se sirve L1 vencido o se responde 503.
+async function readDatasetCache(store: FinanceStorePublic): Promise<DatasetCacheReadResult> {
   try {
-    const { data, error } = await getDB()
-      .from(DATASET_CACHE_TABLE)
-      .select("payload, row_count, refreshed_at")
-      .eq("store_id", store.id)
-      .maybeSingle();
+    const { data, error } = await withTimeout(
+      getDB()
+        .from(DATASET_CACHE_TABLE)
+        .select("payload, row_count, refreshed_at")
+        .eq("store_id", store.id)
+        .maybeSingle(),
+      L2_READ_TIMEOUT_MS,
+      `orders-dataset L2 read ${store.code}`
+    );
     if (error) {
       console.warn(`[orders-dataset L2 read] ${store.code}: ${error.message}`);
-      return null;
+      return { status: "error", error: error.message };
     }
     const row = data as DatasetCacheRow | null;
-    if (!row) return null;
+    if (!row) return { status: "miss" };
     const refreshedAt = new Date(row.refreshed_at).getTime();
     const stale = !Number.isFinite(refreshedAt) || Date.now() - refreshedAt >= DATASET_CACHE_TTL_MS;
-    return { data: deserializeDataset(decodeCachePayload(row.payload)), stale };
+    return {
+      status: "hit",
+      value: { data: deserializeDataset(decodeCachePayload(row.payload)), stale },
+    };
   } catch (err) {
     console.warn(`[orders-dataset L2 read] ${store.code}:`, err);
-    return null;
+    return {
+      status: "error",
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -164,17 +220,21 @@ async function readDatasetCache(store: FinanceStorePublic): Promise<CachedDatase
 async function writeDatasetCache(store: FinanceStorePublic, data: OrdersDataset): Promise<string | null> {
   try {
     const gz = gzipSync(Buffer.from(JSON.stringify(serializeDataset(data)))).toString("base64");
-    const { error } = await getDB()
-      .from(DATASET_CACHE_TABLE)
-      .upsert(
-        {
-          store_id: store.id,
-          payload: { gz },
-          row_count: data.rows.length,
-          refreshed_at: new Date().toISOString(),
-        },
-        { onConflict: "store_id" }
-      );
+    const { error } = await withTimeout(
+      getDB()
+        .from(DATASET_CACHE_TABLE)
+        .upsert(
+          {
+            store_id: store.id,
+            payload: { gz },
+            row_count: data.rows.length,
+            refreshed_at: new Date().toISOString(),
+          },
+          { onConflict: "store_id" }
+        ),
+      L2_WRITE_TIMEOUT_MS,
+      `orders-dataset L2 write ${store.code}`
+    );
     if (error) {
       console.warn(`[orders-dataset L2 write] ${store.code}: ${error.message}`);
       return error.message;
@@ -266,12 +326,13 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
 
 // Devuelve el dataset ensamblado de una tienda con cache de dos niveles:
 //   L1 (memoria, ~60s): hit fresco -> se devuelve sin tocar Postgres.
-//   L2 (Postgres, ~10min): si L1 esta vencido, lee la fila compartida; si esta
+//   L2 (Postgres, ~60min): si L1 esta vencido, lee la fila compartida; si esta
 //      fresca, deserializa, repuebla L1 y la devuelve.
-//   Miss en ambos: arma el dataset (cold build), escribe L2 + L1 y lo devuelve.
+//   Miss confirmado en L2: arma el dataset, escribe L2 + L1 y lo devuelve.
 // El valor devuelto es identico al de buildDataset (caso L1/build directos) o a
-// uno reconstruido byte a byte desde JSONB (caso L2). Esto es solo cache: si L2
-// falla o la tabla no existe, cae a armar en memoria — el dashboard no se rompe.
+// uno reconstruido byte a byte desde JSONB (caso L2). Un error de L2 nunca se
+// interpreta como miss: se sirve L1 vencido o se responde temporalmente no
+// disponible para evitar reconstrucciones masivas durante una caida de Supabase.
 //
 // Single-flight por tienda: al abrir el dashboard, varias rutas (orders/, kpis/,
 // summary/, settlements-view/, ...) piden el dataset a la vez. En una instancia
@@ -282,6 +343,7 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
 // vuelo por tienda, el primer request hace el trabajo y el resto espera el mismo
 // resultado.
 const inFlightLoads = new Map<string, Promise<OrdersDataset>>();
+const l2FailureUntilByStore = new Map<string, number>();
 
 export async function getOrdersDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   const cached = datasetCache.get(store.code);
@@ -293,22 +355,53 @@ export async function getOrdersDataset(store: FinanceStorePublic): Promise<Order
   if (inFlight) return inFlight;
 
   const load = (async () => {
+    const failureUntil = l2FailureUntilByStore.get(store.code) ?? 0;
+    if (failureUntil > Date.now()) {
+      if (cached) return cached.data;
+      throw new OrdersDatasetUnavailableError();
+    }
+
     const fromL2 = await readDatasetCache(store);
-    if (fromL2) {
-      datasetCache.set(store.code, { at: Date.now(), data: fromL2.data });
+    const decision = decideDatasetLoad(
+      fromL2.status as DatasetCacheReadStatus,
+      Boolean(cached)
+    );
+
+    if (decision === "use-l2" && fromL2.status === "hit") {
+      l2FailureUntilByStore.delete(store.code);
+      datasetCache.set(store.code, { at: Date.now(), data: fromL2.value.data });
       // Serve-stale: aunque la fila este vencida, la servimos igual. No lanzamos
       // refresh pesado desde requests de usuario; en serverless eso multiplica
       // rebuilds por instancia y puede saturar Supabase durante degradaciones.
-      if (fromL2.stale) {
+      if (fromL2.value.stale) {
         console.warn(`[orders-dataset L2 stale] ${store.code}: serving stale cache`);
       }
-      return fromL2.data;
+      return fromL2.value.data;
     }
 
-    // Solo el primerisimo build (sin ninguna fila en L2) reconstruye on-request.
-    const data = await buildDataset(store);
+    if (decision === "use-stale-l1" && cached) {
+      l2FailureUntilByStore.set(store.code, Date.now() + L2_FAILURE_BACKOFF_MS);
+      console.warn(`[orders-dataset L1 stale] ${store.code}: serving after L2 failure`);
+      return cached.data;
+    }
+
+    if (decision === "unavailable") {
+      l2FailureUntilByStore.set(store.code, Date.now() + L2_FAILURE_BACKOFF_MS);
+      throw new OrdersDatasetUnavailableError();
+    }
+
+    // Solo un miss confirmado inicia el primer build. La escritura L2 es best
+    // effort: el usuario recibe el dataset aunque Supabase falle al guardarlo.
+    const data = await withTimeout(
+      buildDataset(store),
+      DATASET_BUILD_TIMEOUT_MS,
+      `orders-dataset build ${store.code}`
+    );
     datasetCache.set(store.code, { at: Date.now(), data });
-    await writeDatasetCache(store, data);
+    const writeError = await writeDatasetCache(store, data);
+    if (writeError) {
+      console.warn(`[orders-dataset cold build] ${store.code}: cache write failed: ${writeError}`);
+    }
     return data;
   })();
 
@@ -328,7 +421,11 @@ export async function getOrdersDataset(store: FinanceStorePublic): Promise<Order
 // filas ensambladas. Defensivo: si la escritura L2 falla, igual deja L1 al dia y
 // devuelve el conteo (no lanza por culpa de la cache).
 export async function refreshFinanceDatasetCache(store: FinanceStorePublic): Promise<number> {
-  const data = await buildDataset(store);
+  const data = await withTimeout(
+    buildDataset(store),
+    DATASET_BUILD_TIMEOUT_MS,
+    `orders-dataset refresh ${store.code}`
+  );
   datasetCache.set(store.code, { at: Date.now(), data });
   const writeError = await writeDatasetCache(store, data);
   if (writeError) {

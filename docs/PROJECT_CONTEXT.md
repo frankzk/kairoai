@@ -908,3 +908,42 @@ At the time of writing these were not yet confirmed applied in production — ch
 - How should inventory loss be handled for not-delivered orders?
 - Are numeric-only settlement orders from another store/source?
 - Should weekly settlements map to a calendar week, a custom date range, or both?
+
+## Incident 2026-07-18: 504 on finance orders
+
+### Symptom
+
+- Vercel reported a high-severity increase in 504 responses for
+  `/api/finance/orders` while Supabase was timing out.
+- The Orders screen could remain loading, show a partial history, or temporarily
+  drop to zero rows.
+
+### Root cause
+
+- The first Orders render made three concurrent requests for the same assembled
+  historical dataset: table rows, operational counts, and courier guides.
+- A failed read of `finance_dataset_cache` was indistinguishable from a confirmed
+  cache miss. Every request therefore attempted to rebuild the complete history.
+- Single-flight protected one warm Vercel process only; parallel cold instances
+  could still rebuild the same store at the same time.
+
+### Fix and invariants
+
+- The first Orders request now returns the first table page, operational counts,
+  settlement counts, and courier guides together with `metadata=1`.
+- KPI loading waits for the operational dataset instead of starting another
+  reconstruction at the same time.
+- Only a confirmed L2 cache miss may trigger a cold build.
+- A Supabase/L2 read failure serves the last L1 value when available. Without a
+  stale value it returns HTTP 503 with `Retry-After`, never a full rebuild.
+- L2 reads, writes, and cold builds have explicit time limits and a short failure
+  backoff. The browser preserves the last valid table after transient failures.
+
+### Runbook
+
+1. Check Vercel errors for `/api/finance/orders` and Supabase project health.
+2. Confirm `finance_dataset_cache` is readable for the affected `store_id`.
+3. Do not purge the cache while Supabase is degraded; stale operational data is
+   safer than forcing concurrent historical rebuilds.
+4. After recovery, use Refresh once and verify that the initial Orders request
+   includes `metadata=1` and returns HTTP 200.
