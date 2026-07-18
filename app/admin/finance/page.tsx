@@ -1904,7 +1904,10 @@ function OrdersTab({
           Origen: row.source,
           Guia: row.guide_number,
           Transportadora: normalizeOperationalCourier(row.courier, selectedStore, row.guide_number),
-          "Estado courier": moovin?.latest_status ?? forza?.latest_status ?? "",
+          "Estado courier":
+            moovin?.latest_status ??
+            forza?.latest_status ??
+            (row.guide_number ? "Pendiente de sincronizar" : ""),
           "Incidencia courier": moovin?.has_incident || forza?.has_incident ? "si" : "",
           Cliente: row.customer_name,
           Apellido: row.last_name ?? "",

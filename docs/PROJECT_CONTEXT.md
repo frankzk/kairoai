@@ -125,6 +125,9 @@ Multi-store rule:
   - Costa Rica uses Moovin (`moovin_tracking`, `/api/finance/moovin-sync`, `/api/finance/moovin-tracking`).
   - Honduras uses Forza (`forza_tracking`, `/api/finance/forza-sync`, `/api/finance/forza-tracking`).
   - The UI chooses the carrier from `FINANCE_STORES[].logisticsProvider`. Do not infer Honduras guides as Moovin and do not query Forza for Costa Rica.
+  - The automatic Moovin cron sources candidates from both `shopify_orders` and `logistics_rows`, always filtered by `store_id`. Shopify is checked first so a newly fulfilled Costa Rica order is tracked before it appears in a Boxful Excel.
+  - Generic Shopify carrier labels such as `Transportadora`, `Other`, or an empty label resolve to the store's configured carrier. For Costa Rica they are valid Moovin candidates; a label that explicitly says `Forza` is not.
+  - A guide without a cached courier response is an unknown/pending lookup, not a confirmed blank status. Exports show `Pendiente de sincronizar` until `moovin_tracking` or `forza_tracking` has a response; incident remains blank until known.
   - Forza guide numbers are normalized with the `FD` prefix, so `26827471` and `FD26827471` refer to the same guide.
   - Forza public tracking uses `POST https://rastreo.forzadelivery.com/fd2/Home.aspx/API` with `Tracking/GetTrackingPublic`. The browser page may show reCAPTCHA, but the JSON endpoint currently returns package status for public guide lookups. Cache results in `forza_tracking` and avoid polling all guides on page load.
 - Supabase uniqueness is store-scoped for the key tables: Shopify orders (`store_id, shopify_order_id`), SKU costs (`store_id, sku`), finance claims (`store_id, anomaly_key`), and Boxful file controls (`store_id, file_name, file_type`).

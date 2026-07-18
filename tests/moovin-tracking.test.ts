@@ -6,6 +6,7 @@ import {
   effectiveLatestMoovin,
   type MoovinEvent,
 } from "../lib/moovin";
+import { isMoovinCandidateCourier } from "../lib/moovin-candidates";
 
 // Replica del parser de app/api/finance/moovin-tracking/route.ts para fijar el
 // comportamiento sobre la estructura RSC real de Moovin (linea "1:{...}").
@@ -132,6 +133,19 @@ describe("classifyMoovinFetchFailure", () => {
     expect(classifyMoovinFetchFailure("<!DOCTYPE html><html></html>", 200, "text/html")).toContain(
       "HTML"
     );
+  });
+});
+
+describe("candidatos automaticos de Moovin", () => {
+  it("acepta etiquetas genericas que Shopify usa para Moovin en Costa Rica", () => {
+    expect(isMoovinCandidateCourier("Transportadora")).toBe(true);
+    expect(isMoovinCandidateCourier("Other")).toBe(true);
+    expect(isMoovinCandidateCourier("")).toBe(true);
+  });
+
+  it("acepta Moovin y no mezcla una guia rotulada como Forza", () => {
+    expect(isMoovinCandidateCourier("Moovin")).toBe(true);
+    expect(isMoovinCandidateCourier("Forza")).toBe(false);
   });
 });
 

@@ -17,9 +17,24 @@ const MAX_PER_RUN = 120;
 const FRESH_WINDOW_MINUTES = 6 * 60;
 
 async function run(chainDetect: boolean) {
-  let candidates;
+  const moovinStores = FINANCE_STORES.filter((store) => store.logisticsProvider === "moovin");
+  const candidates: Array<{ idPackage: string; lastName: string }> = [];
+  const seen = new Set<string>();
   try {
-    candidates = await listMoovinSyncCandidates(MAX_PER_RUN, FRESH_WINDOW_MINUTES);
+    for (const store of moovinStores) {
+      const remaining = MAX_PER_RUN - candidates.length;
+      if (remaining <= 0) break;
+      const storeCandidates = await listMoovinSyncCandidates(
+        remaining,
+        FRESH_WINDOW_MINUTES,
+        store.id
+      );
+      for (const candidate of storeCandidates) {
+        if (seen.has(candidate.idPackage)) continue;
+        seen.add(candidate.idPackage);
+        candidates.push(candidate);
+      }
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error";
     const friendly = /does not exist|42P01/.test(message)
@@ -67,7 +82,6 @@ async function run(chainDetect: boolean) {
   // El cron muto moovin_tracking: refresca la cache durable del dataset de las
   // tiendas que usan Moovin (solo si hubo cambios). Defensivo: nunca rompe el cron.
   if (checked > 0) {
-    const moovinStores = FINANCE_STORES.filter((store) => store.logisticsProvider === "moovin");
     await Promise.all(
       moovinStores.map((store) =>
         refreshFinanceDatasetCache(getStoreConfig(store.code)).catch((cacheErr) =>

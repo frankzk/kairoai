@@ -1,6 +1,7 @@
 import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
 import { normalizeForzaGuide } from "./forza";
+import { isMoovinCandidateCourier } from "./moovin-candidates";
 import { normalizeMatchKey } from "./order-matching";
 
 export * from "./finance-types";
@@ -1273,46 +1274,82 @@ export async function getRecentlyCheckedMoovinPackages(maxAgeMinutes: number): P
 // y que no se consultaron dentro de la ventana fresca.
 export async function listMoovinSyncCandidates(
   limit: number,
-  freshWindowMinutes: number
+  freshWindowMinutes: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<Array<{ idPackage: string; lastName: string }>> {
-  // 1) Guias Moovin con guia, desde logistics_rows.
-  const byGuide = new Map<string, string>();
+  // 1) Excluir terminales en cache (entregado/devuelto) y los frescos.
   const pageSize = 1000;
+  const terminal = new Set<string>();
   for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("moovin_tracking")
+      .select("id_package, latest_group")
+      .in("latest_group", ["delivered", "returned"])
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listMoovinSyncCandidates: ${error.message}`);
+    const page = (data ?? []) as Array<{ id_package: string }>;
+    for (const row of page) terminal.add(String(row.id_package ?? "").trim());
+    if (page.length < pageSize) break;
+  }
+  const fresh = await getRecentlyCheckedMoovinPackages(freshWindowMinutes);
+
+  // 2) Shopify es la fuente primaria. Una guia debe entrar al cron aunque aun
+  // no aparezca en un Excel de Boxful. El store_id evita cruces con Honduras.
+  const byGuide = new Map<string, string>();
+  for (let from = 0; from < 50000 && byGuide.size < limit; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("shopify_orders")
+      .select("tracking_number, tracking_company, last_name, shopify_updated_at")
+      .eq("store_id", storeId)
+      .is("cancelled_at", null)
+      .neq("tracking_number", "")
+      .order("shopify_updated_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listMoovinSyncCandidates: ${error.message}`);
+    const page = (data ?? []) as Array<{
+      tracking_number: string | null;
+      tracking_company: string | null;
+      last_name: string | null;
+    }>;
+    for (const row of page) {
+      const guide = String(row.tracking_number ?? "").trim();
+      if (
+        !guide ||
+        terminal.has(guide) ||
+        fresh.has(guide) ||
+        !isMoovinCandidateCourier(row.tracking_company)
+      ) {
+        continue;
+      }
+      if (!byGuide.has(guide)) byGuide.set(guide, String(row.last_name ?? "").trim());
+      if (byGuide.size >= limit) break;
+    }
+    if (page.length < pageSize) break;
+  }
+
+  // 3) Respaldo historico: agrega guias Moovin del Excel logistico que no
+  // llegaron en Shopify, siempre dentro de la misma tienda.
+  for (let from = 0; from < 50000 && byGuide.size < limit; from += pageSize) {
     const { data, error } = await getDB()
       .from("logistics_rows")
       .select("guide_number, last_name, courier")
+      .eq("store_id", storeId)
       .ilike("courier", "%moovin%")
       .neq("guide_number", "")
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`listMoovinSyncCandidates: ${error.message}`);
     const page = (data ?? []) as Array<{ guide_number: string; last_name: string | null }>;
     for (const row of page) {
-      if (row.guide_number && !byGuide.has(row.guide_number)) {
-        byGuide.set(row.guide_number, row.last_name ?? "");
-      }
+      const guide = String(row.guide_number ?? "").trim();
+      if (!guide || terminal.has(guide) || fresh.has(guide) || byGuide.has(guide)) continue;
+      byGuide.set(guide, String(row.last_name ?? "").trim());
+      if (byGuide.size >= limit) break;
     }
     if (page.length < pageSize) break;
   }
 
-  // 2) Excluir terminales en cache (entregado/devuelto) y los frescos.
-  const terminal = new Set<string>();
-  for (let from = 0; from < 50000; from += pageSize) {
-    const { data, error } = await getDB()
-      .from("moovin_tracking")
-      .select("id_package, latest_group, checked_at")
-      .in("latest_group", ["delivered", "returned"])
-      .range(from, from + pageSize - 1);
-    if (error) break;
-    const page = (data ?? []) as Array<{ id_package: string }>;
-    for (const row of page) terminal.add(row.id_package);
-    if (page.length < pageSize) break;
-  }
-  const fresh = await getRecentlyCheckedMoovinPackages(freshWindowMinutes);
-
   const candidates: Array<{ idPackage: string; lastName: string }> = [];
   for (const [guide, lastName] of Array.from(byGuide.entries())) {
-    if (terminal.has(guide) || fresh.has(guide)) continue;
     candidates.push({ idPackage: guide, lastName });
     if (candidates.length >= limit) break;
   }
