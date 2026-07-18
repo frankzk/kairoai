@@ -838,6 +838,26 @@ Build in this order:
   incident, system-delivered while Moovin not confirmed) as a clickable alert +
   modal in Pedidos.
 
+### WYN courier tracking (lib/wyn.ts, migration 0020)
+- Mireva Costa Rica puede usar Moovin y WYN simultaneamente. La transportadora se
+  resuelve por la guia: cualquier guia `MLCR...` pertenece a WYN, incluso si Shopify
+  conserva una etiqueta antigua de Moovin. Shopify sigue siendo la unica fuente de
+  pedidos; WYN solo enriquece guia, estado e historial.
+- `GET /api/finance/wyn-tracking?store=mireva-cr&guide=MLCR...` consulta el endpoint
+  publico `POST https://wynexpress.com/api/tracking`, normaliza el historial y guarda
+  cache por `(store_id, guide_number)` en `wyn_tracking`. La ruta rechaza Honduras y
+  guias que no sean WYN para impedir cruces entre tiendas o couriers.
+- Estados: `Devuelto`/`returned` se clasifica como `No entregado`; `Entregado` como
+  `Entregado`; llegada, transito, ultima milla o retiro como `En ruta`; fallos e
+  incidencias permanecen visibles. La palabra "entregado" dentro de "entregado en
+  direccion de retorno" nunca debe sobreescribir la devolucion.
+- Las guias WYN se excluyen explicitamente del lote masivo de Moovin. En Pedidos, el
+  boton de estado y el modal cambian a WYN, muestran el ultimo estado, el historial y
+  un enlace al rastreo oficial.
+- Para habilitar cache persistente se debe ejecutar
+  `supabase/migrations/0020_wyn_tracking.sql`. Sin la migracion, la consulta en vivo
+  sigue funcionando, pero el estado no queda guardado para la siguiente carga.
+
 ### iComfly Estado de Despacho (lib/icomfly.ts, lib/dispatch.ts, migration 0010)
 Supervisa el despacho de pedidos COD en dos momentos atribuibles a personas:
 1. la **asesora** confirma el pedido y luego **solicita el despacho / genera la

@@ -54,6 +54,12 @@ import type {
   SettlementRow,
 } from "@/lib/finance-types";
 import {
+  buildWynTrackingUrl,
+  isWynGuide,
+  normalizeWynGuide,
+  type WynTrackingResult,
+} from "@/lib/wyn";
+import {
   FINANCE_STORES,
   getFinanceStore,
   type FinanceStoreCode,
@@ -147,6 +153,8 @@ interface TrackableOrderRow {
   moovin_route_attempts?: number;
   forza_group?: string;
   forza_incidents?: number;
+  wyn_group?: string;
+  wyn_incidents?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -1894,13 +1902,20 @@ function OrdersTab({
         const status = mergeDispatchIntoTracking(getEffectiveTrackingStatus(row, traces), row.dispatch_view ?? null, row);
         const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
         const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
+        const wyn = isWynCourier(row.courier, row.guide_number);
         return {
           Orden: row.order_name || row.shopify_order_name,
           Origen: row.source,
           Guia: row.guide_number,
           Transportadora: normalizeOperationalCourier(row.courier, selectedStore, row.guide_number),
-          "Estado courier": moovin?.latest_status ?? forza?.latest_status ?? "",
-          "Incidencia courier": moovin?.has_incident || forza?.has_incident ? "si" : "",
+          "Estado courier": wyn ? getWynGroupLabel(row.wyn_group) : moovin?.latest_status ?? forza?.latest_status ?? "",
+          "Incidencia courier": wyn
+            ? (row.wyn_incidents ?? 0) > 0
+              ? "si"
+              : ""
+            : moovin?.has_incident || forza?.has_incident
+              ? "si"
+              : "",
           Cliente: row.customer_name,
           Apellido: row.last_name ?? "",
           Celular: row.phone ?? "",
@@ -2389,7 +2404,7 @@ function OrdersTable({
                   <>
                     <span className="font-mono">{row.guide_number}</span>
                     {displayCourier && <span className="text-muted-foreground">· {displayCourier}</span>}
-                    {isMoovinCourier(displayCourier, selectedStore) && (
+                    {!isWynCourier(displayCourier, row.guide_number) && isMoovinCourier(displayCourier, selectedStore) && (
                       <MoovinTrackingButton
                         idPackage={row.guide_number}
                         lastName={row.last_name ?? ""}
@@ -2397,7 +2412,14 @@ function OrdersTable({
                         cached={moovinByPackage.get(row.guide_number)}
                       />
                     )}
-                    {isForzaCourier(displayCourier, selectedStore) && (
+                    {isWynCourier(displayCourier, row.guide_number) && (
+                      <WynTrackingButton
+                        guide={row.guide_number}
+                        storeCode={selectedStore.code}
+                        cachedGroup={row.wyn_group}
+                      />
+                    )}
+                    {!isWynCourier(displayCourier, row.guide_number) && isForzaCourier(displayCourier, selectedStore) && (
                       <ForzaTrackingButton guide={row.guide_number} cached={forza} />
                     )}
                   </>
@@ -2479,7 +2501,7 @@ function OrdersTable({
                   {displayCourier ? (
                     <div className="flex flex-col items-start gap-0.5">
                       <span>{displayCourier}</span>
-                      {isMoovinCourier(displayCourier, selectedStore) && row.guide_number && (
+                      {!isWynCourier(displayCourier, row.guide_number) && isMoovinCourier(displayCourier, selectedStore) && row.guide_number && (
                         <MoovinTrackingButton
                           idPackage={row.guide_number}
                           lastName={row.last_name ?? ""}
@@ -2487,7 +2509,14 @@ function OrdersTable({
                           cached={moovinByPackage.get(row.guide_number)}
                         />
                       )}
-                      {isForzaCourier(displayCourier, selectedStore) && row.guide_number && (
+                      {isWynCourier(displayCourier, row.guide_number) && row.guide_number && (
+                        <WynTrackingButton
+                          guide={row.guide_number}
+                          storeCode={selectedStore.code}
+                          cachedGroup={row.wyn_group}
+                        />
+                      )}
+                      {!isWynCourier(displayCourier, row.guide_number) && isForzaCourier(displayCourier, selectedStore) && row.guide_number && (
                         <ForzaTrackingButton guide={row.guide_number} cached={forza} />
                       )}
                     </div>
@@ -2586,6 +2615,10 @@ function isForzaCourier(courier: string | undefined, store?: FinanceStorePublic)
   return String(courier ?? "").toLowerCase().includes("forza");
 }
 
+function isWynCourier(courier: string | undefined, guide?: string): boolean {
+  return isWynGuide(String(guide ?? "")) || String(courier ?? "").toLowerCase().includes("wyn");
+}
+
 // EasySell/Shopify a veces rotula el fulfillment con un valor generico
 // ("Transportadora", "Other", etc.) en vez del courier real. La transportadora
 // por defecto depende de la tienda: Costa Rica usa Moovin, Honduras usa Forza.
@@ -2623,6 +2656,7 @@ function normalizeOperationalCourier(
   store: FinanceStorePublic,
   guide?: string
 ): string {
+  if (isWynGuide(String(guide ?? ""))) return "WYN";
   const company = String(rawCompany ?? "").trim();
   if (company) return normalizeShopifyCourier(company, store);
   return guide ? getDefaultCourierForStore(store) : "";
@@ -2637,6 +2671,7 @@ function normalizeForzaGuide(guide: string): string {
 function normalizeGuideForStore(guide: string | undefined, store: FinanceStorePublic): string {
   const trimmed = String(guide ?? "").trim();
   if (!trimmed) return "";
+  if (isWynGuide(trimmed)) return normalizeWynGuide(trimmed);
   return store.logisticsProvider === "forza" ? normalizeForzaGuide(trimmed) : trimmed;
 }
 
@@ -2882,6 +2917,197 @@ function formatMoovinDate(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function WynTrackingButton({
+  guide,
+  storeCode,
+  cachedGroup,
+}: {
+  guide: string;
+  storeCode: FinanceStoreCode;
+  cachedGroup?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = getWynGroupLabel(cachedGroup);
+  const groupClass =
+    cachedGroup === "delivered"
+      ? "text-emerald-300"
+      : cachedGroup === "returned" || cachedGroup === "not_delivered" || cachedGroup === "failed"
+        ? "text-red-300"
+        : "text-cyan-300";
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="Ver seguimiento WYN"
+        className={
+          cachedGroup
+            ? "flex flex-col items-start text-left"
+            : "inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:border-primary/50"
+        }
+      >
+        {cachedGroup ? (
+          <span className={`text-[10px] font-medium ${groupClass}`}>{label}</span>
+        ) : (
+          <><Search className="h-3 w-3" /> estado</>
+        )}
+      </button>
+      {open && (
+        <WynTrackingModal guide={guide} storeCode={storeCode} onClose={() => setOpen(false)} />
+      )}
+    </>
+  );
+}
+
+function WynTrackingModal({
+  guide,
+  storeCode,
+  onClose,
+}: {
+  guide: string;
+  storeCode: FinanceStoreCode;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [data, setData] = useState<WynTrackingResult | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const params = new URLSearchParams({ store: storeCode, guide: normalizeWynGuide(guide) });
+    fetch(`/api/finance/wyn-tracking?${params.toString()}`, { cache: "no-store" })
+      .then(async (res) => {
+        const json = (await res.json()) as WynTrackingResult & { error?: string; ok?: boolean };
+        if (!res.ok || json.error || json.ok === false) {
+          throw new Error(json.error || "WYN no devolvio datos para esta guia.");
+        }
+        return json;
+      })
+      .then((json) => {
+        if (!cancelled) setData(json);
+      })
+      .catch((requestError: unknown) => {
+        if (!cancelled) {
+          setError(requestError instanceof Error ? requestError.message : "No se pudo consultar WYN.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [guide, storeCode]);
+
+  const groupClass =
+    data?.latestGroup === "delivered"
+      ? "text-emerald-300"
+      : data?.latestGroup === "returned" || data?.latestGroup === "not_delivered"
+        ? "text-red-300"
+        : "text-foreground";
+
+  return (
+    <ModalOverlay onClose={onClose} labelledBy="wyn-tracking-title">
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 id="wyn-tracking-title" className="text-base font-semibold">Seguimiento WYN</h3>
+            <p className="font-mono text-xs text-muted-foreground">Guia {normalizeWynGuide(guide)}</p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center gap-2 px-1 py-6 text-sm text-muted-foreground">
+            <RefreshCw className="h-4 w-4 animate-spin" /> Consultando WYN...
+          </div>
+        ) : error ? (
+          <div className="space-y-3">
+            <p className="border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{error}</p>
+            <a
+              href={buildWynTrackingUrl(guide)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              Abrir rastreo oficial
+            </a>
+          </div>
+        ) : (
+          <>
+            <div className="mb-3 border border-border bg-background p-3">
+              <p className="text-[11px] text-muted-foreground">Ultimo estado</p>
+              <p className={`mt-0.5 text-sm font-semibold ${groupClass}`}>{data?.latestStatus || "Sin estado"}</p>
+              {data?.incidentReason && <p className="mt-1 text-[11px] text-muted-foreground">{data.incidentReason}</p>}
+              {data?.latestAt && (
+                <p className="text-[11px] text-muted-foreground">{formatCourierDate(data.latestAt, "es-CR")}</p>
+              )}
+              <a
+                href={buildWynTrackingUrl(guide)}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-flex text-[11px] text-primary hover:underline"
+              >
+                Abrir rastreo oficial
+              </a>
+            </div>
+            <div className="min-h-0 flex-1 space-y-2 overflow-auto">
+              {(data?.events ?? []).map((event, index) => (
+                <div key={`${event.code}-${event.date}-${index}`} className="flex gap-2">
+                  <span
+                    className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                      event.group === "delivered"
+                        ? "bg-emerald-400"
+                        : event.group === "returned" || event.group === "not_delivered"
+                          ? "bg-red-400"
+                          : "bg-cyan-400"
+                    }`}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span className="text-xs font-medium">{event.title}</span>
+                      {event.date && (
+                        <span className="text-[10px] text-muted-foreground">{formatCourierDate(event.date, "es-CR")}</span>
+                      )}
+                    </div>
+                    {event.description && <p className="text-[11px] text-muted-foreground">{event.description}</p>}
+                  </div>
+                </div>
+              ))}
+              {!data?.events?.length && <p className="text-sm text-muted-foreground">Sin eventos de seguimiento.</p>}
+            </div>
+          </>
+        )}
+      </div>
+    </ModalOverlay>
+  );
+}
+
+function getWynGroupLabel(group: string | undefined): string {
+  switch (group) {
+    case "delivered":
+      return "Entregado";
+    case "returned":
+      return "Devuelto";
+    case "not_delivered":
+    case "failed":
+      return "No entregado";
+    case "incident":
+      return "Incidencia";
+    case "en_route":
+      return "En ruta";
+    case "cancelled":
+      return "Cancelado";
+    case "pending":
+      return "Pendiente";
+    default:
+      return "";
+  }
 }
 
 function ForzaTrackingButton({
@@ -8904,9 +9130,19 @@ function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {
 // ahora vive en /api/finance/orders; la tabla pagina server-side.
 
 function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "guide_number">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "wyn_group" | "wyn_incidents" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
+  // Las guias MLCR pertenecen a WYN. Su estado manda antes de cualquier
+  // etiqueta historica de courier que haya quedado guardada en Shopify.
+  const wynStatus = wynGroupToStatus(row.wyn_group);
+  if (wynStatus) {
+    if ((row.wyn_incidents ?? 0) >= 1 && !isFinalTrackingStatus(wynStatus)) {
+      return wynStatus === "en_route" ? "en_route_retry" : "incident";
+    }
+    return wynStatus;
+  }
+
   // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
   const moovinStatus = moovinGroupToStatus(row.moovin_group);
   if (moovinStatus) {
@@ -8993,7 +9229,7 @@ function classifyIncident(
 }
 
 function getTrackingStatusLabel(
-  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents" | "moovin_route_attempts" | "forza_incidents">,
+  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "wyn_incidents" | "moovin_incidents" | "moovin_route_attempts" | "forza_incidents">,
   traces: SettlementTrace[],
   status: string
 ): string {
@@ -9010,7 +9246,7 @@ function getTrackingStatusLabel(
   if (status === "not_delivered" || status === "returned") return "No entregado";
   if (status === "en_route") return row.boxful_status || "En ruta";
   if (status === "en_route_retry") {
-    const retries = Math.max(row.moovin_incidents ?? 0, row.forza_incidents ?? 0, 1);
+    const retries = Math.max(row.wyn_incidents ?? 0, row.moovin_incidents ?? 0, row.forza_incidents ?? 0, 1);
     return retries > 1 ? `Reintento (${retries})` : "Reintento";
   }
   if (status === "incident")
@@ -9050,6 +9286,25 @@ function forzaGroupToStatus(group: string | undefined): string {
     case "failed":
       return "incident";
     case "in_progress":
+      return "en_route";
+    default:
+      return "";
+  }
+}
+
+function wynGroupToStatus(group: string | undefined): string {
+  switch (group) {
+    case "delivered":
+      return "delivered";
+    case "returned":
+    case "not_delivered":
+    case "cancelled":
+      return "not_delivered";
+    case "failed":
+    case "incident":
+      return "incident";
+    case "in_progress":
+    case "en_route":
       return "en_route";
     default:
       return "";

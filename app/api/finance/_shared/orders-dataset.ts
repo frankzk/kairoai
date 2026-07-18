@@ -15,12 +15,14 @@ import {
   listPersistedShopifyOrders,
   listSettlementImports,
   listSettlementRows,
+  listWynTracking,
 } from "@/lib/finance";
 import { resolveDispatchState } from "@/lib/dispatch";
 import { normalizeMatchKey } from "@/lib/order-matching";
 import type { IcomflyOrderRecord } from "@/lib/finance-types";
 import {
   buildForzaTrackingMap,
+  buildWynTrackingMap,
   buildSettlementTraceMap,
   buildVisibleOrderRows,
   enrichSettlementRowsWithShopify,
@@ -189,11 +191,12 @@ async function writeDatasetCache(store: FinanceStorePublic, data: OrdersDataset)
 // page.tsx: persistidos->summary, mapas de tracking por guia, traces de
 // liquidacion, y buildVisibleOrderRows.
 async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
-  const [persisted, logisticsRows, moovin, forza, settlementRows, imports, icomflyOrders] = await Promise.all([
+  const [persisted, logisticsRows, moovin, forza, wyn, settlementRows, imports, icomflyOrders] = await Promise.all([
     listPersistedShopifyOrders(20000, 0, store.id),
     listLogisticsRows(undefined, store.id),
     listMoovinTracking(),
     listForzaTracking(store.id),
+    listWynTracking(store.id),
     listSettlementRows(undefined, store.id),
     listSettlementImports(store.id),
     listIcomflyOrders({ storeId: store.id }),
@@ -204,13 +207,21 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   );
   const moovinByPackage = new Map(moovin.map((row) => [row.id_package, row]));
   const forzaByGuide = buildForzaTrackingMap(forza);
+  const wynByGuide = buildWynTrackingMap(wyn);
   // El trace map se arma sobre filas de liquidacion ENRIQUECIDAS con Shopify
   // (igual que page.tsx: settlementTraceByKey usa matchedSettlementRows), para
   // que las llaves (shopify_order_name resuelto) coincidan con la UI.
   const enrichedSettlementRows = enrichSettlementRowsWithShopify(settlementRows, shopifyOrders);
   const settlementTraceByKey = buildSettlementTraceMap(enrichedSettlementRows, imports);
 
-  const rows = buildVisibleOrderRows(logisticsRows, shopifyOrders, store, moovinByPackage, forzaByGuide);
+  const rows = buildVisibleOrderRows(
+    logisticsRows,
+    shopifyOrders,
+    store,
+    moovinByPackage,
+    forzaByGuide,
+    wynByGuide
+  );
 
   // Hito de despacho por fila (iComfly + recoleccion de Moovin), precalculado
   // aqui para que orders/ lo funda en el "Estado de seguimiento" y que conteos/

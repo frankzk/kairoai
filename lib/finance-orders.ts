@@ -15,7 +15,9 @@ import type {
   SettlementImport,
   SettlementOrderItem,
   SettlementRow,
+  WynTrackingRow,
 } from "@/lib/finance-types";
+import { isWynGuide, normalizeWynGuide } from "@/lib/wyn";
 import {
   buildShopifyMatchIndex,
   extractExternalOrderCodesFromText,
@@ -83,6 +85,8 @@ export interface TrackableOrderRow {
   moovin_route_attempts?: number;
   forza_group?: string;
   forza_incidents?: number;
+  wyn_group?: string;
+  wyn_incidents?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -177,6 +181,10 @@ function isForzaCourier(courier: string | undefined, store?: FinanceStorePublic)
   return String(courier ?? "").toLowerCase().includes("forza");
 }
 
+function isWynCourier(courier: string | undefined, guide?: string): boolean {
+  return isWynGuide(guide) || String(courier ?? "").toLowerCase().includes("wyn");
+}
+
 // EasySell/Shopify a veces rotula el fulfillment con un valor generico
 // ("Transportadora", "Other", etc.) en vez del courier real. La transportadora
 // por defecto depende de la tienda: Costa Rica usa Moovin, Honduras usa Forza.
@@ -214,6 +222,7 @@ function normalizeOperationalCourier(
   store: FinanceStorePublic,
   guide?: string
 ): string {
+  if (isWynGuide(guide)) return "WYN";
   const company = String(rawCompany ?? "").trim();
   if (company) return normalizeShopifyCourier(company, store);
   return guide ? getDefaultCourierForStore(store) : "";
@@ -228,7 +237,25 @@ function normalizeForzaGuide(guide: string): string {
 function normalizeGuideForStore(guide: string | undefined, store: FinanceStorePublic): string {
   const trimmed = String(guide ?? "").trim();
   if (!trimmed) return "";
+  if (isWynGuide(trimmed)) return normalizeWynGuide(trimmed);
   return store.logisticsProvider === "forza" ? normalizeForzaGuide(trimmed) : trimmed;
+}
+
+export function buildWynTrackingMap(rows: WynTrackingRow[]): Map<string, WynTrackingRow> {
+  const map = new Map<string, WynTrackingRow>();
+  for (const row of rows) {
+    const normalized = normalizeWynGuide(row.guide_number || row.tracking_number);
+    if (normalized) map.set(normalized, row);
+  }
+  return map;
+}
+
+function getWynTrackingFromMap(
+  map: Map<string, WynTrackingRow>,
+  guide: string | undefined
+): WynTrackingRow | undefined {
+  const normalized = normalizeWynGuide(guide);
+  return normalized ? map.get(normalized) : undefined;
 }
 
 export function buildForzaTrackingMap(rows: ForzaTrackingRow[]): Map<string, ForzaTrackingRow> {
@@ -477,15 +504,21 @@ export function buildVisibleOrderRows(
   shopifyOrders: ShopifyOrderSummary[],
   selectedStore: FinanceStorePublic,
   moovinByPackage: Map<string, MoovinTrackingRow>,
-  forzaByGuide: Map<string, ForzaTrackingRow>
+  forzaByGuide: Map<string, ForzaTrackingRow>,
+  wynByGuide: Map<string, WynTrackingRow> = new Map()
 ): TrackableOrderRow[] {
   const shopifyByMatchKey = buildShopifyMatchIndex(shopifyOrders);
   const logisticsDisplayRows = logisticsRows.map((row): TrackableOrderRow => {
     const shopify = findShopifyOrderForRow(row, shopifyByMatchKey);
     const guideNumber = normalizeGuideForStore(row.guide_number, selectedStore);
     const courier = normalizeOperationalCourier(row.courier, selectedStore, guideNumber);
-    const moovinHit = isMoovinCourier(courier, selectedStore) && guideNumber ? moovinByPackage.get(guideNumber) : undefined;
-    const forzaHit = isForzaCourier(courier, selectedStore) && guideNumber ? getForzaTrackingFromMap(forzaByGuide, guideNumber) : undefined;
+    const wynHit = isWynCourier(courier, guideNumber) ? getWynTrackingFromMap(wynByGuide, guideNumber) : undefined;
+    const moovinHit = !wynHit && !isWynGuide(guideNumber) && isMoovinCourier(courier, selectedStore) && guideNumber
+      ? moovinByPackage.get(guideNumber)
+      : undefined;
+    const forzaHit = !wynHit && !isWynGuide(guideNumber) && isForzaCourier(courier, selectedStore) && guideNumber
+      ? getForzaTrackingFromMap(forzaByGuide, guideNumber)
+      : undefined;
     const shopifyItems = shopify
       ? shopify.line_items.map((item) => ({
           sku: item.sku,
@@ -506,6 +539,8 @@ export function buildVisibleOrderRows(
       moovin_route_attempts: moovinHit ? countMoovinRouteAttempts(moovinHit.events) : undefined,
       forza_group: deriveForzaGroup(forzaHit),
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
+      wyn_group: deriveForzaGroup(wynHit),
+      wyn_incidents: wynHit ? countForzaIncidents(wynHit.events) : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
       phone: shopify?.phone || row.customer_phone || null,
@@ -539,13 +574,20 @@ export function buildVisibleOrderRows(
     // aunque aun no este en un Excel logistico. La transportadora por defecto
     // se decide por tienda para evitar cruces Costa Rica/Honduras.
     const shopifyGuide = normalizeGuideForStore(order.tracking_number ?? "", selectedStore);
-    const baseCourier = shopifyGuide ? normalizeShopifyCourier(order.tracking_company, selectedStore) : "";
-    const moovinHit = isMoovinCourier(baseCourier, selectedStore) && shopifyGuide ? moovinByPackage.get(shopifyGuide) : undefined;
-    const forzaHit = isForzaCourier(baseCourier, selectedStore) && shopifyGuide
+    const baseCourier = shopifyGuide
+      ? normalizeOperationalCourier(order.tracking_company, selectedStore, shopifyGuide)
+      : "";
+    const wynHit = isWynCourier(baseCourier, shopifyGuide) ? getWynTrackingFromMap(wynByGuide, shopifyGuide) : undefined;
+    const moovinHit = !wynHit && !isWynGuide(shopifyGuide) && isMoovinCourier(baseCourier, selectedStore) && shopifyGuide
+      ? moovinByPackage.get(shopifyGuide)
+      : undefined;
+    const forzaHit = !wynHit && !isWynGuide(shopifyGuide) && isForzaCourier(baseCourier, selectedStore) && shopifyGuide
       ? getForzaTrackingFromMap(forzaByGuide, shopifyGuide)
       : undefined;
     const shopifyCourier = shopifyGuide
-      ? moovinHit
+      ? wynHit || isWynGuide(shopifyGuide)
+        ? "WYN"
+        : moovinHit
         ? "Moovin"
         : forzaHit
           ? "Forza"
@@ -561,6 +603,8 @@ export function buildVisibleOrderRows(
       moovin_route_attempts: moovinHit ? countMoovinRouteAttempts(moovinHit.events) : undefined,
       forza_group: deriveForzaGroup(forzaHit),
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
+      wyn_group: deriveForzaGroup(wynHit),
+      wyn_incidents: wynHit ? countForzaIncidents(wynHit.events) : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
@@ -692,9 +736,19 @@ export function getSettlementTracesForLogisticsRow(
 // ---------------------------------------------------------------------------
 
 export function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "guide_number">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "wyn_group" | "wyn_incidents" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
+  // WYN se identifica por el prefijo MLCR y manda sobre etiquetas antiguas de
+  // fulfillment. Un retorno final de WYN es un pedido no entregado.
+  const wynStatus = wynGroupToStatus(row.wyn_group);
+  if (wynStatus) {
+    if ((row.wyn_incidents ?? 0) >= 1 && !isFinalTrackingStatus(wynStatus)) {
+      return wynStatus === "en_route" ? "en_route_retry" : "incident";
+    }
+    return wynStatus;
+  }
+
   // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
   const moovinStatus = moovinGroupToStatus(row.moovin_group);
   if (moovinStatus) {
@@ -819,6 +873,25 @@ export function forzaGroupToStatus(group: string | undefined): string {
   }
 }
 
+export function wynGroupToStatus(group: string | undefined): string {
+  switch (group) {
+    case "delivered":
+      return "delivered";
+    case "returned":
+    case "not_delivered":
+    case "cancelled":
+      return "not_delivered";
+    case "failed":
+    case "incident":
+      return "incident";
+    case "in_progress":
+    case "en_route":
+      return "en_route";
+    default:
+      return "";
+  }
+}
+
 // Cuenta las incidencias de entrega ("Incidencia en la entrega", codigo FAILED)
 // de Moovin. Con >=1 incidencia sin cierre final: queda como "Incidencia" si el
 // ultimo evento sigue siendo la incidencia, o como "Reintento" si el ultimo
@@ -925,7 +998,13 @@ export function buildEnRouteGuides(
   if (store.logisticsProvider === "moovin") {
     const byGuide = new Map<string, { idPackage: string; lastName: string; fullName: string }>();
     for (const row of rows) {
-      if (!isMoovinCourier(row.courier, store) || !row.guide_number) continue;
+      if (
+        !isMoovinCourier(row.courier, store) ||
+        !row.guide_number ||
+        isWynCourier(row.courier, row.guide_number)
+      ) {
+        continue;
+      }
       const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
       if (!isOpenStatus(status)) continue;
       if (!byGuide.has(row.guide_number)) {

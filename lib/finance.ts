@@ -22,6 +22,7 @@ import type {
   ProfitabilitySummary,
   SettlementImport,
   SettlementRow,
+  WynTrackingRow,
 } from "./finance-types";
 
 export async function listProductCosts(storeId = DEFAULT_FINANCE_STORE_ID): Promise<ProductCost[]> {
@@ -548,6 +549,10 @@ let persistedTier = 0;
 
 function isMissingColumnError(message: string): boolean {
   return /does not exist|42703/.test(message);
+}
+
+function isMissingRelationError(message: string): boolean {
+  return /relation .* does not exist|42P01|schema cache/i.test(message);
 }
 const LEGACY_PERSISTED_ORDER_SUMMARY_COLUMNS =
   "id, shopify_order_id, order_number, name, customer_name, phone, email, financial_status, fulfillment_status, cancelled_at, total_price, currency, line_items, shopify_created_at, shopify_updated_at, synced_at, note:raw_order->>note, note_attributes:raw_order->note_attributes, raw_line_items:raw_order->line_items";
@@ -1363,6 +1368,56 @@ export async function upsertForzaTracking(
     .from("forza_tracking")
     .upsert(payload, { onConflict: "store_id,guide_number" });
   if (error) throw new Error(`upsertForzaTracking: ${error.message}`);
+}
+
+export async function listWynTracking(
+  storeId = DEFAULT_FINANCE_STORE_ID,
+  opts: { since?: string | null } = {}
+): Promise<WynTrackingRow[]> {
+  const pageSize = 1000;
+  const all: WynTrackingRow[] = [];
+  for (let from = 0; from < 50000; from += pageSize) {
+    let query = getDB()
+      .from("wyn_tracking")
+      .select("*")
+      .eq("store_id", storeId)
+      .order("checked_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (opts.since) query = query.gt("checked_at", opts.since);
+    const { data, error } = await query;
+    if (error && isMissingRelationError(error.message)) return [];
+    if (error) throw new Error(`listWynTracking: ${error.message}`);
+    const page = (data ?? []) as WynTrackingRow[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
+}
+
+export async function upsertWynTracking(
+  rows: Omit<WynTrackingRow, "checked_at" | "store_id">[],
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<void> {
+  if (!rows.length) return;
+  const payload = rows.map((row) => ({ ...row, store_id: storeId, checked_at: new Date().toISOString() }));
+  const { error } = await getDB().from("wyn_tracking").upsert(payload, { onConflict: "store_id,guide_number" });
+  if (error) throw new Error(`upsertWynTracking: ${error.message}`);
+}
+
+export async function getWynTrackingByGuide(
+  storeId: number,
+  guideNumber: string
+): Promise<WynTrackingRow | null> {
+  if (!guideNumber) return null;
+  const { data, error } = await getDB()
+    .from("wyn_tracking")
+    .select("*")
+    .eq("store_id", storeId)
+    .eq("guide_number", guideNumber)
+    .limit(1);
+  if (error && isMissingRelationError(error.message)) return null;
+  if (error) throw new Error(`getWynTrackingByGuide: ${error.message}`);
+  return ((data ?? []) as WynTrackingRow[])[0] ?? null;
 }
 
 // Una fila de tracking de Forza por (store_id, guide_number). Para el detalle de
