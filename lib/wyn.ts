@@ -43,6 +43,11 @@ export function isWynGuide(value?: string | null): boolean {
   return /^MLCR[0-9A-Z]+$/.test(normalizeWynGuide(value));
 }
 
+export function extractWynGuides(value?: string | null): string[] {
+  const matches = String(value ?? "").toUpperCase().match(/MLCR[0-9A-Z]+/g) ?? [];
+  return Array.from(new Set(matches.map(normalizeWynGuide).filter(isWynGuide)));
+}
+
 export function buildWynTrackingUrl(value: string): string {
   return `${WYN_TRACKING_ORIGIN}/tracking?number_id=${encodeURIComponent(normalizeWynGuide(value))}`;
 }

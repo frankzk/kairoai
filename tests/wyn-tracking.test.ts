@@ -8,6 +8,7 @@ import {
 import { FINANCE_STORES } from "../lib/store-config";
 import {
   buildWynTrackingUrl,
+  extractWynGuides,
   isWynGuide,
   normalizeWynGuide,
   normalizeWynStatus,
@@ -21,6 +22,12 @@ describe("WYN tracking", () => {
     expect(buildWynTrackingUrl("mlcr000051603sd")).toBe(
       "https://wynexpress.com/tracking?number_id=MLCR000051603SD"
     );
+  });
+
+  it("extrae varias guias WYN sin duplicarlas", () => {
+    expect(
+      extractWynGuides("MLCR000051603SD / mlcr000051603sd; referencia MLCR000052000SD")
+    ).toEqual(["MLCR000051603SD", "MLCR000052000SD"]);
   });
 
   it("prioriza devolucion aunque la descripcion tambien diga entregado", () => {

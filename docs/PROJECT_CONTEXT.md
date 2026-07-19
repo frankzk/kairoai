@@ -968,3 +968,25 @@ At the time of writing these were not yet confirmed applied in production — ch
    safer than forcing concurrent historical rebuilds.
 4. After recovery, use Refresh once and verify that the initial Orders request
    includes `metadata=1` and returns HTTP 200.
+
+## WYN tracking sync (Costa Rica)
+
+- WYN is isolated to store `mireva-cr` (`store_id=1`) and guides beginning with
+  `MLCR`. Honduras and future stores are never included in this job.
+- `GET/POST /api/cron/wyn` reviews at most 60 uncached or stale guides per run in
+  small batches. Vercel schedules it every two hours; `CRON_SECRET` protects the
+  endpoint when configured.
+- Results are persisted in `wyn_tracking` by `(store_id, guide_number)`. Apply
+  `supabase/migrations/0020_wyn_tracking.sql` before enabling the cron.
+- Terminal results are not requested again: `delivered`, `returned`,
+  `not_delivered`, and `cancelled`. Non-terminal results are eligible again after
+  three hours.
+- The provider result is authoritative. Only `delivered` becomes Kairo
+  `Entregado`. `Devuelto` and phrases such as `Entregado en direccion de retorno`
+  become `No entregado` and must never inflate delivery effectiveness.
+- If WYN rejects a complete batch with access-control responses, the job stops
+  immediately and reports `blocked=true`; no order status is guessed or changed.
+- The courier KPI/report uses the active UI period selector (`Hoy`, `Ayer`,
+  `7 dias`, `30 dias`, `Mes`, `Todo`, or `Rango`). The recurring sync only keeps
+  the underlying operational state current and does not impose a monthly period.
+- Audit 2026-07-18: 165 unique WYN guides were found in Costa Rica Shopify orders.

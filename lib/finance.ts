@@ -2,6 +2,7 @@ import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
 import { normalizeForzaGuide } from "./forza";
 import { normalizeMatchKey } from "./order-matching";
+import { extractWynGuides } from "./wyn";
 
 export * from "./finance-types";
 import type {
@@ -1392,6 +1393,67 @@ export async function listWynTracking(
     if (page.length < pageSize) break;
   }
   return all;
+}
+
+export async function listWynSyncCandidates(
+  limit: number,
+  freshWindowMinutes: number,
+  storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<string[]> {
+  const pageSize = 1000;
+  const guides = new Set<string>();
+
+  for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("shopify_orders")
+      .select("tracking_number")
+      .eq("store_id", storeId)
+      .ilike("tracking_number", "%MLCR%")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listWynSyncCandidates: ${error.message}`);
+
+    const page = (data ?? []) as Array<{ tracking_number: string | null }>;
+    for (const row of page) {
+      for (const guide of extractWynGuides(row.tracking_number)) guides.add(guide);
+    }
+    if (page.length < pageSize) break;
+  }
+
+  if (!guides.size) return [];
+
+  const cachedByGuide = new Map<string, WynTrackingRow>();
+  for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("wyn_tracking")
+      .select("*")
+      .eq("store_id", storeId)
+      .range(from, from + pageSize - 1);
+    if (error && isMissingRelationError(error.message)) {
+      throw new Error("Falta ejecutar supabase/migrations/0020_wyn_tracking.sql en Supabase.");
+    }
+    if (error) throw new Error(`listWynSyncCandidates: ${error.message}`);
+
+    const page = (data ?? []) as WynTrackingRow[];
+    for (const row of page) cachedByGuide.set(row.guide_number, row);
+    if (page.length < pageSize) break;
+  }
+
+  const freshSince = Date.now() - freshWindowMinutes * 60 * 1000;
+  const terminalGroups = new Set(["delivered", "returned", "not_delivered", "cancelled"]);
+  const checkedAt = (guide: string): number => {
+    const parsed = Date.parse(cachedByGuide.get(guide)?.checked_at ?? "");
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  return Array.from(guides)
+    .filter((guide) => {
+      const cached = cachedByGuide.get(guide);
+      if (!cached) return true;
+      if (terminalGroups.has(cached.latest_group)) return false;
+      return checkedAt(guide) < freshSince;
+    })
+    .sort((left, right) => checkedAt(left) - checkedAt(right))
+    .slice(0, Math.max(0, limit));
 }
 
 export async function upsertWynTracking(
