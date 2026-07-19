@@ -997,3 +997,8 @@ At the time of writing these were not yet confirmed applied in production — ch
   The first production sweep confirmed one effective delivery, two shipments in
   route, eleven pending and one unclassified result before WYN rate-limited the
   original burst configuration.
+- Paced production validation 2026-07-18: a second run checked 12 guides without
+  failures or provider blocking. The persistent WYN cache then contained 27 guides:
+  seven `delivered`, one `returned`, five `en_route`, eleven `pending`, and three
+  `unknown`. Guide `MLCR000131292SD` is the returned shipment and therefore remains
+  `No entregado`; it is not included in the seven effective deliveries.
