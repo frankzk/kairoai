@@ -27,6 +27,7 @@ Estado actual:
 | `0011_forza_tracking.sql` | Cache de rastreo Forza para Honduras, separado por `store_id` y guia | Pendiente |
 | `0018_icomfly_dispatch.sql` | Estado de Despacho: tablas icomfly_orders / icomfly_agents + columnas email/icomfly_user_id en payroll_staff | No |
 | `0019_platform_registry.sql` | Registry multi-tienda: integraciones, couriers, perfiles de archivo, roles por tienda y tracking generico | Pendiente |
+| `0020_leads.sql` | Modulo de Leads de WhatsApp: `leads`, `lead_calls`, `lead_conversations`, `lead_webhook_events` (idempotencia), `lead_sync_state`. Identidad de vendedoras via `payroll_staff`; sin RLS (aislamiento por tienda en el API) | Pendiente |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de
