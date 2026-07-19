@@ -10,10 +10,9 @@ export const maxDuration = 300;
 
 const STORE_ID = 1;
 const STORE_CODE = "mireva-cr";
-const MAX_GUIDES_PER_RUN = 60;
+const MAX_GUIDES_PER_RUN = 12;
 const FRESH_WINDOW_MINUTES = 180;
-const BATCH_SIZE = 3;
-const BATCH_DELAY_MS = 350;
+const REQUEST_DELAY_MS = 3_000;
 
 type RunSummary = {
   candidates: number;
@@ -86,41 +85,34 @@ async function run(): Promise<RunSummary> {
     errors: [],
   };
 
-  for (let offset = 0; offset < guides.length; offset += BATCH_SIZE) {
-    const batch = guides.slice(offset, offset + BATCH_SIZE);
-    const results = await Promise.allSettled(batch.map((guide) => fetchWynTracking(guide)));
-    const successful: WynTrackingResult[] = [];
-    const currentErrors: Array<{ guide: string; error: string }> = [];
+  const successful: WynTrackingResult[] = [];
 
-    results.forEach((result, index) => {
-      const guide = batch[index];
-      if (result.status === "fulfilled") {
-        successful.push(result.value);
-        summary.checked += 1;
-        increment(summary, result.value.latestGroup);
-        return;
-      }
+  for (let index = 0; index < guides.length; index += 1) {
+    const guide = guides[index];
 
-      const error = result.reason instanceof Error ? result.reason.message : String(result.reason);
+    try {
+      const result = await fetchWynTracking(guide);
+      successful.push(result);
+      summary.checked += 1;
+      increment(summary, result.latestGroup);
+    } catch (reason) {
+      const error = reason instanceof Error ? reason.message : String(reason);
       summary.failed += 1;
-      currentErrors.push({ guide, error });
       if (summary.errors.length < 10) summary.errors.push({ guide, error });
-    });
 
-    if (successful.length) await upsertWynTracking(successful.map(toCacheRow), STORE_ID);
-
-    if (
-      !successful.length &&
-      currentErrors.length === batch.length &&
-      currentErrors.every((entry) => isProviderBlock(entry.error))
-    ) {
-      summary.blocked = true;
-      break;
+      if (isProviderBlock(error)) {
+        summary.blocked = true;
+        break;
+      }
     }
 
-    if (offset + BATCH_SIZE < guides.length) {
-      await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+    if (index + 1 < guides.length) {
+      await new Promise((resolve) => setTimeout(resolve, REQUEST_DELAY_MS));
     }
+  }
+
+  if (successful.length) {
+    await upsertWynTracking(successful.map(toCacheRow), STORE_ID);
   }
 
   if (summary.checked > 0) {

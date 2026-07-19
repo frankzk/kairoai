@@ -7,7 +7,7 @@
     },
     {
       "path": "/api/cron/wyn",
-      "schedule": "20 */2 * * *"
+      "schedule": "20,50 * * * *"
     },
     {
       "path": "/api/cron/shopify-refresh",

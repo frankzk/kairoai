@@ -973,9 +973,11 @@ At the time of writing these were not yet confirmed applied in production — ch
 
 - WYN is isolated to store `mireva-cr` (`store_id=1`) and guides beginning with
   `MLCR`. Honduras and future stores are never included in this job.
-- `GET/POST /api/cron/wyn` reviews at most 60 uncached or stale guides per run in
-  small batches. Vercel schedules it every two hours; `CRON_SECRET` protects the
-  endpoint when configured.
+- `GET/POST /api/cron/wyn` reviews at most 12 uncached or stale guides per run,
+  sequentially and with a three-second pause between requests. Vercel schedules
+  it every 30 minutes; `CRON_SECRET` protects the endpoint when configured. This
+  pacing is intentional because WYN starts responding with HTTP 429 after bursts
+  of roughly 15 tracking requests.
 - Results are persisted in the shared `courier_shipments` registry by
   `(store_id, courier_code, guide_number)`, always with `courier_code=wyn`. This
   keeps WYN isolated from Moovin and from every other store without an extra table.
@@ -985,9 +987,13 @@ At the time of writing these were not yet confirmed applied in production — ch
 - The provider result is authoritative. Only `delivered` becomes Kairo
   `Entregado`. `Devuelto` and phrases such as `Entregado en direccion de retorno`
   become `No entregado` and must never inflate delivery effectiveness.
-- If WYN rejects a complete batch with access-control responses, the job stops
-  immediately and reports `blocked=true`; no order status is guessed or changed.
+- If WYN returns an access-control or rate-limit response, the job stops
+  immediately and reports `blocked=true`; every successful result from that run
+  is still persisted, and no order status is guessed or changed.
 - The courier KPI/report uses the active UI period selector (`Hoy`, `Ayer`,
   `7 dias`, `30 dias`, `Mes`, `Todo`, or `Rango`). The recurring sync only keeps
   the underlying operational state current and does not impose a monthly period.
 - Audit 2026-07-18: 165 unique WYN guides were found in Costa Rica Shopify orders.
+  The first production sweep confirmed one effective delivery, two shipments in
+  route, eleven pending and one unclassified result before WYN rate-limited the
+  original burst configuration.
