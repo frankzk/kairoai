@@ -839,15 +839,16 @@ Build in this order:
   incident, system-delivered while Moovin not confirmed) as a clickable alert +
   modal in Pedidos.
 
-### WYN courier tracking (lib/wyn.ts, migration 0020)
+### WYN courier tracking (`lib/wyn.ts`)
 - Mireva Costa Rica puede usar Moovin y WYN simultaneamente. La transportadora se
   resuelve por la guia: cualquier guia `MLCR...` pertenece a WYN, incluso si Shopify
   conserva una etiqueta antigua de Moovin. Shopify sigue siendo la unica fuente de
   pedidos; WYN solo enriquece guia, estado e historial.
 - `GET /api/finance/wyn-tracking?store=mireva-cr&guide=MLCR...` consulta el endpoint
   publico `POST https://wynexpress.com/api/tracking`, normaliza el historial y guarda
-  cache por `(store_id, guide_number)` en `wyn_tracking`. La ruta rechaza Honduras y
-  guias que no sean WYN para impedir cruces entre tiendas o couriers.
+  cache por `(store_id, courier_code, guide_number)` en `courier_shipments`, con
+  `courier_code=wyn`. La ruta rechaza Honduras y guias que no sean WYN para impedir
+  cruces entre tiendas o couriers.
 - Estados: `Devuelto`/`returned` se clasifica como `No entregado`; `Entregado` como
   `Entregado`; llegada, transito, ultima milla o retiro como `En ruta`; fallos e
   incidencias permanecen visibles. La palabra "entregado" dentro de "entregado en
@@ -855,9 +856,8 @@ Build in this order:
 - Las guias WYN se excluyen explicitamente del lote masivo de Moovin. En Pedidos, el
   boton de estado y el modal cambian a WYN, muestran el ultimo estado, el historial y
   un enlace al rastreo oficial.
-- Para habilitar cache persistente se debe ejecutar
-  `supabase/migrations/0020_wyn_tracking.sql`. Sin la migracion, la consulta en vivo
-  sigue funcionando, pero el estado no queda guardado para la siguiente carga.
+- El historial de eventos queda dentro de `raw_payload` y la vista operativa lee el
+  mismo registro comun de transportadoras. No requiere una tabla WYN separada.
 
 ### Comparativo por periodo y paqueteria
 
@@ -976,8 +976,9 @@ At the time of writing these were not yet confirmed applied in production — ch
 - `GET/POST /api/cron/wyn` reviews at most 60 uncached or stale guides per run in
   small batches. Vercel schedules it every two hours; `CRON_SECRET` protects the
   endpoint when configured.
-- Results are persisted in `wyn_tracking` by `(store_id, guide_number)`. Apply
-  `supabase/migrations/0020_wyn_tracking.sql` before enabling the cron.
+- Results are persisted in the shared `courier_shipments` registry by
+  `(store_id, courier_code, guide_number)`, always with `courier_code=wyn`. This
+  keeps WYN isolated from Moovin and from every other store without an extra table.
 - Terminal results are not requested again: `delivered`, `returned`,
   `not_delivered`, and `cancelled`. Non-terminal results are eligible again after
   three hours.
