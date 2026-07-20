@@ -165,6 +165,30 @@ let discoveredIds: string[] = [];
 let discoveredAt = 0;
 const DISCOVERY_TTL_MS = 60_000;
 
+// El next-router-state-tree viaja como header HTTP, que solo admite bytes (chars
+// <= 255). Algunos apellidos traen caracteres raros de Boxful/Shopify (p.ej.
+// "ortega⁵" con SUPERSCRIPT FIVE U+2075 = 8309), que reventaban el fetch con
+// "Cannot convert argument to a ByteString". Se encodea el lastName (y el
+// idPackage) con encodeURIComponent -> solo ASCII, header valido; ademas es mas
+// fiel al request real del navegador, que manda la URL percent-encoded.
+// Exportado para tests.
+export function moovinRouterStateTree(idPackage: string, lastName: string): string {
+  return JSON.stringify([
+    "",
+    {
+      children: [
+        "__PAGE__",
+        {},
+        `/?tracking/lastName=${encodeURIComponent(lastName)}&idPackage=${encodeURIComponent(idPackage)}`,
+        "refresh",
+      ],
+    },
+    null,
+    null,
+    true,
+  ]);
+}
+
 function moovinPostAction(
   idPackage: string,
   lastName: string,
@@ -172,13 +196,7 @@ function moovinPostAction(
   actionId: string,
   signal: AbortSignal
 ): Promise<Response> {
-  const routerStateTree = JSON.stringify([
-    "",
-    { children: ["__PAGE__", {}, `/?tracking/lastName=${lastName}&idPackage=${idPackage}`, "refresh"] },
-    null,
-    null,
-    true,
-  ]);
+  const routerStateTree = moovinRouterStateTree(idPackage, lastName);
   return fetch(pageUrl, {
     method: "POST",
     signal,
