@@ -1,4 +1,4 @@
-export type CourierProviderCode = "moovin" | "forza" | "boxful" | (string & {});
+export type CourierProviderCode = "moovin" | "forza" | "wyn" | "boxful" | (string & {});
 export type CourierFileType = "logistica" | "liquidacion";
 export type CourierNormalizedStatus =
   | "delivered"
@@ -115,6 +115,16 @@ export const BUILT_IN_COURIER_ADAPTERS: CourierAdapter[] = [
     normalizeStatus: normalizeCourierStatus,
     trackingUrl: (guide) =>
       `https://rastreo.forzadelivery.com/${encodeURIComponent(normalizeForzaGuideGeneric(guide))}`,
+  },
+  {
+    provider: "wyn",
+    label: "WYN",
+    supportsApiTracking: true,
+    supportsFileImport: false,
+    normalizeGuide: normalizeGuideDefault,
+    normalizeStatus: normalizeCourierStatus,
+    trackingUrl: (guide) =>
+      `https://wynexpress.com/tracking?number_id=${encodeURIComponent(normalizeGuideDefault(guide))}`,
   },
   {
     provider: "boxful",

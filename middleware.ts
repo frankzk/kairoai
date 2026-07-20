@@ -12,6 +12,7 @@ const PUBLIC_PATHS = [
   "/api/retell/webhook",
   "/api/cron/retries",
   "/api/cron/moovin",
+  "/api/cron/wyn",
   "/api/cron/shopify-refresh",
   "/api/cron/finance-index",
   "/api/cron/incidencias",

@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     // costos y versiones son consultas directas.
     const [{ rows, matchedSettlementRows, imports, settlementTraceByKey }, expenses, costs, costVersions] =
       await Promise.all([
-        getOrdersDataset(store),
+        getOrdersDataset(store, ["rows", "matchedSettlementRows", "imports", "settlementTraceByKey"]),
         listExpenses(undefined, store.id),
         listProductCosts(store.id),
         listProductCostVersions(undefined, store.id),

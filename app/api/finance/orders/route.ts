@@ -11,7 +11,11 @@ import {
   type TrackableOrderRow,
 } from "@/lib/finance-orders";
 import { mergeDispatchIntoTracking } from "@/lib/dispatch";
-import { getOrdersDataset, type OrdersDataset } from "../_shared/orders-dataset";
+import {
+  getOrdersDataset,
+  isOrdersDatasetUnavailableError,
+  type OrdersDataset,
+} from "../_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -113,6 +117,59 @@ function matchesPeriod(
 }
 
 type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[] };
+type ResolvedRow = { row: TrackableOrderRow; traces: SettlementTrace[]; status: string };
+
+function resolveRows(
+  rows: TrackableOrderRow[],
+  settlementTraceByKey: OrdersDataset["settlementTraceByKey"]
+): ResolvedRow[] {
+  return rows.map((row) => {
+    const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
+    const status = mergeDispatchIntoTracking(
+      getEffectiveTrackingStatus(row, traces),
+      row.dispatch_view ?? null,
+      row
+    );
+    return { row, traces, status };
+  });
+}
+
+function countTracking(rows: ResolvedRow[]): Record<TrackingFilter, number> {
+  const counts: Record<TrackingFilter, number> = {
+    all: rows.length,
+    pending: 0,
+    despacho_solicitado: 0,
+    recolectado: 0,
+    en_route: 0,
+    en_route_retry: 0,
+    incident_solvable: 0,
+    incident_unsolvable: 0,
+    annulled: 0,
+    delivered: 0,
+    not_delivered: 0,
+  };
+  for (const item of rows) {
+    counts[getTrackingFilterFromStatus(item.status, item.row)] += 1;
+  }
+  return counts;
+}
+
+function countSettlements(rows: ResolvedRow[]): Record<SettlementFilter, number> {
+  const counts: Record<SettlementFilter, number> = {
+    all: rows.length,
+    settled: 0,
+    unsettled: 0,
+    to_claim: 0,
+    duplicate: 0,
+  };
+  for (const item of rows) {
+    if (item.traces.length === 1) counts.settled += 1;
+    if (item.traces.length === 0) counts.unsettled += 1;
+    if (item.traces.length === 0 && item.status === "delivered") counts.to_claim += 1;
+    if (item.traces.length > 1) counts.duplicate += 1;
+  }
+  return counts;
+}
 
 // Aplica el filtro de liquidacion sobre las trazas ya resueltas. Misma logica
 // que el useMemo filteredRows de OrdersTab (page.tsx ~1761).
@@ -148,13 +205,18 @@ export async function GET(req: NextRequest) {
   const startDate = (params.get("start") || "").trim();
   const endDate = (params.get("end") || "").trim();
   const exportAll = params.get("all") === "1";
-  // enRouteGuides (lista grande, ~cientos) solo se calcula/envia cuando se pide
-  // con ?guides=1. El fetch paginado de la tabla NO la pide, asi que cada cambio
-  // de pagina/filtro viaja liviano; el cliente la trae una sola vez por tienda.
+  // ?guides=1 se conserva para clientes antiguos. La carga inicial nueva usa
+  // metadata=1 y obtiene tabla, conteos y guias en una sola lectura del dataset.
   const includeGuides = params.get("guides") === "1";
+  // La primera carga del tab puede pedir conteos y guias globales en la misma
+  // respuesta. Asi evitamos tres lecturas concurrentes del dataset completo.
+  const includeMetadata = params.get("metadata") === "1";
 
   try {
-    const { rows, settlementTraceByKey }: OrdersDataset = await getOrdersDataset(store);
+    const { rows, settlementTraceByKey } = await getOrdersDataset(store, [
+      "rows",
+      "settlementTraceByKey",
+    ]);
     const now = new Date();
 
     // 1) Periodo (Vista actual). Se cuenta aparte para la etiqueta "Vista actual".
@@ -168,34 +230,10 @@ export async function GET(req: NextRequest) {
       : periodRows;
 
     // Resolvemos trazas + estado una sola vez por fila.
-    const withMeta: Array<{ row: TrackableOrderRow; traces: SettlementTrace[]; status: string }> =
-      searchedRows.map((row) => {
-        const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
-        const status = mergeDispatchIntoTracking(
-          getEffectiveTrackingStatus(row, traces),
-          row.dispatch_view ?? null,
-          row
-        );
-        return { row, traces, status };
-      });
+    const withMeta = resolveRows(searchedRows, settlementTraceByKey);
 
     // Conteos por estado (sobre searchedRows), igual que trackingCounts en la UI.
-    const trackingCounts: Record<TrackingFilter, number> = {
-      all: withMeta.length,
-      pending: 0,
-      despacho_solicitado: 0,
-      recolectado: 0,
-      en_route: 0,
-      en_route_retry: 0,
-      incident_solvable: 0,
-      incident_unsolvable: 0,
-      annulled: 0,
-      delivered: 0,
-      not_delivered: 0,
-    };
-    for (const item of withMeta) {
-      trackingCounts[getTrackingFilterFromStatus(item.status, item.row)] += 1;
-    }
+    const trackingCounts = countTracking(withMeta);
 
     // 3) Filtro de estado -> sobre este conjunto se miden los settlementCounts.
     const trackingFiltered =
@@ -203,19 +241,7 @@ export async function GET(req: NextRequest) {
         ? withMeta
         : withMeta.filter((item) => getTrackingFilterFromStatus(item.status, item.row) === trackingFilter);
 
-    const settlementCounts: Record<SettlementFilter, number> = {
-      all: trackingFiltered.length,
-      settled: 0,
-      unsettled: 0,
-      to_claim: 0,
-      duplicate: 0,
-    };
-    for (const item of trackingFiltered) {
-      if (item.traces.length === 1) settlementCounts.settled += 1;
-      if (item.traces.length === 0) settlementCounts.unsettled += 1;
-      if (item.traces.length === 0 && item.status === "delivered") settlementCounts.to_claim += 1;
-      if (item.traces.length > 1) settlementCounts.duplicate += 1;
-    }
+    const settlementCounts = countSettlements(trackingFiltered);
 
     // 4) Filtro de liquidacion -> conjunto final mostrado.
     const finalFiltered = trackingFiltered.filter((item) =>
@@ -238,11 +264,21 @@ export async function GET(req: NextRequest) {
     const startIdx = (page - 1) * pageSize;
     const pageRows = finalFiltered.slice(startIdx, startIdx + pageSize).map(attachTraces);
 
-    // Guias no terminales para los botones "Actualizar Moovin/Forza": sobre el
-    // dataset completo (no dependen de la paginacion ni de los filtros). Solo se
-    // calculan/envian con ?guides=1 para no inflar cada fetch de pagina.
+    // Guias no terminales para clientes antiguos que todavia usan ?guides=1.
+    // La UI actual las recibe dentro de operationalMetadata en su primera carga.
     const enRouteGuides = includeGuides
       ? buildEnRouteGuides(rows, settlementTraceByKey, store)
+      : undefined;
+
+    const operationalMetadata = includeMetadata
+      ? (() => {
+          const allRows = resolveRows(rows, settlementTraceByKey);
+          return {
+            trackingCounts: countTracking(allRows),
+            settlementCounts: countSettlements(allRows),
+            enRouteGuides: buildEnRouteGuides(rows, settlementTraceByKey, store),
+          };
+        })()
       : undefined;
 
     return NextResponse.json({
@@ -255,8 +291,18 @@ export async function GET(req: NextRequest) {
       trackingCounts,
       settlementCounts,
       ...(enRouteGuides ? { enRouteGuides } : {}),
+      ...(operationalMetadata ? { operationalMetadata } : {}),
     });
   } catch (err) {
+    if (isOrdersDatasetUnavailableError(err)) {
+      return NextResponse.json(
+        {
+          error: "Datos operativos temporalmente no disponibles. Reintenta en unos segundos.",
+          retryable: true,
+        },
+        { status: 503, headers: { "Retry-After": "5" } }
+      );
+    }
     const message = toFriendlyErrorMessage(err, "Error al cargar pedidos");
     return NextResponse.json({ error: message }, { status: 500 });
   }

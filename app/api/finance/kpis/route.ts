@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import {
+  buildCourierPerformanceReport,
   computeOpMetricsFromTrackableRows,
   getKpiWindows,
+  type CourierPerformanceReport,
   type KpiRange,
   type OpMetrics,
   type TrackableOrderRow,
@@ -39,7 +41,11 @@ function inWindow(value: string | null, start: number, end: number): boolean {
 // (TTL ~30s). El dataset ensamblado tiene su propio cache en getOrdersDataset;
 // este evita recomputar las metricas en rafagas de requests.
 const KPIS_TTL_MS = 30_000;
-type KpisPayload = { current: OpMetrics; previous: OpMetrics | null };
+type KpisPayload = {
+  current: OpMetrics;
+  previous: OpMetrics | null;
+  courierPerformance: CourierPerformanceReport | null;
+};
 const kpisCache = new Map<string, { at: number; data: KpisPayload }>();
 
 export async function GET(req: NextRequest) {
@@ -74,7 +80,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(cached.data);
     }
 
-    const { rows, settlementTraceByKey } = await getOrdersDataset(store);
+    const { rows, settlementTraceByKey } = await getOrdersDataset(store, [
+      "rows",
+      "settlementTraceByKey",
+    ]);
 
     // Misma logica que el useMemo operationalKpis de page.tsx: ventana actual y
     // ventana previa "like-for-like", filtrando por shopify_created_at antes de
@@ -94,7 +103,12 @@ export async function GET(req: NextRequest) {
           )
         : null;
 
-    const data: KpisPayload = { current, previous };
+    const courierPerformance =
+      store.code === "mireva-cr"
+        ? buildCourierPerformanceReport(rows, settlementTraceByKey, win)
+        : null;
+
+    const data: KpisPayload = { current, previous, courierPerformance };
     // Poda de vencidos: las claves de rango custom son abiertas (una por par de
     // fechas) y sin esto el mapa creceria sin tope en instancias longevas.
     if (kpisCache.size > 50) {
