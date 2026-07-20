@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, MessageSquare, Phone, RefreshCw, X } from "lucide-react";
+import { ArrowLeft, Check, Copy, MessageSquare, Phone, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,7 +10,47 @@ import { Badge } from "@/components/ui/badge";
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import { BOARD_VIEWS, type BoardStage } from "@/lib/leads-classify";
-import { maskPhone } from "@/lib/phone-cr";
+
+// Formato de presentacion CR: 506######## -> +506 6123-4567
+function formatPhone(phone: string): string {
+  if (/^506\d{8}$/.test(phone)) {
+    const n = phone.slice(3);
+    return `+506 ${n.slice(0, 4)}-${n.slice(4)}`;
+  }
+  return phone;
+}
+
+function PhoneWithCopy({ phone }: { phone: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(phone);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      } catch {
+        // Clipboard no disponible (contexto no seguro): ignora en silencio.
+      }
+    },
+    [phone]
+  );
+  return (
+    <span className="inline-flex items-center gap-1">
+      <Phone className="h-3 w-3" />
+      <span className="tabular-nums">{formatPhone(phone)}</span>
+      <button
+        type="button"
+        onClick={copy}
+        title={copied ? "Copiado" : "Copiar numero"}
+        aria-label="Copiar numero"
+        className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+      >
+        {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+      </button>
+    </span>
+  );
+}
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "muted";
 
@@ -245,8 +285,7 @@ function LeadCard({ lead, onOpen }: { lead: LeadRow; onOpen: () => void }) {
             )}
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-            <Phone className="h-3 w-3" />
-            <span>{maskPhone(lead.phone)}</span>
+            <PhoneWithCopy phone={lead.phone} />
             {lead.last_message_text && (
               <span className="truncate">· {lead.last_message_text}</span>
             )}
@@ -307,7 +346,9 @@ function LeadDrawer({
         <div className="flex items-center gap-2 border-b border-border p-4">
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium">{lead.name || "Sin nombre"}</p>
-            <p className="text-xs text-muted-foreground">{maskPhone(lead.phone)}</p>
+            <div className="text-xs text-muted-foreground">
+              <PhoneWithCopy phone={lead.phone} />
+            </div>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X className="h-5 w-5" />
