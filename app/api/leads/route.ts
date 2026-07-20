@@ -5,7 +5,7 @@ import { runLeadsSync } from "@/lib/leads-sync";
 import { BOARD_VIEWS, statusBoardStage } from "@/lib/leads-classify";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 // GET: tablero de leads de la tienda (agrupado por bucket + conteos).
 export async function GET(req: NextRequest) {
@@ -46,6 +46,7 @@ export async function POST(req: NextRequest) {
     const payload = (body ?? {}) as Record<string, unknown>;
     const result = await runLeadsSync({
       store: store.code,
+      deep: payload.deep === true || payload.deep === "1",
       maxPages: payload.max_pages != null ? Number(payload.max_pages) : undefined,
       startPage: payload.page != null ? Number(payload.page) : undefined,
     });

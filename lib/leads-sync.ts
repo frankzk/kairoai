@@ -24,6 +24,7 @@ import type { FinanceStoreCode } from "./store-config";
 
 const DEFAULT_MAX_PAGES = 20;
 const MAX_MAX_PAGES = 200;
+const DEEP_MAX_PAGES = 1000; // barrido completo: hasta 50k conversaciones
 const PAGE_LIMIT = 50;
 
 export interface LeadsSyncSummary {
@@ -48,6 +49,7 @@ export async function runLeadsSync(opts: {
   externalStoreId?: number;
   maxPages?: number;
   startPage?: number;
+  deep?: boolean; // barrido completo: recorre TODAS las paginas
 } = {}): Promise<LeadsSyncResult> {
   const { store, externalStoreId } = resolveIcomflyStoreContext({
     store: opts.store,
@@ -56,7 +58,9 @@ export async function runLeadsSync(opts: {
   });
   const storeId = store.id;
   const phoneCfg = phoneConfigForStore(store.code);
-  const maxPages = Math.min(Math.max(opts.maxPages ?? DEFAULT_MAX_PAGES, 1), MAX_MAX_PAGES);
+  const maxPages = opts.deep
+    ? DEEP_MAX_PAGES
+    : Math.min(Math.max(opts.maxPages ?? DEFAULT_MAX_PAGES, 1), MAX_MAX_PAGES);
   const startPage = Math.max(opts.startPage ?? 1, 1);
 
   const [snapshots, orderPhones] = await Promise.all([
@@ -77,7 +81,7 @@ export async function runLeadsSync(opts: {
     },
   };
 
-  const rows: LeadUpsertRow[] = [];
+  let leadsWritten = 0;
   let conversationsSeen = 0;
   let skippedNoPhone = 0;
   let preservedManual = 0;
@@ -154,8 +158,12 @@ export async function runLeadsSync(opts: {
       }
     }
 
-    for (const row of Array.from(seenThisRun.values())) {
-      rows.push(row);
+    const pageRows = Array.from(seenThisRun.values());
+    // Upsert incremental por pagina: el progreso se guarda aunque un barrido
+    // largo se corte por timeout.
+    await upsertLeads(pageRows);
+    leadsWritten += pageRows.length;
+    for (const row of pageRows) {
       summary.total += 1;
       summary.byStage[statusBoardStage(row.status)] += 1;
       // Reflejar en snapshots para dedupe entre paginas.
@@ -172,13 +180,12 @@ export async function runLeadsSync(opts: {
     page += 1;
   }
 
-  await upsertLeads(rows);
   await setSyncCursor(`icomfly_chat:${storeId}`, { watermark: new Date().toISOString() });
 
   return {
     store: store.code,
     conversations_seen: conversationsSeen,
-    leads_written: rows.length,
+    leads_written: leadsWritten,
     skipped_no_phone: skippedNoPhone,
     preserved_manual: preservedManual,
     pages_fetched: pagesFetched,

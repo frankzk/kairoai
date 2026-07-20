@@ -246,6 +246,50 @@ export interface LeadOrderInput {
   };
 }
 
+// Busca un cliente existente en Shopify por telefono para precargar el form.
+export interface ShopifyCustomerPrefill {
+  found: boolean;
+  name?: string;
+  email?: string;
+  province?: string;
+  city?: string;
+  address1?: string;
+  zip?: string;
+  orders_count?: number;
+}
+
+export async function findCustomerByPhone(
+  phone: string,
+  creds?: ShopifyCreds
+): Promise<ShopifyCustomerPrefill> {
+  if (!phone) return { found: false };
+  // Search tolera formatos; probamos con y sin '+'.
+  const query = encodeURIComponent(`phone:${phone} OR phone:+${phone}`);
+  const data = await shopifyFetch<{
+    customers: Array<{
+      first_name?: string;
+      last_name?: string;
+      email?: string;
+      orders_count?: number;
+      default_address?: Record<string, string>;
+      addresses?: Array<Record<string, string>>;
+    }>;
+  }>(`/customers/search.json?query=${query}&limit=1`, {}, creds).catch(() => ({ customers: [] }));
+  const c = (data.customers ?? [])[0];
+  if (!c) return { found: false };
+  const addr = c.default_address ?? (c.addresses ?? [])[0] ?? {};
+  return {
+    found: true,
+    name: [c.first_name, c.last_name].filter(Boolean).join(" ") || undefined,
+    email: c.email || undefined,
+    province: addr.province || undefined,
+    city: addr.city || undefined,
+    address1: addr.address1 || undefined,
+    zip: addr.zip || undefined,
+    orders_count: c.orders_count,
+  };
+}
+
 export async function createLeadOrder(
   input: LeadOrderInput,
   creds?: ShopifyCreds

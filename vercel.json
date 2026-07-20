@@ -58,7 +58,7 @@
       "maxDuration": 300
     },
     "app/api/leads/route.ts": {
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "app/api/icomfly/sync/route.ts": {
       "maxDuration": 60

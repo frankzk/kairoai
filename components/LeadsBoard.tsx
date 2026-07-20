@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, Copy, MessageSquare, Phone, RefreshCw, ShoppingCart, X } from "lucide-react";
-import CreateOrderModal from "@/components/CreateOrderModal";
+import CreateOrderPanel from "@/components/CreateOrderPanel";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -132,24 +132,27 @@ export default function LeadsBoard() {
     load();
   }, [load]);
 
-  const sync = useCallback(async () => {
-    setSyncing(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/leads`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ store }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Error al sincronizar");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al sincronizar");
-    } finally {
-      setSyncing(false);
-    }
-  }, [store, load]);
+  const sync = useCallback(
+    async (deep = false) => {
+      setSyncing(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/leads`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(deep ? { store, deep: true } : { store }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Error al sincronizar");
+        await load();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error al sincronizar");
+      } finally {
+        setSyncing(false);
+      }
+    },
+    [store, load]
+  );
 
   const visibleLeads = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -186,9 +189,18 @@ export default function LeadsBoard() {
                 </option>
               ))}
             </select>
-            <Button onClick={sync} disabled={syncing} size="sm">
+            <Button onClick={() => sync(false)} disabled={syncing} size="sm">
               <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
               {syncing ? "Sincronizando..." : "Sincronizar"}
+            </Button>
+            <Button
+              onClick={() => sync(true)}
+              disabled={syncing}
+              size="sm"
+              variant="outline"
+              title="Recorre TODO el histórico y reclasifica (tarda más)"
+            >
+              Sincronizar todo
             </Button>
           </div>
         </div>
@@ -349,7 +361,9 @@ function LeadDrawer({
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
       <div
-        className="flex h-full w-full max-w-md flex-col border-l border-border bg-card"
+        className={`flex h-full w-full flex-col border-l border-border bg-card transition-[max-width] ${
+          showOrder ? "max-w-4xl" : "max-w-md"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border p-4">
@@ -359,63 +373,68 @@ function LeadDrawer({
               <PhoneWithCopy phone={lead.phone} />
             </div>
           </div>
-          <Button size="sm" onClick={() => setShowOrder(true)}>
+          <Button size="sm" variant={showOrder ? "outline" : "default"} onClick={() => setShowOrder((v) => !v)}>
             <ShoppingCart className="mr-2 h-4 w-4" />
-            Crear pedido
+            {showOrder ? "Ocultar pedido" : "Crear pedido"}
           </Button>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {lead.labels.length > 0 && (
-          <div className="flex flex-wrap gap-1 border-b border-border p-3">
-            {lead.labels.map((l) => (
-              <Badge key={l} variant="muted" className="text-[10px]">
-                {l}
-              </Badge>
-            ))}
-          </div>
-        )}
-
-        <div className="flex-1 space-y-2 overflow-y-auto p-4">
-          {loading ? (
-            <p className="text-center text-sm text-muted-foreground">Cargando chat...</p>
-          ) : error ? (
-            <p className="text-center text-sm text-destructive">{error}</p>
-          ) : messages.length === 0 ? (
-            <p className="text-center text-sm text-muted-foreground">Sin mensajes.</p>
-          ) : (
-            messages.map((m) => (
-              <div
-                key={m.id}
-                className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
-                  m.direction === "inbound"
-                    ? "bg-muted"
-                    : "ml-auto bg-primary text-primary-foreground"
-                }`}
-              >
-                {m.text && <p className="whitespace-pre-wrap break-words">{m.text}</p>}
-                {m.mediaUrl && (
-                  <p className="mt-1 text-xs italic opacity-80">[{m.mediaKind || "media"}]</p>
-                )}
+        {/* Dos columnas: chat (izquierda) + pedido (derecha) */}
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          <div className={`flex min-h-0 flex-col ${showOrder ? "md:w-1/2 md:border-r md:border-border" : "w-full"}`}>
+            {lead.labels.length > 0 && (
+              <div className="flex flex-wrap gap-1 border-b border-border p-3">
+                {lead.labels.map((l) => (
+                  <Badge key={l} variant="muted" className="text-[10px]">
+                    {l}
+                  </Badge>
+                ))}
               </div>
-            ))
+            )}
+            <div className="flex-1 space-y-2 overflow-y-auto p-4">
+              {loading ? (
+                <p className="text-center text-sm text-muted-foreground">Cargando chat...</p>
+              ) : error ? (
+                <p className="text-center text-sm text-destructive">{error}</p>
+              ) : messages.length === 0 ? (
+                <p className="text-center text-sm text-muted-foreground">Sin mensajes.</p>
+              ) : (
+                messages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`max-w-[80%] select-text rounded-lg px-3 py-2 text-sm ${
+                      m.direction === "inbound"
+                        ? "bg-muted"
+                        : "ml-auto bg-primary text-primary-foreground"
+                    }`}
+                  >
+                    {m.text && <p className="whitespace-pre-wrap break-words">{m.text}</p>}
+                    {m.mediaUrl && (
+                      <p className="mt-1 text-xs italic opacity-80">[{m.mediaKind || "media"}]</p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {showOrder && (
+            <div className="min-h-0 flex-1 border-t border-border md:w-1/2 md:border-t-0">
+              <CreateOrderPanel
+                lead={{ id: lead.id, name: lead.name, phone: lead.phone }}
+                store={store}
+                onCreated={(orderName) => {
+                  setShowOrder(false);
+                  onCreated(orderName);
+                }}
+              />
+            </div>
           )}
         </div>
       </div>
-
-      {showOrder && (
-        <CreateOrderModal
-          lead={{ id: lead.id, name: lead.name, phone: lead.phone }}
-          store={store}
-          onClose={() => setShowOrder(false)}
-          onCreated={(orderName) => {
-            setShowOrder(false);
-            onCreated(orderName);
-          }}
-        />
-      )}
     </div>
   );
 }
