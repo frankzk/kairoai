@@ -50,21 +50,25 @@ export const LEAD_STATUSES: StatusDef[] = [
   { code: "nuevo", label: "Nuevo", category: "open", source: "auto", callable: true, board: "seguimiento" },
   { code: "frio", label: "Frio", category: "open", source: "auto", callable: true, board: "frio" },
   // open (manual)
-  { code: "contactado_dejo_wsp", label: "Contactado / dejo WhatsApp", category: "open", source: "manual", callable: true, board: "seguimiento" },
-  { code: "no_responde", label: "No responde", category: "open", source: "manual", callable: true, board: "seguimiento" },
+  { code: "contactado_dejo_wsp", label: "Contactado, dejo WhatsApp", category: "open", source: "manual", callable: true, board: "seguimiento" },
+  { code: "no_responde", label: "No responde (NR)", category: "open", source: "manual", callable: true, board: "seguimiento" },
   { code: "cuelga", label: "Cuelga", category: "open", source: "manual", callable: true, board: "seguimiento" },
-  { code: "buzon", label: "Buzon", category: "open", source: "manual", callable: true, board: "seguimiento" },
+  { code: "buzon", label: "Buzon de voz", category: "open", source: "manual", callable: true, board: "seguimiento" },
   { code: "volver_a_llamar", label: "Volver a llamar", category: "open", source: "manual", callable: true, board: "seguimiento" },
   { code: "en_espera_direccion", label: "En espera de direccion", category: "open", source: "manual", callable: true, board: "por_cerrar" },
   { code: "sin_stock", label: "Sin stock", category: "open", source: "manual", callable: true, board: "seguimiento" },
+  { code: "otros_productos", label: "Consulto otros productos", category: "open", source: "manual", callable: true, board: "seguimiento" },
+  { code: "repetido", label: "Repetido", category: "open", source: "manual", callable: true, board: "seguimiento" },
   // lost / descartado (terminal)
   { code: "cancelado_cliente", label: "Cancelado por cliente", category: "lost", source: "manual", callable: false, board: "descartado" },
   { code: "cancelado", label: "Cancelado", category: "lost", source: "auto", callable: false, board: "descartado" },
   { code: "ya_compro_otro_lado", label: "Ya compro en otro lado", category: "lost", source: "manual", callable: false, board: "descartado" },
-  { code: "solo_informacion", label: "Solo informacion", category: "lost", source: "manual", callable: false, board: "descartado" },
-  { code: "fuera_de_pais", label: "Fuera del pais", category: "lost", source: "manual", callable: false, board: "descartado" },
+  { code: "solo_informacion", label: "Solo queria informacion", category: "lost", source: "manual", callable: false, board: "descartado" },
+  { code: "solo_miraba", label: "Solo miraba", category: "lost", source: "manual", callable: false, board: "descartado" },
+  { code: "fuera_de_ciudad", label: "Fuera de la ciudad", category: "lost", source: "manual", callable: false, board: "descartado" },
   { code: "lista_negra", label: "Lista negra", category: "lost", source: "manual", callable: false, board: "descartado" },
-  { code: "nr_no_existe", label: "Numero no existe", category: "lost", source: "manual", callable: false, board: "descartado" },
+  { code: "nr_no_existe", label: "Numero no existe / incorrecto", category: "lost", source: "manual", callable: false, board: "descartado" },
+  { code: "nr_extranjero", label: "Numero extranjero", category: "lost", source: "manual", callable: false, board: "descartado" },
   { code: "duplicado", label: "Duplicado", category: "lost", source: "auto", callable: false, board: "descartado" },
   { code: "postventa", label: "Postventa / garantia", category: "lost", source: "auto", callable: false, board: "descartado" },
 ];
@@ -106,7 +110,7 @@ const LABEL_RULES: LabelRule[] = [
   { pattern: /duplicad|ya tiene orden|ya tiene una orden|numero diferente/, status: "duplicado", reason: "etiqueta: duplicado", tier: "strong" },
   { pattern: /venta por bot|pedido shopify/, status: "venta_por_bot", reason: "etiqueta: venta por bot", tier: "strong" },
   { pattern: /sin stock/, status: "sin_stock", reason: "etiqueta: sin stock", tier: "strong" },
-  { pattern: /fuera del pais|fuera de pais|esta fuera del pais/, status: "fuera_de_pais", reason: "etiqueta: fuera del pais", tier: "strong" },
+  { pattern: /fuera del pais|fuera de pais|esta fuera del pais|fuera de la ciudad|fuera de ciudad/, status: "fuera_de_ciudad", reason: "etiqueta: fuera de la ciudad", tier: "strong" },
   { pattern: /requerimiento humano|revision humana|revisi.n humana/, status: "por_cerrar", reason: "etiqueta: requiere humano", tier: "human" },
   { pattern: /falta (la )?direc|espera de direc|falta subir|subir|falta que envie|falta la ubicacion|revision de direc|revisi.n de direc/, status: "en_espera_direccion", reason: "etiqueta: falta direccion/subir", tier: "human" },
   { pattern: /no tiene dinero|vaa cuadrar|va a cuadrar/, status: "volver_a_llamar", reason: "etiqueta: sin dinero / volver a llamar", tier: "human" },
@@ -322,3 +326,73 @@ export const BOARD_STAGE_PRIORITY: BoardStage[] = [
   "ganado",
   "descartado",
 ];
+
+// ─── Desplegable "Resultado de la llamada" (gestion manual de la asesora) ─────
+// Orden y etiquetas segun el panel de ventas. La opcion "(mantener estado)" la
+// agrega la UI como valor vacio.
+export interface DispositionOption {
+  code: string;
+  label: string;
+}
+
+export const DISPOSITION_OPTIONS: DispositionOption[] = [
+  { code: "casi_cierra", label: "Casi cierra (dio datos)" },
+  { code: "no_responde", label: "No responde (NR)" },
+  { code: "volver_a_llamar", label: "Volver a llamar" },
+  { code: "contactado_dejo_wsp", label: "Contactado, dejo WhatsApp" },
+  { code: "buzon", label: "Buzon de voz" },
+  { code: "sin_stock", label: "Sin stock" },
+  { code: "cuelga", label: "Cuelga" },
+  { code: "otros_productos", label: "Consulto otros productos" },
+  { code: "repetido", label: "Repetido" },
+  { code: "cancelado_cliente", label: "Cancelado por cliente" },
+  { code: "cancelado", label: "Cancelado" },
+  { code: "ya_compro_otro_lado", label: "Ya compro en otro lado" },
+  { code: "solo_informacion", label: "Solo queria informacion" },
+  { code: "solo_miraba", label: "Solo miraba" },
+  { code: "fuera_de_ciudad", label: "Fuera de la ciudad" },
+  { code: "lista_negra", label: "Lista negra" },
+  { code: "nr_no_existe", label: "Numero no existe / incorrecto" },
+  { code: "nr_extranjero", label: "Numero extranjero" },
+];
+
+/** Botones de acceso rapido (fila superior del panel). */
+export const DISPOSITION_QUICK: DispositionOption[] = [
+  { code: "casi_cierra", label: "Casi cierra" },
+  { code: "no_responde", label: "No contesto" },
+  { code: "volver_a_llamar", label: "Volver a llamar" },
+  { code: "contactado_dejo_wsp", label: "Contactado" },
+  { code: "buzon", label: "Buzon" },
+  { code: "sin_stock", label: "Sin stock" },
+];
+
+const DISPOSITION_CODES = new Set(DISPOSITION_OPTIONS.map((o) => o.code));
+
+export function isValidDisposition(code: string): boolean {
+  return DISPOSITION_CODES.has(code);
+}
+
+/** Estados que agendan un seguimiento automatico al registrarse. */
+export function schedulesFollowup(code: string): boolean {
+  return code === "casi_cierra" || code === "volver_a_llamar";
+}
+
+/**
+ * Proximo seguimiento por defecto (hora local de la tienda). Regla del panel:
+ * si es antes de las 16:00 -> hoy 18:00; si no -> manana 10:00.
+ * CR y HN son UTC-6 (sin horario de verano), asi que usamos offset fijo -6.
+ */
+export function defaultFollowupAt(now: Date, offsetHours = -6): string {
+  const offsetMs = offsetHours * 3600_000;
+  const local = new Date(now.getTime() + offsetMs); // "reloj" local en UTC
+  const localHour = local.getUTCHours();
+  const target = new Date(local.getTime());
+  if (localHour < 16) {
+    target.setUTCHours(18, 0, 0, 0);
+  } else {
+    target.setUTCDate(target.getUTCDate() + 1);
+    target.setUTCHours(10, 0, 0, 0);
+  }
+  // Volver a UTC real restando el offset.
+  return new Date(target.getTime() - offsetMs).toISOString();
+}

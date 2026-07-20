@@ -6,6 +6,10 @@ import {
   nextLeadState,
   statusCategory,
   statusBoardStage,
+  isValidDisposition,
+  schedulesFollowup,
+  defaultFollowupAt,
+  DISPOSITION_OPTIONS,
 } from "../lib/leads-classify";
 import type { IcomflyConversation, LeadStateSnapshot } from "../lib/leads-types";
 
@@ -204,5 +208,47 @@ describe("statusCategory", () => {
     expect(statusCategory("sinpe_por_verificar")).toBe("hot");
     expect(statusCategory("pedido_generado")).toBe("won");
     expect(statusCategory("lista_negra")).toBe("lost");
+  });
+});
+
+describe("dispositions (resultado de la llamada)", () => {
+  it("todas las opciones del desplegable estan en el catalogo de estados", () => {
+    for (const opt of DISPOSITION_OPTIONS) {
+      expect(["won", "hot", "open", "lost"]).toContain(statusCategory(opt.code));
+    }
+  });
+  it("incluye los estados nuevos del panel de CR", () => {
+    const codes = DISPOSITION_OPTIONS.map((o) => o.code);
+    expect(codes).toContain("solo_miraba");
+    expect(codes).toContain("nr_extranjero");
+    expect(codes).toContain("otros_productos");
+    expect(codes).toContain("repetido");
+    expect(codes).toContain("fuera_de_ciudad");
+  });
+  it("valida codigos de disposicion", () => {
+    expect(isValidDisposition("no_responde")).toBe(true);
+    expect(isValidDisposition("inventado")).toBe(false);
+  });
+  it("solo casi_cierra y volver_a_llamar agendan seguimiento", () => {
+    expect(schedulesFollowup("casi_cierra")).toBe(true);
+    expect(schedulesFollowup("volver_a_llamar")).toBe(true);
+    expect(schedulesFollowup("no_responde")).toBe(false);
+  });
+});
+
+describe("defaultFollowupAt (hora CR, UTC-6)", () => {
+  it("antes de las 16:00 CR -> hoy 18:00 CR (00:00 UTC dia siguiente)", () => {
+    // 2026-07-20 10:00 CR = 16:00 UTC
+    const now = new Date("2026-07-20T16:00:00Z");
+    const iso = defaultFollowupAt(now);
+    // 18:00 CR = 00:00 UTC del 21
+    expect(iso).toBe("2026-07-21T00:00:00.000Z");
+  });
+  it("despues de las 16:00 CR -> manana 10:00 CR (16:00 UTC dia siguiente)", () => {
+    // 2026-07-20 17:00 CR = 23:00 UTC
+    const now = new Date("2026-07-20T23:00:00Z");
+    const iso = defaultFollowupAt(now);
+    // manana 10:00 CR = 16:00 UTC del 21
+    expect(iso).toBe("2026-07-21T16:00:00.000Z");
   });
 });

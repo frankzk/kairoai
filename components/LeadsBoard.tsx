@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, Copy, MessageSquare, Phone, RefreshCw, ShoppingCart, X } from "lucide-react";
 import CreateOrderPanel from "@/components/CreateOrderPanel";
+import GestionBar from "@/components/GestionBar";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -277,6 +278,7 @@ export default function LeadsBoard() {
             setDrawerLead(null);
             load();
           }}
+          onRefresh={load}
         />
       )}
     </div>
@@ -326,11 +328,13 @@ function LeadDrawer({
   store,
   onClose,
   onCreated,
+  onRefresh,
 }: {
   lead: LeadRow;
   store: string;
   onClose: () => void;
   onCreated: (orderName: string) => void;
+  onRefresh: () => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -419,6 +423,7 @@ function LeadDrawer({
                 ))
               )}
             </div>
+            <GestionBar leadId={lead.id} store={store} onDone={() => onRefresh()} />
           </div>
 
           {showOrder && (

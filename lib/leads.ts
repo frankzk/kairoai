@@ -3,7 +3,7 @@
 // que el resto de APIs del repo; no hay RLS todavia.
 
 import { getDB } from "./db";
-import { statusBoardStage, type BoardStage } from "./leads-classify";
+import { statusBoardStage, statusCategory, type BoardStage } from "./leads-classify";
 import type { LeadCategory, LeadStateSnapshot, StatusSource } from "./leads-types";
 import { normalizePhone, phoneConfigForStore } from "./phone-cr";
 
@@ -252,6 +252,49 @@ export async function markLeadWonByAdvisor(opts: {
     new_status: "pedido_generado",
     note: `Pedido ${opts.shopifyOrderName} creado desde el tablero de Leads`,
   });
+}
+
+/**
+ * Registra un "resultado de la llamada" (gestion manual de la asesora).
+ * status_source='manual' -> la ingesta NUNCA lo revierte. Si el estado es
+ * terminal (lost/won) se marca closed_by. Devuelve el estado aplicado.
+ */
+export async function applyDisposition(opts: {
+  storeId: number;
+  leadId: number;
+  vendedora: number;
+  status: string;
+  note?: string | null;
+  nextFollowupAt?: string | null;
+}): Promise<{ status: string; category: LeadCategory }> {
+  const category = statusCategory(opts.status);
+  const patch: Record<string, unknown> = {
+    status: opts.status,
+    category,
+    status_source: "manual",
+    auto_reason: null,
+    needs_attention: false,
+  };
+  if (category === "lost" || category === "won") patch.closed_by = opts.vendedora;
+  if (opts.nextFollowupAt !== undefined) patch.next_followup_at = opts.nextFollowupAt;
+
+  const { error } = await getDB()
+    .from("leads")
+    .update(patch)
+    .eq("store_id", opts.storeId)
+    .eq("id", opts.leadId);
+  if (error) throw new Error(`applyDisposition: ${error.message}`);
+
+  await insertLeadCall({
+    lead_id: opts.leadId,
+    store_id: opts.storeId,
+    vendedora: opts.vendedora,
+    kind: "state_change",
+    new_status: opts.status,
+    note: opts.note ?? null,
+    next_followup_at: opts.nextFollowupAt ?? null,
+  });
+  return { status: opts.status, category };
 }
 
 // ─── Cursores de sincronizacion ──────────────────────────────────────────────
