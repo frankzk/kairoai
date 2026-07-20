@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { CheckCircle2, Loader2, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProductPicker } from "@/components/ProductPicker";
@@ -32,6 +32,16 @@ interface LeadLike {
   phone: string;
 }
 
+interface OrderLine {
+  key: number;
+  product: ShopifyProductOption | null;
+  quantity: number;
+  price: string;
+}
+
+let lineSeq = 1;
+const newLine = (): OrderLine => ({ key: lineSeq++, product: null, quantity: 1, price: "" });
+
 export default function CreateOrderPanel({
   lead,
   store,
@@ -48,9 +58,7 @@ export default function CreateOrderPanel({
   const [productsError, setProductsError] = useState("");
   const [existingCustomer, setExistingCustomer] = useState<{ orders_count?: number } | null>(null);
 
-  const [product, setProduct] = useState<ShopifyProductOption | null>(null);
-  const [quantity, setQuantity] = useState(1);
-  const [price, setPrice] = useState("");
+  const [lines, setLines] = useState<OrderLine[]>([newLine()]);
   const [discountValue, setDiscountValue] = useState("");
   const [discountType, setDiscountType] = useState<"percentage" | "fixed_amount">("percentage");
 
@@ -119,10 +127,6 @@ export default function CreateOrderPanel({
     })();
   }, [lead.id, store]);
 
-  useEffect(() => {
-    if (product) setPrice(String(product.price ?? ""));
-  }, [product]);
-
   const selectVendedora = (id: number) => {
     setVendedoraId(id);
     try {
@@ -132,19 +136,39 @@ export default function CreateOrderPanel({
     }
   };
 
-  const lineTotal = useMemo(() => {
-    const unit = Number(price) || 0;
-    const gross = unit * (Number(quantity) || 0);
+  const updateLine = useCallback((key: number, patch: Partial<OrderLine>) => {
+    setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  }, []);
+
+  const setLineProduct = useCallback((key: number, product: ShopifyProductOption | null) => {
+    setLines((prev) =>
+      prev.map((l) =>
+        l.key === key
+          ? { ...l, product, price: product && !l.price ? String(product.price ?? "") : l.price }
+          : l
+      )
+    );
+  }, []);
+
+  const addLine = () => setLines((prev) => [...prev, newLine()]);
+  const removeLine = (key: number) =>
+    setLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
+
+  const gross = useMemo(
+    () => lines.reduce((sum, l) => sum + (Number(l.price) || 0) * (Number(l.quantity) || 0), 0),
+    [lines]
+  );
+  const total = useMemo(() => {
     const d = Number(discountValue) || 0;
     if (d <= 0) return gross;
     return discountType === "percentage" ? gross * (1 - d / 100) : Math.max(0, gross - d);
-  }, [price, quantity, discountValue, discountType]);
+  }, [gross, discountValue, discountType]);
 
-  const canSubmit =
-    vendedoraId != null && product != null && Number(quantity) > 0 && Number(price) > 0 && !submitting;
+  const validLines = lines.filter((l) => l.product && Number(l.quantity) > 0 && Number(l.price) > 0);
+  const canSubmit = vendedoraId != null && validLines.length > 0 && !submitting;
 
   async function submit() {
-    if (!canSubmit || !product) return;
+    if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -154,15 +178,13 @@ export default function CreateOrderPanel({
         body: JSON.stringify({
           store,
           vendedora_id: vendedoraId,
-          items: [
-            {
-              variant_id: product.variant_id,
-              sku: product.sku,
-              title: product.display_name,
-              price: Number(price),
-              quantity: Number(quantity),
-            },
-          ],
+          items: validLines.map((l) => ({
+            variant_id: l.product!.variant_id,
+            sku: l.product!.sku,
+            title: l.product!.display_name,
+            price: Number(l.price),
+            quantity: Number(l.quantity),
+          })),
           shipping: { name, province, canton, address, reference },
           discount: Number(discountValue) > 0 ? { value: Number(discountValue), type: discountType } : undefined,
           payment_method: paymentMethod,
@@ -214,26 +236,70 @@ export default function CreateOrderPanel({
           </select>
         </div>
 
-        <ProductPicker
-          label="Producto"
-          value={product}
-          onChange={setProduct}
-          products={products}
-          loading={productsLoading}
-          error={productsError}
-        />
+        {/* Productos (multiples lineas) */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-muted-foreground">Productos</label>
+            <button
+              type="button"
+              onClick={addLine}
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              <Plus className="h-3 w-3" /> Agregar producto
+            </button>
+          </div>
 
+          {lines.map((line, idx) => (
+            <div key={line.key} className="rounded-md border border-border p-2">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">Producto {idx + 1}</span>
+                {lines.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeLine(line.key)}
+                    className="text-muted-foreground hover:text-destructive"
+                    aria-label="Quitar producto"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              <ProductPicker
+                label=""
+                value={line.product}
+                onChange={(p) => setLineProduct(line.key, p)}
+                products={products}
+                loading={productsLoading}
+                error={productsError}
+              />
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-[11px] text-muted-foreground">Cantidad</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={line.quantity}
+                    onChange={(e) => updateLine(line.key, { quantity: Number(e.target.value) })}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] text-muted-foreground">Precio unitario (₡)</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={line.price}
+                    onChange={(e) => updateLine(line.key, { price: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Descuento a nivel de pedido */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Cantidad</label>
-            <Input type="number" min={1} value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Precio unitario (₡)</label>
-            <Input type="number" min={0} value={price} onChange={(e) => setPrice(e.target.value)} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Descuento</label>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">Descuento (todo el pedido)</label>
             <Input type="number" min={0} value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} placeholder="0" />
           </div>
           <div>
@@ -249,6 +315,7 @@ export default function CreateOrderPanel({
           </div>
         </div>
 
+        {/* Envio */}
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Nombre destinatario</label>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
@@ -297,8 +364,10 @@ export default function CreateOrderPanel({
 
       <div className="border-t border-border p-4">
         <div className="mb-3 flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">Total</span>
-          <span className="font-semibold">₡{lineTotal.toLocaleString("es-CR")}</span>
+          <span className="text-muted-foreground">
+            Total{validLines.length > 1 ? ` · ${validLines.length} productos` : ""}
+          </span>
+          <span className="font-semibold">₡{total.toLocaleString("es-CR")}</span>
         </div>
         {!confirming ? (
           <Button className="w-full" disabled={!canSubmit} onClick={() => setConfirming(true)}>
@@ -307,7 +376,7 @@ export default function CreateOrderPanel({
         ) : (
           <div className="space-y-2">
             <p className="text-center text-xs text-muted-foreground">
-              Se creará un pedido REAL en Shopify por ₡{lineTotal.toLocaleString("es-CR")}. ¿Confirmas?
+              Se creará un pedido REAL en Shopify por ₡{total.toLocaleString("es-CR")}. ¿Confirmas?
             </p>
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" disabled={submitting} onClick={() => setConfirming(false)}>
