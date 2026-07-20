@@ -3,6 +3,7 @@ import { getRequiredStoreFromBody, getRequiredStoreFromSearchParams } from "@/li
 import { countByStage, listLeads } from "@/lib/leads";
 import { runLeadsSync } from "@/lib/leads-sync";
 import { BOARD_VIEWS, statusBoardStage } from "@/lib/leads-classify";
+import { daysAgoIso } from "@/lib/leads-metrics";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -17,7 +18,11 @@ export async function GET(req: NextRequest) {
     );
   }
   try {
-    const leads = await listLeads({ storeId: store.id });
+    // Por defecto ocultamos leads con mas de 30 dias sin interaccion; ?all=1
+    // los incluye.
+    const includeAll = req.nextUrl.searchParams.get("all") === "1";
+    const sinceIso = includeAll ? undefined : daysAgoIso(new Date(), 30);
+    const leads = await listLeads({ storeId: store.id, sinceIso });
     const counts = countByStage(leads);
     const withStage = leads.map((l) => ({ ...l, board_stage: statusBoardStage(l.status) }));
     return NextResponse.json({

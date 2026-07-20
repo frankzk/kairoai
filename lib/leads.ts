@@ -143,6 +143,8 @@ export interface ListLeadsOptions {
   storeId: number;
   stage?: BoardStage;
   limit?: number;
+  /** Solo leads con interaccion desde este ISO (oculta los muy antiguos). */
+  sinceIso?: string;
 }
 
 export async function listLeads(opts: ListLeadsOptions): Promise<LeadRecord[]> {
@@ -150,12 +152,14 @@ export async function listLeads(opts: ListLeadsOptions): Promise<LeadRecord[]> {
   const pageSize = 1000;
   const all: LeadRecord[] = [];
   for (let from = 0; from < limit; from += pageSize) {
-    const { data, error } = await getDB()
+    let query = getDB()
       .from("leads")
       .select("*")
       .eq("store_id", opts.storeId)
       .order("last_interaction_at", { ascending: false, nullsFirst: false })
       .range(from, Math.min(from + pageSize, limit) - 1);
+    if (opts.sinceIso) query = query.gte("last_interaction_at", opts.sinceIso);
+    const { data, error } = await query;
     if (error) throw new Error(`listLeads: ${error.message}`);
     const page = (data ?? []) as LeadRecord[];
     all.push(...page);
@@ -164,6 +168,63 @@ export async function listLeads(opts: ListLeadsOptions): Promise<LeadRecord[]> {
   // El bucket del tablero se deriva del status; filtrar en memoria si se pidio.
   if (opts.stage) return all.filter((l) => statusBoardStage(l.status) === opts.stage);
   return all;
+}
+
+// ─── Productividad de la asesora (contactos + pedidos por periodo) ───────────
+export interface ProductivityRow {
+  vendedora_id: number;
+  name: string;
+  gestiones: number; // total de gestiones registradas
+  leads: number; // leads distintos gestionados
+  pedidos: number; // pedidos creados (lead_calls kind='sale')
+}
+
+export async function getProductivity(
+  storeId: number,
+  fromIso: string,
+  toIso: string
+): Promise<ProductivityRow[]> {
+  // Nombres de la planilla.
+  const { data: staffData } = await getDB().from("payroll_staff").select("id,name");
+  const names = new Map<number, string>();
+  for (const s of (staffData ?? []) as Array<{ id: number; name: string }>) names.set(s.id, s.name);
+
+  // Gestiones en el rango, con vendedora asignada.
+  const agg = new Map<number, { gestiones: number; pedidos: number; leads: Set<number> }>();
+  const pageSize = 1000;
+  for (let from = 0; from < 200000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("lead_calls")
+      .select("vendedora,kind,lead_id")
+      .eq("store_id", storeId)
+      .gte("occurred_at", fromIso)
+      .lt("occurred_at", toIso)
+      .not("vendedora", "is", null)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`getProductivity: ${error.message}`);
+    const page = (data ?? []) as Array<{ vendedora: number; kind: string; lead_id: number }>;
+    for (const row of page) {
+      let a = agg.get(row.vendedora);
+      if (!a) {
+        a = { gestiones: 0, pedidos: 0, leads: new Set() };
+        agg.set(row.vendedora, a);
+      }
+      a.gestiones += 1;
+      a.leads.add(row.lead_id);
+      if (row.kind === "sale") a.pedidos += 1;
+    }
+    if (page.length < pageSize) break;
+  }
+
+  return Array.from(agg.entries())
+    .map(([vendedora_id, a]) => ({
+      vendedora_id,
+      name: names.get(vendedora_id) ?? `Asesora ${vendedora_id}`,
+      gestiones: a.gestiones,
+      leads: a.leads.size,
+      pedidos: a.pedidos,
+    }))
+    .sort((x, y) => y.pedidos - x.pedidos || y.gestiones - x.gestiones);
 }
 
 export interface LeadBoardCounts {

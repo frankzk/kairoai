@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, Copy, MessageSquare, Phone, RefreshCw, ShoppingCart, X } from "lucide-react";
 import CreateOrderPanel from "@/components/CreateOrderPanel";
 import GestionBar from "@/components/GestionBar";
+import ProductivityPanel from "@/components/ProductivityPanel";
+import { BarChart3 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -109,13 +111,15 @@ export default function LeadsBoard() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
+  const [showProductivity, setShowProductivity] = useState(false);
+  const [includeOld, setIncludeOld] = useState(false);
   const [drawerLead, setDrawerLead] = useState<LeadRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/leads?store=${store}`);
+      const res = await fetch(`/api/leads?store=${store}${includeOld ? "&all=1" : ""}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error al cargar leads");
       setLeads(data.leads ?? []);
@@ -127,7 +131,7 @@ export default function LeadsBoard() {
     } finally {
       setLoading(false);
     }
-  }, [store]);
+  }, [store, includeOld]);
 
   useEffect(() => {
     load();
@@ -203,6 +207,15 @@ export default function LeadsBoard() {
             >
               Sincronizar todo
             </Button>
+            <Button
+              onClick={() => setShowProductivity((v) => !v)}
+              size="sm"
+              variant={showProductivity ? "default" : "outline"}
+              title="Resumen de gestiones y pedidos por asesora"
+            >
+              <BarChart3 className="mr-2 h-4 w-4" />
+              Productividad
+            </Button>
           </div>
         </div>
       </header>
@@ -213,6 +226,8 @@ export default function LeadsBoard() {
             <CardContent className="py-3 text-sm text-destructive">{error}</CardContent>
           </Card>
         )}
+
+        {showProductivity && <ProductivityPanel store={store} />}
 
         {/* Pestañas por bucket */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -243,6 +258,13 @@ export default function LeadsBoard() {
             className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:underline"
           >
             {showHidden ? "Ocultar ganados/descartados" : "Ver ganados/descartados"}
+          </button>
+          <button
+            onClick={() => setIncludeOld((v) => !v)}
+            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+            title="Por defecto se ocultan leads con más de 30 días sin actividad"
+          >
+            {includeOld ? "Ocultar antiguos (+30 días)" : "Incluir antiguos (+30 días)"}
           </button>
         </div>
 
