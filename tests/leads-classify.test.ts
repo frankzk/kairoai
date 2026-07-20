@@ -3,6 +3,7 @@ import {
   classifyConversation,
   classifyByLabels,
   detectSinpeText,
+  detectOrderInTranscript,
   nextLeadState,
   statusCategory,
   statusBoardStage,
@@ -11,7 +12,7 @@ import {
   defaultFollowupAt,
   DISPOSITION_OPTIONS,
 } from "../lib/leads-classify";
-import type { IcomflyConversation, LeadStateSnapshot } from "../lib/leads-types";
+import type { ConversationMessage, IcomflyConversation, LeadStateSnapshot } from "../lib/leads-types";
 
 function makeConv(partial: Partial<IcomflyConversation> = {}): IcomflyConversation {
   return {
@@ -60,6 +61,39 @@ describe("classifyByLabels", () => {
   });
   it("returns null when nothing matches", () => {
     expect(classifyByLabels(["etiqueta random 10-07"])).toBeNull();
+  });
+});
+
+describe("detectOrderInTranscript", () => {
+  const msg = (direction: "inbound" | "outbound", text: string): ConversationMessage => ({
+    id: Math.random().toString(),
+    direction,
+    timestamp: 0,
+    text,
+  });
+  it("detecta pedido enviado por la guia (caso William)", () => {
+    const t = [
+      msg("inbound", "Ok ok"),
+      msg("outbound", "Tu numero de guia es 2585274, acabamos de enviar tu pedido de 2x Crucis+"),
+    ];
+    expect(detectOrderInTranscript(t)).toBe(true);
+  });
+  it("detecta 'ya confirmamos tu pedido'", () => {
+    expect(detectOrderInTranscript([msg("outbound", "Perfecto, ya confirmamos tu pedido")])).toBe(true);
+  });
+  it("detecta recordatorio de pedido y contacto de Moovin", () => {
+    expect(detectOrderInTranscript([msg("outbound", "Recordatorio: tu pedido llega pronto")])).toBe(true);
+    expect(detectOrderInTranscript([msg("outbound", "se comunicaron contigo de Moovin para la entrega")])).toBe(true);
+  });
+  it("NO se dispara con mensajes PRE-pedido (pidiendo datos)", () => {
+    const t = [
+      msg("outbound", "Para hacer tu pedido, necesito tu nombre y direccion de entrega"),
+      msg("inbound", "Juan, Alajuela"),
+    ];
+    expect(detectOrderInTranscript(t)).toBe(false);
+  });
+  it("ignora frases que vengan del cliente (inbound)", () => {
+    expect(detectOrderInTranscript([msg("inbound", "ya confirmamos tu pedido")])).toBe(false);
   });
 });
 

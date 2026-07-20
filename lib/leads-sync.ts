@@ -9,11 +9,18 @@
 // No persiste mensajes; el transcript se lee en vivo al abrir el drawer.
 
 import { resolveIcomflyStoreContext } from "./icomfly";
-import { listConversations } from "./icomfly-chat";
-import { classifyConversation, statusBoardStage, type BoardStage } from "./leads-classify";
+import { listConversations, fetchConversationTranscript } from "./icomfly-chat";
 import {
+  classifyConversation,
+  detectOrderInTranscript,
+  statusBoardStage,
+  type BoardStage,
+} from "./leads-classify";
+import {
+  listLeads,
   loadLeadSnapshots,
   loadStoreOrderPhones,
+  markLeadWonAuto,
   setSyncCursor,
   upsertLeads,
   type LeadUpsertRow,
@@ -191,5 +198,59 @@ export async function runLeadsSync(opts: {
     pages_fetched: pagesFetched,
     has_more: hasMore,
     summary,
+  };
+}
+
+export interface ReclassifyResult {
+  store: FinanceStoreCode | string;
+  checked: number;
+  moved_to_won: number;
+  has_more: boolean;
+}
+
+/**
+ * Barrido fino sobre un bucket (por defecto "por_cerrar"): baja el transcript
+ * de cada lead auto sin orden y, si el chat evidencia un pedido ya confirmado
+ * (guia/enviado/"ya confirmamos tu pedido"...), lo mueve a Ganados. Respeta los
+ * estados manuales. Bounded por maxLeads para no exceder el tiempo del request.
+ */
+export async function reclassifyStage(opts: {
+  store?: FinanceStoreCode | string;
+  storeId?: number;
+  externalStoreId?: number;
+  stage?: BoardStage;
+  maxLeads?: number;
+}): Promise<ReclassifyResult> {
+  const { store, externalStoreId } = resolveIcomflyStoreContext({
+    store: opts.store,
+    storeId: opts.storeId,
+    externalStoreId: opts.externalStoreId,
+  });
+  const storeId = store.id;
+  const stage = opts.stage ?? "por_cerrar";
+  const maxLeads = Math.min(Math.max(opts.maxLeads ?? 600, 1), 3000);
+
+  const leads = await listLeads({ storeId, stage });
+  const candidates = leads
+    .filter((l) => l.status_source !== "manual" && !l.has_order && l.crm_conversation_id)
+    .slice(0, maxLeads);
+
+  let moved = 0;
+  for (const lead of candidates) {
+    const msgs = await fetchConversationTranscript(
+      lead.crm_conversation_id as string,
+      externalStoreId
+    ).catch(() => []);
+    if (detectOrderInTranscript(msgs)) {
+      const changed = await markLeadWonAuto(storeId, lead.id, "pedido confirmado en el chat");
+      if (changed) moved += 1;
+    }
+  }
+
+  return {
+    store: store.code,
+    checked: candidates.length,
+    moved_to_won: moved,
+    has_more: leads.filter((l) => l.status_source !== "manual" && !l.has_order).length > maxLeads,
   };
 }

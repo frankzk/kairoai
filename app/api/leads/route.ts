@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody, getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { countByStage, listLeads } from "@/lib/leads";
-import { runLeadsSync } from "@/lib/leads-sync";
+import { runLeadsSync, reclassifyStage } from "@/lib/leads-sync";
 import { BOARD_VIEWS, statusBoardStage } from "@/lib/leads-classify";
 import { daysAgoIso } from "@/lib/leads-metrics";
 
@@ -49,6 +49,12 @@ export async function POST(req: NextRequest) {
   }
   try {
     const payload = (body ?? {}) as Record<string, unknown>;
+    // Barrido fino: lee el chat de los leads de "por cerrar" y mueve a Ganados
+    // los que ya son pedido confirmado.
+    if (payload.reclassify) {
+      const result = await reclassifyStage({ store: store.code, stage: "por_cerrar" });
+      return NextResponse.json(result);
+    }
     const result = await runLeadsSync({
       store: store.code,
       deep: payload.deep === true || payload.deep === "1",

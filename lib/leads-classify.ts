@@ -6,6 +6,7 @@
 
 import type {
   Classification,
+  ConversationMessage,
   IcomflyConversation,
   LeadCategory,
   LeadStateSnapshot,
@@ -149,6 +150,34 @@ export function classifyByStrongLabels(labels: string[]): { status: string; reas
 /** Etiquetas de "requiere humano" / falta direccion -> por cerrar. */
 export function classifyByHumanLabels(labels: string[]): { status: string; reason: string } | null {
   return matchLabelRules(labels, ["human"]);
+}
+
+// ─── Deteccion de pedido YA confirmado, leyendo el transcript ────────────────
+// Para conversaciones sin metadata.sale_state (p.ej. pedidos viejos o creados
+// por otro flujo), el bot igual deja mensajes inequivocos de que el pedido
+// existe/se envio. Solo miramos mensajes SALIENTES (bot/negocio) y frases que
+// implican un pedido YA creado/confirmado/enviado (no "para hacer tu pedido...").
+const ORDER_CONFIRMED_RES: RegExp[] = [
+  /numero de guia|tu guia es|guia es \d|cuando tengamos (la guia|el numero de guia)/,
+  /acabamos de enviar tu pedido|enviamos tu pedido|hemos enviado tu pedido|ya enviamos tu pedido/,
+  /ya confirmamos tu pedido|pedido (ya )?(esta|quedo) confirmado|pedido confirmado/,
+  /tu pedido (ya )?(esta) creado|pedido esta creado|ya tome los datos de tu pedido/,
+  /tu pedido sigue en proceso/,
+  /recordatorio.*pedido|para la entrega de tu|se comunicaron contigo de moovin/,
+];
+
+function normText(t: string): string {
+  return t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+/** true si el transcript evidencia un pedido ya confirmado/enviado. */
+export function detectOrderInTranscript(messages: ConversationMessage[]): boolean {
+  for (const m of messages) {
+    if (m.direction !== "outbound" || !m.text) continue;
+    const t = normText(m.text);
+    if (ORDER_CONFIRMED_RES.some((re) => re.test(t))) return true;
+  }
+  return false;
 }
 
 // ─── Deteccion de pago adelantado (SINPE) por texto ──────────────────────────

@@ -172,6 +172,29 @@ export default function LeadsBoard() {
     []
   );
 
+  const reclassify = useCallback(async () => {
+    setSyncing(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/leads`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store, reclassify: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error al afinar");
+      await load();
+      setError(
+        `Afinado: ${data.moved_to_won ?? 0} de ${data.checked ?? 0} en "Por cerrar" eran pedidos y pasaron a Ganados.` +
+          (data.has_more ? " (quedan más; corre de nuevo para seguir)" : "")
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al afinar");
+    } finally {
+      setSyncing(false);
+    }
+  }, [store, load]);
+
   const visibleLeads = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (activeStage === "agenda") {
@@ -225,6 +248,15 @@ export default function LeadsBoard() {
               title="Recorre TODO el histórico y reclasifica (tarda más)"
             >
               Sincronizar todo
+            </Button>
+            <Button
+              onClick={reclassify}
+              disabled={syncing}
+              size="sm"
+              variant="outline"
+              title="Lee el chat de los leads en 'Por cerrar' y mueve a Ganados los que ya son pedido"
+            >
+              Afinar “Por cerrar”
             </Button>
             <Button
               onClick={() => setShowProductivity((v) => !v)}
