@@ -24,6 +24,10 @@
     {
       "path": "/api/cron/icomfly",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/leads",
+      "schedule": "*/5 * * * *"
     }
   ],
   "functions": {
@@ -56,6 +60,12 @@
     },
     "app/api/cron/icomfly/route.ts": {
       "maxDuration": 60
+    },
+    "app/api/cron/leads/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/leads/route.ts": {
+      "maxDuration": 300
     },
     "app/api/icomfly/sync/route.ts": {
       "maxDuration": 60

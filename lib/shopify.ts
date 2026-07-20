@@ -205,6 +205,116 @@ export async function completeDraftOrder(
   return data.draft_order;
 }
 
+// ─── Crear pedido desde el modulo de Leads (asesora cierra la venta) ─────────
+// Crea un pedido COD "directo" reutilizando el mecanismo probado de Shopify:
+// draft order -> completar con pago pendiente. Para la asesora es un solo paso
+// (form -> confirmar -> pedido creado); no depende de scopes nuevos porque es
+// el mismo camino que ya usan los upsells.
+
+export interface ShopifyOrderAddress {
+  first_name?: string;
+  last_name?: string;
+  address1?: string;
+  address2?: string;
+  city?: string; // canton
+  province?: string; // provincia CR
+  zip?: string;
+  country?: string; // "Costa Rica"
+  phone?: string;
+}
+
+export interface LeadOrderLineItem {
+  variant_id?: number;
+  sku?: string;
+  title: string;
+  price: string; // precio unitario (editable por la asesora)
+  quantity: number;
+}
+
+export interface LeadOrderInput {
+  line_items: LeadOrderLineItem[];
+  phone?: string;
+  email?: string;
+  shipping_address?: ShopifyOrderAddress;
+  note?: string;
+  tags?: string; // "cerrado_por_asesora, kairo_leads"
+  // Descuento a nivel de pedido (opcional).
+  applied_discount?: {
+    description?: string;
+    value_type: "percentage" | "fixed_amount";
+    value: string;
+  };
+}
+
+// Busca un cliente existente en Shopify por telefono para precargar el form.
+export interface ShopifyCustomerPrefill {
+  found: boolean;
+  name?: string;
+  email?: string;
+  province?: string;
+  city?: string;
+  address1?: string;
+  zip?: string;
+  orders_count?: number;
+}
+
+export async function findCustomerByPhone(
+  phone: string,
+  creds?: ShopifyCreds
+): Promise<ShopifyCustomerPrefill> {
+  if (!phone) return { found: false };
+  // Search tolera formatos; probamos con y sin '+'.
+  const query = encodeURIComponent(`phone:${phone} OR phone:+${phone}`);
+  const data = await shopifyFetch<{
+    customers: Array<{
+      first_name?: string;
+      last_name?: string;
+      email?: string;
+      orders_count?: number;
+      default_address?: Record<string, string>;
+      addresses?: Array<Record<string, string>>;
+    }>;
+  }>(`/customers/search.json?query=${query}&limit=1`, {}, creds).catch(() => ({ customers: [] }));
+  const c = (data.customers ?? [])[0];
+  if (!c) return { found: false };
+  const addr = c.default_address ?? (c.addresses ?? [])[0] ?? {};
+  return {
+    found: true,
+    name: [c.first_name, c.last_name].filter(Boolean).join(" ") || undefined,
+    email: c.email || undefined,
+    province: addr.province || undefined,
+    city: addr.city || undefined,
+    address1: addr.address1 || undefined,
+    zip: addr.zip || undefined,
+    orders_count: c.orders_count,
+  };
+}
+
+export async function createLeadOrder(
+  input: LeadOrderInput,
+  creds?: ShopifyCreds
+): Promise<{ order_id: number; name: string; total: string }> {
+  // 1) Crear el borrador con lineas, envio, descuento, tags y nota.
+  const draft = await shopifyFetch<{ draft_order: { id: number } }>(
+    `/draft_orders.json`,
+    { method: "POST", body: JSON.stringify({ draft_order: input }) },
+    creds
+  );
+  // 2) Completarlo con pago PENDIENTE (COD).
+  const completed = await shopifyFetch<{ draft_order: { id: number; order_id: number } }>(
+    `/draft_orders/${draft.draft_order.id}/complete.json?payment_pending=true`,
+    { method: "PUT", body: JSON.stringify({}) },
+    creds
+  );
+  // 3) Leer nombre/total del pedido real resultante.
+  const ord = await shopifyFetch<{ order: { id: number; name: string; total_price: string } }>(
+    `/orders/${completed.draft_order.order_id}.json?fields=id,name,total_price`,
+    {},
+    creds
+  );
+  return { order_id: ord.order.id, name: ord.order.name, total: ord.order.total_price };
+}
+
 // ─── HMAC Validation ────────────────────────────────────────────────────────
 
 export function validateShopifyHmac(
