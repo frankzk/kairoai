@@ -111,7 +111,6 @@ export default function LeadsBoard() {
   const [activeStage, setActiveStage] = useState<BoardStage | "agenda">("por_cerrar");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
   const [showProductivity, setShowProductivity] = useState(false);
@@ -140,28 +139,6 @@ export default function LeadsBoard() {
     load();
   }, [load]);
 
-  const sync = useCallback(
-    async (deep = false) => {
-      setSyncing(true);
-      setError(null);
-      try {
-        const res = await fetch(`/api/leads`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(deep ? { store, deep: true } : { store }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Error al sincronizar");
-        await load();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Error al sincronizar");
-      } finally {
-        setSyncing(false);
-      }
-    },
-    [store, load]
-  );
-
   const matchesSearch = useCallback(
     (l: LeadRow, q: string) =>
       q
@@ -171,35 +148,6 @@ export default function LeadsBoard() {
         : true,
     []
   );
-
-  const reclassify = useCallback(async () => {
-    setSyncing(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/leads`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ store, reclassify: true }),
-      });
-      const text = await res.text();
-      let data: Record<string, unknown> = {};
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error("El servidor tardó demasiado. El cron sigue afinando automáticamente.");
-      }
-      if (!res.ok) throw new Error((data.error as string) || "Error al afinar");
-      await load();
-      setError(
-        `Afinado un lote: ${data.moved_to_won ?? 0} de ${data.checked ?? 0} revisados ya eran pedido y pasaron a Ganados. ` +
-          `Faltan ~${data.pending ?? 0} por revisar. El cron sigue afinando todas las etapas cada 10 min.`
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al afinar");
-    } finally {
-      setSyncing(false);
-    }
-  }, [store, load]);
 
   const visibleLeads = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -242,27 +190,14 @@ export default function LeadsBoard() {
                 </option>
               ))}
             </select>
-            <Button onClick={() => sync(false)} disabled={syncing} size="sm">
-              <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-              {syncing ? "Sincronizando..." : "Sincronizar"}
-            </Button>
             <Button
-              onClick={() => sync(true)}
-              disabled={syncing}
+              onClick={load}
+              disabled={loading}
               size="sm"
-              variant="outline"
-              title="Recorre TODO el histórico y reclasifica (tarda más)"
+              title="Los leads se sincronizan y afinan solos cada pocos minutos; esto refresca la vista"
             >
-              Sincronizar todo
-            </Button>
-            <Button
-              onClick={reclassify}
-              disabled={syncing}
-              size="sm"
-              variant="outline"
-              title="Lee el chat de los leads de todas las etapas y mueve a Ganados los que ya son pedido"
-            >
-              Afinar clasificación
+              <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              {loading ? "Actualizando..." : "Actualizar"}
             </Button>
             <Button
               onClick={() => setShowProductivity((v) => !v)}
