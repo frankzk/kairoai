@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { extractActionIds, parseMoovinResponse } from "@/lib/moovin";
+import { extractActionIds, moovinRouterStateTree, parseMoovinResponse } from "@/lib/moovin";
+
+// El next-router-state-tree va como header HTTP (solo bytes <= 255). Apellidos con
+// caracteres raros (p.ej. "ortega⁵" con U+2075 = 8309) reventaban el fetch con
+// "Cannot convert argument to a ByteString". El helper debe encodear todo a ASCII.
+describe("moovinRouterStateTree", () => {
+  it("no deja ningun caracter > 255 aunque el apellido traiga U+2075 (ByteString-safe)", () => {
+    const tree = moovinRouterStateTree("2568458", "ortega⁵");
+    expect(Array.from(tree).every((ch) => ch.charCodeAt(0) <= 255)).toBe(true);
+    expect(tree).toContain("2568458");
+    expect(tree).toContain("ortega%E2%81%B5"); // "ortega⁵" percent-encoded
+  });
+
+  it("apellidos normales tambien quedan encodeados (espacios, acentos)", () => {
+    const tree = moovinRouterStateTree("123", "salas Elizondo");
+    expect(Array.from(tree).every((ch) => ch.charCodeAt(0) <= 255)).toBe(true);
+    expect(tree).toContain("salas%20Elizondo");
+    const acc = moovinRouterStateTree("1", "Núñez");
+    expect(Array.from(acc).every((ch) => ch.charCodeAt(0) <= 255)).toBe(true);
+  });
+});
 
 // Respuesta real del Server Action de Moovin (formato RSC: lineas "<n>:{...}"),
 // capturada de la guia 2557364. Fija que el parser saca el tracking del payload
