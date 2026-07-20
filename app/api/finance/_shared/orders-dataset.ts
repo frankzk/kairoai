@@ -83,7 +83,13 @@ const datasetCache = new Map<string, CacheEntry>();
 // mutaciones controladas.
 const DATASET_CACHE_TTL_MS = 60 * 60_000;
 const DATASET_CACHE_TABLE = "finance_dataset_cache";
-const L2_READ_TIMEOUT_MS = 4_000;
+// Lectura del payload L2 (decenas de MB gzip en JSONB): 4s resulto irreal para
+// el tamano actual del dataset (14-15k pedidos) — instancias frias abortaban la
+// descarga y el modulo caia en 503 permanentes. 20s sigue siendo acotado frente
+// al maxDuration de 60s de las rutas de lectura, pero permite que una descarga
+// lenta complete. Si Supabase realmente esta caido, el timeout se alcanza igual
+// y se mantiene la proteccion (stale L1 o 503 con backoff).
+const L2_READ_TIMEOUT_MS = 20_000;
 const L2_WRITE_TIMEOUT_MS = 8_000;
 const DATASET_BUILD_TIMEOUT_MS = 45_000;
 const L2_FAILURE_BACKOFF_MS = 15_000;
