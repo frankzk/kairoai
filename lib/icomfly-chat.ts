@@ -145,6 +145,7 @@ function normalizeLabels(raw: unknown): string[] {
 
 export function normalizeConversation(raw: Record<string, unknown>): IcomflyConversation {
   const metadata = (raw.metadata ?? {}) as Record<string, unknown>;
+  const saleState = (metadata.sale_state ?? {}) as Record<string, unknown>;
   return {
     id: pickString(raw, ["id", "_id", "conversation_id", "uuid"]),
     contactId: pickStringOrNull(raw, ["contact_id", "contactId", "customer_id"]),
@@ -162,6 +163,10 @@ export function normalizeConversation(raw: Record<string, unknown>): IcomflyConv
     abandonedCartId: pickStringOrNull(metadata, ["abandoned_cart_id"]) ?? pickStringOrNull(raw, ["abandoned_cart_id"]),
     abandonedCartCount: pickNumber(raw, ["abandoned_cart_count", "abandonedCartCount"]),
     recoveredCartCount: pickNumber(raw, ["recovered_cart_count", "recoveredCartCount"]),
+    saleStage: pickStringOrNull(saleState, ["stage"]),
+    saleOrderId: pickStringOrNull(saleState, ["order_id", "orderId"]),
+    paymentMethod: pickStringOrNull(saleState, ["payment_method", "paymentMethod"]),
+    warrantyClaimId: pickStringOrNull(metadata, ["warranty_claim_id"]),
     labels: normalizeLabels(raw.labels ?? raw.tags),
     closedAt: pickStringOrNull(raw, ["closed_at", "closedAt"]),
     closedReason: pickStringOrNull(raw, ["closed_reason", "closedReason"]),

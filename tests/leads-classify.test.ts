@@ -27,6 +27,10 @@ function makeConv(partial: Partial<IcomflyConversation> = {}): IcomflyConversati
     abandonedCartId: null,
     abandonedCartCount: 0,
     recoveredCartCount: 0,
+    saleStage: null,
+    saleOrderId: null,
+    paymentMethod: null,
+    warrantyClaimId: null,
     labels: [],
     closedAt: null,
     closedReason: null,
@@ -68,6 +72,41 @@ describe("classifyConversation priority", () => {
     const c = classifyConversation(makeConv({ labels: ["Carrito Abandonado"] }), { hasShopifyOrder: true });
     expect(c.status).toBe("pedido_generado");
     expect(c.category).toBe("won");
+  });
+  it("caso Alfredo: sale_state order_created + etiqueta 'requiere humano' -> GANADO, no por_cerrar", () => {
+    const c = classifyConversation(
+      makeConv({
+        saleStage: "order_created",
+        saleOrderId: "234279",
+        labels: ["Revisión de dirección", "Revisión humana"],
+        lastMessageText: "Gracias",
+        lastMessageSender: "customer",
+      })
+    );
+    expect(c.status).toBe("pedido_en_curso");
+    expect(c.category).toBe("won");
+    expect(statusBoardStage(c.status)).toBe("ganado");
+  });
+  it("sale_state order_id presente sin stage explicito -> ganado", () => {
+    const c = classifyConversation(makeConv({ saleOrderId: "999" }));
+    expect(c.category).toBe("won");
+  });
+  it("collecting_data -> por_cerrar", () => {
+    const c = classifyConversation(makeConv({ saleStage: "collecting_data" }));
+    expect(statusBoardStage(c.status)).toBe("por_cerrar");
+  });
+  it("pending_payment -> por_cerrar", () => {
+    const c = classifyConversation(makeConv({ saleStage: "pending_payment" }));
+    expect(statusBoardStage(c.status)).toBe("por_cerrar");
+  });
+  it("product_selected -> seguimiento", () => {
+    const c = classifyConversation(makeConv({ saleStage: "product_selected" }));
+    expect(statusBoardStage(c.status)).toBe("seguimiento");
+  });
+  it("warranty claim -> descartado (postventa)", () => {
+    const c = classifyConversation(makeConv({ warrantyClaimId: "12" }));
+    expect(c.status).toBe("postventa");
+    expect(statusBoardStage(c.status)).toBe("descartado");
   });
   it("SINPE in last message -> pago_verificar", () => {
     const c = classifyConversation(makeConv({ lastMessageText: "ya te hice el sinpe" }));

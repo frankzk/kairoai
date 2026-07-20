@@ -36,6 +36,7 @@ export type BoardStage =
 export const LEAD_STATUSES: StatusDef[] = [
   // won (oculto, sin gestion)
   { code: "pedido_generado", label: "Pedido generado", category: "won", source: "auto", callable: false, board: "ganado" },
+  { code: "pedido_en_curso", label: "Pedido en curso", category: "won", source: "auto", callable: false, board: "ganado" },
   { code: "ya_tiene_pedido", label: "Ya tiene pedido", category: "won", source: "auto", callable: false, board: "ganado" },
   { code: "venta_por_bot", label: "Venta por bot", category: "won", source: "auto", callable: false, board: "ganado" },
   { code: "carrito_recuperado", label: "Carrito recuperado", category: "won", source: "auto", callable: false, board: "ganado" },
@@ -65,6 +66,7 @@ export const LEAD_STATUSES: StatusDef[] = [
   { code: "lista_negra", label: "Lista negra", category: "lost", source: "manual", callable: false, board: "descartado" },
   { code: "nr_no_existe", label: "Numero no existe", category: "lost", source: "manual", callable: false, board: "descartado" },
   { code: "duplicado", label: "Duplicado", category: "lost", source: "auto", callable: false, board: "descartado" },
+  { code: "postventa", label: "Postventa / garantia", category: "lost", source: "auto", callable: false, board: "descartado" },
 ];
 
 const STATUS_BY_CODE = new Map(LEAD_STATUSES.map((s) => [s.code, s]));
@@ -92,20 +94,23 @@ interface LabelRule {
   pattern: RegExp;
   status: string;
   reason: string;
+  // 'strong' = senal definitiva de won/lost (se evalua antes que sale_state);
+  // 'human'  = requiere humano / falta direccion -> por cerrar (despues);
+  // 'cart'   = senal de carrito (la cubre cartSignal, no particiona aparte).
+  tier: "strong" | "human" | "cart";
 }
 
 const LABEL_RULES: LabelRule[] = [
-  { pattern: /lista negra/, status: "lista_negra", reason: "etiqueta: lista negra" },
-  { pattern: /carrito .*recuperad|recuperad.* carrito|carrito abandonado recuperado/, status: "carrito_recuperado", reason: "etiqueta: carrito recuperado" },
-  { pattern: /duplicad|ya tiene orden|ya tiene una orden|numero diferente/, status: "duplicado", reason: "etiqueta: duplicado" },
-  { pattern: /venta por bot|pedido shopify/, status: "venta_por_bot", reason: "etiqueta: venta por bot" },
-  { pattern: /requerimiento humano|revision humana|revisi.n humana/, status: "por_cerrar", reason: "etiqueta: requiere humano" },
-  { pattern: /falta (la )?direc|espera de direc|falta subir|subir|falta que envie|falta la ubicacion|revision de direc|revisi.n de direc/, status: "en_espera_direccion", reason: "etiqueta: falta direccion/subir" },
-  { pattern: /sin stock/, status: "sin_stock", reason: "etiqueta: sin stock" },
-  { pattern: /carrito abandonado|carrito sin recuperar/, status: "carrito_abandonado", reason: "etiqueta: carrito abandonado" },
-  { pattern: /no tiene dinero|vaa cuadrar|va a cuadrar/, status: "volver_a_llamar", reason: "etiqueta: sin dinero / volver a llamar" },
-  { pattern: /fuera del pais|fuera de pais|esta fuera del pais/, status: "fuera_de_pais", reason: "etiqueta: fuera del pais" },
-  { pattern: /reclamo|devoluc|novedad/, status: "conversando", reason: "etiqueta: postventa/novedad" },
+  { pattern: /lista negra/, status: "lista_negra", reason: "etiqueta: lista negra", tier: "strong" },
+  { pattern: /carrito .*recuperad|recuperad.* carrito|carrito abandonado recuperado/, status: "carrito_recuperado", reason: "etiqueta: carrito recuperado", tier: "strong" },
+  { pattern: /duplicad|ya tiene orden|ya tiene una orden|numero diferente/, status: "duplicado", reason: "etiqueta: duplicado", tier: "strong" },
+  { pattern: /venta por bot|pedido shopify/, status: "venta_por_bot", reason: "etiqueta: venta por bot", tier: "strong" },
+  { pattern: /sin stock/, status: "sin_stock", reason: "etiqueta: sin stock", tier: "strong" },
+  { pattern: /fuera del pais|fuera de pais|esta fuera del pais/, status: "fuera_de_pais", reason: "etiqueta: fuera del pais", tier: "strong" },
+  { pattern: /requerimiento humano|revision humana|revisi.n humana/, status: "por_cerrar", reason: "etiqueta: requiere humano", tier: "human" },
+  { pattern: /falta (la )?direc|espera de direc|falta subir|subir|falta que envie|falta la ubicacion|revision de direc|revisi.n de direc/, status: "en_espera_direccion", reason: "etiqueta: falta direccion/subir", tier: "human" },
+  { pattern: /no tiene dinero|vaa cuadrar|va a cuadrar/, status: "volver_a_llamar", reason: "etiqueta: sin dinero / volver a llamar", tier: "human" },
+  { pattern: /carrito abandonado|carrito sin recuperar/, status: "carrito_abandonado", reason: "etiqueta: carrito abandonado", tier: "cart" },
 ];
 
 function normalizeLabel(label: string): string {
@@ -116,15 +121,30 @@ function normalizeLabel(label: string): string {
     .trim();
 }
 
-/** Devuelve la primera regla de etiqueta que matchea, o null. */
-export function classifyByLabels(labels: string[]): { status: string; reason: string } | null {
+function matchLabelRules(labels: string[], tiers: LabelRule["tier"][]): { status: string; reason: string } | null {
   const norm = labels.map(normalizeLabel);
   for (const rule of LABEL_RULES) {
+    if (!tiers.includes(rule.tier)) continue;
     if (norm.some((l) => rule.pattern.test(l))) {
       return { status: rule.status, reason: rule.reason };
     }
   }
   return null;
+}
+
+/** Todas las reglas (compat + uso general). Primera que matchea gana. */
+export function classifyByLabels(labels: string[]): { status: string; reason: string } | null {
+  return matchLabelRules(labels, ["strong", "human", "cart"]);
+}
+
+/** Solo etiquetas definitivas de won/lost (se evaluan antes que sale_state). */
+export function classifyByStrongLabels(labels: string[]): { status: string; reason: string } | null {
+  return matchLabelRules(labels, ["strong"]);
+}
+
+/** Etiquetas de "requiere humano" / falta direccion -> por cerrar. */
+export function classifyByHumanLabels(labels: string[]): { status: string; reason: string } | null {
+  return matchLabelRules(labels, ["human"]);
 }
 
 // ─── Deteccion de pago adelantado (SINPE) por texto ──────────────────────────
@@ -150,38 +170,55 @@ export function classifyConversation(
     autoReason: reason,
     hasCartSignal: cartSignal,
   });
+  const stage = (conv.saleStage ?? "").toLowerCase();
 
-  // 1) Orden confirmada (Shopify por telefono) -> ganado, oculto.
+  // 1) Ya es pedido -> GANADO (oculto, sin gestion). Prioridad maxima para que
+  //    NO caiga en "por cerrar" aunque tenga etiqueta "requiere humano":
+  //    (a) orden de Shopify por telefono, (b) el bot marco la venta creada.
   if (ctx.hasShopifyOrder) return base("pedido_generado", "orden de Shopify enlazada por telefono");
+  if (stage === "order_created" || conv.saleOrderId) {
+    return base("pedido_en_curso", `pedido creado en Icomfly${conv.saleOrderId ? ` (#${conv.saleOrderId})` : ""}`);
+  }
 
-  // 2) Etiquetas del equipo (won/lost/senales fuertes).
-  const byLabel = classifyByLabels(conv.labels);
-  if (byLabel) return base(byLabel.status, byLabel.reason);
+  // 2) Postventa (reclamo de garantia) -> no es gestion de venta.
+  if (conv.warrantyClaimId) return base("postventa", "reclamo de garantia (postventa)");
 
-  // 3) Conversacion cerrada en Icomfly sin senal previa -> descartado suave.
+  // 3) Etiquetas fuertes del equipo (won/lost: lista negra, duplicado,
+  //    carrito recuperado). Las de "requiere humano"/"falta direccion" se
+  //    dejan para despues de las senales de sale_state.
+  const strongLabel = classifyByStrongLabels(conv.labels);
+  if (strongLabel) return base(strongLabel.status, strongLabel.reason);
+
+  // 4) Conversacion cerrada en Icomfly sin senal previa -> descartado suave.
   if (conv.closedAt) {
     return base("cancelado", `conversacion cerrada en Icomfly${conv.closedReason ? `: ${conv.closedReason}` : ""}`);
   }
 
-  // 4) Pago adelantado detectado en el ultimo mensaje.
+  // 5) Pago adelantado (SINPE) detectado en el ultimo mensaje -> verificar.
   if (detectSinpeText(conv.lastMessageText)) {
     return base("sinpe_por_verificar", "SINPE detectado en el ultimo mensaje");
   }
 
-  // 5) Humano tomo el chat (bot desactivado) -> por cerrar.
-  if (conv.chatbotDisabled) {
-    return base("por_cerrar", "chatbot desactivado: humano gestionando");
-  }
+  // 6) Dando datos / esperando pago, o humano gestionando -> POR CERRAR.
+  if (stage === "collecting_data") return base("por_cerrar", "cliente dando sus datos (falta cerrar)");
+  if (stage === "pending_payment") return base("por_cerrar", "esperando metodo de pago (falta cerrar)");
+  const humanLabel = classifyByHumanLabels(conv.labels);
+  if (humanLabel) return base(humanLabel.status, humanLabel.reason);
+  if (conv.chatbotDisabled) return base("por_cerrar", "chatbot desactivado: humano gestionando");
 
-  // 6) Senal de carrito -> carrito abandonado.
+  // 7) Eligio producto pero aun no da datos -> seguimiento (empujar).
+  if (stage === "product_selected") return base("conversando", "eligio producto, falta cerrar");
+
+  // 8) Senal de carrito -> carrito abandonado.
   if (cartSignal) return base("carrito_abandonado", "carrito abandonado (senal de Icomfly)");
 
-  // 7) Conversando: el cliente escribio ultimo o hay no leidos.
+  // 9) Conversando: el cliente escribio ultimo o hay no leidos.
   if (isInbound(conv.lastMessageSender) || conv.unreadCount > 0) {
     return base("conversando", "cliente con mensaje sin responder");
   }
 
-  // 8) Frio si el ultimo contacto es viejo; si es reciente, nuevo.
+  // 10) Solo mirando / sin actividad -> frio; si es reciente, nuevo.
+  if (stage === "browsing" && isStale(conv.lastMessageAt)) return base("frio", "solo mirando, sin actividad reciente");
   if (isStale(conv.lastMessageAt)) return base("frio", "sin actividad reciente");
   return base("nuevo", "conversacion nueva sin gestionar");
 }

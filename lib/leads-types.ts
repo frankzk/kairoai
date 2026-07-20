@@ -22,6 +22,12 @@ export interface IcomflyConversation {
   abandonedCartId: string | null;
   abandonedCartCount: number;
   recoveredCartCount: number;
+  // Estado de venta que trackea el bot de Icomfly (metadata.sale_state):
+  // browsing | product_selected | collecting_data | pending_payment | order_created
+  saleStage: string | null;
+  saleOrderId: string | null; // id de pedido en Icomfly cuando se creo
+  paymentMethod: string | null; // Contraentrega | Sinpe | ...
+  warrantyClaimId: string | null; // reclamo de garantia (postventa)
   labels: string[];
   closedAt: string | null;
   closedReason: string | null;
