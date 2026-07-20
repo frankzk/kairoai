@@ -191,8 +191,8 @@ export default function LeadsBoard() {
       if (!res.ok) throw new Error((data.error as string) || "Error al afinar");
       await load();
       setError(
-        `Afinado un lote: ${data.moved_to_won ?? 0} de ${data.checked ?? 0} revisados eran pedidos y pasaron a Ganados. ` +
-          `Faltan ~${data.pending ?? 0}. El cron sigue afinando solo cada 10 min.`
+        `Afinado un lote: ${data.moved_to_won ?? 0} de ${data.checked ?? 0} revisados ya eran pedido y pasaron a Ganados. ` +
+          `Faltan ~${data.pending ?? 0} por revisar. El cron sigue afinando todas las etapas cada 10 min.`
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al afinar");
@@ -260,9 +260,9 @@ export default function LeadsBoard() {
               disabled={syncing}
               size="sm"
               variant="outline"
-              title="Lee el chat de los leads en 'Por cerrar' y mueve a Ganados los que ya son pedido"
+              title="Lee el chat de los leads de todas las etapas y mueve a Ganados los que ya son pedido"
             >
-              Afinar “Por cerrar”
+              Afinar clasificación
             </Button>
             <Button
               onClick={() => setShowProductivity((v) => !v)}

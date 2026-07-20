@@ -19,7 +19,6 @@ async function handle() {
         reclassifyStage({
           store: target.store.code,
           externalStoreId: target.externalStoreId,
-          stage: "por_cerrar",
           maxLeads: 100,
         }).catch((err) => ({
           store: target.store.code,

@@ -212,11 +212,17 @@ export interface ReclassifyResult {
 const RECLASSIFY_DEFAULT_BATCH = 100;
 const RECLASSIFY_MAX_BATCH = 300;
 
+// Buckets "de trabajo": un lead aqui deberia necesitar gestion porque aun no
+// tiene pedido. El afinado los revisa TODOS (no solo "por cerrar"). Ganados y
+// Descartados quedan fuera (ya son terminales).
+const ACTIVE_STAGES: BoardStage[] = ["por_cerrar", "pago_verificar", "carrito", "seguimiento", "frio"];
+
 /**
- * Barrido fino por LOTES sobre un bucket (por defecto "por_cerrar"): baja el
- * transcript de un lote de leads auto sin orden y mueve a Ganados los que ya
- * son pedido confirmado (guia/enviado/"ya confirmamos tu pedido"...). Respeta
- * los estados manuales.
+ * Barrido fino por LOTES sobre los buckets de trabajo: baja el transcript de un
+ * lote de leads auto sin orden y mueve a Ganados los que ya son pedido
+ * confirmado (guia/enviado/"ya confirmamos tu pedido"/Moovin...). Asi cada
+ * etapa deja solo los leads que de verdad hay que gestionar. Respeta los
+ * estados manuales.
  *
  * Usa un cursor por tienda (ultimo lead id revisado) en lead_sync_state para
  * avanzar entre corridas sin re-checar los mismos; al llegar al final vuelve al
@@ -226,7 +232,7 @@ export async function reclassifyStage(opts: {
   store?: FinanceStoreCode | string;
   storeId?: number;
   externalStoreId?: number;
-  stage?: BoardStage;
+  stage?: BoardStage; // opcional: limitar a un bucket; por defecto TODOS los activos
   maxLeads?: number;
 }): Promise<ReclassifyResult> {
   const { store, externalStoreId } = resolveIcomflyStoreContext({
@@ -235,13 +241,19 @@ export async function reclassifyStage(opts: {
     externalStoreId: opts.externalStoreId,
   });
   const storeId = store.id;
-  const stage = opts.stage ?? "por_cerrar";
   const batch = Math.min(Math.max(opts.maxLeads ?? RECLASSIFY_DEFAULT_BATCH, 1), RECLASSIFY_MAX_BATCH);
   const cursorKey = `reclassify:${storeId}`;
+  const scope = new Set<BoardStage>(opts.stage ? [opts.stage] : ACTIVE_STAGES);
 
-  const leads = await listLeads({ storeId, stage });
+  const leads = await listLeads({ storeId });
   const candidates = leads
-    .filter((l) => l.status_source !== "manual" && !l.has_order && l.crm_conversation_id)
+    .filter(
+      (l) =>
+        l.status_source !== "manual" &&
+        !l.has_order &&
+        l.crm_conversation_id &&
+        scope.has(statusBoardStage(l.status))
+    )
     .sort((a, b) => a.id - b.id);
 
   if (candidates.length === 0) {

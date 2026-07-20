@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     // Barrido fino: lee el chat de los leads de "por cerrar" y mueve a Ganados
     // los que ya son pedido confirmado.
     if (payload.reclassify) {
-      const result = await reclassifyStage({ store: store.code, stage: "por_cerrar" });
+      const result = await reclassifyStage({ store: store.code });
       return NextResponse.json(result);
     }
     const result = await runLeadsSync({
