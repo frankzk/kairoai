@@ -80,7 +80,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(cached.data);
     }
 
-    const { rows, settlementTraceByKey } = await getOrdersDataset(store);
+    const { rows, settlementTraceByKey } = await getOrdersDataset(store, [
+      "rows",
+      "settlementTraceByKey",
+    ]);
 
     // Misma logica que el useMemo operationalKpis de page.tsx: ventana actual y
     // ventana previa "like-for-like", filtrando por shopify_created_at antes de

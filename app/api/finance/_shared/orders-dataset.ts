@@ -1,7 +1,8 @@
 // Helper compartido por las rutas server-side de finanzas (Carril 2 inc. 1).
 // Carga los datos crudos de una tienda, los ensambla a filas trackeables y
-// cachea el dataset por tienda con un TTL corto, para que kpis/ y orders/
-// reusen el mismo trabajo sin recargar 11k pedidos en cada request.
+// cachea el dataset por tienda POR SECCION, para que cada ruta descargue solo
+// lo que usa (orders/ lee rows+traces ~1.6MB gzip en vez del payload completo
+// de ~8MB gzip que habia con ~15k pedidos).
 //
 // Las carpetas con prefijo "_" son privadas en el App Router (no generan ruta).
 
@@ -40,41 +41,61 @@ import {
   decideDatasetLoad,
   type DatasetCacheReadStatus,
 } from "./orders-dataset-policy";
+import {
+  DATASET_SECTIONS,
+  LEGACY_FULL_SECTION,
+  deserializeFullDataset,
+  deserializeSection,
+  serializeFullDataset,
+  serializeSection,
+  type DatasetSection,
+  type OrdersDataset,
+  type SerializedFullDataset,
+} from "./orders-dataset-sections";
 
-export interface OrdersDataset {
-  rows: TrackableOrderRow[];
-  settlementTraceByKey: Map<string, SettlementTrace[]>;
-  // Expuestos para las rutas product-analysis/, monthly-close/ y notes/ (Carril 2
-  // inc.2): buildFinanceControlCenter necesita las liquidaciones enriquecidas y
-  // los imports; notes/ usa los pedidos Shopify. Ya se calculan en buildDataset,
-  // asi que no hay carga extra.
-  shopifyOrders: ShopifyOrderSummary[];
-  matchedSettlementRows: SettlementRow[];
-  imports: SettlementImport[];
-  // Expuesto para settlements-view/ (Carril 2 — tab Liquidaciones):
-  // getDeliveredWithoutSettlement necesita las filas crudas de logistica. Ya se
-  // cargan en buildDataset (listLogisticsRows), asi que no hay carga extra.
-  logisticsRows: LogisticsRow[];
-  // Pre-calculados para settlements-view/ con la MISMA semantica que page.tsx
-  // (Carril 2 — tab Liquidaciones), para que los numeros sean identicos a prod:
-  //  - liquidationAlertRows: getDeliveredWithoutSettlement(logisticsRows, RAW
-  //    settlementRows) — usa las filas de liquidacion crudas, igual que el useMemo
-  //    del cliente (que opera sobre el estado `rows`, no las enriquecidas).
-  //  - doubleSettlementAnomalies: getDoubleSettlementAnomalies(settlementTraceByKey)
-  //    donde el trace map ya se arma sobre las filas ENRIQUECIDAS + imports.
-  liquidationAlertRows: LogisticsRow[];
-  doubleSettlementAnomalies: DoubleSettlementAnomaly[];
-}
+export type { OrdersDataset, DatasetSection } from "./orders-dataset-sections";
+
+// Notas sobre las secciones compartidas (Carril 2 inc.2):
+//  - shopifyOrders / matchedSettlementRows / imports: los usan product-analysis/,
+//    monthly-close/ y notes/ (buildFinanceControlCenter necesita las liquidaciones
+//    enriquecidas y los imports; notes/ usa los pedidos Shopify).
+//  - logisticsRows / liquidationAlertRows / doubleSettlementAnomalies: los usa
+//    settlements-view/ (tab Liquidaciones), pre-calculados con la MISMA semantica
+//    que page.tsx para que los numeros sean identicos a prod.
 
 interface CacheEntry {
   at: number;
-  data: OrdersDataset;
+  data: OrdersDataset[DatasetSection];
 }
 
-// L1: cache en memoria por instancia. TTL corto para que dentro de una misma
-// instancia varios requests seguidos reusen el dataset sin ni siquiera tocar L2.
+// L1: cache en memoria por instancia, POR SECCION (clave store:section). TTL
+// corto para que dentro de una misma instancia varios requests seguidos reusen
+// las secciones sin ni siquiera tocar L2.
 const CACHE_TTL_MS = 60_000;
 const datasetCache = new Map<string, CacheEntry>();
+
+function l1Key(store: FinanceStorePublic, section: DatasetSection): string {
+  return `${store.code}:${section}`;
+}
+
+// Devuelve la entrada L1 de una seccion si existe y esta fresca.
+function getFreshL1(store: FinanceStorePublic, section: DatasetSection): CacheEntry | null {
+  const entry = datasetCache.get(l1Key(store, section));
+  if (!entry || Date.now() - entry.at >= CACHE_TTL_MS) return null;
+  return entry;
+}
+
+function setL1(
+  store: FinanceStorePublic,
+  section: DatasetSection,
+  data: OrdersDataset[DatasetSection]
+): void {
+  datasetCache.set(l1Key(store, section), { at: Date.now(), data });
+}
+
+function setL1All(store: FinanceStorePublic, data: OrdersDataset): void {
+  for (const section of DATASET_SECTIONS) setL1(store, section, data[section]);
+}
 
 // L2: cache durable y compartida en Postgres (tabla finance_dataset_cache,
 // migracion 0013). Frescura de 60 min: el payload es grande y Postgres puede
@@ -137,119 +158,167 @@ function withTimeout<T>(
 // logisticsRows, liquidationAlertRows, doubleSettlementAnomalies) ya son datos
 // planos (strings/numbers/null/arreglos de objetos) y las fechas son strings ISO,
 // asi que viajan por JSONB sin perdida.
-type SettlementTraceEntries = Array<[string, SettlementTrace[]]>;
-
-interface SerializedDataset extends Omit<OrdersDataset, "settlementTraceByKey"> {
-  settlementTraceByKey: SettlementTraceEntries;
+// El payload se guarda comprimido como { gz: base64(gzip(json)) }. Se descomprime
+// aca; tolera tambien un payload plano por compatibilidad.
+function encodeCachePayload(value: unknown): { gz: string } {
+  return { gz: gzipSync(Buffer.from(JSON.stringify(value))).toString("base64") };
 }
 
-function serializeDataset(data: OrdersDataset): SerializedDataset {
-  return {
-    ...data,
-    settlementTraceByKey: Array.from(data.settlementTraceByKey.entries()),
-  };
-}
-
-function deserializeDataset(payload: SerializedDataset): OrdersDataset {
-  return {
-    ...payload,
-    settlementTraceByKey: new Map<string, SettlementTrace[]>(
-      payload.settlementTraceByKey ?? []
-    ),
-  };
+function decodeCachePayload<T>(payload: { gz?: string } | T): T {
+  const gz = (payload as { gz?: string } | null)?.gz;
+  if (typeof gz === "string") {
+    return JSON.parse(gunzipSync(Buffer.from(gz, "base64")).toString("utf8")) as T;
+  }
+  return payload as T;
 }
 
 interface DatasetCacheRow {
-  payload: { gz?: string } | SerializedDataset;
-  row_count: number;
+  section?: string;
+  payload: unknown;
   refreshed_at: string;
 }
 
-// El payload se guarda comprimido como { gz: base64(gzip(json)) }. Se descomprime
-// aca; tolera tambien un payload plano por compatibilidad.
-function decodeCachePayload(payload: { gz?: string } | SerializedDataset): SerializedDataset {
-  const gz = (payload as { gz?: string } | null)?.gz;
-  if (typeof gz === "string") {
-    return JSON.parse(gunzipSync(Buffer.from(gz, "base64")).toString("utf8")) as SerializedDataset;
-  }
-  return payload as SerializedDataset;
-}
-
-interface CachedDataset {
-  data: OrdersDataset;
-  stale: boolean;
-}
-
-type DatasetCacheReadResult =
-  | { status: "hit"; value: CachedDataset }
+type L2ReadResult =
+  | { status: "hit"; rows: DatasetCacheRow[] }
   | { status: "miss" }
   | { status: "error"; error: string };
 
-// Distingue un miss real de una falla de Supabase. Solo un miss confirmado puede
-// iniciar un cold build; ante error se sirve L1 vencido o se responde 503.
-async function readDatasetCache(store: FinanceStorePublic): Promise<DatasetCacheReadResult> {
+function toL2Result(data: DatasetCacheRow[] | null, error: { message: string } | null, label: string): L2ReadResult {
+  if (error) {
+    console.warn(`${label}: ${error.message}`);
+    return { status: "error", error: error.message };
+  }
+  if (!data || data.length === 0) return { status: "miss" };
+  return { status: "hit", rows: data };
+}
+
+// Lee las filas L2 de las secciones pedidas (una sola query con IN). Si la
+// migracion 0021 aun no se aplica, la columna section no existe y la query
+// falla: el llamador cae al fallback legacy (fila 'full'), que es exactamente
+// el comportamiento pre-secciones.
+async function readL2Sections(
+  store: FinanceStorePublic,
+  sections: readonly DatasetSection[]
+): Promise<L2ReadResult> {
   try {
     const { data, error } = await withTimeout(
       getDB()
         .from(DATASET_CACHE_TABLE)
-        .select("payload, row_count, refreshed_at")
+        .select("section, payload, refreshed_at")
         .eq("store_id", store.id)
-        .maybeSingle(),
+        .in("section", sections as string[]),
       L2_READ_TIMEOUT_MS,
-      `orders-dataset L2 read ${store.code}`
+      `orders-dataset L2 read sections ${store.code}`
     );
-    if (error) {
-      console.warn(`[orders-dataset L2 read] ${store.code}: ${error.message}`);
-      return { status: "error", error: error.message };
-    }
-    const row = data as DatasetCacheRow | null;
-    if (!row) return { status: "miss" };
-    const refreshedAt = new Date(row.refreshed_at).getTime();
-    const stale = !Number.isFinite(refreshedAt) || Date.now() - refreshedAt >= DATASET_CACHE_TTL_MS;
-    return {
-      status: "hit",
-      value: { data: deserializeDataset(decodeCachePayload(row.payload)), stale },
-    };
+    return toL2Result(data as DatasetCacheRow[] | null, error, `[orders-dataset L2 read sections] ${store.code}`);
   } catch (err) {
-    console.warn(`[orders-dataset L2 read] ${store.code}:`, err);
-    return {
-      status: "error",
-      error: err instanceof Error ? err.message : String(err),
-    };
+    console.warn(`[orders-dataset L2 read sections] ${store.code}:`, err);
+    return { status: "error", error: err instanceof Error ? err.message : String(err) };
   }
 }
 
-// Escribe (upsert) el dataset en la cache L2. El payload ensamblado es enorme
-// (decenas de MB: rows + shopifyOrders + logistica), asi que se comprime con gzip
-// y se guarda como { gz: base64 } dentro del JSONB (sin migracion). Devuelve el
-// mensaje de error si la escritura falla, o null si fue ok (el cron lo reporta).
-async function writeDatasetCache(store: FinanceStorePublic, data: OrdersDataset): Promise<string | null> {
+// Lee la fila legacy 'full' (dataset completo en una pieza). Post-0021 filtra
+// por section='full'; pre-0021 (columna inexistente) lee la unica fila de la
+// tienda sin filtro.
+async function readL2LegacyFull(store: FinanceStorePublic): Promise<L2ReadResult> {
+  const label = `orders-dataset L2 read legacy ${store.code}`;
   try {
-    const gz = gzipSync(Buffer.from(JSON.stringify(serializeDataset(data)))).toString("base64");
+    const { data, error } = await withTimeout(
+      getDB()
+        .from(DATASET_CACHE_TABLE)
+        .select("payload, refreshed_at")
+        .eq("store_id", store.id)
+        .eq("section", LEGACY_FULL_SECTION)
+        .maybeSingle(),
+      L2_READ_TIMEOUT_MS,
+      label
+    );
+    if (!error) return toL2Result(data ? [data as DatasetCacheRow] : null, null, `[${label}]`);
+    // Pre-migracion 0021: la columna section no existe -> reintenta sin filtro.
+    const legacy = await withTimeout(
+      getDB()
+        .from(DATASET_CACHE_TABLE)
+        .select("payload, refreshed_at")
+        .eq("store_id", store.id)
+        .maybeSingle(),
+      L2_READ_TIMEOUT_MS,
+      `${label} (sin columna section)`
+    );
+    return toL2Result(legacy.data ? [legacy.data as DatasetCacheRow] : null, legacy.error, `[${label}]`);
+  } catch (err) {
+    console.warn(`[${label}]:`, err);
+    return { status: "error", error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function isStaleRow(row: DatasetCacheRow): boolean {
+  const refreshedAt = new Date(row.refreshed_at).getTime();
+  return !Number.isFinite(refreshedAt) || Date.now() - refreshedAt >= DATASET_CACHE_TTL_MS;
+}
+
+// Escribe la fila legacy 'full' (una pieza). Es el formato pre-0021: sigue
+// funcionando con y sin la migracion (la columna section tiene default 'full').
+async function writeL2LegacyFull(store: FinanceStorePublic, data: OrdersDataset): Promise<string | null> {
+  try {
     const { error } = await withTimeout(
       getDB()
         .from(DATASET_CACHE_TABLE)
         .upsert(
           {
             store_id: store.id,
-            payload: { gz },
+            section: LEGACY_FULL_SECTION,
+            payload: encodeCachePayload(serializeFullDataset(data)),
             row_count: data.rows.length,
             refreshed_at: new Date().toISOString(),
           },
           { onConflict: "store_id" }
         ),
       L2_WRITE_TIMEOUT_MS,
-      `orders-dataset L2 write ${store.code}`
+      `orders-dataset L2 write legacy ${store.code}`
     );
     if (error) {
-      console.warn(`[orders-dataset L2 write] ${store.code}: ${error.message}`);
+      console.warn(`[orders-dataset L2 write legacy] ${store.code}: ${error.message}`);
       return error.message;
     }
     return null;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[orders-dataset L2 write] ${store.code}:`, err);
+    console.warn(`[orders-dataset L2 write legacy] ${store.code}:`, err);
     return message;
+  }
+}
+
+// Escribe (upsert) una fila por seccion en la cache L2. Cada payload va
+// comprimido con gzip como { gz: base64 } dentro del JSONB. Si la escritura
+// por secciones falla (p. ej. migracion 0021 aun no aplicada), cae a escribir
+// la fila legacy 'full' para no perder la cache. Devuelve el mensaje de error
+// si AMBAS escrituras fallan, o null si alguna fue ok.
+async function writeDatasetCache(store: FinanceStorePublic, data: OrdersDataset): Promise<string | null> {
+  try {
+    const refreshedAt = new Date().toISOString();
+    const rows = DATASET_SECTIONS.map((section) => ({
+      store_id: store.id,
+      section,
+      payload: encodeCachePayload(serializeSection(section, data[section])),
+      row_count: Array.isArray(data[section]) ? (data[section] as unknown[]).length : 0,
+      refreshed_at: refreshedAt,
+    }));
+    const { error } = await withTimeout(
+      getDB()
+        .from(DATASET_CACHE_TABLE)
+        .upsert(rows, { onConflict: "store_id,section" }),
+      L2_WRITE_TIMEOUT_MS,
+      `orders-dataset L2 write sections ${store.code}`
+    );
+    if (error) throw new Error(error.message);
+    return null;
+  } catch (err) {
+    console.warn(
+      `[orders-dataset L2 write sections] ${store.code}:`,
+      err instanceof Error ? err.message : err,
+      "— fallback a fila legacy"
+    );
+    return writeL2LegacyFull(store, data);
   }
 }
 
@@ -348,91 +417,172 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
 // (FUNCTION_INVOCATION_TIMEOUT en cada cold start). Con una unica promesa en
 // vuelo por tienda, el primer request hace el trabajo y el resto espera el mismo
 // resultado.
-const inFlightLoads = new Map<string, Promise<OrdersDataset>>();
+const inFlightLoads = new Map<string, Promise<void>>();
 const l2FailureUntilByStore = new Map<string, number>();
 
-export async function getOrdersDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
-  const cached = datasetCache.get(store.code);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-    return cached.data;
+function assembleFromL1<S extends DatasetSection>(
+  store: FinanceStorePublic,
+  sections: readonly S[]
+): Pick<OrdersDataset, S> {
+  const out = {} as Pick<OrdersDataset, S>;
+  for (const section of sections) {
+    out[section] = datasetCache.get(l1Key(store, section))!.data as OrdersDataset[S];
   }
+  return out;
+}
 
-  const inFlight = inFlightLoads.get(store.code);
-  if (inFlight) return inFlight;
-
-  const load = (async () => {
-    const failureUntil = l2FailureUntilByStore.get(store.code) ?? 0;
-    if (failureUntil > Date.now()) {
-      if (cached) return cached.data;
-      throw new OrdersDatasetUnavailableError();
-    }
-
-    const fromL2 = await readDatasetCache(store);
-    const decision = decideDatasetLoad(
-      fromL2.status as DatasetCacheReadStatus,
-      Boolean(cached)
-    );
-
-    if (decision === "use-l2" && fromL2.status === "hit") {
-      l2FailureUntilByStore.delete(store.code);
-      datasetCache.set(store.code, { at: Date.now(), data: fromL2.value.data });
-      // Serve-stale: aunque la fila este vencida, la servimos igual. No lanzamos
-      // refresh pesado desde requests de usuario; en serverless eso multiplica
-      // rebuilds por instancia y puede saturar Supabase durante degradaciones.
-      if (fromL2.value.stale) {
-        console.warn(`[orders-dataset L2 stale] ${store.code}: serving stale cache`);
-      }
-      return fromL2.value.data;
-    }
-
-    if (decision === "use-stale-l1" && cached) {
-      l2FailureUntilByStore.set(store.code, Date.now() + L2_FAILURE_BACKOFF_MS);
-      console.warn(`[orders-dataset L1 stale] ${store.code}: serving after L2 failure`);
-      return cached.data;
-    }
-
-    if (decision === "unavailable") {
-      l2FailureUntilByStore.set(store.code, Date.now() + L2_FAILURE_BACKOFF_MS);
-      throw new OrdersDatasetUnavailableError();
-    }
-
-    // Solo un miss confirmado inicia el primer build. La escritura L2 es best
-    // effort: el usuario recibe el dataset aunque Supabase falle al guardarlo.
-    const data = await withTimeout(
-      buildDataset(store),
-      DATASET_BUILD_TIMEOUT_MS,
-      `orders-dataset build ${store.code}`
-    );
-    datasetCache.set(store.code, { at: Date.now(), data });
-    const writeError = await writeDatasetCache(store, data);
-    if (writeError) {
-      console.warn(`[orders-dataset cold build] ${store.code}: cache write failed: ${writeError}`);
-    }
-    return data;
-  })();
-
-  inFlightLoads.set(store.code, load);
-  try {
-    return await load;
-  } finally {
-    // Se limpia siempre (exito o error) para que un fallo no deje pegada una
-    // promesa rechazada: el siguiente request reintenta desde cero.
-    inFlightLoads.delete(store.code);
+// Cold build: solo lo inicia un miss confirmado (sin filas de seccion NI fila
+// legacy). Repuebla L1 completo y escribe L2 best-effort: el usuario recibe el
+// dataset aunque Supabase falle al guardarlo. Los errores del build SI se
+// propagan (el caller responde 500 con mensaje amigable, como antes).
+async function coldBuild(store: FinanceStorePublic): Promise<void> {
+  const data = await withTimeout(
+    buildDataset(store),
+    DATASET_BUILD_TIMEOUT_MS,
+    `orders-dataset build ${store.code}`
+  );
+  setL1All(store, data);
+  const writeError = await writeDatasetCache(store, data);
+  if (writeError) {
+    console.warn(`[orders-dataset cold build] ${store.code}: cache write failed: ${writeError}`);
   }
 }
 
-// Reconstruye el dataset de una tienda y refresca ambas caches (L2 upsert + L1).
-// Es lo que llaman el cron (app/api/cron/finance-index) y las mutaciones para
-// mantener la cache fresca FUERA del path del request. Devuelve el numero de
-// filas ensambladas. Defensivo: si la escritura L2 falla, igual deja L1 al dia y
-// devuelve el conteo (no lanza por culpa de la cache).
+// Carga en L1 las secciones pedidas. Orden de fuentes: filas por seccion ->
+// fila legacy 'full' -> cold build. Nunca lanza por problemas de cache: ante
+// error registra el backoff por tienda y deja L1 como esta (el llamador sirve
+// stale L1 si tiene, o responde 503 protegido).
+async function loadMissingSections(
+  store: FinanceStorePublic,
+  sections: readonly DatasetSection[]
+): Promise<void> {
+  // 1) Filas por seccion (el formato vigente post-0021).
+  const fromSections = await readL2Sections(store, sections);
+  if (fromSections.status === "hit") {
+    const bySection = new Map(fromSections.rows.map((row) => [row.section, row]));
+    if (sections.every((s) => bySection.has(s))) {
+      l2FailureUntilByStore.delete(store.code);
+      let anyStale = false;
+      for (const s of sections) {
+        const row = bySection.get(s)!;
+        if (isStaleRow(row)) anyStale = true;
+        setL1(store, s, deserializeSection(s, decodeCachePayload<unknown>(row.payload)) as OrdersDataset[DatasetSection]);
+      }
+      // Serve-stale: aunque la fila este vencida, la servimos igual. No lanzamos
+      // refresh pesado desde requests de usuario; en serverless eso multiplica
+      // rebuilds por instancia y puede saturar Supabase durante degradaciones.
+      if (anyStale) {
+        console.warn(`[orders-dataset L2 stale] ${store.code}: serving stale cache`);
+      }
+      return;
+    }
+    // Faltan filas de seccion (p. ej. el primer build post-0021 aun no corre):
+    // sigue el fallback legacy / cold build.
+  }
+
+  // 2) Fila legacy 'full' (transicion y compatibilidad pre-0021).
+  const legacy = await readL2LegacyFull(store);
+  const status: DatasetCacheReadStatus =
+    legacy.status === "hit" ? "hit" : legacy.status === "miss" ? "miss" : "error";
+  const hasL1 = sections.every((s) => datasetCache.has(l1Key(store, s)));
+  const decision = decideDatasetLoad(status, hasL1);
+
+  if (decision === "use-l2" && legacy.status === "hit") {
+    l2FailureUntilByStore.delete(store.code);
+    const full = deserializeFullDataset(
+      decodeCachePayload<SerializedFullDataset>(
+        legacy.rows[0].payload as { gz?: string } | SerializedFullDataset
+      )
+    );
+    setL1All(store, full);
+    if (isStaleRow(legacy.rows[0])) {
+      console.warn(`[orders-dataset L2 stale] ${store.code}: serving legacy stale cache`);
+    }
+    return;
+  }
+
+  if (decision === "use-stale-l1") {
+    l2FailureUntilByStore.set(store.code, Date.now() + L2_FAILURE_BACKOFF_MS);
+    console.warn(`[orders-dataset L1 stale] ${store.code}: serving after L2 failure`);
+    return;
+  }
+
+  if (decision === "unavailable") {
+    l2FailureUntilByStore.set(store.code, Date.now() + L2_FAILURE_BACKOFF_MS);
+    return;
+  }
+
+  // 3) Miss confirmado -> cold build.
+  await coldBuild(store);
+}
+
+// Devuelve las secciones pedidas del dataset, con cache de dos niveles POR
+// SECCION:
+//   L1 (memoria, ~60s, clave store:section): hit fresco -> sin tocar Postgres.
+//   L2 (Postgres, ~60min): una fila por (store_id, section); se leen solo las
+//      secciones pedidas en una sola query (orders/ baja ~1.6MB gzip en vez de
+//      los ~8MB del payload completo).
+//   Fallback: fila legacy 'full' (pre-0021) -> cold build solo tras miss real.
+// Single-flight por tienda: al abrir el dashboard varias rutas piden secciones
+// a la vez; con una unica carga en vuelo por tienda, la primera trabaja y el
+// resto espera el mismo resultado (ver comentario mas arriba).
+export async function getOrdersDataset<S extends DatasetSection>(
+  store: FinanceStorePublic,
+  sections: readonly S[]
+): Promise<Pick<OrdersDataset, S>> {
+  const missingFresh = () => sections.filter((s) => !getFreshL1(store, s));
+
+  if (missingFresh().length === 0) {
+    return assembleFromL1(store, sections);
+  }
+
+  // Fail-fast durante una caida de Supabase: solo si alguna seccion no tiene
+  // NADA en L1 (ni vencido) que servir.
+  const failureUntil = l2FailureUntilByStore.get(store.code) ?? 0;
+  const withoutAnyL1 = () => sections.filter((s) => !datasetCache.has(l1Key(store, s)));
+  if (failureUntil > Date.now() && withoutAnyL1().length > 0) {
+    throw new OrdersDatasetUnavailableError();
+  }
+
+  for (let attempt = 0; attempt < 2 && missingFresh().length > 0; attempt++) {
+    const inFlight = inFlightLoads.get(store.code);
+    if (inFlight) {
+      // Otra carga en vuelo (p. ej. de una ruta hermana): se espera y se
+      // re-evalua L1; si aun faltan secciones, el siguiente intento carga.
+      await inFlight.catch(() => undefined);
+      continue;
+    }
+    const load = loadMissingSections(store, missingFresh());
+    inFlightLoads.set(store.code, load);
+    try {
+      await load;
+    } finally {
+      // Se limpia siempre (exito o error) para que un fallo no deje pegada una
+      // promesa rechazada: el siguiente request reintenta desde cero.
+      inFlightLoads.delete(store.code);
+    }
+  }
+
+  // Tras la carga: si alguna seccion sigue sin NADA en L1, la cache fallo ->
+  // 503 protegido (mismo contrato que antes).
+  if (withoutAnyL1().length > 0) {
+    throw new OrdersDatasetUnavailableError();
+  }
+  return assembleFromL1(store, sections);
+}
+
+// Reconstruye el dataset de una tienda y refresca ambas caches (L2 upsert por
+// seccion + L1). Es lo que llaman el cron (app/api/cron/finance-index) y las
+// mutaciones para mantener la cache fresca FUERA del path del request.
+// Devuelve el numero de filas ensambladas. Defensivo: si la escritura L2 falla,
+// igual deja L1 al dia y devuelve el conteo (no lanza por culpa de la cache).
 export async function refreshFinanceDatasetCache(store: FinanceStorePublic): Promise<number> {
   const data = await withTimeout(
     buildDataset(store),
     DATASET_BUILD_TIMEOUT_MS,
     `orders-dataset refresh ${store.code}`
   );
-  datasetCache.set(store.code, { at: Date.now(), data });
+  setL1All(store, data);
   const writeError = await writeDatasetCache(store, data);
   if (writeError) {
     // El cron (y el precalentado manual) reportan este error en vez de fallar en

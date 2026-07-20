@@ -46,7 +46,11 @@ export async function GET(req: NextRequest) {
     // liquidationAlertRows y doubleSettlementAnomalies pre-computados con la misma
     // semantica que el cliente.
     const { matchedSettlementRows, liquidationAlertRows, doubleSettlementAnomalies } =
-      await getOrdersDataset(store);
+      await getOrdersDataset(store, [
+        "matchedSettlementRows",
+        "liquidationAlertRows",
+        "doubleSettlementAnomalies",
+      ]);
 
     const data: SettlementsViewPayload = {
       rows: matchedSettlementRows,
