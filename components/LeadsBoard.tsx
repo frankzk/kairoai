@@ -339,10 +339,6 @@ export default function LeadsBoard() {
           lead={drawerLead}
           store={store}
           onClose={() => setDrawerLead(null)}
-          onCreated={() => {
-            setDrawerLead(null);
-            load();
-          }}
           onRefresh={load}
         />
       )}
@@ -416,13 +412,11 @@ function LeadDrawer({
   lead,
   store,
   onClose,
-  onCreated,
   onRefresh,
 }: {
   lead: LeadRow;
   store: string;
   onClose: () => void;
-  onCreated: (orderName: string) => void;
   onRefresh: () => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -529,9 +523,9 @@ function LeadDrawer({
               <CreateOrderPanel
                 lead={{ id: lead.id, name: lead.name, phone: lead.phone }}
                 store={store}
-                onCreated={(orderName) => {
-                  setShowOrder(false);
-                  onCreated(orderName);
+                onCreated={() => {
+                  onRefresh();
+                  setHistoryKey((k) => k + 1);
                 }}
               />
             </div>

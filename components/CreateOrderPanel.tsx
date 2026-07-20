@@ -72,6 +72,7 @@ export default function CreateOrderPanel({
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createdOrder, setCreatedOrder] = useState<string | null>(null);
 
   // Asesoras + recordar la seleccionada.
   useEffect(() => {
@@ -192,6 +193,9 @@ export default function CreateOrderPanel({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error al crear el pedido");
+      // Confirmacion DENTRO del drawer: no cerramos, mostramos exito y
+      // refrescamos el tablero por detras.
+      setCreatedOrder(data.order_name);
       onCreated(data.order_name);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al crear el pedido");
@@ -199,6 +203,32 @@ export default function CreateOrderPanel({
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function resetForNew() {
+    setCreatedOrder(null);
+    setConfirming(false);
+    setLines([newLine()]);
+    setDiscountValue("");
+  }
+
+  if (createdOrder) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/15">
+          <CheckCircle2 className="h-8 w-8 text-emerald-400" />
+        </div>
+        <p className="text-lg font-semibold">Pedido creado</p>
+        <p className="text-sm text-muted-foreground">
+          Se generó el pedido <span className="font-medium text-foreground">{createdOrder}</span> en Shopify.
+          El lead pasó a <span className="font-medium text-foreground">Ganados</span>.
+        </p>
+        <Button variant="outline" className="mt-2" onClick={resetForNew}>
+          <Plus className="mr-2 h-4 w-4" /> Crear otro pedido
+        </Button>
+        <p className="text-xs text-muted-foreground/70">Cierra este panel con “Ocultar pedido” o la ✕ del drawer.</p>
+      </div>
+    );
   }
 
   return (
