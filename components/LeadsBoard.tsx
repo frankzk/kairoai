@@ -38,7 +38,7 @@ function PhoneWithCopy({ phone }: { phone: string }) {
   return (
     <span className="inline-flex items-center gap-1">
       <Phone className="h-3 w-3" />
-      <span className="tabular-nums">{formatPhone(phone)}</span>
+      <span className="whitespace-nowrap tabular-nums">{formatPhone(phone)}</span>
       <button
         type="button"
         onClick={copy}
@@ -286,9 +286,6 @@ function LeadCard({ lead, onOpen }: { lead: LeadRow; onOpen: () => void }) {
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
             <PhoneWithCopy phone={lead.phone} />
-            {lead.last_message_text && (
-              <span className="truncate">· {lead.last_message_text}</span>
-            )}
           </div>
           {lead.auto_reason && (
             <p className="mt-0.5 truncate text-xs text-muted-foreground/70">{lead.auto_reason}</p>
