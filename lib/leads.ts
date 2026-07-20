@@ -364,6 +364,42 @@ export async function applyDisposition(opts: {
   return { status: opts.status, category };
 }
 
+/**
+ * Marca un lead como ganado detectado por el sistema (p.ej. el transcript
+ * evidencia un pedido ya confirmado). NO toca leads con estado manual.
+ */
+export async function markLeadWonAuto(
+  storeId: number,
+  leadId: number,
+  reason: string
+): Promise<boolean> {
+  const { data, error } = await getDB()
+    .from("leads")
+    .update({
+      category: "won",
+      status: "pedido_en_curso",
+      has_order: true,
+      auto_reason: reason,
+    })
+    .eq("store_id", storeId)
+    .eq("id", leadId)
+    .neq("status_source", "manual")
+    .select("id");
+  if (error) throw new Error(`markLeadWonAuto: ${error.message}`);
+  const changed = (data ?? []).length > 0;
+  if (changed) {
+    await insertLeadCall({
+      lead_id: leadId,
+      store_id: storeId,
+      vendedora: null,
+      kind: "system",
+      new_status: "pedido_en_curso",
+      note: reason,
+    });
+  }
+  return changed;
+}
+
 // ─── Historial de gestiones de un lead (timeline del drawer) ─────────────────
 export interface LeadHistoryRow {
   id: number;
