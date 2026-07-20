@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(cached.data);
     }
 
-    const { shopifyOrders } = await getOrdersDataset(store);
+    const { shopifyOrders } = await getOrdersDataset(store, ["shopifyOrders"]);
     const data: NotesPayload = {
       rows: buildShopifyNoteAliasRows(shopifyOrders),
       shopifyOrderCount: shopifyOrders.length,

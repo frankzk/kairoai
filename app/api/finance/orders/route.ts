@@ -213,7 +213,10 @@ export async function GET(req: NextRequest) {
   const includeMetadata = params.get("metadata") === "1";
 
   try {
-    const { rows, settlementTraceByKey }: OrdersDataset = await getOrdersDataset(store);
+    const { rows, settlementTraceByKey } = await getOrdersDataset(store, [
+      "rows",
+      "settlementTraceByKey",
+    ]);
     const now = new Date();
 
     // 1) Periodo (Vista actual). Se cuenta aparte para la etiqueta "Vista actual".
