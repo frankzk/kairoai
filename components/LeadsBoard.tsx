@@ -5,7 +5,8 @@ import { ArrowLeft, Check, Copy, MessageSquare, Phone, RefreshCw, ShoppingCart, 
 import CreateOrderPanel from "@/components/CreateOrderPanel";
 import GestionBar from "@/components/GestionBar";
 import ProductivityPanel from "@/components/ProductivityPanel";
-import { BarChart3 } from "lucide-react";
+import LeadHistory from "@/components/LeadHistory";
+import { BarChart3, CalendarClock } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -83,6 +84,8 @@ interface LeadRow {
   unread_count: number;
   chatbot_disabled: boolean;
   last_interaction_at: string | null;
+  next_followup_at: string | null;
+  needs_attention: boolean;
   crm_conversation_id: string | null;
 }
 
@@ -105,7 +108,7 @@ export default function LeadsBoard() {
   const [store, setStore] = useSelectedStore();
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [counts, setCounts] = useState<BoardCounts | null>(null);
-  const [activeStage, setActiveStage] = useState<BoardStage>("por_cerrar");
+  const [activeStage, setActiveStage] = useState<BoardStage | "agenda">("por_cerrar");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -159,18 +162,34 @@ export default function LeadsBoard() {
     [store, load]
   );
 
+  const matchesSearch = useCallback(
+    (l: LeadRow, q: string) =>
+      q
+        ? (l.name ?? "").toLowerCase().includes(q) ||
+          l.phone.includes(q) ||
+          (l.last_message_text ?? "").toLowerCase().includes(q)
+        : true,
+    []
+  );
+
   const visibleLeads = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return leads
-      .filter((l) => l.board_stage === activeStage)
-      .filter((l) =>
-        q
-          ? (l.name ?? "").toLowerCase().includes(q) ||
-            l.phone.includes(q) ||
-            (l.last_message_text ?? "").toLowerCase().includes(q)
-          : true
-      );
-  }, [leads, activeStage, search]);
+    if (activeStage === "agenda") {
+      return leads
+        .filter((l) => l.next_followup_at != null)
+        .filter((l) => matchesSearch(l, q))
+        .sort((a, b) => (a.next_followup_at ?? "").localeCompare(b.next_followup_at ?? ""));
+    }
+    return leads.filter((l) => l.board_stage === activeStage).filter((l) => matchesSearch(l, q));
+  }, [leads, activeStage, search, matchesSearch]);
+
+  // Agenda: seguimientos programados y cuantos ya vencieron.
+  const agenda = useMemo(() => {
+    const now = Date.now();
+    const scheduled = leads.filter((l) => l.next_followup_at != null);
+    const due = scheduled.filter((l) => new Date(l.next_followup_at as string).getTime() <= now).length;
+    return { total: scheduled.length, due };
+  }, [leads]);
 
   const views = showHidden ? BOARD_VIEWS : BOARD_VIEWS.filter((v) => !v.hiddenByDefault);
 
@@ -231,6 +250,30 @@ export default function LeadsBoard() {
 
         {/* Pestañas por bucket */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setActiveStage("agenda")}
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
+              activeStage === "agenda"
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-card hover:bg-accent"
+            }`}
+            title="Seguimientos programados (volver a llamar)"
+          >
+            <CalendarClock className="h-4 w-4" />
+            <span>Agenda</span>
+            {agenda.due > 0 && (
+              <span className="rounded-full bg-destructive px-1.5 text-xs text-destructive-foreground">
+                {agenda.due} hoy
+              </span>
+            )}
+            <span
+              className={`rounded-full px-1.5 text-xs ${
+                activeStage === "agenda" ? "bg-primary-foreground/20" : "bg-muted"
+              }`}
+            >
+              {agenda.total}
+            </span>
+          </button>
           {views.map((v) => {
             const meta = STAGE_META[v.key];
             const count = counts?.byStage[v.key] ?? 0;
@@ -307,6 +350,29 @@ export default function LeadsBoard() {
   );
 }
 
+function FollowupBadge({ iso }: { iso: string }) {
+  const overdue = new Date(iso).getTime() <= Date.now();
+  const when = (() => {
+    try {
+      return new Date(iso).toLocaleString("es-CR", {
+        timeZone: "America/Costa_Rica",
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return iso;
+    }
+  })();
+  return (
+    <Badge variant={overdue ? "destructive" : "warning"} className="shrink-0 gap-1">
+      <CalendarClock className="h-3 w-3" />
+      {overdue ? "Seguir hoy" : "Seguir"} · {when}
+    </Badge>
+  );
+}
+
 function LeadCard({ lead, onOpen }: { lead: LeadRow; onOpen: () => void }) {
   const meta = STAGE_META[lead.board_stage];
   return (
@@ -328,6 +394,7 @@ function LeadCard({ lead, onOpen }: { lead: LeadRow; onOpen: () => void }) {
                 {lead.unread_count} sin leer
               </Badge>
             )}
+            {lead.next_followup_at && <FollowupBadge iso={lead.next_followup_at} />}
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
             <PhoneWithCopy phone={lead.phone} />
@@ -362,6 +429,7 @@ function LeadDrawer({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showOrder, setShowOrder] = useState(false);
+  const [historyKey, setHistoryKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -420,6 +488,7 @@ function LeadDrawer({
                 ))}
               </div>
             )}
+            <LeadHistory leadId={lead.id} store={store} refreshKey={historyKey} />
             <div className="flex-1 space-y-2 overflow-y-auto p-4">
               {loading ? (
                 <p className="text-center text-sm text-muted-foreground">Cargando chat...</p>
@@ -445,7 +514,14 @@ function LeadDrawer({
                 ))
               )}
             </div>
-            <GestionBar leadId={lead.id} store={store} onDone={() => onRefresh()} />
+            <GestionBar
+              leadId={lead.id}
+              store={store}
+              onDone={() => {
+                onRefresh();
+                setHistoryKey((k) => k + 1);
+              }}
+            />
           </div>
 
           {showOrder && (

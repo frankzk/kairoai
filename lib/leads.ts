@@ -158,7 +158,13 @@ export async function listLeads(opts: ListLeadsOptions): Promise<LeadRecord[]> {
       .eq("store_id", opts.storeId)
       .order("last_interaction_at", { ascending: false, nullsFirst: false })
       .range(from, Math.min(from + pageSize, limit) - 1);
-    if (opts.sinceIso) query = query.gte("last_interaction_at", opts.sinceIso);
+    // Oculta los muy antiguos, PERO conserva los que tienen seguimiento
+    // programado o estan marcados para atencion (no se pueden perder).
+    if (opts.sinceIso) {
+      query = query.or(
+        `last_interaction_at.gte.${opts.sinceIso},next_followup_at.not.is.null,needs_attention.is.true`
+      );
+    }
     const { data, error } = await query;
     if (error) throw new Error(`listLeads: ${error.message}`);
     const page = (data ?? []) as LeadRecord[];
@@ -356,6 +362,51 @@ export async function applyDisposition(opts: {
     next_followup_at: opts.nextFollowupAt ?? null,
   });
   return { status: opts.status, category };
+}
+
+// ─── Historial de gestiones de un lead (timeline del drawer) ─────────────────
+export interface LeadHistoryRow {
+  id: number;
+  kind: string;
+  new_status: string | null;
+  note: string | null;
+  vendedora_name: string | null;
+  occurred_at: string;
+}
+
+export async function getLeadHistory(storeId: number, leadId: number): Promise<LeadHistoryRow[]> {
+  const { data, error } = await getDB()
+    .from("lead_calls")
+    .select("id,kind,new_status,note,vendedora,occurred_at")
+    .eq("store_id", storeId)
+    .eq("lead_id", leadId)
+    .order("occurred_at", { ascending: false })
+    .limit(200);
+  if (error) throw new Error(`getLeadHistory: ${error.message}`);
+  const rows = (data ?? []) as Array<{
+    id: number;
+    kind: string;
+    new_status: string | null;
+    note: string | null;
+    vendedora: number | null;
+    occurred_at: string;
+  }>;
+
+  const ids = Array.from(new Set(rows.map((r) => r.vendedora).filter((v): v is number => v != null)));
+  const names = new Map<number, string>();
+  if (ids.length) {
+    const { data: staff } = await getDB().from("payroll_staff").select("id,name").in("id", ids);
+    for (const s of (staff ?? []) as Array<{ id: number; name: string }>) names.set(s.id, s.name);
+  }
+
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    new_status: r.new_status,
+    note: r.note,
+    vendedora_name: r.vendedora != null ? names.get(r.vendedora) ?? null : null,
+    occurred_at: r.occurred_at,
+  }));
 }
 
 // ─── Cursores de sincronizacion ──────────────────────────────────────────────
