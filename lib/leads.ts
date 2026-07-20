@@ -185,6 +185,75 @@ export function countByStage(leads: LeadRecord[]): LeadBoardCounts {
   return { total: leads.length, byStage };
 }
 
+export async function getLead(storeId: number, leadId: number): Promise<LeadRecord | null> {
+  const { data, error } = await getDB()
+    .from("leads")
+    .select("*")
+    .eq("store_id", storeId)
+    .eq("id", leadId)
+    .maybeSingle();
+  if (error) throw new Error(`getLead: ${error.message}`);
+  return (data as LeadRecord) ?? null;
+}
+
+/** Registra una gestion en el historial (auditoria + productividad). */
+export async function insertLeadCall(row: {
+  lead_id: number;
+  store_id: number;
+  vendedora: number | null;
+  kind: string;
+  new_status?: string | null;
+  note?: string | null;
+  next_followup_at?: string | null;
+}): Promise<void> {
+  const { error } = await getDB().from("lead_calls").insert({
+    lead_id: row.lead_id,
+    store_id: row.store_id,
+    vendedora: row.vendedora,
+    kind: row.kind,
+    new_status: row.new_status ?? null,
+    note: row.note ?? null,
+    next_followup_at: row.next_followup_at ?? null,
+  });
+  if (error) throw new Error(`insertLeadCall: ${error.message}`);
+}
+
+/**
+ * Marca un lead como ganado porque la asesora creo el pedido en Shopify desde
+ * el drawer. status_source='manual' para que la ingesta no lo revierta, y
+ * closed_by = asesora (esto define la ventana "Cerrados por la asesora").
+ */
+export async function markLeadWonByAdvisor(opts: {
+  storeId: number;
+  leadId: number;
+  vendedora: number;
+  shopifyOrderName: string;
+  note?: string;
+}): Promise<void> {
+  const { error } = await getDB()
+    .from("leads")
+    .update({
+      category: "won",
+      status: "pedido_generado",
+      status_source: "manual",
+      auto_reason: opts.note ?? "pedido creado por la asesora en Shopify",
+      has_order: true,
+      shopify_order_name: opts.shopifyOrderName,
+      closed_by: opts.vendedora,
+    })
+    .eq("store_id", opts.storeId)
+    .eq("id", opts.leadId);
+  if (error) throw new Error(`markLeadWonByAdvisor: ${error.message}`);
+  await insertLeadCall({
+    lead_id: opts.leadId,
+    store_id: opts.storeId,
+    vendedora: opts.vendedora,
+    kind: "sale",
+    new_status: "pedido_generado",
+    note: `Pedido ${opts.shopifyOrderName} creado desde el tablero de Leads`,
+  });
+}
+
 // ─── Cursores de sincronizacion ──────────────────────────────────────────────
 export async function getSyncCursor(sourceKey: string): Promise<{ cursor: string | null; watermark: string | null }> {
   const { data, error } = await getDB()

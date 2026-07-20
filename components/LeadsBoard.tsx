@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Check, Copy, MessageSquare, Phone, RefreshCw, X } from "lucide-react";
+import { ArrowLeft, Check, Copy, MessageSquare, Phone, RefreshCw, ShoppingCart, X } from "lucide-react";
+import CreateOrderModal from "@/components/CreateOrderModal";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -256,7 +257,15 @@ export default function LeadsBoard() {
       </main>
 
       {drawerLead && (
-        <LeadDrawer lead={drawerLead} store={store} onClose={() => setDrawerLead(null)} />
+        <LeadDrawer
+          lead={drawerLead}
+          store={store}
+          onClose={() => setDrawerLead(null)}
+          onCreated={() => {
+            setDrawerLead(null);
+            load();
+          }}
+        />
       )}
     </div>
   );
@@ -304,14 +313,17 @@ function LeadDrawer({
   lead,
   store,
   onClose,
+  onCreated,
 }: {
   lead: LeadRow;
   store: string;
   onClose: () => void;
+  onCreated: (orderName: string) => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showOrder, setShowOrder] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -347,6 +359,10 @@ function LeadDrawer({
               <PhoneWithCopy phone={lead.phone} />
             </div>
           </div>
+          <Button size="sm" onClick={() => setShowOrder(true)}>
+            <ShoppingCart className="mr-2 h-4 w-4" />
+            Crear pedido
+          </Button>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X className="h-5 w-5" />
           </button>
@@ -388,6 +404,18 @@ function LeadDrawer({
           )}
         </div>
       </div>
+
+      {showOrder && (
+        <CreateOrderModal
+          lead={{ id: lead.id, name: lead.name, phone: lead.phone }}
+          store={store}
+          onClose={() => setShowOrder(false)}
+          onCreated={(orderName) => {
+            setShowOrder(false);
+            onCreated(orderName);
+          }}
+        />
+      )}
     </div>
   );
 }
