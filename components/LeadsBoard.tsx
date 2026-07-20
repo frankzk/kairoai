@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Check, Copy, MessageSquare, Phone, RefreshCw, ShoppingCart, X } from "lucide-react";
 import CreateOrderPanel from "@/components/CreateOrderPanel";
 import GestionBar from "@/components/GestionBar";
@@ -462,6 +462,14 @@ function LeadDrawer({
   const [error, setError] = useState<string | null>(null);
   const [showOrder, setShowOrder] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  // Al cargar el chat, mostrar el ULTIMO mensaje (scroll al fondo, como WhatsApp).
+  useEffect(() => {
+    if (!loading && chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [loading, messages]);
 
   useEffect(() => {
     let alive = true;
@@ -521,7 +529,7 @@ function LeadDrawer({
               </div>
             )}
             <LeadHistory leadId={lead.id} store={store} refreshKey={historyKey} />
-            <div className="flex-1 space-y-2 overflow-y-auto p-4">
+            <div ref={chatScrollRef} className="flex-1 space-y-2 overflow-y-auto p-4">
               {loading ? (
                 <p className="text-center text-sm text-muted-foreground">Cargando chat...</p>
               ) : error ? (
