@@ -17,6 +17,7 @@ import {
   type BoardStage,
 } from "./leads-classify";
 import {
+  getSyncCursor,
   listLeads,
   loadLeadSnapshots,
   loadStoreOrderPhones,
@@ -205,14 +206,21 @@ export interface ReclassifyResult {
   store: FinanceStoreCode | string;
   checked: number;
   moved_to_won: number;
-  has_more: boolean;
+  pending: number; // leads del bucket que faltan por revisar en esta vuelta
 }
 
+const RECLASSIFY_DEFAULT_BATCH = 100;
+const RECLASSIFY_MAX_BATCH = 300;
+
 /**
- * Barrido fino sobre un bucket (por defecto "por_cerrar"): baja el transcript
- * de cada lead auto sin orden y, si el chat evidencia un pedido ya confirmado
- * (guia/enviado/"ya confirmamos tu pedido"...), lo mueve a Ganados. Respeta los
- * estados manuales. Bounded por maxLeads para no exceder el tiempo del request.
+ * Barrido fino por LOTES sobre un bucket (por defecto "por_cerrar"): baja el
+ * transcript de un lote de leads auto sin orden y mueve a Ganados los que ya
+ * son pedido confirmado (guia/enviado/"ya confirmamos tu pedido"...). Respeta
+ * los estados manuales.
+ *
+ * Usa un cursor por tienda (ultimo lead id revisado) en lead_sync_state para
+ * avanzar entre corridas sin re-checar los mismos; al llegar al final vuelve al
+ * inicio (re-escanea periodicamente por si un lead se volvio pedido despues).
  */
 export async function reclassifyStage(opts: {
   store?: FinanceStoreCode | string;
@@ -228,15 +236,25 @@ export async function reclassifyStage(opts: {
   });
   const storeId = store.id;
   const stage = opts.stage ?? "por_cerrar";
-  const maxLeads = Math.min(Math.max(opts.maxLeads ?? 600, 1), 3000);
+  const batch = Math.min(Math.max(opts.maxLeads ?? RECLASSIFY_DEFAULT_BATCH, 1), RECLASSIFY_MAX_BATCH);
+  const cursorKey = `reclassify:${storeId}`;
 
   const leads = await listLeads({ storeId, stage });
   const candidates = leads
     .filter((l) => l.status_source !== "manual" && !l.has_order && l.crm_conversation_id)
-    .slice(0, maxLeads);
+    .sort((a, b) => a.id - b.id);
+
+  if (candidates.length === 0) {
+    return { store: store.code, checked: 0, moved_to_won: 0, pending: 0 };
+  }
+
+  const { cursor } = await getSyncCursor(cursorKey);
+  const lastId = cursor ? Number(cursor) : 0;
+  let slice = candidates.filter((l) => l.id > lastId).slice(0, batch);
+  if (slice.length === 0) slice = candidates.slice(0, batch); // vuelta completa: reinicia
 
   let moved = 0;
-  for (const lead of candidates) {
+  for (const lead of slice) {
     const msgs = await fetchConversationTranscript(
       lead.crm_conversation_id as string,
       externalStoreId
@@ -247,10 +265,12 @@ export async function reclassifyStage(opts: {
     }
   }
 
-  return {
-    store: store.code,
-    checked: candidates.length,
-    moved_to_won: moved,
-    has_more: leads.filter((l) => l.status_source !== "manual" && !l.has_order).length > maxLeads,
-  };
+  // Avanza el cursor; si llegamos al ultimo candidato, reinicia a 0.
+  const lastCandidateId = candidates[candidates.length - 1].id;
+  const lastScannedId = slice[slice.length - 1].id;
+  const reachedEnd = lastScannedId >= lastCandidateId;
+  await setSyncCursor(cursorKey, { cursor: reachedEnd ? "0" : String(lastScannedId) });
+
+  const pending = candidates.filter((l) => l.id > lastScannedId).length;
+  return { store: store.code, checked: slice.length, moved_to_won: moved, pending };
 }

@@ -181,12 +181,18 @@ export default function LeadsBoard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ store, reclassify: true }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Error al afinar");
+      const text = await res.text();
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error("El servidor tardó demasiado. El cron sigue afinando automáticamente.");
+      }
+      if (!res.ok) throw new Error((data.error as string) || "Error al afinar");
       await load();
       setError(
-        `Afinado: ${data.moved_to_won ?? 0} de ${data.checked ?? 0} en "Por cerrar" eran pedidos y pasaron a Ganados.` +
-          (data.has_more ? " (quedan más; corre de nuevo para seguir)" : "")
+        `Afinado un lote: ${data.moved_to_won ?? 0} de ${data.checked ?? 0} revisados eran pedidos y pasaron a Ganados. ` +
+          `Faltan ~${data.pending ?? 0}. El cron sigue afinando solo cada 10 min.`
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al afinar");

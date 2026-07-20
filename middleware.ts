@@ -18,6 +18,7 @@ const PUBLIC_PATHS = [
   "/api/cron/incidencias",
   "/api/cron/icomfly",
   "/api/cron/leads",
+  "/api/cron/leads-reclassify",
 ];
 
 function isPublicPath(pathname: string): boolean {
