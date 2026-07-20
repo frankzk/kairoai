@@ -792,6 +792,7 @@ Build in this order:
   `raw_order` by using real `note`/`note_attributes`/`line_items` columns.
 
 ### Finance/logistics features
+- **Comparativo por periodo y paqueteria**: la tarjeta `Entrega por paqueteria` y su detalle usan exactamente la misma cohorte temporal seleccionada en los KPIs (`Hoy`, `Ayer`, `7 dias`, `30 dias`, `Mes`, `Todo` o `Rango`). El filtro se aplica sobre `shopify_created_at` con limite superior exclusivo; Shopify sigue siendo la fuente unica y las filas logisticas solo enriquecen guia, transportadora y estado.
 - **En ruta** tracking status: an order with a Boxful guide/courier is "En ruta"
   (dispatched, in transit), distinct from "Pendiente" (confirmed, not shipped).
   Aggregations treat en_route as pending-like via `isPendingLike`.
@@ -837,6 +838,46 @@ Build in this order:
   mismatches (Moovin delivered but unrecorded, returned not reflected, unresolved
   incident, system-delivered while Moovin not confirmed) as a clickable alert +
   modal in Pedidos.
+
+### WYN courier tracking (`lib/wyn.ts`)
+- Mireva Costa Rica puede usar Moovin y WYN simultaneamente. La transportadora se
+  resuelve por la guia: cualquier guia `MLCR...` pertenece a WYN, incluso si Shopify
+  conserva una etiqueta antigua de Moovin. Shopify sigue siendo la unica fuente de
+  pedidos; WYN solo enriquece guia, estado e historial.
+- `GET /api/finance/wyn-tracking?store=mireva-cr&guide=MLCR...` consulta el endpoint
+  publico `POST https://wynexpress.com/api/tracking`, normaliza el historial y guarda
+  cache por `(store_id, courier_code, guide_number)` en `courier_shipments`, con
+  `courier_code=wyn`. La ruta rechaza Honduras y guias que no sean WYN para impedir
+  cruces entre tiendas o couriers.
+- Estados: `Devuelto`/`returned` se clasifica como `No entregado`; `Entregado` como
+  `Entregado`; llegada, transito, ultima milla o retiro como `En ruta`; fallos e
+  incidencias permanecen visibles. La palabra "entregado" dentro de "entregado en
+  direccion de retorno" nunca debe sobreescribir la devolucion.
+- Las guias WYN se excluyen explicitamente del lote masivo de Moovin. En Pedidos, el
+  boton de estado y el modal cambian a WYN, muestran el ultimo estado, el historial y
+  un enlace al rastreo oficial.
+- El historial de eventos queda dentro de `raw_payload` y la vista operativa lee el
+  mismo registro comun de transportadoras. No requiere una tabla WYN separada.
+
+### Comparativo por periodo y paqueteria
+
+- En Mireva Costa Rica, la tarjeta superior que antes mostraba un lead time sin
+  muestras ahora resume la efectividad de entrega de **WYN / MailAmericas** y
+  **Moovin**. Al abrirla muestra la comparacion completa por estados Kairo.
+- El reporte usa la misma cohorte Shopify elegida en los KPIs superiores: `Hoy`,
+  `Ayer`, `7 dias`, `30 dias`, `Mes`, `Todo` o las fechas de `Rango`. Shopify es
+  la unica fuente de pedidos: las filas logisticas solo agregan guia, paqueteria y
+  estado. Una fila WYN/Boxful sin pedido Shopify asociado no aumenta ningun conteo.
+- Cada pedido se deduplica por codigo Shopify. `Despachados` significa pedidos de
+  la cohorte con guia identificada para esa paqueteria. `Efectividad` se calcula
+  como `Entregados / Despachados`, no como entregados entre casos finalizados.
+- Los estados se muestran normalizados al flujo Kairo: Pendiente, Despacho
+  solicitado, Recolectado, En ruta, Reintento, incidencias solucionables/no
+  solucionables, Anulado, Entregado y No entregado.
+- Una guia con transportadora desconocida queda en el contador de auditoria
+  `Guias sin paqueteria identificada`; nunca se asigna por aproximacion.
+- El calculo se incorpora a `GET /api/finance/kpis` y reutiliza el dataset operativo
+  ya cargado. No crea una lectura historica adicional de Supabase.
 
 ### iComfly Estado de Despacho (lib/icomfly.ts, lib/dispatch.ts, migration 0010)
 Supervisa el despacho de pedidos COD en dos momentos atribuibles a personas:
@@ -888,3 +929,76 @@ At the time of writing these were not yet confirmed applied in production — ch
 - How should inventory loss be handled for not-delivered orders?
 - Are numeric-only settlement orders from another store/source?
 - Should weekly settlements map to a calendar week, a custom date range, or both?
+
+## Incident 2026-07-18: 504 on finance orders
+
+### Symptom
+
+- Vercel reported a high-severity increase in 504 responses for
+  `/api/finance/orders` while Supabase was timing out.
+- The Orders screen could remain loading, show a partial history, or temporarily
+  drop to zero rows.
+
+### Root cause
+
+- The first Orders render made three concurrent requests for the same assembled
+  historical dataset: table rows, operational counts, and courier guides.
+- A failed read of `finance_dataset_cache` was indistinguishable from a confirmed
+  cache miss. Every request therefore attempted to rebuild the complete history.
+- Single-flight protected one warm Vercel process only; parallel cold instances
+  could still rebuild the same store at the same time.
+
+### Fix and invariants
+
+- The first Orders request now returns the first table page, operational counts,
+  settlement counts, and courier guides together with `metadata=1`.
+- KPI loading waits for the operational dataset instead of starting another
+  reconstruction at the same time.
+- Only a confirmed L2 cache miss may trigger a cold build.
+- A Supabase/L2 read failure serves the last L1 value when available. Without a
+  stale value it returns HTTP 503 with `Retry-After`, never a full rebuild.
+- L2 reads, writes, and cold builds have explicit time limits and a short failure
+  backoff. The browser preserves the last valid table after transient failures.
+
+### Runbook
+
+1. Check Vercel errors for `/api/finance/orders` and Supabase project health.
+2. Confirm `finance_dataset_cache` is readable for the affected `store_id`.
+3. Do not purge the cache while Supabase is degraded; stale operational data is
+   safer than forcing concurrent historical rebuilds.
+4. After recovery, use Refresh once and verify that the initial Orders request
+   includes `metadata=1` and returns HTTP 200.
+
+## WYN tracking sync (Costa Rica)
+
+- WYN is isolated to store `mireva-cr` (`store_id=1`) and guides beginning with
+  `MLCR`. Honduras and future stores are never included in this job.
+- `GET/POST /api/cron/wyn` reviews at most 12 uncached or stale guides per run,
+  sequentially and with a three-second pause between requests. Vercel schedules
+  it every 30 minutes; `CRON_SECRET` protects the endpoint when configured. This
+  pacing is intentional because WYN starts responding with HTTP 429 after bursts
+  of roughly 15 tracking requests.
+- Results are persisted in the shared `courier_shipments` registry by
+  `(store_id, courier_code, guide_number)`, always with `courier_code=wyn`. This
+  keeps WYN isolated from Moovin and from every other store without an extra table.
+- Terminal results are not requested again: `delivered`, `returned`,
+  `not_delivered`, and `cancelled`. Non-terminal results are eligible again after
+  three hours.
+- The provider result is authoritative. Only `delivered` becomes Kairo
+  `Entregado`. `Devuelto` and phrases such as `Entregado en direccion de retorno`
+  become `No entregado` and must never inflate delivery effectiveness.
+- If WYN returns an access-control or rate-limit response, the job stops
+  immediately and reports `blocked=true`; every successful result from that run
+  is still persisted, and no order status is guessed or changed.
+- The courier KPI/report uses the active UI period selector (`Hoy`, `Ayer`,
+  `7 dias`, `30 dias`, `Mes`, `Todo`, or `Rango`). The recurring sync only keeps
+  the underlying operational state current and does not impose a monthly period.
+- Audit 2026-07-18: 165 unique WYN guides were found in Costa Rica Shopify orders.
+  The first production sweep confirmed one effective delivery, two shipments in
+  route, eleven pending and one unclassified result before WYN rate-limited the
+  original burst configuration.
+- Paced production validation 2026-07-18: a second run checked 12 guides without
+  failures or provider blocking. The persistent WYN cache then contained 27 guides:
+  seven `delivered`, one `returned`, five `en_route`, eleven `pending`, and three
+  `unknown`. Guide `MLCR000131292SD` is the returned shipment and therefore remains
+  `No entregado`; it is not included in the seven effective deliveries.

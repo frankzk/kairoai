@@ -21,9 +21,12 @@ describe("courier adapters", () => {
     expect(normalizeForzaGuideGeneric("fd26827471")).toBe("FD26827471");
   });
 
-  it("expone adapters built-in para Moovin, Forza y Boxful", () => {
+  it("expone adapters built-in para Moovin, Forza, WYN y Boxful", () => {
     expect(getBuiltInCourierAdapter("moovin")?.supportsApiTracking).toBe(true);
     expect(getBuiltInCourierAdapter("forza")?.trackingUrl?.("123")).toContain("FD123");
+    expect(getBuiltInCourierAdapter("wyn")?.trackingUrl?.("mlcr000051603sd")).toContain(
+      "MLCR000051603SD"
+    );
     expect(getBuiltInCourierAdapter("boxful")?.supportsFileImport).toBe(true);
     expect(getBuiltInCourierAdapter("unknown")).toBeNull();
   });

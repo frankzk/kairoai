@@ -6,6 +6,10 @@
       "schedule": "0 8,12,16,20 * * *"
     },
     {
+      "path": "/api/cron/wyn",
+      "schedule": "20,50 * * * *"
+    },
+    {
       "path": "/api/cron/shopify-refresh",
       "schedule": "0 */3 * * *"
     },
@@ -39,6 +43,9 @@
       "maxDuration": 25
     },
     "app/api/cron/moovin/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/wyn/route.ts": {
       "maxDuration": 300
     },
     "app/api/cron/shopify-refresh/route.ts": {

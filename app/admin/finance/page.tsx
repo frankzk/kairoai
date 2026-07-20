@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import { normalizeSearchText } from "@/lib/order-matching";
 import {
+  type CourierKairoStatus,
+  type CourierPerformanceReport,
   type FinanceControlCenter,
   type FinancialAnomaly,
   type MonthlyCloseRow,
@@ -53,6 +55,12 @@ import type {
   SettlementImport,
   SettlementRow,
 } from "@/lib/finance-types";
+import {
+  buildWynTrackingUrl,
+  isWynGuide,
+  normalizeWynGuide,
+  type WynTrackingResult,
+} from "@/lib/wyn";
 import {
   FINANCE_STORES,
   getFinanceStore,
@@ -147,6 +155,8 @@ interface TrackableOrderRow {
   moovin_route_attempts?: number;
   forza_group?: string;
   forza_incidents?: number;
+  wyn_group?: string;
+  wyn_incidents?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -334,6 +344,15 @@ const EMPTY_SETTLEMENT_COUNTS: Record<OrderSettlementFilter, number> = {
   duplicate: 0,
 };
 
+interface OrdersOperationalMetadata {
+  trackingCounts: Record<OrderTrackingFilter, number>;
+  settlementCounts: Record<OrderSettlementFilter, number>;
+  enRouteGuides: {
+    moovin: Array<{ idPackage: string; lastName: string; fullName: string }>;
+    forza: Array<{ guide: string }>;
+  };
+}
+
 // Meses disponibles para el selector, derivados del rango de cobertura Shopify
 // (oldest..newest) en vez de recorrer el snapshot completo. Devuelve YYYY-MM
 // desc.
@@ -456,14 +475,15 @@ export default function FinancePage() {
   // /api/finance/kpis para no depender de cargar las ~11k filas en el navegador.
   const [kpiCards, setKpiCards] = useState<KpiCardVM[]>([]);
   const [kpiLoading, setKpiLoading] = useState(true);
-  // Carril 2 inc.2: la barra de Alertas se alimenta de conteos server-side
-  // (period=all) en vez del snapshot en memoria, que ya no se carga en el tab
-  // Pedidos. Pedimos /api/finance/orders con pageSize=1 (el dataset esta cacheado
-  // 30s en el server, asi que es barato) solo para leer tracking/settlement counts.
+  const [courierPerformance, setCourierPerformance] = useState<CourierPerformanceReport | null>(null);
+  const [courierReportOpen, setCourierReportOpen] = useState(false);
+  // La barra de alertas se actualiza con la metadata de la primera respuesta de
+  // Pedidos. Asi no abre otra lectura concurrente del historico operativo.
   const [alertCounts, setAlertCounts] = useState<{
     trackingCounts: Record<OrderTrackingFilter, number>;
     settlementCounts: Record<OrderSettlementFilter, number>;
   }>({ trackingCounts: EMPTY_TRACKING_COUNTS, settlementCounts: EMPTY_SETTLEMENT_COUNTS });
+  const [ordersDatasetReadyStore, setOrdersDatasetReadyStore] = useState<FinanceStoreCode | null>(null);
   // Carril 2 inc.2 (tabs restantes): Productos, Cierre mensual y Notas cargan
   // server-side. Cada uno trae sus filas ya calculadas desde su endpoint, asi que
   // estos tabs ya no dependen del snapshot pesado (~11k pedidos) en el navegador.
@@ -512,6 +532,24 @@ export default function FinancePage() {
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
+
+  const handleOrdersOperationalMetadata = useCallback(
+    (storeCode: FinanceStoreCode, metadata: OrdersOperationalMetadata) => {
+      if (storeCode !== selectedStoreCode) return;
+      setAlertCounts({
+        trackingCounts: metadata.trackingCounts ?? EMPTY_TRACKING_COUNTS,
+        settlementCounts: metadata.settlementCounts ?? EMPTY_SETTLEMENT_COUNTS,
+      });
+    },
+    [selectedStoreCode]
+  );
+
+  const handleOrdersDatasetReady = useCallback(
+    (storeCode: FinanceStoreCode) => {
+      if (storeCode === selectedStoreCode) setOrdersDatasetReadyStore(storeCode);
+    },
+    [selectedStoreCode]
+  );
 
   const latestLogisticsImport = logisticsImports[0];
   const claimByAnomalyKey = useMemo(
@@ -1101,10 +1139,8 @@ export default function FinancePage() {
     await refresh();
   }
 
-  // Carril 2 inc.2: la barra de Alertas ya NO se calcula sobre visibleOrderRows
-  // (que en el tab Pedidos queda vacio porque el snapshot pesado esta diferido).
-  // Sus conteos vienen del estado `alertCounts`, alimentado por el efecto
-  // server-side de mas abajo (/api/finance/orders?period=all).
+  // La barra de alertas usa los metadatos devueltos junto con la primera pagina
+  // de pedidos. Asi la vista operativa necesita una sola carga inicial.
 
   // La ventana (etiqueta de rango / comparativo / "tasas en maduracion") es
   // pura y barata: se calcula en cliente. Las tarjetas de KPIs vienen del
@@ -1117,14 +1153,24 @@ export default function FinancePage() {
     }),
     [kpiRange, kpiCustomStart, kpiCustomEnd, kpiCards]
   );
+  const operationalCountsLoading = ordersDatasetReadyStore !== selectedStoreCode;
 
   // Fetch de KPIs server-side: current + previous por tienda y periodo. Reemplaza
   // el calculo en memoria sobre visibleOrderRows (Carril 2 inc.2).
   useEffect(() => {
+    if (tab === "orders" && ordersDatasetReadyStore !== selectedStoreCode) {
+      setKpiCards([]);
+      setCourierPerformance(null);
+      setCourierReportOpen(false);
+      setKpiLoading(true);
+      return;
+    }
     // Rango custom incompleto: no consultamos hasta tener ambas fechas; las
     // tarjetas quedan en cero con la etiqueta "elegí desde y hasta".
     if (kpiRange === "custom" && (!kpiCustomStart || !kpiCustomEnd || kpiCustomStart > kpiCustomEnd)) {
       setKpiCards([]);
+      setCourierPerformance(null);
+      setCourierReportOpen(false);
       setKpiLoading(false);
       return;
     }
@@ -1147,44 +1193,21 @@ export default function FinancePage() {
         const previous = (json.previous as OpMetrics | null | undefined) ?? null;
         if (!current) throw new Error("Respuesta de KPIs invalida");
         setKpiCards(buildOperationalKpiCards(current, previous));
+        setCourierPerformance(
+          (json.courierPerformance as CourierPerformanceReport | null | undefined) ?? null
+        );
       } catch (err) {
         if (controller.signal.aborted) return;
         // No bloqueamos la pantalla por los KPIs; quedan vacios y la tabla sigue.
         setKpiCards([]);
+        setCourierPerformance(null);
+        setCourierReportOpen(false);
       } finally {
         if (!controller.signal.aborted) setKpiLoading(false);
       }
     })();
     return () => controller.abort();
-  }, [selectedStoreCode, kpiRange, kpiCustomStart, kpiCustomEnd]);
-
-  // Conteos para la barra de Alertas (Carril 2 inc.2). period=all para que las
-  // alertas reflejen todo el historico, no solo la ventana del selector. Una
-  // sola request barata (pageSize=1; el server cachea el dataset 30s) por tienda
-  // o cuando se actualiza. No reintroduce el snapshot pesado en el tab Pedidos.
-  useEffect(() => {
-    const controller = new AbortController();
-    (async () => {
-      try {
-        const res = await fetch(
-          withStore("/api/finance/orders?period=all&pageSize=1", selectedStoreCode),
-          { cache: "no-store", signal: controller.signal }
-        );
-        const json = await readApiJson(res);
-        if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar las alertas");
-        setAlertCounts({
-          trackingCounts: (json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS,
-          settlementCounts: (json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS,
-        });
-      } catch {
-        if (controller.signal.aborted) return;
-        // Las alertas son informativas; si fallan dejamos los conteos en cero y
-        // la tabla de pedidos sigue funcionando.
-        setAlertCounts({ trackingCounts: EMPTY_TRACKING_COUNTS, settlementCounts: EMPTY_SETTLEMENT_COUNTS });
-      }
-    })();
-    return () => controller.abort();
-  }, [selectedStoreCode]);
+  }, [selectedStoreCode, kpiRange, kpiCustomStart, kpiCustomEnd, tab, ordersDatasetReadyStore]);
 
   // Productos server-side (Carril 2 inc.2): /api/finance/product-analysis devuelve
   // las filas ya agregadas (buildFinanceControlCenter + buildProductAnalysisRows en
@@ -1386,26 +1409,35 @@ export default function FinancePage() {
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4 xl:grid-cols-7">
-            {operationalKpis.cards.map(({ id, ...card }) => (
-              <OperationalKpiCard key={id} loading={kpiLoading} {...card} />
-            ))}
+            {operationalKpis.cards.map(({ id, ...card }) =>
+              id === "lead" && selectedStoreCode === "mireva-cr" && courierPerformance ? (
+                <CourierPerformanceKpiCard
+                  key={id}
+                  report={courierPerformance}
+                  loading={kpiLoading}
+                  onClick={() => setCourierReportOpen(true)}
+                />
+              ) : (
+                <OperationalKpiCard key={id} loading={kpiLoading} {...card} />
+              )
+            )}
           </div>
 
           <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
             <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Alertas</span>
-            {/* Carril 2 inc.2: alimentado de conteos server-side (period=all) en
-                lugar del snapshot en memoria. Reintentos/Incidencias vienen de
-                trackingCounts; Por reclamar de settlementCounts.to_claim. */}
+            {/* Los conteos llegan con la primera pagina operativa. Reintentos e
+                incidencias vienen de trackingCounts; Por reclamar de
+                settlementCounts.to_claim. */}
             <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
-              <AlertStat label="Reintentos" value={loading ? "..." : formatInt(alertCounts.trackingCounts.en_route_retry)} tone="bad" />
-              <AlertStat label="Incidencias" value={loading ? "..." : formatInt(alertCounts.trackingCounts.incident_solvable + alertCounts.trackingCounts.incident_unsolvable)} tone="bad" />
-              <AlertStat label="Por reclamar" value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim)} tone="warn" />
+              <AlertStat label="Reintentos" value={operationalCountsLoading ? "..." : formatInt(alertCounts.trackingCounts.en_route_retry)} tone="bad" />
+              <AlertStat label="Incidencias" value={operationalCountsLoading ? "..." : formatInt(alertCounts.trackingCounts.incident_solvable + alertCounts.trackingCounts.incident_unsolvable)} tone="bad" />
+              <AlertStat label="Por reclamar" value={operationalCountsLoading ? "..." : formatInt(alertCounts.settlementCounts.to_claim)} tone="warn" />
               <AlertStat
                 label="Anomalías"
                 // Equivale al calculo previo en cliente (liquidationAlertRows +
                 // doubleSettlementAnomalies): entregados sin liquidar (to_claim) +
                 // liquidaciones duplicadas (duplicate).
-                value={loading ? "..." : formatInt(alertCounts.settlementCounts.to_claim + alertCounts.settlementCounts.duplicate)}
+                value={operationalCountsLoading ? "..." : formatInt(alertCounts.settlementCounts.to_claim + alertCounts.settlementCounts.duplicate)}
                 tone="warn"
               />
             </div>
@@ -1451,6 +1483,7 @@ export default function FinancePage() {
           )}
             {tab === "orders" && (
               <OrdersTab
+                key={selectedStore.code}
                 selectedStore={selectedStore}
                 logisticsImports={logisticsImports}
                 latestLogisticsImport={latestLogisticsImport}
@@ -1465,6 +1498,8 @@ export default function FinancePage() {
                 onSyncShopify={syncShopifyHistory}
                 importingLogistics={importingLogistics}
                 onLogisticsImport={handleLogisticsImport}
+                onOperationalMetadata={handleOrdersOperationalMetadata}
+                onDatasetReady={handleOrdersDatasetReady}
               />
             )}
             {tab === "dispatch" && <DispatchTab storeCode={selectedStore.code} />}
@@ -1532,6 +1567,12 @@ export default function FinancePage() {
                 onRematch={rematchImports}
               />
             )}
+          {courierReportOpen && courierPerformance && (
+            <CourierPerformanceModal
+              report={courierPerformance}
+              onClose={() => setCourierReportOpen(false)}
+            />
+          )}
         </>
       </main>
     </div>
@@ -1623,6 +1664,8 @@ function OrdersTab({
   onSyncShopify,
   importingLogistics,
   onLogisticsImport,
+  onOperationalMetadata,
+  onDatasetReady,
 }: {
   selectedStore: FinanceStorePublic;
   logisticsImports: LogisticsImport[];
@@ -1641,6 +1684,8 @@ function OrdersTab({
   onSyncShopify: () => void;
   importingLogistics: boolean;
   onLogisticsImport: (event: FormEvent<HTMLFormElement>) => Promise<ImportResult>;
+  onOperationalMetadata: (storeCode: FinanceStoreCode, metadata: OrdersOperationalMetadata) => void;
+  onDatasetReady: (storeCode: FinanceStoreCode) => void;
 }) {
   const [isLogisticsModalOpen, setIsLogisticsModalOpen] = useState(false);
   const [logisticsModalError, setLogisticsModalError] = useState("");
@@ -1681,6 +1726,7 @@ function OrdersTab({
   const [exporting, setExporting] = useState(false);
   // Busqueda con debounce (~300ms) para no disparar un fetch por tecla.
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const metadataLoadedStoreRef = useRef("");
 
   // Meses disponibles: derivados del rango de cobertura Shopify (oldest..newest)
   // en vez de recorrer las ~11k filas en el navegador.
@@ -1724,7 +1770,12 @@ function OrdersTab({
     setTableError("");
     (async () => {
       try {
-        const query = buildOrdersQuery({ page: String(page), pageSize: String(ORDERS_PAGE_SIZE) });
+        const includeMetadata = metadataLoadedStoreRef.current !== selectedStore.code;
+        const query = buildOrdersQuery({
+          page: String(page),
+          pageSize: String(ORDERS_PAGE_SIZE),
+          ...(includeMetadata ? { metadata: "1" } : {}),
+        });
         const res = await fetch(withStore(`/api/finance/orders?${query}`, selectedStore.code), {
           cache: "no-store",
           signal: controller.signal,
@@ -1737,43 +1788,22 @@ function OrdersTab({
         setSearchedCount(Number(json.searchedCount ?? 0));
         setTrackingCounts((json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS);
         setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
+        if (json.operationalMetadata) {
+          const metadata = json.operationalMetadata as OrdersOperationalMetadata;
+          metadataLoadedStoreRef.current = selectedStore.code;
+          setEnRouteGuides(metadata.enRouteGuides ?? { moovin: [], forza: [] });
+          onOperationalMetadata(selectedStore.code, metadata);
+        }
+        onDatasetReady(selectedStore.code);
       } catch (err) {
         if (controller.signal.aborted) return;
-        setServerRows([]);
-        setTotal(0);
         setTableError(err instanceof Error ? err.message : "No se pudieron cargar los pedidos");
       } finally {
         if (!controller.signal.aborted) setTableLoading(false);
       }
     })();
     return () => controller.abort();
-  }, [buildOrdersQuery, page, selectedStore.code, refreshKey]);
-
-  // Guias "en ruta" para los botones Moovin/Forza: dependen de la tienda (no de
-  // pagina/filtro), asi que se traen una sola vez por tienda con ?guides=1, en
-  // vez de viajar en cada fetch de la tabla.
-  useEffect(() => {
-    const controller = new AbortController();
-    (async () => {
-      try {
-        const res = await fetch(
-          withStore("/api/finance/orders?period=all&pageSize=1&guides=1", selectedStore.code),
-          { cache: "no-store", signal: controller.signal }
-        );
-        const json = await readApiJson(res);
-        if (!res.ok) return;
-        setEnRouteGuides(
-          (json.enRouteGuides as {
-            moovin: Array<{ idPackage: string; lastName: string; fullName: string }>;
-            forza: Array<{ guide: string }>;
-          }) ?? { moovin: [], forza: [] }
-        );
-      } catch {
-        // Los botones de sync no son criticos para la carga inicial.
-      }
-    })();
-    return () => controller.abort();
-  }, [selectedStore.code, refreshKey]);
+  }, [buildOrdersQuery, page, selectedStore.code, refreshKey, onOperationalMetadata, onDatasetReady]);
 
   const [moovinSyncing, setMoovinSyncing] = useState(false);
   const [moovinMessage, setMoovinMessage] = useState("");
@@ -1811,6 +1841,7 @@ function OrdersTab({
         );
       }
       await onReloadMoovin();
+      metadataLoadedStoreRef.current = "";
       setRefreshKey((key) => key + 1);
       setMoovinMessage(
         `Moovin actualizado: ${checked} consultados, ${delivered} entregados, ${incidents} con incidencia.`
@@ -1848,6 +1879,7 @@ function OrdersTab({
         );
       }
       await onReloadForza();
+      metadataLoadedStoreRef.current = "";
       setRefreshKey((key) => key + 1);
       setForzaMessage(
         `Forza actualizado: ${checked} consultados, ${delivered} entregados, ${incidents} con incidencia.`
@@ -1894,13 +1926,20 @@ function OrdersTab({
         const status = mergeDispatchIntoTracking(getEffectiveTrackingStatus(row, traces), row.dispatch_view ?? null, row);
         const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
         const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
+        const wyn = isWynCourier(row.courier, row.guide_number);
         return {
           Orden: row.order_name || row.shopify_order_name,
           Origen: row.source,
           Guia: row.guide_number,
           Transportadora: normalizeOperationalCourier(row.courier, selectedStore, row.guide_number),
-          "Estado courier": moovin?.latest_status ?? forza?.latest_status ?? "",
-          "Incidencia courier": moovin?.has_incident || forza?.has_incident ? "si" : "",
+          "Estado courier": wyn ? getWynGroupLabel(row.wyn_group) : moovin?.latest_status ?? forza?.latest_status ?? "",
+          "Incidencia courier": wyn
+            ? (row.wyn_incidents ?? 0) > 0
+              ? "si"
+              : ""
+            : moovin?.has_incident || forza?.has_incident
+              ? "si"
+              : "",
           Cliente: row.customer_name,
           Apellido: row.last_name ?? "",
           Celular: row.phone ?? "",
@@ -2389,7 +2428,7 @@ function OrdersTable({
                   <>
                     <span className="font-mono">{row.guide_number}</span>
                     {displayCourier && <span className="text-muted-foreground">· {displayCourier}</span>}
-                    {isMoovinCourier(displayCourier, selectedStore) && (
+                    {!isWynCourier(displayCourier, row.guide_number) && isMoovinCourier(displayCourier, selectedStore) && (
                       <MoovinTrackingButton
                         idPackage={row.guide_number}
                         lastName={row.last_name ?? ""}
@@ -2397,7 +2436,14 @@ function OrdersTable({
                         cached={moovinByPackage.get(row.guide_number)}
                       />
                     )}
-                    {isForzaCourier(displayCourier, selectedStore) && (
+                    {isWynCourier(displayCourier, row.guide_number) && (
+                      <WynTrackingButton
+                        guide={row.guide_number}
+                        storeCode={selectedStore.code}
+                        cachedGroup={row.wyn_group}
+                      />
+                    )}
+                    {!isWynCourier(displayCourier, row.guide_number) && isForzaCourier(displayCourier, selectedStore) && (
                       <ForzaTrackingButton guide={row.guide_number} cached={forza} />
                     )}
                   </>
@@ -2479,7 +2525,7 @@ function OrdersTable({
                   {displayCourier ? (
                     <div className="flex flex-col items-start gap-0.5">
                       <span>{displayCourier}</span>
-                      {isMoovinCourier(displayCourier, selectedStore) && row.guide_number && (
+                      {!isWynCourier(displayCourier, row.guide_number) && isMoovinCourier(displayCourier, selectedStore) && row.guide_number && (
                         <MoovinTrackingButton
                           idPackage={row.guide_number}
                           lastName={row.last_name ?? ""}
@@ -2487,7 +2533,14 @@ function OrdersTable({
                           cached={moovinByPackage.get(row.guide_number)}
                         />
                       )}
-                      {isForzaCourier(displayCourier, selectedStore) && row.guide_number && (
+                      {isWynCourier(displayCourier, row.guide_number) && row.guide_number && (
+                        <WynTrackingButton
+                          guide={row.guide_number}
+                          storeCode={selectedStore.code}
+                          cachedGroup={row.wyn_group}
+                        />
+                      )}
+                      {!isWynCourier(displayCourier, row.guide_number) && isForzaCourier(displayCourier, selectedStore) && row.guide_number && (
                         <ForzaTrackingButton guide={row.guide_number} cached={forza} />
                       )}
                     </div>
@@ -2586,6 +2639,10 @@ function isForzaCourier(courier: string | undefined, store?: FinanceStorePublic)
   return String(courier ?? "").toLowerCase().includes("forza");
 }
 
+function isWynCourier(courier: string | undefined, guide?: string): boolean {
+  return isWynGuide(String(guide ?? "")) || String(courier ?? "").toLowerCase().includes("wyn");
+}
+
 // EasySell/Shopify a veces rotula el fulfillment con un valor generico
 // ("Transportadora", "Other", etc.) en vez del courier real. La transportadora
 // por defecto depende de la tienda: Costa Rica usa Moovin, Honduras usa Forza.
@@ -2623,6 +2680,7 @@ function normalizeOperationalCourier(
   store: FinanceStorePublic,
   guide?: string
 ): string {
+  if (isWynGuide(String(guide ?? ""))) return "WYN";
   const company = String(rawCompany ?? "").trim();
   if (company) return normalizeShopifyCourier(company, store);
   return guide ? getDefaultCourierForStore(store) : "";
@@ -2637,6 +2695,7 @@ function normalizeForzaGuide(guide: string): string {
 function normalizeGuideForStore(guide: string | undefined, store: FinanceStorePublic): string {
   const trimmed = String(guide ?? "").trim();
   if (!trimmed) return "";
+  if (isWynGuide(trimmed)) return normalizeWynGuide(trimmed);
   return store.logisticsProvider === "forza" ? normalizeForzaGuide(trimmed) : trimmed;
 }
 
@@ -2882,6 +2941,197 @@ function formatMoovinDate(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function WynTrackingButton({
+  guide,
+  storeCode,
+  cachedGroup,
+}: {
+  guide: string;
+  storeCode: FinanceStoreCode;
+  cachedGroup?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = getWynGroupLabel(cachedGroup);
+  const groupClass =
+    cachedGroup === "delivered"
+      ? "text-emerald-300"
+      : cachedGroup === "returned" || cachedGroup === "not_delivered" || cachedGroup === "failed"
+        ? "text-red-300"
+        : "text-cyan-300";
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="Ver seguimiento WYN"
+        className={
+          cachedGroup
+            ? "flex flex-col items-start text-left"
+            : "inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:border-primary/50"
+        }
+      >
+        {cachedGroup ? (
+          <span className={`text-[10px] font-medium ${groupClass}`}>{label}</span>
+        ) : (
+          <><Search className="h-3 w-3" /> estado</>
+        )}
+      </button>
+      {open && (
+        <WynTrackingModal guide={guide} storeCode={storeCode} onClose={() => setOpen(false)} />
+      )}
+    </>
+  );
+}
+
+function WynTrackingModal({
+  guide,
+  storeCode,
+  onClose,
+}: {
+  guide: string;
+  storeCode: FinanceStoreCode;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [data, setData] = useState<WynTrackingResult | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const params = new URLSearchParams({ store: storeCode, guide: normalizeWynGuide(guide) });
+    fetch(`/api/finance/wyn-tracking?${params.toString()}`, { cache: "no-store" })
+      .then(async (res) => {
+        const json = (await res.json()) as WynTrackingResult & { error?: string; ok?: boolean };
+        if (!res.ok || json.error || json.ok === false) {
+          throw new Error(json.error || "WYN no devolvio datos para esta guia.");
+        }
+        return json;
+      })
+      .then((json) => {
+        if (!cancelled) setData(json);
+      })
+      .catch((requestError: unknown) => {
+        if (!cancelled) {
+          setError(requestError instanceof Error ? requestError.message : "No se pudo consultar WYN.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [guide, storeCode]);
+
+  const groupClass =
+    data?.latestGroup === "delivered"
+      ? "text-emerald-300"
+      : data?.latestGroup === "returned" || data?.latestGroup === "not_delivered"
+        ? "text-red-300"
+        : "text-foreground";
+
+  return (
+    <ModalOverlay onClose={onClose} labelledBy="wyn-tracking-title">
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 id="wyn-tracking-title" className="text-base font-semibold">Seguimiento WYN</h3>
+            <p className="font-mono text-xs text-muted-foreground">Guia {normalizeWynGuide(guide)}</p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center gap-2 px-1 py-6 text-sm text-muted-foreground">
+            <RefreshCw className="h-4 w-4 animate-spin" /> Consultando WYN...
+          </div>
+        ) : error ? (
+          <div className="space-y-3">
+            <p className="border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{error}</p>
+            <a
+              href={buildWynTrackingUrl(guide)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              Abrir rastreo oficial
+            </a>
+          </div>
+        ) : (
+          <>
+            <div className="mb-3 border border-border bg-background p-3">
+              <p className="text-[11px] text-muted-foreground">Ultimo estado</p>
+              <p className={`mt-0.5 text-sm font-semibold ${groupClass}`}>{data?.latestStatus || "Sin estado"}</p>
+              {data?.incidentReason && <p className="mt-1 text-[11px] text-muted-foreground">{data.incidentReason}</p>}
+              {data?.latestAt && (
+                <p className="text-[11px] text-muted-foreground">{formatCourierDate(data.latestAt, "es-CR")}</p>
+              )}
+              <a
+                href={buildWynTrackingUrl(guide)}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-flex text-[11px] text-primary hover:underline"
+              >
+                Abrir rastreo oficial
+              </a>
+            </div>
+            <div className="min-h-0 flex-1 space-y-2 overflow-auto">
+              {(data?.events ?? []).map((event, index) => (
+                <div key={`${event.code}-${event.date}-${index}`} className="flex gap-2">
+                  <span
+                    className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                      event.group === "delivered"
+                        ? "bg-emerald-400"
+                        : event.group === "returned" || event.group === "not_delivered"
+                          ? "bg-red-400"
+                          : "bg-cyan-400"
+                    }`}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span className="text-xs font-medium">{event.title}</span>
+                      {event.date && (
+                        <span className="text-[10px] text-muted-foreground">{formatCourierDate(event.date, "es-CR")}</span>
+                      )}
+                    </div>
+                    {event.description && <p className="text-[11px] text-muted-foreground">{event.description}</p>}
+                  </div>
+                </div>
+              ))}
+              {!data?.events?.length && <p className="text-sm text-muted-foreground">Sin eventos de seguimiento.</p>}
+            </div>
+          </>
+        )}
+      </div>
+    </ModalOverlay>
+  );
+}
+
+function getWynGroupLabel(group: string | undefined): string {
+  switch (group) {
+    case "delivered":
+      return "Entregado";
+    case "returned":
+      return "Devuelto";
+    case "not_delivered":
+    case "failed":
+      return "No entregado";
+    case "incident":
+      return "Incidencia";
+    case "en_route":
+      return "En ruta";
+    case "cancelled":
+      return "Cancelado";
+    case "pending":
+      return "Pendiente";
+    default:
+      return "";
+  }
 }
 
 function ForzaTrackingButton({
@@ -8053,6 +8303,165 @@ function OperationalKpiCard({
   );
 }
 
+const COURIER_STATUS_LABELS: Array<[CourierKairoStatus, string]> = [
+  ["pending", "Pendientes"],
+  ["despacho_solicitado", "Despacho solicitado"],
+  ["recolectado", "Recolectado"],
+  ["en_route", "En ruta"],
+  ["en_route_retry", "Reintento"],
+  ["incident_solvable", "Inc. solucionable"],
+  ["incident_unsolvable", "Inc. no solucionable"],
+  ["annulled", "Anulados"],
+  ["delivered", "Entregados"],
+  ["not_delivered", "No entregados"],
+];
+
+function CourierPerformanceKpiCard({
+  report,
+  loading,
+  onClick,
+}: {
+  report: CourierPerformanceReport;
+  loading: boolean;
+  onClick: () => void;
+}) {
+  const wyn = report.rows.find((row) => row.id === "wyn");
+  const moovin = report.rows.find((row) => row.id === "moovin");
+  const hasDispatches = report.rows.some((row) => row.dispatched > 0);
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="min-w-0 rounded-md border border-border bg-card p-2.5 text-left transition-colors hover:border-primary/50 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-3"
+      aria-label={`Ver efectividad por paqueteria del periodo ${report.periodLabel}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="truncate text-[11px] text-muted-foreground">Entrega por paqueteria</p>
+        <Truck className="h-3.5 w-3.5 shrink-0 text-primary" />
+      </div>
+      <p className="mt-1 truncate text-base font-bold leading-none text-foreground sm:text-xl">
+        {loading ? "..." : hasDispatches ? `WYN ${wyn?.deliveryRate.toFixed(1) ?? "0.0"}%` : "Sin despachos"}
+      </p>
+      <p className="mt-1 truncate text-[10px] leading-tight text-muted-foreground">
+        {loading
+          ? "Calculando comparativo"
+          : `${report.periodLabel} | Moovin ${moovin?.deliveryRate.toFixed(1) ?? "0.0"}%`}
+      </p>
+    </button>
+  );
+}
+
+function CourierPerformanceModal({
+  report,
+  onClose,
+}: {
+  report: CourierPerformanceReport;
+  onClose: () => void;
+}) {
+  const titleId = "courier-performance-title";
+
+  return (
+    <ModalOverlay onClose={onClose} labelledBy={titleId}>
+      <section className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-md border border-border bg-card shadow-2xl">
+        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+          <div className="min-w-0">
+            <h2 id={titleId} className="text-base font-semibold text-foreground">
+              Efectividad por paqueteria
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Periodo seleccionado: {report.periodLabel}. Un pedido Shopify se cuenta una sola vez.
+            </p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Cerrar reporte">
+            <X className="h-4 w-4" />
+          </Button>
+        </header>
+
+        <div className="space-y-5 px-5 py-4">
+          <div className="grid grid-cols-1 border border-border sm:grid-cols-3">
+            <MiniStat label="Pedidos Shopify del periodo" value={report.totalShopifyOrders} />
+            <MiniStat label="Pedidos con guia" value={report.withGuide} />
+            <MiniStat label="Guias sin paqueteria identificada" value={report.unassignedGuides} />
+          </div>
+
+          {report.unassignedGuides > 0 && (
+            <div className="flex gap-2 border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                {report.unassignedGuides} guias no se atribuyeron a WYN/MailAmericas ni a Moovin. Se excluyen del
+                comparativo hasta identificar la paqueteria.
+              </p>
+            </div>
+          )}
+
+          <div className="overflow-x-auto border border-border">
+            <table className="w-full min-w-[680px] text-sm">
+              <thead className="bg-muted/20 text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Paqueteria</th>
+                  <th className="px-3 py-2 text-right font-medium">Despachados</th>
+                  <th className="px-3 py-2 text-right font-medium">Entregados</th>
+                  <th className="px-3 py-2 text-right font-medium">No entregados</th>
+                  <th className="px-3 py-2 text-right font-medium">Efectividad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.rows.map((row) => (
+                  <tr key={row.id} className="border-t border-border">
+                    <td className="px-3 py-3 font-medium text-foreground">{row.label}</td>
+                    <td className="px-3 py-3 text-right font-mono">{row.dispatched}</td>
+                    <td className="px-3 py-3 text-right font-mono text-emerald-300">{row.delivered}</td>
+                    <td className="px-3 py-3 text-right font-mono text-red-300">{row.notDelivered}</td>
+                    <td className="px-3 py-3 text-right font-mono font-semibold text-foreground">
+                      {row.deliveryRate.toFixed(1)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <h3 className="mb-2 text-sm font-semibold text-foreground">Estados de seguimiento Kairo</h3>
+            <div className="overflow-x-auto border border-border">
+              <table className="w-full min-w-[560px] text-sm">
+                <thead className="bg-muted/20 text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Estado</th>
+                    {report.rows.map((row) => (
+                      <th key={row.id} className="px-3 py-2 text-right font-medium">
+                        {row.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {COURIER_STATUS_LABELS.map(([status, label]) => (
+                    <tr key={status} className="border-t border-border">
+                      <td className="px-3 py-2 text-muted-foreground">{label}</td>
+                      {report.rows.map((row) => (
+                        <td key={row.id} className="px-3 py-2 text-right font-mono text-foreground">
+                          {row.statusCounts[status]}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Efectividad = pedidos entregados / pedidos con guia de la paqueteria. Los estados mostrados son los
+            estados normalizados de Kairo, no las etiquetas originales de cada transportadora.
+          </p>
+        </div>
+      </section>
+    </ModalOverlay>
+  );
+}
+
 function AlertStat({
   label,
   value,
@@ -8904,9 +9313,19 @@ function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {
 // ahora vive en /api/finance/orders; la tabla pagina server-side.
 
 function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "guide_number">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "wyn_group" | "wyn_incidents" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
+  // Las guias MLCR pertenecen a WYN. Su estado manda antes de cualquier
+  // etiqueta historica de courier que haya quedado guardada en Shopify.
+  const wynStatus = wynGroupToStatus(row.wyn_group);
+  if (wynStatus) {
+    if ((row.wyn_incidents ?? 0) >= 1 && !isFinalTrackingStatus(wynStatus)) {
+      return wynStatus === "en_route" ? "en_route_retry" : "incident";
+    }
+    return wynStatus;
+  }
+
   // Moovin manda para sus envios: su ultimo evento define el estado en vivo.
   const moovinStatus = moovinGroupToStatus(row.moovin_group);
   if (moovinStatus) {
@@ -8993,7 +9412,7 @@ function classifyIncident(
 }
 
 function getTrackingStatusLabel(
-  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "moovin_incidents" | "moovin_route_attempts" | "forza_incidents">,
+  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "wyn_incidents" | "moovin_incidents" | "moovin_route_attempts" | "forza_incidents">,
   traces: SettlementTrace[],
   status: string
 ): string {
@@ -9010,7 +9429,7 @@ function getTrackingStatusLabel(
   if (status === "not_delivered" || status === "returned") return "No entregado";
   if (status === "en_route") return row.boxful_status || "En ruta";
   if (status === "en_route_retry") {
-    const retries = Math.max(row.moovin_incidents ?? 0, row.forza_incidents ?? 0, 1);
+    const retries = Math.max(row.wyn_incidents ?? 0, row.moovin_incidents ?? 0, row.forza_incidents ?? 0, 1);
     return retries > 1 ? `Reintento (${retries})` : "Reintento";
   }
   if (status === "incident")
@@ -9050,6 +9469,25 @@ function forzaGroupToStatus(group: string | undefined): string {
     case "failed":
       return "incident";
     case "in_progress":
+      return "en_route";
+    default:
+      return "";
+  }
+}
+
+function wynGroupToStatus(group: string | undefined): string {
+  switch (group) {
+    case "delivered":
+      return "delivered";
+    case "returned":
+    case "not_delivered":
+    case "cancelled":
+      return "not_delivered";
+    case "failed":
+    case "incident":
+      return "incident";
+    case "in_progress":
+    case "en_route":
       return "en_route";
     default:
       return "";

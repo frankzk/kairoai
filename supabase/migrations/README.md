@@ -27,6 +27,7 @@ Estado actual:
 | `0011_forza_tracking.sql` | Cache de rastreo Forza para Honduras, separado por `store_id` y guia | Pendiente |
 | `0018_icomfly_dispatch.sql` | Estado de Despacho: tablas icomfly_orders / icomfly_agents + columnas email/icomfly_user_id en payroll_staff | No |
 | `0019_platform_registry.sql` | Registry multi-tienda: integraciones, couriers, perfiles de archivo, roles por tienda y tracking generico | Pendiente |
+| `0020_wyn_tracking.sql` | Cache de rastreo WYN para Costa Rica, separado por `store_id` y guia `MLCR...` | Pendiente |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de
