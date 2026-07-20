@@ -15,14 +15,11 @@ const BASE = process.env.ICOMFLY_BASE || "https://api.icomfly.com/api";
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
-async function getChatToken(): Promise<string> {
-  if (process.env.ICOMFLY_TOKEN) return process.env.ICOMFLY_TOKEN;
-  if (cachedToken && cachedToken.expiresAt > Date.now()) return cachedToken.token;
-
+async function loginForToken(): Promise<string> {
   const email = process.env.ICOMFLY_EMAIL;
   const password = process.env.ICOMFLY_PASSWORD;
   if (!email || !password) {
-    throw new Error("iComfly no configurado: define ICOMFLY_TOKEN o ICOMFLY_EMAIL + ICOMFLY_PASSWORD.");
+    throw new Error("iComfly no configurado: define ICOMFLY_EMAIL + ICOMFLY_PASSWORD (o ICOMFLY_TOKEN).");
   }
   const res = await fetch(`${BASE}/auth/login`, {
     method: "POST",
@@ -47,6 +44,20 @@ async function getChatToken(): Promise<string> {
   return token;
 }
 
+// Preferimos el login por credenciales (se auto-refresca y quedo verificado que
+// su JWT funciona en /api/chat/*). ICOMFLY_TOKEN es solo un override explicito
+// para cuando no hay credenciales. `forceFresh` ignora el cache y re-loguea:
+// se usa ante un 401 para no quedar atrapados con un token vencido.
+async function getChatToken(forceFresh = false): Promise<string> {
+  const hasCreds = Boolean(process.env.ICOMFLY_EMAIL && process.env.ICOMFLY_PASSWORD);
+  if (hasCreds) {
+    if (!forceFresh && cachedToken && cachedToken.expiresAt > Date.now()) return cachedToken.token;
+    return loginForToken();
+  }
+  if (process.env.ICOMFLY_TOKEN) return process.env.ICOMFLY_TOKEN;
+  throw new Error("iComfly no configurado: define ICOMFLY_EMAIL + ICOMFLY_PASSWORD (o ICOMFLY_TOKEN).");
+}
+
 async function chatFetch(path: string, externalStoreId: number): Promise<unknown> {
   const token = await getChatToken();
   const headers = {
@@ -56,13 +67,20 @@ async function chatFetch(path: string, externalStoreId: number): Promise<unknown
   };
   const res = await fetch(`${BASE}${path}`, { headers, cache: "no-store" });
   if (res.status === 401) {
+    // Token vencido/invalido: forzar un login nuevo y reintentar una vez.
     cachedToken = null;
-    const retryToken = await getChatToken();
+    const retryToken = await getChatToken(true);
     const retry = await fetch(`${BASE}${path}`, {
       headers: { ...headers, Authorization: `Bearer ${retryToken}` },
       cache: "no-store",
     });
-    if (!retry.ok) throw new Error(`iComfly chat ${retry.status}: ${(await retry.text()).slice(0, 200)}`);
+    if (!retry.ok) {
+      const detail = (await retry.text()).slice(0, 200);
+      const hint = process.env.ICOMFLY_EMAIL
+        ? ""
+        : " (no hay ICOMFLY_EMAIL/ICOMFLY_PASSWORD en este entorno; revisa las env vars de Vercel para Preview y Production).";
+      throw new Error(`iComfly chat ${retry.status}: ${detail}${hint}`);
+    }
     return retry.json();
   }
   if (!res.ok) throw new Error(`iComfly chat ${res.status}: ${(await res.text()).slice(0, 200)}`);
