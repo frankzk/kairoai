@@ -32,6 +32,10 @@
     {
       "path": "/api/cron/leads-reclassify",
       "schedule": "2,12,22,32,42,52 * * * *"
+    },
+    {
+      "path": "/api/cron/leads-shopify-match",
+      "schedule": "7 * * * *"
     }
   ],
   "functions": {
@@ -73,6 +77,9 @@
     },
     "app/api/cron/leads-reclassify/route.ts": {
       "maxDuration": 300
+    },
+    "app/api/cron/leads-shopify-match/route.ts": {
+      "maxDuration": 60
     },
     "app/api/icomfly/sync/route.ts": {
       "maxDuration": 60

@@ -445,6 +445,21 @@ export async function markLeadsWonAuto(
   return changed;
 }
 
+/**
+ * Cruce eficiente contra ordenes reales de Shopify: delega TODO el match+move
+ * a un RPC de Postgres (match_leads_to_shopify_orders) que corre en el servidor
+ * en una sola sentencia con indice. No carga ordenes en memoria de la app (eso
+ * saturaba la base). Mueve a Ganados los leads cuyo telefono ya tiene orden
+ * vigente en la tienda, respetando estados manuales. Devuelve cuantos movio.
+ */
+export async function matchLeadsToShopifyOrders(storeId: number): Promise<number> {
+  const { data, error } = await getDB().rpc("match_leads_to_shopify_orders", {
+    p_store_id: storeId,
+  });
+  if (error) throw new Error(`matchLeadsToShopifyOrders: ${error.message}`);
+  return typeof data === "number" ? data : Number(data ?? 0);
+}
+
 // ─── Historial de gestiones de un lead (timeline del drawer) ─────────────────
 export interface LeadHistoryRow {
   id: number;
