@@ -1032,6 +1032,54 @@ At the time of writing these were not yet confirmed applied in production — ch
 4. Reload `/admin/finance`; the initial Orders request should return HTTP 200 in
    well under 20 s.
 
+## Escalabilidad de /api/finance/orders (rediseño por fases)
+
+### Problema
+
+El endpoint hoy baja TODO el dataset de la tienda (blob JSONB en
+`finance_dataset_cache`), lo descomprime en memoria y **filtra, cuenta y pagina
+en JavaScript** sobre las ~15k filas. El estado de seguimiento y el de
+liquidación son campos DERIVADOS (`getEffectiveTrackingStatus` +
+`mergeDispatchIntoTracking` + trazas), por eso hoy se calculan en memoria sobre
+el dataset completo. Es O(todo) por request: a 100k pedidos el parse pasa de
+>10MB, la RAM y los cold builds se disparan y el módulo vuelve a caer.
+
+### Solución: índice materializado + SQL (O(página))
+
+Materializar por pedido los campos derivados como FILAS reales indexables y mover
+filtro/paginación/conteos a SQL:
+
+- **`finance_order_index`** (migración 0024): una fila por pedido con
+  `tracking_filter`, `effective_status`, `settlement_count`, `is_delivered`,
+  `order_date`, `shopify_created_at`, `cod_amount`, `guide_number`, `courier`,
+  `search_lower` / `search_compact` (búsqueda GIN trigram) y `detail` JSONB (el
+  `RowWithTraces` que pinta la tabla). PK e índices liderados por `store_id`
+  (aislamiento por tienda). Autovacuum agresivo (misma rotación que 0023).
+- **Derivación con paridad exacta**: `lib/finance-order-index.ts`
+  (`buildOrderIndexRecords`) replica byte a byte `resolveRows` del endpoint y
+  `matchesOrderSearch`. Cubierto por `tests/finance-order-index.test.ts`.
+- **Búsqueda en servidor sin cambiar semántica**: `search_lower` (campos en
+  minúscula unidos por `\n`) reproduce `text.includes(rawQuery)` y
+  `search_compact` (campos `normalizeSearchText` unidos por `\n`) reproduce
+  `compactText.includes(compactQuery)`; como ni `rawQuery` ni `compactQuery`
+  contienen `\n`, un `LIKE '%q%'` no cruza el separador → equivale al match por
+  campo.
+
+### Fases
+
+- **Fase 1 (hecha, aditiva):** tabla + el cron `finance-index` la puebla
+  `refreshFinanceDatasetCache(store, { writeOrderIndex: true })`, 1/hora/tienda.
+  Las mutaciones NO la escriben (no cargan 15k filas por cambio) y **nada la lee
+  todavía** — riesgo cero. Sirve para validar paridad contra la implementación en
+  memoria.
+- **Fase 2 (pendiente):** reescribir `/api/finance/orders` para leer de la tabla
+  (WHERE store_id + filtros, `LIMIT/OFFSET` o keyset, conteos con
+  `COUNT(*) FILTER (...)`), detrás de un flag, verificando que los números salen
+  idénticos a la UI actual.
+- **Fase 3 (pendiente):** activar el flag, borrar el camino en memoria y la
+  sección `rows` del blob. Operativo (índice) y financiero (`/summary`,
+  `product-costs`, `expenses`) quedan totalmente desacoplados.
+
 ## WYN tracking sync (Costa Rica)
 
 - WYN is isolated to store `mireva-cr` (`store_id=1`) and guides beginning with

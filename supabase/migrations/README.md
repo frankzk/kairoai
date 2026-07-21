@@ -31,6 +31,7 @@ Estado actual:
 | `0021_finance_dataset_cache_sections.sql` | Cache L2 por secciones del dataset financiero | Pendiente |
 | `0022_leads.sql` | Modulo de Leads de WhatsApp: `leads`, `lead_calls`, `lead_conversations`, `lead_webhook_events` (idempotencia), `lead_sync_state`. Identidad de vendedoras via `payroll_staff`; sin RLS (aislamiento por tienda en el API) | Si (aplicada en produccion) |
 | `0023_finance_autovacuum_tuning.sql` | Autovacuum agresivo en `finance_dataset_cache`, `moovin_tracking`, `logistics_rows`, `settlement_rows` para evitar el bloat que dejaba `/admin/finance` en 503 (incidente 2026-07-21) | Si (21/07/2026) |
+| `0024_finance_order_index.sql` | Tabla índice por pedido (`finance_order_index`) + pg_trgm para paginación/filtros/búsqueda server-side de `/api/finance/orders` (Fase 1, aditiva; la puebla el cron finance-index) | Si (21/07/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de

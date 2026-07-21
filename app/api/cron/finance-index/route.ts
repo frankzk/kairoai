@@ -25,7 +25,9 @@ async function run(storeFilter: string | null) {
   for (const publicStore of targets) {
     const store = getStoreConfig(publicStore.code);
     try {
-      const rowCount = await refreshFinanceDatasetCache(store);
+      // El cron es el único que puebla el índice por pedido (finance_order_index,
+      // Fase 1): 1 vez/hora/tienda, fuera del path del request y de las mutaciones.
+      const rowCount = await refreshFinanceDatasetCache(store, { writeOrderIndex: true });
       results.push({ store: store.code, row_count: rowCount });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error";

@@ -36,6 +36,7 @@ import {
   type TrackableOrderRow,
 } from "@/lib/finance-orders";
 import type { LogisticsRow, SettlementImport, SettlementRow } from "@/lib/finance-types";
+import { buildOrderIndexRecords } from "@/lib/finance-order-index";
 import type { FinanceStorePublic } from "@/lib/store-config";
 import {
   decideDatasetLoad,
@@ -577,18 +578,80 @@ export async function getOrdersDataset<S extends DatasetSection>(
   return assembleFromL1(store, sections);
 }
 
+// ---------------------------------------------------------------------------
+// Índice por pedido (Fase 1 del rediseño escalable de orders/).
+// Materializa una fila por pedido en finance_order_index con los campos de
+// filtro derivados, para que la Fase 2 filtre/pagine/cuente en SQL (O(página)).
+// Es ADITIVO: nada lo lee aún. Best-effort y time-boxed: si falla, NO rompe el
+// refresh del dataset cache (que es lo que hoy sirve al endpoint).
+// ---------------------------------------------------------------------------
+const ORDER_INDEX_TABLE = "finance_order_index";
+const ORDER_INDEX_BATCH = 1000;
+const ORDER_INDEX_WRITE_TIMEOUT_MS = 12_000;
+
+async function writeFinanceOrderIndex(store: FinanceStorePublic, data: OrdersDataset): Promise<void> {
+  const refreshedAt = new Date().toISOString();
+  const records = buildOrderIndexRecords(data.rows, data.settlementTraceByKey);
+
+  // Upsert por lotes (onConflict = PK). Cada fila lleva refreshed_at=runTs para
+  // que el delete final borre exactamente lo que no se re-escribió (pedidos que
+  // desaparecieron del dataset).
+  for (let i = 0; i < records.length; i += ORDER_INDEX_BATCH) {
+    const batch = records.slice(i, i + ORDER_INDEX_BATCH).map((record) => ({
+      store_id: store.id,
+      refreshed_at: refreshedAt,
+      ...record,
+    }));
+    const { error } = await withTimeout(
+      getDB().from(ORDER_INDEX_TABLE).upsert(batch, { onConflict: "store_id,order_key" }),
+      ORDER_INDEX_WRITE_TIMEOUT_MS,
+      `order-index upsert ${store.code} [${i}]`
+    );
+    if (error) throw new Error(error.message);
+  }
+
+  // Barre pedidos que ya no existen en el dataset (quedaron con refreshed_at viejo).
+  const { error: deleteError } = await withTimeout(
+    getDB()
+      .from(ORDER_INDEX_TABLE)
+      .delete()
+      .eq("store_id", store.id)
+      .lt("refreshed_at", refreshedAt),
+    ORDER_INDEX_WRITE_TIMEOUT_MS,
+    `order-index prune ${store.code}`
+  );
+  if (deleteError) throw new Error(deleteError.message);
+}
+
 // Reconstruye el dataset de una tienda y refresca ambas caches (L2 upsert por
 // seccion + L1). Es lo que llaman el cron (app/api/cron/finance-index) y las
 // mutaciones para mantener la cache fresca FUERA del path del request.
 // Devuelve el numero de filas ensambladas. Defensivo: si la escritura L2 falla,
 // igual deja L1 al dia y devuelve el conteo (no lanza por culpa de la cache).
-export async function refreshFinanceDatasetCache(store: FinanceStorePublic): Promise<number> {
+export async function refreshFinanceDatasetCache(
+  store: FinanceStorePublic,
+  options: { writeOrderIndex?: boolean } = {}
+): Promise<number> {
   const data = await withTimeout(
     buildDataset(store),
     DATASET_BUILD_TIMEOUT_MS,
     `orders-dataset refresh ${store.code}`
   );
   setL1All(store, data);
+  // Índice por pedido (Fase 1): SOLO cuando el llamador lo pide (el cron
+  // finance-index, 1/hora/tienda). Las mutaciones no lo escriben para no cargar
+  // ~15k filas en cada cambio; nada lo LEE aún, así que su frescura horaria basta.
+  // Best-effort: un fallo aquí NO debe tumbar el refresh del dataset cache.
+  if (options.writeOrderIndex) {
+    try {
+      await writeFinanceOrderIndex(store, data);
+    } catch (err) {
+      console.warn(
+        `[finance-order-index write] ${store.code}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
   const writeError = await writeDatasetCache(store, data);
   if (writeError) {
     // El cron (y el precalentado manual) reportan este error en vez de fallar en
