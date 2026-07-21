@@ -51,7 +51,8 @@ export async function GET(req: NextRequest) {
       imports,
       costs,
       costVersions,
-      settlementTraceByKey
+      settlementTraceByKey,
+      store
     );
 
     const data: ProductAnalysisPayload = { rows: buildProductAnalysisRows(financeControl.orders) };

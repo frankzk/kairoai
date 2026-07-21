@@ -657,7 +657,11 @@ Build in this order:
 - Currency is now store-aware end to end. Honduras shows and books in `HNL`; Costa Rica stays in `CRC`.
   - `app/admin/finance/page.tsx`: `currency()` formats in the active store's currency (active store set by `<FinancePage>` each render); expense capture converts `USD`/`PEN` to the store's accounting currency (`CRC`/`HNL`) with store-aware labels, dropdown options, hints, and the `Monto original`/`Tipo de cambio ...->CRC|HNL` audit note.
   - `app/api/finance/exchange-rate/route.ts`: added `to` param (`CRC`/`HNL`, default `CRC`) so the rate targets the store's accounting currency; cache is keyed by `from->to`.
+  - `lib/finance-orders.ts`: `buildFinanceControlCenter` / `buildFinancialAnomalies` now take the store, so the "Margen negativo" anomaly message formats in the store's currency (monthly-close and product-analysis routes pass `store`).
+  - `app/admin/incidencias/page.tsx`: the COD amount formatter is store-aware (was hardcoded to `₡`/`es-CR`), so Honduras incidents show `HNL`.
+  - `app/api/finance/expenses/route.ts`: missing-currency fallback is the store's accounting currency instead of hardcoded `CRC`.
   - Costa Rica behavior is unchanged because `CRC`/`FINANCE_STORES[0]` remains the default across every helper.
+  - Out of scope (Costa Rica-only, not multi-store): the voice-agent/upsell tools (`lib/upsell-rules.ts`, `components/CreateOrderPanel.tsx`, `components/ProductPicker.tsx`, `/admin/upsell`) keep `₡` because their prices are CR-only. Order-code prefixes like `#MCRC...` are order identifiers, not currency, and were left untouched.
 - `npx tsc --noEmit`: passed (0 errors)
 - `npm test`: passed (233 tests)
 - `npm run build`: passed

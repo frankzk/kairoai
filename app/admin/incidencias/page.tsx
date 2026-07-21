@@ -87,7 +87,17 @@ const CUENTA_REENVIO: Record<FinanceStoreCode, CuentaReenvio | null> = {
   "mireva-hn": null,
 };
 
-const currency = (n: number) => "₡" + Math.round(Number(n) || 0).toLocaleString("es-CR");
+// Formatea en la moneda de la tienda: CRC (Costa Rica) o HNL (Honduras).
+// Honduras no debe mostrar colones, asi que el monto COD sigue a la tienda
+// activa segun FINANCE_STORES[].currency.
+const currency = (n: number, storeCode: FinanceStoreCode = FINANCE_STORES[0].code) => {
+  const store = FINANCE_STORES.find((s) => s.code === storeCode) ?? FINANCE_STORES[0];
+  return new Intl.NumberFormat(store.locale, {
+    style: "currency",
+    currency: store.currency,
+    maximumFractionDigits: 0,
+  }).format(Math.round(Number(n) || 0));
+};
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString("es-CR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDay = (s: string | null) => (s ? s.slice(0, 10).split("-").reverse().join("/") : "—");
@@ -966,7 +976,7 @@ export default function IncidenciasPage() {
                           {CATEGORY_LABELS[i.category]}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-right">{i.cod_amount ? currency(i.cod_amount) : "—"}</td>
+                      <td className="px-3 py-2 text-right">{i.cod_amount ? currency(i.cod_amount, selectedStoreCode) : "—"}</td>
                       <td className="px-3 py-2 text-center">{i.intentos_llamada || 0}</td>
                       <td className="px-3 py-2 text-center"><span className={`tabular-nums ${age.tone}`}>{age.label}</span></td>
                       <td className="px-3 py-2 text-xs">{i.reprogramada_para || "—"}</td>
@@ -1152,7 +1162,7 @@ function DetailModal({
             <div><span className="text-muted-foreground">Telefono:</span> {incident.customer_phone || "—"}</div>
             <div><span className="text-muted-foreground">Guia:</span> <span className="font-mono text-xs">{incident.guide_number || "—"}</span></div>
             <div><span className="text-muted-foreground">Courier:</span> {incident.courier || "—"}</div>
-            <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount) : "—"}</div>
+            <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount, storeCode) : "—"}</div>
             <div className="flex items-baseline gap-1.5">
               <span className="text-muted-foreground">Intentos de entrega:</span>
               <span className="text-base font-bold tabular-nums">

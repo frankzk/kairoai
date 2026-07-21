@@ -52,7 +52,8 @@ export async function GET(req: NextRequest) {
       imports,
       costs,
       costVersions,
-      settlementTraceByKey
+      settlementTraceByKey,
+      store
     );
 
     const data: MonthlyClosePayload = {

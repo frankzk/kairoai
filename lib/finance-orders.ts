@@ -1921,7 +1921,8 @@ function buildOrderProfitabilityRow({
 
 function buildFinancialAnomalies(
   row: OrderProfitabilityRow,
-  settlementRows: SettlementRow[]
+  settlementRows: SettlementRow[],
+  store: FinanceStorePublic = FINANCE_STORES[0]
 ): FinancialAnomaly[] {
   const anomalies: FinancialAnomaly[] = [];
   const hasSettlement = settlementRows.length > 0;
@@ -2009,7 +2010,7 @@ function buildFinancialAnomalies(
       guide_number: row.guide_number,
       amount: row.contribution_margin,
       source_file: sourceFile,
-      message: `El pedido queda con margen ${currency(row.contribution_margin)} antes de ads/planilla.`,
+      message: `El pedido queda con margen ${currency(row.contribution_margin, store)} antes de ads/planilla.`,
       action: "Revisar precio, costo SKU, cobros logisticos y promociones.",
     });
   }
@@ -2073,7 +2074,8 @@ export function buildFinanceControlCenter(
   imports: SettlementImport[],
   costs: ProductCost[],
   costVersions: ProductCostVersion[],
-  settlementTraceByKey: Map<string, SettlementTrace[]>
+  settlementTraceByKey: Map<string, SettlementTrace[]>,
+  store: FinanceStorePublic = FINANCE_STORES[0]
 ): FinanceControlCenter {
   const fileByImportId = new Map(imports.map((item) => [item.id, item.file_name]));
   const settlementRowsByKey = buildSettlementRowsByKey(settlementRows);
@@ -2101,7 +2103,7 @@ export function buildFinanceControlCenter(
     });
 
     orders.push(financialRow);
-    anomalies.push(...buildFinancialAnomalies(financialRow, matchedSettlementRows));
+    anomalies.push(...buildFinancialAnomalies(financialRow, matchedSettlementRows, store));
   }
 
   for (const settlementRow of settlementRows.filter((row) => !consumedSettlementIds.has(row.id))) {

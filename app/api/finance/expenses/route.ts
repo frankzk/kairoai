@@ -47,7 +47,9 @@ export async function POST(req: NextRequest) {
         category: body.category || "",
         description: body.description || "",
         amount: Number(body.amount ?? 0),
-        currency: body.currency || "CRC",
+        // El cliente envia la moneda contable ya resuelta (CRC/HNL). Si faltara,
+        // se usa la de la tienda para no forzar colones en Honduras.
+        currency: body.currency || store.currency,
         notes: body.notes || "",
       },
       store.id
