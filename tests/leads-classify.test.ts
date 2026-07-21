@@ -144,9 +144,15 @@ describe("classifyConversation priority", () => {
     const c = classifyConversation(makeConv({ saleStage: "pending_payment" }));
     expect(statusBoardStage(c.status)).toBe("por_cerrar");
   });
-  it("product_selected -> seguimiento", () => {
+  it("product_selected -> tibios (sin trabajar aun)", () => {
     const c = classifyConversation(makeConv({ saleStage: "product_selected" }));
-    expect(statusBoardStage(c.status)).toBe("seguimiento");
+    expect(statusBoardStage(c.status)).toBe("tibios");
+  });
+  it("conversando/nuevo -> tibios; los estados manuales -> seguimiento", () => {
+    expect(statusBoardStage("conversando")).toBe("tibios");
+    expect(statusBoardStage("nuevo")).toBe("tibios");
+    expect(statusBoardStage("no_responde")).toBe("seguimiento");
+    expect(statusBoardStage("volver_a_llamar")).toBe("seguimiento");
   });
   it("warranty claim -> descartado (postventa)", () => {
     const c = classifyConversation(makeConv({ warrantyClaimId: "12" }));

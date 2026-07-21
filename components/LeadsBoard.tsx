@@ -63,6 +63,7 @@ const STAGE_META: Record<BoardStage, { label: string; variant: BadgeVariant; emo
   pago_verificar: { label: "Pago por verificar", variant: "warning", emoji: "💰" },
   por_cerrar: { label: "Por cerrar", variant: "destructive", emoji: "🔥" },
   carrito: { label: "Carrito", variant: "info", emoji: "🛒" },
+  tibios: { label: "Tibios", variant: "warning", emoji: "🌡️" },
   seguimiento: { label: "Seguimiento", variant: "secondary", emoji: "💬" },
   frio: { label: "Frio", variant: "muted", emoji: "❄️" },
   ganado: { label: "Ganado", variant: "success", emoji: "✅" },
