@@ -164,6 +164,9 @@ const ORDER_CONFIRMED_RES: RegExp[] = [
   /tu pedido (ya )?(esta) creado|pedido esta creado|ya tome los datos de tu pedido/,
   /tu pedido sigue en proceso/,
   /recordatorio.*pedido|para la entrega de tu|se comunicaron contigo de moovin/,
+  // El bot abre confirmando un pedido YA recibido, con total contra entrega.
+  /hemos recibido tu pedido|recibido tu pedido de/,
+  /(valor )?total a pagar contra entrega/,
 ];
 
 function normText(t: string): string {

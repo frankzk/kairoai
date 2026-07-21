@@ -81,6 +81,13 @@ describe("detectOrderInTranscript", () => {
   it("detecta 'ya confirmamos tu pedido'", () => {
     expect(detectOrderInTranscript([msg("outbound", "Perfecto, ya confirmamos tu pedido")])).toBe(true);
   });
+  it("detecta apertura 'Hemos recibido tu pedido ... contra entrega' (caso Javier)", () => {
+    const t = [
+      msg("outbound", "Hola Javier. Hemos recibido tu pedido de 1x HER LOSS, valor total a pagar CONTRA ENTREGA de ₡19.900. Confirmame por favor"),
+      msg("inbound", "2 sin leer"),
+    ];
+    expect(detectOrderInTranscript(t)).toBe(true);
+  });
   it("detecta recordatorio de pedido y contacto de Moovin", () => {
     expect(detectOrderInTranscript([msg("outbound", "Recordatorio: tu pedido llega pronto")])).toBe(true);
     expect(detectOrderInTranscript([msg("outbound", "se comunicaron contigo de Moovin para la entrega")])).toBe(true);
