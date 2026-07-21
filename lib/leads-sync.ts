@@ -20,9 +20,7 @@ import {
   getSyncCursor,
   listLeads,
   loadLeadSnapshots,
-  loadStoreOrderPhones,
   markLeadWonAuto,
-  markLeadsWonAuto,
   setSyncCursor,
   upsertLeads,
   type LeadUpsertRow,
@@ -72,10 +70,10 @@ export async function runLeadsSync(opts: {
     : Math.min(Math.max(opts.maxPages ?? DEFAULT_MAX_PAGES, 1), MAX_MAX_PAGES);
   const startPage = Math.max(opts.startPage ?? 1, 1);
 
-  const [snapshots, orderPhones] = await Promise.all([
-    loadLeadSnapshots(storeId),
-    loadStoreOrderPhones(storeId, store.code).catch(() => new Set<string>()),
-  ]);
+  const snapshots = await loadLeadSnapshots(storeId);
+  // El cruce con ordenes de Shopify NO se hace aqui (cada 5 min escanear toda
+  // la tabla de ordenes saturaba la base). Se hace en el afinado, por lotes.
+  const orderPhones = new Set<string>();
 
   const summary: LeadsSyncSummary = {
     total: 0,
@@ -247,10 +245,7 @@ export async function reclassifyStage(opts: {
   const cursorKey = `reclassify:${storeId}`;
   const scope = new Set<BoardStage>(opts.stage ? [opts.stage] : ACTIVE_STAGES);
 
-  const [leads, orderPhones] = await Promise.all([
-    listLeads({ storeId }),
-    loadStoreOrderPhones(storeId, store.code).catch(() => new Set<string>()),
-  ]);
+  const leads = await listLeads({ storeId });
   const candidates = leads
     .filter(
       (l) =>
@@ -265,26 +260,15 @@ export async function reclassifyStage(opts: {
     return { store: store.code, checked: 0, moved_to_won: 0, pending: 0 };
   }
 
-  let moved = 0;
-
-  // ── Pase rapido (sin API): mover TODOS los que tienen orden real en Shopify.
-  // Es la senal mas confiable (una consulta no tiene orden). En lote para no
-  // hacer timeout cuando son miles.
-  const withOrderIds: number[] = [];
-  const withoutOrder: typeof candidates = [];
-  for (const lead of candidates) {
-    if (orderPhones.has(lead.phone)) withOrderIds.push(lead.id);
-    else withoutOrder.push(lead);
-  }
-  moved += await markLeadsWonAuto(storeId, withOrderIds, "orden real en Shopify (por telefono)");
-
-  // ── Pase por chat (con API, por lotes): para los que NO tienen orden Shopify,
-  // leer el transcript y detectar señales confiables de despacho.
+  // Pase por chat, por lotes (con cursor): lee el transcript y detecta señales
+  // confiables de despacho. El cruce con ordenes de Shopify se hace aparte, en
+  // SQL (RPC), para no escanear toda la tabla de ordenes en la app.
   const { cursor } = await getSyncCursor(cursorKey);
   const lastId = cursor ? Number(cursor) : 0;
-  let slice = withoutOrder.filter((l) => l.id > lastId).slice(0, batch);
-  if (slice.length === 0) slice = withoutOrder.slice(0, batch); // vuelta completa: reinicia
+  let slice = candidates.filter((l) => l.id > lastId).slice(0, batch);
+  if (slice.length === 0) slice = candidates.slice(0, batch); // vuelta completa: reinicia
 
+  let moved = 0;
   for (const lead of slice) {
     const msgs = await fetchConversationTranscript(
       lead.crm_conversation_id as string,
@@ -296,16 +280,11 @@ export async function reclassifyStage(opts: {
     }
   }
 
-  // Avanza el cursor del pase por chat; si llegamos al final, reinicia a 0.
-  if (slice.length === 0 || withoutOrder.length === 0) {
-    await setSyncCursor(cursorKey, { cursor: "0" });
-    return { store: store.code, checked: 0, moved_to_won: moved, pending: 0 };
-  }
-  const lastCandidateId = withoutOrder[withoutOrder.length - 1].id;
+  const lastCandidateId = candidates[candidates.length - 1].id;
   const lastScannedId = slice[slice.length - 1].id;
   const reachedEnd = lastScannedId >= lastCandidateId;
   await setSyncCursor(cursorKey, { cursor: reachedEnd ? "0" : String(lastScannedId) });
 
-  const pending = withoutOrder.filter((l) => l.id > lastScannedId).length;
+  const pending = candidates.filter((l) => l.id > lastScannedId).length;
   return { store: store.code, checked: slice.length, moved_to_won: moved, pending };
 }
