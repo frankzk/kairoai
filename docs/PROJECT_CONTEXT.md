@@ -969,6 +969,69 @@ At the time of writing these were not yet confirmed applied in production — ch
 4. After recovery, use Refresh once and verify that the initial Orders request
    includes `metadata=1` and returns HTTP 200.
 
+## Incident 2026-07-21: finance orders 503 / "0 pedidos" (table bloat)
+
+### Symptom
+
+- `/admin/finance` showed **0 pedidos**, all operational KPIs at `0/0`, and the
+  banner **"Datos operativos temporalmente no disponibles. Reintenta en unos
+  segundos."** — even though Supabase reported Healthy and the metadata line still
+  recognised ~15,558 Shopify orders. The data existed; reading it failed.
+
+### Root cause
+
+- **Severe table bloat / stale planner stats** on the finance tables. They are
+  rewritten wholesale very often, and autovacuum was not keeping up (Postgres logs
+  showed `autovacuum worker took too long to start; canceled`):
+  - `finance_dataset_cache`: 62 MB for 18 live rows (hourly cron × 8 sections × 2
+    stores, each a multi-MB payload → dead versions piled up).
+  - `moovin_tracking`: 19 MB for ~10k rows; `logistics_rows`: 63 MB;
+    `settlement_rows`: 19 MB. Several reported `n_live_tup = 0` (never analysed),
+    so the planner seq-scanned inflated heaps.
+- Effect: the L2 cache read (`SELECT payload …`) and the source-table scans took
+  **10–46 s**, exceeding the 20 s L2 read timeout and the 45 s cold-build timeout.
+- A **database restart** (`the database system is starting up` /
+  `terminating connection due to administrator command` in the logs) left caches
+  cold; the first reads hit disk over the bloated heaps and every finance read
+  fell to HTTP 503.
+- Secondary bug: the L2 write fallback `writeL2LegacyFull` upserted with
+  `onConflict: "store_id"`, but the post-0021 PK is `(store_id, section)`. Postgres
+  rejected it (`there is no unique or exclusion constraint matching the ON CONFLICT
+  specification`), so when the per-section write timed out under load, the fallback
+  also failed and nothing was persisted.
+
+### Fix and invariants
+
+- **Reclaimed the bloat (production, one-off):** `VACUUM (FULL, ANALYZE)` on
+  `finance_dataset_cache`, `moovin_tracking`, `logistics_rows`, `settlement_rows`,
+  plus `ANALYZE` on `shopify_orders` / `icomfly_orders` / `forza_tracking`. Reads
+  dropped from 10–18 s to ~80 ms; the `logistics_rows` store scan from 14–46 s to
+  ~33 ms.
+- **Prevented recurrence:** migration `0023_finance_autovacuum_tuning.sql` lowers
+  the autovacuum/analyze thresholds on those churny tables so vacuum runs long
+  before 20% of the table is dead (the default is far too late for tables rewritten
+  in full).
+- **Write path repaired:** `writeL2LegacyFull` now conflicts on
+  `(store_id, section)`, so the degraded-mode write actually persists.
+- **UI never shows a false zero:** the Orders table keeps the last valid result on
+  a transient failure and shows an inline **Reintentar** button. If a store has
+  never loaded successfully it renders an explicit error state instead of an empty
+  "0 pedidos" table, and switching stores clears the previous store's rows so a
+  failure never leaks another store's data.
+
+### Runbook
+
+1. If finance reads are slow or 503, check table bloat first:
+   `SELECT relname, n_live_tup, n_dead_tup, pg_size_pretty(pg_total_relation_size(relid))
+    FROM pg_stat_user_tables WHERE relname IN
+    ('finance_dataset_cache','moovin_tracking','logistics_rows','settlement_rows','shopify_orders');`
+2. If a table is far larger than its live-row count implies (or `last_analyze` is
+   null), run `VACUUM (FULL, ANALYZE) <table>;` (small tables, seconds; brief lock).
+3. Confirm migration `0023` is applied (`SELECT reloptions FROM pg_class WHERE
+   relname='finance_dataset_cache';` should list the autovacuum overrides).
+4. Reload `/admin/finance`; the initial Orders request should return HTTP 200 in
+   well under 20 s.
+
 ## WYN tracking sync (Costa Rica)
 
 - WYN is isolated to store `mireva-cr` (`store_id=1`) and guides beginning with

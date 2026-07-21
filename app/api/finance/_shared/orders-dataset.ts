@@ -271,7 +271,13 @@ async function writeL2LegacyFull(store: FinanceStorePublic, data: OrdersDataset)
             row_count: data.rows.length,
             refreshed_at: new Date().toISOString(),
           },
-          { onConflict: "store_id" }
+          // La PK post-0021 es (store_id, section). Usar onConflict: "store_id"
+          // no matchea ninguna constraint unica y Postgres respondia
+          // "there is no unique or exclusion constraint matching the ON CONFLICT
+          // specification", dejando la escritura de respaldo inutilizable: cuando
+          // el upsert por secciones fallaba (timeout), este fallback tambien fallaba
+          // y no se persistia NADA. Conflictar por (store_id, section) apunta a la PK.
+          { onConflict: "store_id,section" }
         ),
       L2_WRITE_TIMEOUT_MS,
       `orders-dataset L2 write legacy ${store.code}`

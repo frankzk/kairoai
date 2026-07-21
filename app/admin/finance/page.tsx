@@ -1723,6 +1723,11 @@ function OrdersTab({
   }>({ moovin: [], forza: [] });
   const [tableLoading, setTableLoading] = useState(true);
   const [tableError, setTableError] = useState("");
+  // Distingue "aun no cargo nada" de "ya hubo una carga valida". Cuando una
+  // peticion falla NO reseteamos filas/conteos: mantenemos el ultimo resultado
+  // valido (requisito: no mostrar cero ante un fallo). Si nunca cargo, mostramos
+  // el error con boton de reintento en vez de una tabla vacia que parece "0".
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [exporting, setExporting] = useState(false);
   // Busqueda con debounce (~300ms) para no disparar un fetch por tecla.
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -1744,6 +1749,27 @@ function OrdersTab({
   useEffect(() => {
     setPage(1);
   }, [debouncedSearch, trackingFilter, settlementFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code]);
+
+  // Al cambiar de tienda limpiamos el ultimo resultado valido: mantenerlo entre
+  // tiendas rompe el aislamiento (mostrar pedidos de otra tienda mientras carga
+  // la nueva, o si su carga falla). El "mantener ultimo valido" aplica solo a
+  // fallos transitorios de la MISMA tienda, no a un cambio de contexto.
+  useEffect(() => {
+    setServerRows([]);
+    setTotal(0);
+    setPeriodCount(0);
+    setSearchedCount(0);
+    setTrackingCounts(EMPTY_TRACKING_COUNTS);
+    setSettlementCounts(EMPTY_SETTLEMENT_COUNTS);
+    setHasLoadedOnce(false);
+  }, [selectedStore.code]);
+
+  // Reintento manual tras un fallo: fuerza una relectura del dataset (pide de
+  // nuevo la metadata) sin recargar toda la pagina.
+  const retryOrders = useCallback(() => {
+    metadataLoadedStoreRef.current = "";
+    setRefreshKey((key) => key + 1);
+  }, []);
 
   // Query params compartidos por el fetch de la tabla y por el export.
   const buildOrdersQuery = useCallback(
@@ -1788,6 +1814,7 @@ function OrdersTab({
         setSearchedCount(Number(json.searchedCount ?? 0));
         setTrackingCounts((json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS);
         setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
+        setHasLoadedOnce(true);
         if (json.operationalMetadata) {
           const metadata = json.operationalMetadata as OrdersOperationalMetadata;
           metadataLoadedStoreRef.current = selectedStore.code;
@@ -2226,10 +2253,36 @@ function OrdersTab({
               : " · Sin Boxful importado"}
           </p>
           {tableError && (
-            <div className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-red-200">
-              {tableError}
+            <div className="flex flex-col gap-2 border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-red-200 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                {tableError}
+                {hasLoadedOnce && (
+                  <span className="ml-1 text-red-300/80">
+                    Se mantiene el ultimo resultado valido.
+                  </span>
+                )}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                disabled={tableLoading}
+                onClick={retryOrders}
+              >
+                {tableLoading ? "Reintentando..." : "Reintentar"}
+              </Button>
             </div>
           )}
+          {tableError && !hasLoadedOnce ? (
+            // Nunca hubo una carga valida: mostramos el estado de error (con el
+            // reintento del banner de arriba) en lugar de una tabla vacia que se
+            // leeria como "0 pedidos" cuando en realidad la peticion fallo.
+            <div className="flex flex-col items-center justify-center gap-1 rounded-md border border-border/60 px-4 py-10 text-center text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">No pudimos cargar los pedidos.</p>
+              <p>Los datos existen; fue un fallo temporal al leerlos. Usa “Reintentar”.</p>
+            </div>
+          ) : (
           <div
             className={`transition-opacity ${tableLoading && serverRows.length > 0 ? "opacity-50" : ""}`}
             aria-busy={tableLoading}
@@ -2253,6 +2306,7 @@ function OrdersTab({
             }
           />
           </div>
+          )}
           {total > ORDERS_PAGE_SIZE && (
             <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
               <span>
