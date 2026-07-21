@@ -81,16 +81,27 @@ describe("detectOrderInTranscript", () => {
   it("detecta 'ya confirmamos tu pedido'", () => {
     expect(detectOrderInTranscript([msg("outbound", "Perfecto, ya confirmamos tu pedido")])).toBe(true);
   });
-  it("detecta apertura 'Hemos recibido tu pedido ... contra entrega' (caso Javier)", () => {
+  it("NO trata la apertura 'Hemos recibido tu pedido' como pedido (el cliente puede declinar)", () => {
     const t = [
-      msg("outbound", "Hola Javier. Hemos recibido tu pedido de 1x HER LOSS, valor total a pagar CONTRA ENTREGA de ₡19.900. Confirmame por favor"),
-      msg("inbound", "2 sin leer"),
+      msg("outbound", "Hola. Hemos recibido tu pedido de 1x HER LOSS, valor total a pagar CONTRA ENTREGA de ₡19.900. Confirmame por favor"),
     ];
-    expect(detectOrderInTranscript(t)).toBe(true);
+    expect(detectOrderInTranscript(t)).toBe(false);
+  });
+  it("detecta pedido enviado con guia y Moovin (caso Jordan/William)", () => {
+    expect(detectOrderInTranscript([msg("outbound", "Tu numero de guia es 2585274, acabamos de enviar tu pedido con la transportadora Moovin")])).toBe(true);
+    expect(detectOrderInTranscript([msg("outbound", "se comunicaron contigo de Moovin para la entrega de tu pedido")])).toBe(true);
   });
   it("detecta recordatorio de pedido y contacto de Moovin", () => {
     expect(detectOrderInTranscript([msg("outbound", "Recordatorio: tu pedido llega pronto")])).toBe(true);
     expect(detectOrderInTranscript([msg("outbound", "se comunicaron contigo de Moovin para la entrega")])).toBe(true);
+  });
+  it("NO trata 'procesando tu pedido' solo como pedido (el bot lo dice aunque el cliente decline)", () => {
+    const t = [msg("outbound", "nos encontramos procesando tu pedido, confirmame si estos datos son correctos para despacharlo")];
+    expect(detectOrderInTranscript(t)).toBe(false);
+  });
+  it("NO confunde el carrito abandonado (aun no confirmado) con un pedido", () => {
+    const t = [msg("outbound", "Estamos un poquito tristes, porque aun no has confirmado tu compra. no queremos tener que cancelar tu pedido, ayudanos a evitarlo")];
+    expect(detectOrderInTranscript(t)).toBe(false);
   });
   it("NO se dispara con mensajes PRE-pedido (pidiendo datos)", () => {
     const t = [

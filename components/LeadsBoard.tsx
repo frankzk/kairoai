@@ -16,6 +16,22 @@ import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import { BOARD_VIEWS, BOARD_STAGE_PRIORITY, type BoardStage } from "@/lib/leads-classify";
 
+// Fecha/hora del ultimo mensaje en hora CR (dd/mm hh:mm).
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("es-CR", {
+      timeZone: "America/Costa_Rica",
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
 // Formato de presentacion CR: 506######## -> +506 6123-4567
 function formatPhone(phone: string): string {
   if (/^506\d{8}$/.test(phone)) {
@@ -116,6 +132,7 @@ export default function LeadsBoard() {
   const [showHidden, setShowHidden] = useState(false);
   const [showProductivity, setShowProductivity] = useState(false);
   const [includeOld, setIncludeOld] = useState(false);
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
   const [drawerLead, setDrawerLead] = useState<LeadRow | null>(null);
 
   const load = useCallback(async () => {
@@ -173,8 +190,12 @@ export default function LeadsBoard() {
         .filter((l) => l.next_followup_at != null)
         .sort((a, b) => (a.next_followup_at ?? "").localeCompare(b.next_followup_at ?? ""));
     }
-    return leads.filter((l) => l.board_stage === activeStage);
-  }, [leads, activeStage, searching, searchMatches]);
+    const byInteraction = (a: LeadRow, b: LeadRow) => {
+      const cmp = (a.last_interaction_at ?? "").localeCompare(b.last_interaction_at ?? "");
+      return sortDir === "desc" ? -cmp : cmp;
+    };
+    return leads.filter((l) => l.board_stage === activeStage).sort(byInteraction);
+  }, [leads, activeStage, searching, searchMatches, sortDir]);
 
   // Conteo por etapa: refleja los resultados de busqueda cuando hay query.
   const stageCount = (stage: BoardStage) =>
@@ -327,11 +348,24 @@ export default function LeadsBoard() {
               : "No hay leads en esta etapa."}
           </p>
         ) : (
-          <div className="space-y-2">
-            {visibleLeads.map((lead) => (
-              <LeadCard key={lead.id} lead={lead} onOpen={() => setDrawerLead(lead)} />
-            ))}
-          </div>
+          <>
+            {!searching && activeStage !== "agenda" && (
+              <div className="mb-2 flex justify-end">
+                <button
+                  onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                  title="Ordenar por fecha del último mensaje"
+                >
+                  Última interacción {sortDir === "desc" ? "↓ reciente primero" : "↑ antiguo primero"}
+                </button>
+              </div>
+            )}
+            <div className="space-y-2">
+              {visibleLeads.map((lead) => (
+                <LeadCard key={lead.id} lead={lead} onOpen={() => setDrawerLead(lead)} />
+              ))}
+            </div>
+          </>
         )}
       </main>
 
@@ -400,10 +434,15 @@ function LeadCard({ lead, onOpen }: { lead: LeadRow; onOpen: () => void }) {
             <p className="mt-0.5 truncate text-xs text-muted-foreground/70">{lead.auto_reason}</p>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={onOpen}>
-          <MessageSquare className="mr-2 h-4 w-4" />
-          Ver chat
-        </Button>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span className="text-xs text-muted-foreground" title="Fecha del último mensaje">
+            {fmtDateTime(lead.last_interaction_at)}
+          </span>
+          <Button variant="outline" size="sm" onClick={onOpen}>
+            <MessageSquare className="mr-2 h-4 w-4" />
+            Ver chat
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

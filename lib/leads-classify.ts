@@ -158,16 +158,16 @@ export function classifyByHumanLabels(labels: string[]): { status: string; reaso
 // por otro flujo), el bot igual deja mensajes inequivocos de que el pedido
 // existe/se envio. Solo miramos mensajes SALIENTES (bot/negocio) y frases que
 // implican un pedido YA creado/confirmado/enviado (no "para hacer tu pedido...").
+// SOLO senales CONFIABLES: el pedido llego a logistica (guia/enviado/Moovin) o
+// el bot confirmo explicitamente. Se descartaron a proposito frases de apertura
+// como "hemos recibido tu pedido" / "procesando tu pedido" / "para despacharte"
+// porque el bot las manda AUNQUE el cliente luego decline (visto en produccion:
+// clientes que reciben esas frases y responden "no lo voy a pedir").
 const ORDER_CONFIRMED_RES: RegExp[] = [
   /numero de guia|tu guia es|guia es \d|cuando tengamos (la guia|el numero de guia)/,
   /acabamos de enviar tu pedido|enviamos tu pedido|hemos enviado tu pedido|ya enviamos tu pedido/,
   /ya confirmamos tu pedido|pedido (ya )?(esta|quedo) confirmado|pedido confirmado/,
-  /tu pedido (ya )?(esta) creado|pedido esta creado|ya tome los datos de tu pedido/,
-  /tu pedido sigue en proceso/,
   /recordatorio.*pedido|para la entrega de tu|se comunicaron contigo de moovin/,
-  // El bot abre confirmando un pedido YA recibido, con total contra entrega.
-  /hemos recibido tu pedido|recibido tu pedido de/,
-  /(valor )?total a pagar contra entrega/,
 ];
 
 function normText(t: string): string {
