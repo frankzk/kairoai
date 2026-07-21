@@ -235,7 +235,7 @@ type ExpensePayload = {
   currency: string;
   notes: string;
 };
-const EXPENSE_ORIGINAL_CURRENCIES = ["CRC", "USD", "PEN"] as const;
+const EXPENSE_ORIGINAL_CURRENCIES = ["CRC", "HNL", "USD", "PEN"] as const;
 const PAYROLL_PAYMENT_TYPES = [
   "Sueldo mensual",
   "Sueldo quincena",
@@ -256,6 +256,9 @@ const MISC_EXPENSE_CATEGORIES = [
   "otros",
 ] as const;
 type ExpenseOriginalCurrency = (typeof EXPENSE_ORIGINAL_CURRENCIES)[number];
+// Moneda contable de una tienda (en la que se registran los gastos y el cierre
+// mensual): CRC para Costa Rica, HNL para Honduras.
+type AccountingCurrency = FinanceStorePublic["currency"];
 
 const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string }> = [
   { value: "all", label: "Todos" },
@@ -532,6 +535,10 @@ export default function FinancePage() {
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
+  // Formateo de moneda ligado a la tienda activa: se fija en el render del
+  // padre para que todos los hijos (tablas, KPIs, cierres) muestren CRC en CR
+  // y HNL en HN sin propagar la tienda a cada llamada de currency().
+  setActiveCurrencyStore(selectedStore);
 
   const handleOrdersOperationalMetadata = useCallback(
     (storeCode: FinanceStoreCode, metadata: OrdersOperationalMetadata) => {
@@ -1108,7 +1115,7 @@ export default function FinancePage() {
 
   async function saveExpense(event: FormEvent<HTMLFormElement>): Promise<boolean> {
     event.preventDefault();
-    const expensePayload = buildExpensePayload(expenseForm);
+    const expensePayload = buildExpensePayload(expenseForm, selectedStore.currency);
     if (!expensePayload.ok) {
       setError(expensePayload.error);
       return false;
@@ -1538,6 +1545,7 @@ export default function FinancePage() {
             )}
             {tab === "expenses" && (
               <ExpensesTab
+                selectedStore={selectedStore}
                 expenses={expenses}
                 form={expenseForm}
                 setForm={setExpenseForm}
@@ -5171,18 +5179,24 @@ function ProductCostRow({
 }
 
 function ExpensesTab({
+  selectedStore,
   expenses,
   form,
   setForm,
   onSave,
   onDelete,
 }: {
+  selectedStore: FinanceStorePublic;
   expenses: BusinessExpense[];
   form: typeof emptyExpense;
   setForm: (form: typeof emptyExpense) => void;
   onSave: (event: FormEvent<HTMLFormElement>) => Promise<boolean>;
   onDelete: (id: number) => void;
 }) {
+  // Moneda contable de la tienda activa: CRC en Costa Rica, HNL en Honduras.
+  // Los gastos en USD/PEN se convierten a esta moneda; los pagados en la moneda
+  // local no necesitan conversion.
+  const accountingCurrency = selectedStore.currency;
   const [activeType, setActiveType] = useState<ExpenseType>("ads");
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null);
@@ -5266,8 +5280,8 @@ function ExpensesTab({
   ).sort((a, b) => a.localeCompare(b));
   const formAmount = Number(form.amount);
   const formExchangeRate = Number(form.exchange_rate);
-  const originalCurrency = getExpenseOriginalCurrency(form);
-  const needsExchangeRate = originalCurrency !== "CRC";
+  const originalCurrency = getExpenseOriginalCurrency(form, accountingCurrency);
+  const needsExchangeRate = originalCurrency !== accountingCurrency;
   const [fxHint, setFxHint] = useState("");
   const formRef = useRef(form);
   formRef.current = form;
@@ -5282,14 +5296,15 @@ function ExpensesTab({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/finance/exchange-rate?from=${originalCurrency}`, {
-          cache: "no-store",
-        });
+        const res = await fetch(
+          `/api/finance/exchange-rate?from=${originalCurrency}&to=${accountingCurrency}`,
+          { cache: "no-store" }
+        );
         const json = (await res.json()) as { rate?: number; updated?: string; stale?: boolean };
         if (cancelled || !res.ok || !json.rate) return;
         const rate = Number(json.rate);
         setFxHint(
-          `TC del dia: ${rate.toFixed(2)} CRC por 1 ${originalCurrency}${json.stale ? " (cacheado)" : ""}`
+          `TC del dia: ${rate.toFixed(2)} ${accountingCurrency} por 1 ${originalCurrency}${json.stale ? " (cacheado)" : ""}`
         );
         if (!formRef.current.exchange_rate) {
           setForm({ ...formRef.current, exchange_rate: rate.toFixed(2) });
@@ -5302,7 +5317,7 @@ function ExpensesTab({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [originalCurrency, needsExchangeRate]);
+  }, [originalCurrency, needsExchangeRate, accountingCurrency]);
   const convertedExpenseAmount =
     needsExchangeRate &&
     Number.isFinite(formAmount) &&
@@ -5322,28 +5337,28 @@ function ExpensesTab({
   function selectExpenseType(type: ExpenseType) {
     setActiveType(type);
     setEditingExpenseId(null);
-    setForm(prepareExpenseFormForType(form, type));
+    setForm(prepareExpenseFormForType(form, type, accountingCurrency));
     clearExpenseFilters();
   }
 
   function openExpenseModal(type: ExpenseType) {
     setActiveType(type);
     setEditingExpenseId(null);
-    setForm(prepareExpenseFormForType(form, type));
+    setForm(prepareExpenseFormForType(form, type, accountingCurrency));
     setIsExpenseModalOpen(true);
   }
 
   function openEditExpenseModal(expense: BusinessExpense) {
     setActiveType(expense.type);
     setEditingExpenseId(expense.id);
-    setForm(buildExpenseFormFromRecord(expense));
+    setForm(buildExpenseFormFromRecord(expense, accountingCurrency));
     setIsExpenseModalOpen(true);
   }
 
   function closeExpenseModal() {
     setIsExpenseModalOpen(false);
     setEditingExpenseId(null);
-    setForm({ ...emptyExpense, type: activeType });
+    setForm({ ...emptyExpense, type: activeType, currency: accountingCurrency });
   }
 
   async function handleExpenseSubmit(event: FormEvent<HTMLFormElement>) {
@@ -5718,13 +5733,13 @@ function ExpensesTab({
                         required
                       />
                     </LabeledField>
-                    <LabeledField label="Tipo de cambio a colones">
+                    <LabeledField label={`Tipo de cambio a ${accountingCurrencyWord(accountingCurrency)}`}>
                       <Input
                         type="number"
                         min="0"
                         step="0.01"
                         inputMode="decimal"
-                        placeholder="CRC por 1 PEN"
+                        placeholder={`${accountingCurrency} por 1 PEN`}
                         value={form.exchange_rate}
                         onChange={(e) => setForm({ ...form, exchange_rate: e.target.value, type: activeType })}
                         required
@@ -5739,7 +5754,7 @@ function ExpensesTab({
                   <div className="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
                     {convertedExpenseAmount
                       ? `Se guardara en cierre mensual como ${currency(convertedExpenseAmount)}.`
-                      : "Ingresa monto y tipo de cambio para calcular el gasto en CRC."}
+                      : `Ingresa monto y tipo de cambio para calcular el gasto en ${accountingCurrency}.`}
                   </div>
                 </>
               ) : activeType === "misc" ? (
@@ -5752,22 +5767,24 @@ function ExpensesTab({
                           setForm({
                             ...form,
                             currency: e.target.value,
-                            exchange_rate: e.target.value === "CRC" ? "" : form.exchange_rate,
+                            exchange_rate: e.target.value === accountingCurrency ? "" : form.exchange_rate,
                             type: activeType,
                           })
                         }
                         className="h-10 w-full border border-input bg-background px-3 text-sm outline-none"
                       >
-                        <option value="CRC">Colones (CRC)</option>
-                        <option value="USD">Dolares (USD)</option>
-                        <option value="PEN">Soles (PEN)</option>
+                        {getExpenseCurrencyOptions(accountingCurrency).map((code) => (
+                          <option key={code} value={code}>
+                            {EXPENSE_CURRENCY_LABEL[code]}
+                          </option>
+                        ))}
                       </select>
                     </LabeledField>
-                    <LabeledField label={getExpenseAmountLabel(originalCurrency)}>
+                    <LabeledField label={getExpenseAmountLabel(originalCurrency, accountingCurrency)}>
                       <Input
                         type="number"
                         min="0"
-                        step={originalCurrency === "CRC" ? "1" : "0.01"}
+                        step={originalCurrency === accountingCurrency ? "1" : "0.01"}
                         inputMode="decimal"
                         placeholder={getExpenseAmountPlaceholder(originalCurrency)}
                         value={form.amount}
@@ -5777,13 +5794,13 @@ function ExpensesTab({
                     </LabeledField>
                   </div>
                   {needsExchangeRate && (
-                    <LabeledField label={getExchangeRateLabel(originalCurrency)}>
+                    <LabeledField label={getExchangeRateLabel(originalCurrency, accountingCurrency)}>
                       <Input
                         type="number"
                         min="0"
                         step="0.01"
                         inputMode="decimal"
-                        placeholder={`CRC por 1 ${originalCurrency}`}
+                        placeholder={`${accountingCurrency} por 1 ${originalCurrency}`}
                         value={form.exchange_rate}
                         onChange={(e) => setForm({ ...form, exchange_rate: e.target.value, type: activeType })}
                         required
@@ -5799,12 +5816,12 @@ function ExpensesTab({
                     {needsExchangeRate
                       ? convertedExpenseAmount
                         ? `Se guardara en cierre mensual como ${currency(convertedExpenseAmount)}.`
-                        : "Ingresa monto y tipo de cambio para calcular el gasto en CRC."
+                        : `Ingresa monto y tipo de cambio para calcular el gasto en ${accountingCurrency}.`
                       : "Se guardara en cierre mensual sin conversion."}
                   </div>
                 </>
               ) : (
-                <LabeledField label="Monto en colones">
+                <LabeledField label={`Monto en ${accountingCurrencyWord(accountingCurrency)}`}>
                   <Input
                     type="number"
                     min="0"
@@ -5986,22 +6003,31 @@ function LabeledField({
   );
 }
 
-function prepareExpenseFormForType(form: typeof emptyExpense, type: ExpenseType): typeof emptyExpense {
+function prepareExpenseFormForType(
+  form: typeof emptyExpense,
+  type: ExpenseType,
+  accountingCurrency: AccountingCurrency = "CRC"
+): typeof emptyExpense {
   const currency =
     type === "payroll"
       ? "PEN"
       : type === "misc" && form.type === "misc"
-        ? normalizeExpenseOriginalCurrency(form.currency)
-        : "CRC";
+        ? normalizeExpenseOriginalCurrency(form.currency, accountingCurrency)
+        : accountingCurrency;
   return {
     ...form,
     type,
     currency,
-    exchange_rate: type === "ads" || currency === "CRC" ? "" : form.exchange_rate,
+    // No hace falta tipo de cambio si el gasto ya esta en la moneda contable de
+    // la tienda (CRC en CR, HNL en HN).
+    exchange_rate: type === "ads" || currency === accountingCurrency ? "" : form.exchange_rate,
   };
 }
 
-function buildExpenseFormFromRecord(expense: BusinessExpense): typeof emptyExpense {
+function buildExpenseFormFromRecord(
+  expense: BusinessExpense,
+  accountingCurrency: AccountingCurrency = "CRC"
+): typeof emptyExpense {
   const originalPayment = parseExpenseOriginalPayment(expense);
   return {
     ...emptyExpense,
@@ -6013,30 +6039,59 @@ function buildExpenseFormFromRecord(expense: BusinessExpense): typeof emptyExpen
     category: expense.category || "",
     description: expense.description || "",
     amount: String(originalPayment?.amount ?? expense.amount ?? ""),
-    currency: originalPayment?.currency ?? normalizeExpenseOriginalCurrency(expense.currency),
+    currency: originalPayment?.currency ?? normalizeExpenseOriginalCurrency(expense.currency, accountingCurrency),
     exchange_rate: originalPayment?.exchangeRate ? String(originalPayment.exchangeRate) : "",
     notes: originalPayment?.cleanNotes ?? expense.notes ?? "",
   };
 }
 
-function normalizeExpenseOriginalCurrency(value: string): ExpenseOriginalCurrency {
-  return isExpenseOriginalCurrency(value) ? value : "CRC";
+// Moneda contable de la tienda: la local (CRC/HNL) mas las divisas extranjeras
+// que se convierten. Costa Rica ve [CRC, USD, PEN]; Honduras ve [HNL, USD, PEN].
+function getExpenseCurrencyOptions(accountingCurrency: AccountingCurrency): ExpenseOriginalCurrency[] {
+  return [accountingCurrency, "USD", "PEN"];
+}
+
+function accountingCurrencyWord(accountingCurrency: AccountingCurrency): string {
+  return accountingCurrency === "HNL" ? "lempiras" : "colones";
+}
+
+const EXPENSE_CURRENCY_LABEL: Record<ExpenseOriginalCurrency, string> = {
+  CRC: "Colones (CRC)",
+  HNL: "Lempiras (HNL)",
+  USD: "Dolares (USD)",
+  PEN: "Soles (PEN)",
+};
+
+function normalizeExpenseOriginalCurrency(
+  value: string,
+  accountingCurrency: AccountingCurrency = "CRC"
+): ExpenseOriginalCurrency {
+  const upper = String(value || "").toUpperCase();
+  if (upper === "USD" || upper === "PEN") return upper;
+  // Cualquier moneda local (o vacio) cae en la moneda contable de la tienda.
+  return accountingCurrency;
 }
 
 function isExpenseOriginalCurrency(value: string): value is ExpenseOriginalCurrency {
   return (EXPENSE_ORIGINAL_CURRENCIES as readonly string[]).includes(value);
 }
 
-function getExpenseOriginalCurrency(form: typeof emptyExpense): ExpenseOriginalCurrency {
+function getExpenseOriginalCurrency(
+  form: typeof emptyExpense,
+  accountingCurrency: AccountingCurrency = "CRC"
+): ExpenseOriginalCurrency {
   if (form.type === "payroll") return "PEN";
-  if (form.type === "misc") return normalizeExpenseOriginalCurrency(form.currency);
-  return "CRC";
+  if (form.type === "misc") return normalizeExpenseOriginalCurrency(form.currency, accountingCurrency);
+  return accountingCurrency;
 }
 
-function getExpenseAmountLabel(currencyCode: ExpenseOriginalCurrency): string {
+function getExpenseAmountLabel(
+  currencyCode: ExpenseOriginalCurrency,
+  accountingCurrency: AccountingCurrency = "CRC"
+): string {
   if (currencyCode === "USD") return "Monto pagado en dolares";
   if (currencyCode === "PEN") return "Monto pagado en soles";
-  return "Monto en colones";
+  return `Monto en ${accountingCurrencyWord(accountingCurrency)}`;
 }
 
 function getExpenseAmountPlaceholder(currencyCode: ExpenseOriginalCurrency): string {
@@ -6045,8 +6100,11 @@ function getExpenseAmountPlaceholder(currencyCode: ExpenseOriginalCurrency): str
   return "Monto";
 }
 
-function getExchangeRateLabel(currencyCode: ExpenseOriginalCurrency): string {
-  return `Tipo de cambio ${currencyCode} a colones`;
+function getExchangeRateLabel(
+  currencyCode: ExpenseOriginalCurrency,
+  accountingCurrency: AccountingCurrency = "CRC"
+): string {
+  return `Tipo de cambio ${currencyCode} a ${accountingCurrencyWord(accountingCurrency)}`;
 }
 
 function getExpenseOriginalPaymentLabel(expense: BusinessExpense): string {
@@ -6065,9 +6123,17 @@ function parseExpenseOriginalPayment(expense: Pick<BusinessExpense, "notes">): {
   const notes = expense.notes || "";
   const originalMatch = notes.match(/Monto original:\s*([A-Z]{3})\s*([0-9.,]+)/i);
   if (!originalMatch) return null;
-  const originalCurrency = normalizeExpenseOriginalCurrency(originalMatch[1].toUpperCase());
+  // Se conserva la moneda exacta guardada en la nota (USD/PEN o la local de la
+  // tienda). No se normaliza contra una moneda contable porque una nota puede
+  // pertenecer a cualquier tienda; USD/PEN se detectan y el resto (CRC/HNL) se
+  // toma tal cual quedo escrito.
+  const rawCurrency = originalMatch[1].toUpperCase();
+  const originalCurrency: ExpenseOriginalCurrency = isExpenseOriginalCurrency(rawCurrency)
+    ? rawCurrency
+    : "CRC";
   const amount = parseLocaleNumber(originalMatch[2]);
-  const exchangeRateMatch = notes.match(/Tipo de cambio [A-Z]{3}->CRC:\s*([0-9.,]+)/i);
+  // La nota puede convertir a CRC o HNL segun la tienda: `->CRC:` o `->HNL:`.
+  const exchangeRateMatch = notes.match(/Tipo de cambio [A-Z]{3}->[A-Z]{3}:\s*([0-9.,]+)/i);
   const exchangeRate = exchangeRateMatch ? parseLocaleNumber(exchangeRateMatch[1]) : 0;
   const cleanNotes =
     notes
@@ -6092,7 +6158,8 @@ function formatOriginalCurrencyAmount(currencyCode: string, amount: number): str
   if (currencyCode === "PEN") {
     return `S/ ${amount.toLocaleString("es-PE", { maximumFractionDigits: 2 })}`;
   }
-  if (currencyCode === "CRC") return currency(amount);
+  // CRC / HNL (moneda local): se formatea con la moneda de la tienda activa.
+  if (currencyCode === "CRC" || currencyCode === "HNL") return currency(amount);
   return `${currencyCode} ${amount.toLocaleString("es-CR", { maximumFractionDigits: 2 })}`;
 }
 
@@ -8558,7 +8625,18 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   return <Badge variant="muted">{label || "Pendiente"}</Badge>;
 }
 
-function currency(value: number, store = FINANCE_STORES[0]): string {
+// Tienda activa para el formateo de moneda. <FinancePage> la fija en cada
+// render (antes de que se rendericen sus hijos) para que currency() muestre
+// CRC en Costa Rica y HNL en Honduras sin tener que pasar la tienda a las ~90
+// llamadas repartidas por la pantalla. Costa Rica es el default, asi que si
+// nunca se fija nada el comportamiento historico se conserva intacto.
+let activeCurrencyStore: FinanceStorePublic = FINANCE_STORES[0];
+
+function setActiveCurrencyStore(store: FinanceStorePublic): void {
+  activeCurrencyStore = store;
+}
+
+function currency(value: number, store: FinanceStorePublic = activeCurrencyStore): string {
   return new Intl.NumberFormat(store.locale, {
     style: "currency",
     currency: store.currency,
@@ -8665,7 +8743,8 @@ function formatFinancePageError(error: string): string {
 }
 
 function buildExpensePayload(
-  form: typeof emptyExpense
+  form: typeof emptyExpense,
+  accountingCurrency: AccountingCurrency = "CRC"
 ): { ok: true; expense: ExpensePayload } | { ok: false; error: string } {
   const amount = Number(form.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -8680,7 +8759,7 @@ function buildExpensePayload(
     category: form.category.trim(),
     description: form.description.trim(),
     amount,
-    currency: "CRC",
+    currency: accountingCurrency,
     notes: form.notes.trim(),
   };
 
@@ -8688,21 +8767,22 @@ function buildExpensePayload(
     if (form.type === "payroll") return { ok: false, error: "Ingresa la persona asociada al pago de planilla." };
   }
 
-  const originalCurrency = getExpenseOriginalCurrency(form);
-  if (originalCurrency === "CRC") return { ok: true, expense: baseExpense };
+  const originalCurrency = getExpenseOriginalCurrency(form, accountingCurrency);
+  // Si el gasto ya esta en la moneda contable de la tienda no hay conversion.
+  if (originalCurrency === accountingCurrency) return { ok: true, expense: baseExpense };
 
   const exchangeRate = Number(form.exchange_rate);
   if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
     return {
       ok: false,
-      error: `Ingresa el tipo de cambio ${originalCurrency} a CRC para registrar este gasto.`,
+      error: `Ingresa el tipo de cambio ${originalCurrency} a ${accountingCurrency} para registrar este gasto.`,
     };
   }
 
   const convertedAmount = roundMoney(amount * exchangeRate);
   const conversionNote = [
     `Monto original: ${originalCurrency} ${amount.toFixed(2)}`,
-    `Tipo de cambio ${originalCurrency}->CRC: ${exchangeRate}`,
+    `Tipo de cambio ${originalCurrency}->${accountingCurrency}: ${exchangeRate}`,
     baseExpense.notes ? `Nota: ${baseExpense.notes}` : "",
   ].filter(Boolean).join("\n");
 

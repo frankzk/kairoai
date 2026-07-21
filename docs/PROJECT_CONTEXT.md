@@ -133,6 +133,11 @@ Multi-store rule:
   - `mireva-cr` (`store_id = 1`, currency `CRC`, logistics provider `Moovin`)
   - `mireva-hn` (`store_id = 2`, currency `HNL`, logistics provider `Forza`)
 - The `/admin/finance` header includes a store selector. Every finance API request must carry the selected `store` value.
+- Currency is store-aware and follows `FINANCE_STORES[].currency` (the store's accounting currency): Costa Rica shows and books in `CRC`, Honduras in `HNL`. Honduras must never show colones.
+  - Display: the finance page's `currency()` formatter reads an active store that `<FinancePage>` sets on every render, so all tables, KPIs, and monthly closes format in the selected store's currency without threading the store through ~90 call sites. Costa Rica (`FINANCE_STORES[0]`) is the default, so its historical behavior is unchanged.
+  - Expenses: amounts are stored in the store's accounting currency. Expenses paid in `USD`/`PEN` are converted to that currency (CRC for CR, HNL for HN) via the exchange-rate route; expenses paid in the store's local currency need no conversion. The `Monto original` / `Tipo de cambio ...->CRC|HNL` audit note in `business_expenses.notes` records the store's currency, and the parser accepts either target.
+  - `/api/finance/exchange-rate` takes `from` (USD/PEN) and `to` (CRC/HNL, default CRC) and returns the rate to the store's accounting currency.
+  - `PEN` (payroll) and `USD` remain original payment currencies only; they are always converted to the store's accounting currency for reporting.
 - Store isolation is enforced at the API boundary: finance and Shopify data endpoints require an explicit valid `store` (`mireva-cr` or `mireva-hn`) and return `400` instead of defaulting to Costa Rica.
 - Finance writes, uploads, deletes, syncs, and reads must always pass `store_id` to Supabase. Boxful logistics/liquidation imports must set `store_id` on both the import record and every row.
 - Costa Rica keeps the legacy env fallback `SHOPIFY_SHOP_DOMAIN` + `SHOPIFY_ACCESS_TOKEN`.
@@ -647,6 +652,16 @@ Build in this order:
 
 ## Validation Log
 
+2026-07-21:
+
+- Currency is now store-aware end to end. Honduras shows and books in `HNL`; Costa Rica stays in `CRC`.
+  - `app/admin/finance/page.tsx`: `currency()` formats in the active store's currency (active store set by `<FinancePage>` each render); expense capture converts `USD`/`PEN` to the store's accounting currency (`CRC`/`HNL`) with store-aware labels, dropdown options, hints, and the `Monto original`/`Tipo de cambio ...->CRC|HNL` audit note.
+  - `app/api/finance/exchange-rate/route.ts`: added `to` param (`CRC`/`HNL`, default `CRC`) so the rate targets the store's accounting currency; cache is keyed by `from->to`.
+  - Costa Rica behavior is unchanged because `CRC`/`FINANCE_STORES[0]` remains the default across every helper.
+- `npx tsc --noEmit`: passed (0 errors)
+- `npm test`: passed (233 tests)
+- `npm run build`: passed
+
 2026-06-13:
 
 - `npm run lint`: passed
@@ -715,8 +730,8 @@ Build in this order:
   - `boxful_file_controls.status = importado`
   Future product work should replace this emergency path with an async/background import flow or chunked client upload.
 - `Pedidos` consolidates multiple Boxful logistics rows for the same Shopify order into one visible order row. When duplicate logistics rows exist, a final column-M status (`Entregado` or `No entregado`) wins over intermediate states like `Registrado`, `Recolectado`, `En ruta a destino`, or `Problemas en gestión`; if there are multiple final rows, the newest logistics date wins. This prevents the UI from showing a Shopify order as `Pendiente` when the uploaded Boxful history already contains its final delivery outcome.
-- `Gastos > Planilla` captures payroll in Peruvian soles (`PEN`) with a required exchange rate to Costa Rican colones (`CRC`). The app stores the converted CRC amount in `business_expenses.amount` so monthly profitability remains comparable; the original PEN amount and exchange rate are persisted in `business_expenses.notes` for audit display.
-- `Gastos > Varios` supports expenses paid in `CRC`, `USD`, or `PEN`. If the original currency is not CRC, the modal requires an exchange rate and stores the converted CRC amount in `business_expenses.amount`; the original amount/currency and exchange rate are persisted in `business_expenses.notes`.
+- `Gastos > Planilla` captures payroll in Peruvian soles (`PEN`) with a required exchange rate to the store's accounting currency (`CRC` for Costa Rica, `HNL` for Honduras). The app stores the converted amount in `business_expenses.amount` so monthly profitability stays in the store's currency; the original PEN amount and exchange rate are persisted in `business_expenses.notes` for audit display.
+- `Gastos > Varios` supports expenses paid in the store's local currency (`CRC` or `HNL`), `USD`, or `PEN`. If the original currency is not the store's accounting currency, the modal requires an exchange rate and stores the converted amount in `business_expenses.amount`; the original amount/currency and exchange rate are persisted in `business_expenses.notes`. The currency dropdown offers `[store local currency, USD, PEN]`.
 
 2026-06-10:
 
