@@ -29,7 +29,8 @@ export type BoardStage =
   | "por_cerrar" // dio datos, falta cerrar
   | "pago_verificar" // SINPE por verificar
   | "carrito" // carrito abandonado
-  | "seguimiento" // conversando / tibio / gestion manual pendiente
+  | "tibios" // escribieron pero nadie los ha trabajado aun
+  | "seguimiento" // ya trabajados por la asesora, en seguimiento
   | "frio" // frio, minimo contacto
   | "ganado" // ya compro -> oculto, sin gestion
   | "descartado"; // terminal, sin gestion
@@ -47,8 +48,8 @@ export const LEAD_STATUSES: StatusDef[] = [
   { code: "casi_cierra", label: "Casi cierra", category: "hot", source: "auto", callable: true, board: "por_cerrar" },
   // open (auto)
   { code: "carrito_abandonado", label: "Carrito abandonado", category: "open", source: "auto", callable: true, board: "carrito" },
-  { code: "conversando", label: "Conversando", category: "open", source: "auto", callable: true, board: "seguimiento" },
-  { code: "nuevo", label: "Nuevo", category: "open", source: "auto", callable: true, board: "seguimiento" },
+  { code: "conversando", label: "Conversando", category: "open", source: "auto", callable: true, board: "tibios" },
+  { code: "nuevo", label: "Nuevo", category: "open", source: "auto", callable: true, board: "tibios" },
   { code: "frio", label: "Frio", category: "open", source: "auto", callable: true, board: "frio" },
   // open (manual)
   { code: "contactado_dejo_wsp", label: "Contactado, dejo WhatsApp", category: "open", source: "manual", callable: true, board: "seguimiento" },
@@ -342,6 +343,7 @@ export const BOARD_VIEWS: BoardView[] = [
   { key: "por_cerrar", label: "Por cerrar" },
   { key: "pago_verificar", label: "Pago por verificar" },
   { key: "carrito", label: "Carritos" },
+  { key: "tibios", label: "Tibios" },
   { key: "seguimiento", label: "Seguimiento" },
   { key: "frio", label: "Frios" },
   { key: "ganado", label: "Ganados", hiddenByDefault: true },
@@ -353,6 +355,7 @@ export const BOARD_STAGE_PRIORITY: BoardStage[] = [
   "pago_verificar",
   "por_cerrar",
   "carrito",
+  "tibios",
   "seguimiento",
   "frio",
   "ganado",

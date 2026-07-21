@@ -82,6 +82,7 @@ export async function runLeadsSync(opts: {
       por_cerrar: 0,
       pago_verificar: 0,
       carrito: 0,
+      tibios: 0,
       seguimiento: 0,
       frio: 0,
       ganado: 0,
@@ -215,7 +216,7 @@ const RECLASSIFY_MAX_BATCH = 300;
 // Buckets "de trabajo": un lead aqui deberia necesitar gestion porque aun no
 // tiene pedido. El afinado los revisa TODOS (no solo "por cerrar"). Ganados y
 // Descartados quedan fuera (ya son terminales).
-const ACTIVE_STAGES: BoardStage[] = ["por_cerrar", "pago_verificar", "carrito", "seguimiento", "frio"];
+const ACTIVE_STAGES: BoardStage[] = ["por_cerrar", "pago_verificar", "carrito", "tibios", "seguimiento", "frio"];
 
 /**
  * Barrido fino por LOTES sobre los buckets de trabajo: baja el transcript de un

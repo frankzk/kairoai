@@ -243,6 +243,7 @@ export function countByStage(leads: LeadRecord[]): LeadBoardCounts {
     por_cerrar: 0,
     pago_verificar: 0,
     carrito: 0,
+    tibios: 0,
     seguimiento: 0,
     frio: 0,
     ganado: 0,
