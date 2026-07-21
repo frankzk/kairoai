@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
-import { BOARD_VIEWS, type BoardStage } from "@/lib/leads-classify";
+import { BOARD_VIEWS, BOARD_STAGE_PRIORITY, type BoardStage } from "@/lib/leads-classify";
 
 // Formato de presentacion CR: 506######## -> +506 6123-4567
 function formatPhone(phone: string): string {
@@ -149,16 +149,35 @@ export default function LeadsBoard() {
     []
   );
 
+  const q = search.trim().toLowerCase();
+  const searching = q.length > 0;
+
+  // Al buscar, los resultados son de TODAS las etapas (busqueda global).
+  const searchMatches = useMemo(
+    () => (searching ? leads.filter((l) => matchesSearch(l, q)) : []),
+    [leads, q, searching, matchesSearch]
+  );
+
+  const stagePriority = (stage: BoardStage) => {
+    const i = BOARD_STAGE_PRIORITY.indexOf(stage);
+    return i < 0 ? 99 : i;
+  };
+
   const visibleLeads = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    if (searching) {
+      return [...searchMatches].sort((a, b) => stagePriority(a.board_stage) - stagePriority(b.board_stage));
+    }
     if (activeStage === "agenda") {
       return leads
         .filter((l) => l.next_followup_at != null)
-        .filter((l) => matchesSearch(l, q))
         .sort((a, b) => (a.next_followup_at ?? "").localeCompare(b.next_followup_at ?? ""));
     }
-    return leads.filter((l) => l.board_stage === activeStage).filter((l) => matchesSearch(l, q));
-  }, [leads, activeStage, search, matchesSearch]);
+    return leads.filter((l) => l.board_stage === activeStage);
+  }, [leads, activeStage, searching, searchMatches]);
+
+  // Conteo por etapa: refleja los resultados de busqueda cuando hay query.
+  const stageCount = (stage: BoardStage) =>
+    searching ? searchMatches.filter((l) => l.board_stage === stage).length : counts?.byStage[stage] ?? 0;
 
   // Agenda: seguimientos programados y cuantos ya vencieron.
   const agenda = useMemo(() => {
@@ -221,6 +240,20 @@ export default function LeadsBoard() {
 
         {showProductivity && <ProductivityPanel store={store} />}
 
+        {/* Buscador (por encima de las etapas: busca en TODAS) */}
+        <div className="mb-4">
+          <Input
+            placeholder="Buscar por nombre, telefono o mensaje... (en todas las etapas)"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {searching && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {visibleLeads.length} resultado{visibleLeads.length === 1 ? "" : "s"} en todas las etapas · los números de cada etapa muestran las coincidencias
+            </p>
+          )}
+        </div>
+
         {/* Pestañas por bucket */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <button
@@ -249,8 +282,8 @@ export default function LeadsBoard() {
           </button>
           {views.map((v) => {
             const meta = STAGE_META[v.key];
-            const count = counts?.byStage[v.key] ?? 0;
-            const active = activeStage === v.key;
+            const count = stageCount(v.key);
+            const active = activeStage === v.key && !searching;
             return (
               <button
                 key={v.key}
@@ -284,19 +317,13 @@ export default function LeadsBoard() {
           </button>
         </div>
 
-        <div className="mb-4">
-          <Input
-            placeholder="Buscar por nombre, telefono o mensaje..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-
         {loading ? (
           <p className="py-12 text-center text-muted-foreground">Cargando...</p>
         ) : visibleLeads.length === 0 ? (
           <p className="py-12 text-center text-muted-foreground">
-            No hay leads en esta etapa. {counts && counts.total === 0 ? "Pulsa Sincronizar para traer los chats de Icomfly." : ""}
+            {searching
+              ? "Sin resultados para la búsqueda."
+              : "No hay leads en esta etapa."}
           </p>
         ) : (
           <div className="space-y-2">
