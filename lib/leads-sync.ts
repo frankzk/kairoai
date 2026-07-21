@@ -22,6 +22,7 @@ import {
   loadLeadSnapshots,
   loadStoreOrderPhones,
   markLeadWonAuto,
+  markLeadsWonAuto,
   setSyncCursor,
   upsertLeads,
   type LeadUpsertRow,
@@ -246,7 +247,10 @@ export async function reclassifyStage(opts: {
   const cursorKey = `reclassify:${storeId}`;
   const scope = new Set<BoardStage>(opts.stage ? [opts.stage] : ACTIVE_STAGES);
 
-  const leads = await listLeads({ storeId });
+  const [leads, orderPhones] = await Promise.all([
+    listLeads({ storeId }),
+    loadStoreOrderPhones(storeId, store.code).catch(() => new Set<string>()),
+  ]);
   const candidates = leads
     .filter(
       (l) =>
@@ -261,12 +265,26 @@ export async function reclassifyStage(opts: {
     return { store: store.code, checked: 0, moved_to_won: 0, pending: 0 };
   }
 
+  let moved = 0;
+
+  // ── Pase rapido (sin API): mover TODOS los que tienen orden real en Shopify.
+  // Es la senal mas confiable (una consulta no tiene orden). En lote para no
+  // hacer timeout cuando son miles.
+  const withOrderIds: number[] = [];
+  const withoutOrder: typeof candidates = [];
+  for (const lead of candidates) {
+    if (orderPhones.has(lead.phone)) withOrderIds.push(lead.id);
+    else withoutOrder.push(lead);
+  }
+  moved += await markLeadsWonAuto(storeId, withOrderIds, "orden real en Shopify (por telefono)");
+
+  // ── Pase por chat (con API, por lotes): para los que NO tienen orden Shopify,
+  // leer el transcript y detectar señales confiables de despacho.
   const { cursor } = await getSyncCursor(cursorKey);
   const lastId = cursor ? Number(cursor) : 0;
-  let slice = candidates.filter((l) => l.id > lastId).slice(0, batch);
-  if (slice.length === 0) slice = candidates.slice(0, batch); // vuelta completa: reinicia
+  let slice = withoutOrder.filter((l) => l.id > lastId).slice(0, batch);
+  if (slice.length === 0) slice = withoutOrder.slice(0, batch); // vuelta completa: reinicia
 
-  let moved = 0;
   for (const lead of slice) {
     const msgs = await fetchConversationTranscript(
       lead.crm_conversation_id as string,
@@ -278,12 +296,16 @@ export async function reclassifyStage(opts: {
     }
   }
 
-  // Avanza el cursor; si llegamos al ultimo candidato, reinicia a 0.
-  const lastCandidateId = candidates[candidates.length - 1].id;
+  // Avanza el cursor del pase por chat; si llegamos al final, reinicia a 0.
+  if (slice.length === 0 || withoutOrder.length === 0) {
+    await setSyncCursor(cursorKey, { cursor: "0" });
+    return { store: store.code, checked: 0, moved_to_won: moved, pending: 0 };
+  }
+  const lastCandidateId = withoutOrder[withoutOrder.length - 1].id;
   const lastScannedId = slice[slice.length - 1].id;
   const reachedEnd = lastScannedId >= lastCandidateId;
   await setSyncCursor(cursorKey, { cursor: reachedEnd ? "0" : String(lastScannedId) });
 
-  const pending = candidates.filter((l) => l.id > lastScannedId).length;
+  const pending = withoutOrder.filter((l) => l.id > lastScannedId).length;
   return { store: store.code, checked: slice.length, moved_to_won: moved, pending };
 }
