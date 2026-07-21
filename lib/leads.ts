@@ -123,15 +123,18 @@ export async function loadStoreOrderPhones(
   const set = new Set<string>();
   const pageSize = 1000;
   for (let from = 0; from < 200000; from += pageSize) {
+    // Columna real es `phone`. Solo ordenes NO canceladas cuentan como pedido
+    // real (una orden cancelada = cliente que declino, no es "ganado").
     const { data, error } = await getDB()
       .from("shopify_orders")
-      .select("customer_phone")
+      .select("phone")
       .eq("store_id", storeId)
+      .is("cancelled_at", null)
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`loadStoreOrderPhones: ${error.message}`);
     const page = data ?? [];
-    for (const row of page as Array<{ customer_phone: string | null }>) {
-      const norm = normalizePhone(row.customer_phone, cfg);
+    for (const row of page as Array<{ phone: string | null }>) {
+      const norm = normalizePhone(row.phone, cfg);
       if (norm) set.add(norm);
     }
     if (page.length < pageSize) break;
@@ -397,6 +400,47 @@ export async function markLeadWonAuto(
       new_status: "pedido_en_curso",
       note: reason,
     });
+  }
+  return changed;
+}
+
+/**
+ * Version en LOTE de markLeadWonAuto: mueve muchos leads a ganado de una vez
+ * (para el cruce con ordenes de Shopify, que puede tocar miles). No toca leads
+ * con estado manual. Devuelve cuantos cambiaron.
+ */
+export async function markLeadsWonAuto(
+  storeId: number,
+  leadIds: number[],
+  reason: string
+): Promise<number> {
+  if (!leadIds.length) return 0;
+  let changed = 0;
+  const chunk = 500;
+  for (let i = 0; i < leadIds.length; i += chunk) {
+    const ids = leadIds.slice(i, i + chunk);
+    const { data, error } = await getDB()
+      .from("leads")
+      .update({ category: "won", status: "pedido_generado", has_order: true, auto_reason: reason })
+      .eq("store_id", storeId)
+      .in("id", ids)
+      .neq("status_source", "manual")
+      .select("id");
+    if (error) throw new Error(`markLeadsWonAuto: ${error.message}`);
+    const movedIds = ((data ?? []) as Array<{ id: number }>).map((r) => r.id);
+    changed += movedIds.length;
+    if (movedIds.length) {
+      const rows = movedIds.map((id) => ({
+        lead_id: id,
+        store_id: storeId,
+        vendedora: null,
+        kind: "system",
+        new_status: "pedido_generado",
+        note: reason,
+      }));
+      const { error: callErr } = await getDB().from("lead_calls").insert(rows);
+      if (callErr) throw new Error(`markLeadsWonAuto lead_calls: ${callErr.message}`);
+    }
   }
   return changed;
 }
