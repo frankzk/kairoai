@@ -45,22 +45,46 @@ function escapeOr(value: string): string {
   return value.replace(/[,()]/g, " ").trim();
 }
 
+// Tope duro de filas que trae la bandeja. PostgREST/Supabase corta cada
+// respuesta a `max-rows` (1000 por defecto), asi que un `.limit(2000)` a secas
+// devolvia SOLO 1000 filas: la bandeja mostraba las 1000 novedades mas recientes
+// y el buscador (que filtra en el cliente) no encontraba nada mas viejo. Se
+// pagina con .range() igual que listLogisticsRows/listSettlementRows para pasar
+// ese tope. 20000 cubre el historico completo por tienda con margen.
+const INCIDENTS_PAGE_SIZE = 1000;
+const INCIDENTS_MAX_ROWS = 20000;
+
 export async function listIncidents(filters: IncidentFilters = {}): Promise<Incident[]> {
-  let query = getDB().from("incidents").select("*").order("updated_at", { ascending: false });
-  if (filters.storeId) query = query.eq("store_id", filters.storeId);
-  if (filters.soloReintento) query = query.eq("status", "sin_contestar");
-  else if (filters.status) query = query.eq("status", filters.status);
-  if (filters.category) query = query.eq("category", filters.category);
-  if (filters.source) query = query.eq("source", filters.source);
   const q = escapeOr(filters.search ?? "");
-  if (q) {
-    query = query.or(
-      `order_name.ilike.%${q}%,guide_number.ilike.%${q}%,customer_name.ilike.%${q}%,customer_phone.ilike.%${q}%`
-    );
+  const buildQuery = (from: number) => {
+    let query = getDB()
+      .from("incidents")
+      .select("*")
+      .order("updated_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + INCIDENTS_PAGE_SIZE - 1);
+    if (filters.storeId) query = query.eq("store_id", filters.storeId);
+    if (filters.soloReintento) query = query.eq("status", "sin_contestar");
+    else if (filters.status) query = query.eq("status", filters.status);
+    if (filters.category) query = query.eq("category", filters.category);
+    if (filters.source) query = query.eq("source", filters.source);
+    if (q) {
+      query = query.or(
+        `order_name.ilike.%${q}%,guide_number.ilike.%${q}%,customer_name.ilike.%${q}%,customer_phone.ilike.%${q}%`
+      );
+    }
+    return query;
+  };
+
+  const all: Incident[] = [];
+  for (let from = 0; from < INCIDENTS_MAX_ROWS; from += INCIDENTS_PAGE_SIZE) {
+    const { data, error } = await buildQuery(from);
+    if (error) throw new Error(`listIncidents: ${error.message}`);
+    const page = (data ?? []) as Incident[];
+    all.push(...page);
+    if (page.length < INCIDENTS_PAGE_SIZE) break;
   }
-  const { data, error } = await query.limit(2000);
-  if (error) throw new Error(`listIncidents: ${error.message}`);
-  return (data ?? []) as Incident[];
+  return all;
 }
 
 // Conteo de novedades por estado para TODA la tienda, SIN los filtros de la

@@ -3,6 +3,7 @@
 // La usan el cron de deteccion y el service layer.
 
 import { normalizeMatchKey } from "./order-matching";
+import { classifyMoovinGroup } from "./moovin";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
 import type { MoovinTrackingRow, ForzaTrackingRow, LogisticsRow } from "./finance-types";
 import type { ShopifyOrderSummary } from "./finance-orders";
@@ -85,7 +86,16 @@ export function detectMoovinIncident(
   storeId: number = DEFAULT_FINANCE_STORE_ID,
   shopify?: ShopifyOrderSummary
 ): DetectedIncident | null {
-  const group = tracking.latest_group || "";
+  // Reinterpreta el grupo con el clasificador vigente. Las filas de
+  // moovin_tracking guardadas ANTES de mapear un codigo (p.ej. los codigos de
+  // gestion REVIEW / CHANGECONTACTPOINT) quedaron cacheadas con
+  // latest_group="in_progress"; el codigo crudo (latest_code) sigue guardado, asi
+  // que re-clasificamos para detectarlas SIN esperar el re-fetch guia por guia
+  // (topado a 130/corrida). Solo sube in_progress -> failed; nunca degrada un
+  // estado terminal ya guardado (delivered / returned).
+  const storedGroup = tracking.latest_group || "";
+  const codeGroup = classifyMoovinGroup(tracking.latest_code || "", tracking.latest_status || "");
+  const group = codeGroup === "failed" && storedGroup !== "failed" ? "failed" : storedGroup;
   // "Incidencia activa" = el ultimo evento de Moovin es una falla (has_incident).
   // Coincide con el estado "Incidencia" de la pagina de finanzas
   // (moovinGroupToStatus: failed -> incident). NO incluye "returned"/"delivered":

@@ -61,4 +61,23 @@ describe("detectMoovinIncident — una gestión REVIEW/CHANGECONTACTPOINT es nov
     );
     expect(candidate).not.toBeNull();
   });
+
+  it("fila CACHEADA (latest_group=in_progress, latest_code=REVIEW) se reinterpreta como novedad", () => {
+    // Simula una fila guardada ANTES del mapeo: el grupo quedó en in_progress y
+    // has_incident=false, pero el código crudo es REVIEW -> debe detectarse igual.
+    const cached = trackingRow("in_progress", "REVIEW", "paquete en revisión");
+    (cached as { has_incident: boolean }).has_incident = false;
+    const candidate = detectMoovinIncident(cached, undefined, 1);
+    expect(candidate).not.toBeNull();
+    expect(candidate?.last_tracking_group).toBe("failed");
+  });
+
+  it("no degrada un estado terminal ya guardado (delivered se respeta)", () => {
+    const delivered = trackingRow("delivered", "DELIVERED", "Entregado");
+    (delivered as { has_incident: boolean }).has_incident = false;
+    // delivered + sin novedad previa => detectMoovinIncident lo trata como cierre,
+    // no como nueva novedad; lo importante es que NO se reinterpreta como failed.
+    const candidate = detectMoovinIncident(delivered, undefined, 1);
+    expect(candidate?.last_tracking_group ?? "delivered").not.toBe("failed");
+  });
 });
