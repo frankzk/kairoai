@@ -1,8 +1,8 @@
 import { getDB } from "@/lib/db";
-import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
+import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
 import { normalizeForzaGuide } from "./forza";
 import { normalizeMatchKey } from "./order-matching";
-import { extractWynGuides } from "./wyn";
+import { extractWynGuides, isWynGuide } from "./wyn";
 
 export * from "./finance-types";
 import type {
@@ -1312,6 +1312,45 @@ export async function listMoovinSyncCandidates(
     if (page.length < pageSize) break;
   }
 
+  // 1b) Guias del FULFILLMENT de Shopify (tracking_number) de la tienda Moovin,
+  // recientes y no-WYN. Muchos pedidos se despachan en Shopify con guia Moovin
+  // SIN pasar por un Excel de Boxful; sin esto la guia nunca entraba a la lista de
+  // candidatos y su tracking quedaba congelado (bug real: la guia 2586380 mostraba
+  // "Recolectado" del 18/07 mientras Moovin ya tenia "Incidencia en la entrega" del
+  // 21/07, y la novedad nunca se creaba). Se limita a los ultimos 45 dias (los
+  // viejos ya son terminales) y se excluyen las guias WYN (MLCR...). Estas guias
+  // "solo-Shopify" son los puntos ciegos, asi que se priorizan al elegir candidatos.
+  // Best-effort: si la consulta falla, se sigue con las guias de Boxful.
+  const shopifyOnlyGuides: string[] = [];
+  const moovinStore = FINANCE_STORES.find((store) => store.logisticsProvider === "moovin");
+  if (moovinStore) {
+    const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+    for (let from = 0; from < 50000; from += pageSize) {
+      const { data, error } = await getDB()
+        .from("shopify_orders")
+        .select("tracking_number, last_name, customer_name")
+        .eq("store_id", moovinStore.id)
+        .neq("tracking_number", "")
+        .is("cancelled_at", null)
+        .gte("shopify_created_at", since)
+        .order("shopify_created_at", { ascending: false })
+        .range(from, from + pageSize - 1);
+      if (error) break;
+      const page = (data ?? []) as Array<{
+        tracking_number: string | null;
+        last_name: string | null;
+        customer_name: string | null;
+      }>;
+      for (const row of page) {
+        const guide = (row.tracking_number ?? "").trim();
+        if (!guide || isWynGuide(guide) || byGuide.has(guide)) continue;
+        byGuide.set(guide, { lastName: row.last_name ?? "", fullName: row.customer_name ?? "" });
+        shopifyOnlyGuides.push(guide);
+      }
+      if (page.length < pageSize) break;
+    }
+  }
+
   // 2) Excluir terminales en cache (entregado/devuelto) y los frescos.
   const terminal = new Set<string>();
   for (let from = 0; from < 50000; from += pageSize) {
@@ -1327,12 +1366,22 @@ export async function listMoovinSyncCandidates(
   }
   const fresh = await getRecentlyCheckedMoovinPackages(freshWindowMinutes);
 
+  // Prioridad: primero las guias "solo-Shopify" (puntos ciegos, recientes primero),
+  // que llevan potencialmente dias sin re-consultarse; luego el resto (Boxful), que
+  // ya se venia sincronizando. Asi el presupuesto por corrida (limit) cubre primero
+  // las que la operacion no estaba viendo.
   const candidates: Array<{ idPackage: string; lastName: string; fullName: string }> = [];
-  for (const [guide, names] of Array.from(byGuide.entries())) {
-    if (terminal.has(guide) || fresh.has(guide)) continue;
+  const seen = new Set<string>();
+  const pushCandidate = (guide: string) => {
+    if (candidates.length >= limit || seen.has(guide)) return;
+    if (terminal.has(guide) || fresh.has(guide)) return;
+    const names = byGuide.get(guide);
+    if (!names) return;
+    seen.add(guide);
     candidates.push({ idPackage: guide, lastName: names.lastName, fullName: names.fullName });
-    if (candidates.length >= limit) break;
-  }
+  };
+  for (const guide of shopifyOnlyGuides) pushCandidate(guide);
+  for (const guide of Array.from(byGuide.keys())) pushCandidate(guide);
   return candidates;
 }
 
