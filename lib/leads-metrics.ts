@@ -85,6 +85,13 @@ export interface UncalledLeadDay {
   count: number;
 }
 
+export interface UncalledLeadBucket {
+  key: string;
+  date: string | null;
+  count: number;
+  kind: "older" | "day";
+}
+
 /** Fecha de entrada usada tanto por el grafico como por el filtro de la lista. */
 export function uncalledLeadDateKey(
   lead: UncalledLeadMetricInput,
@@ -103,6 +110,19 @@ export function isUncalledLeadOnDate(
   offsetHours = -6
 ): boolean {
   return lead.status_source === "auto" && uncalledLeadDateKey(lead, offsetHours) === date;
+}
+
+/** Lead sin llamar anterior al primer dia visible de la ventana. */
+export function isUncalledLeadOlderThanWindow(
+  lead: UncalledLeadMetricInput,
+  now: Date,
+  days: number,
+  offsetHours = -6
+): boolean {
+  if (lead.status_source !== "auto") return false;
+  const firstVisibleDate = recentLocalDateKeys(now, days, offsetHours)[0];
+  const leadDate = uncalledLeadDateKey(lead, offsetHours);
+  return Boolean(firstVisibleDate && leadDate && leadDate < firstVisibleDate);
 }
 
 /** Serie diaria completa (incluye dias con cero) para el grafico operativo. */
@@ -124,6 +144,24 @@ export function buildUncalledLeadSeries(
   }
 
   return dates.map((date) => ({ date, count: countsByDay.get(date) ?? 0 }));
+}
+
+/** Bucket historico + serie diaria; juntos cubren todos los leads sin llamar. */
+export function buildUncalledLeadBuckets(
+  leads: UncalledLeadMetricInput[],
+  now: Date,
+  days: number,
+  offsetHours = -6
+): UncalledLeadBucket[] {
+  const daily = buildUncalledLeadSeries(leads, now, days, offsetHours);
+  const olderCount = leads.filter((lead) =>
+    isUncalledLeadOlderThanWindow(lead, now, days, offsetHours)
+  ).length;
+
+  return [
+    { key: `older-than-${days}`, date: null, count: olderCount, kind: "older" },
+    ...daily.map((day) => ({ key: day.date, ...day, kind: "day" as const })),
+  ];
 }
 
 /**

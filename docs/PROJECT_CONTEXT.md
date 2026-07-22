@@ -914,11 +914,14 @@ Supervisa el despacho de pedidos COD en dos momentos atribuibles a personas:
 
 ### Leads de WhatsApp: gráfico diario de pendientes
 
-- `/admin/leads` muestra los leads sin gestión manual de los últimos 14 días,
-  agrupados por `first_seen_at` en UTC-6 (con `created_at` como respaldo).
+- `/admin/leads` muestra los leads sin gestión manual agrupados por
+  `first_seen_at` en UTC-6 (con `created_at` como respaldo): una barra **+14
+  días** acumula los históricos y las 14 barras siguientes detallan cada día.
 - El gráfico se recalcula sobre la búsqueda global, etapa o Agenda activa. Una
-  barra filtra la lista a los leads sin llamar de esa fecha; el filtro convive
-  con las etapas y puede retirarse desde la barra o desde **Quitar filtro**.
+  barra filtra la lista a los leads sin llamar de esa fecha o del acumulado
+  histórico; el filtro convive con las etapas y puede retirarse desde la barra
+  o desde **Quitar filtro**. El total suma todos esos buckets y, si hay leads ya
+  gestionados dentro de la etapa, muestra el denominador por separado.
 - El buscador incorpora a su derecha un rango inclusivo **Desde / Hasta** sobre
   `last_interaction_at` en UTC-6, exactamente la fecha mostrada encima de
   **Ver chat**. El rango actualiza lista, etapas, Agenda y gráfico.

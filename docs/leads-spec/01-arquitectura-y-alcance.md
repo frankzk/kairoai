@@ -42,17 +42,20 @@ drawer (transcript bajo demanda) y (b) enviar mensajes.
 ## Tablero operativo actual en Kairo
 
 `/admin/leads` conserva la búsqueda global y las etapas del tablero, y añade un
-gráfico de barras de **leads sin llamar por día** para priorizar el rezago:
+gráfico de barras de **leads sin llamar por antigüedad** para priorizar el rezago:
 
 - “Sin llamar” significa que el lead todavía no tiene una gestión manual
   (`status_source = 'auto'`). Las transiciones automáticas del CRM no cuentan
   como una llamada de la asesora.
 - El día corresponde a `first_seen_at` en hora local de Costa Rica/Honduras
-  (UTC-6), con `created_at` como respaldo. La ventana visible comprende los
-  últimos 14 días calendario.
+  (UTC-6), con `created_at` como respaldo. La primera barra **+14 días** acumula
+  los leads anteriores a la ventana; las 14 barras restantes detallan cada día.
 - El gráfico respeta el contexto actual: la etapa seleccionada, Agenda o una
   búsqueda global. Al pulsar una barra, la lista muestra únicamente los leads
-  sin llamar de ese día dentro del mismo contexto.
+  sin llamar de ese día —o del acumulado histórico— dentro del mismo contexto.
+- El total superior suma el acumulado y las barras diarias. Si es menor que el
+  total de la etapa, la diferencia corresponde a leads ya gestionados
+  manualmente; la UI lo aclara con **de N en la etapa**.
 - El filtro de fecha se puede combinar con las etapas y la búsqueda, se refleja
   en sus conteos y se quita pulsando de nuevo la barra o **Quitar filtro**.
 - A la derecha del buscador, el rango inclusivo **Desde / Hasta** filtra por

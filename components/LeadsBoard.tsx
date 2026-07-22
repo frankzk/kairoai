@@ -28,8 +28,9 @@ import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import { BOARD_VIEWS, BOARD_STAGE_PRIORITY, type BoardStage } from "@/lib/leads-classify";
 import {
-  buildUncalledLeadSeries,
+  buildUncalledLeadBuckets,
   isUncalledLeadOnDate,
+  isUncalledLeadOlderThanWindow,
   matchesLocalDateRange,
 } from "@/lib/leads-metrics";
 
@@ -170,7 +171,7 @@ export default function LeadsBoard() {
   const [includeOld, setIncludeOld] = useState(false);
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
   const [drawerLead, setDrawerLead] = useState<LeadRow | null>(null);
-  const [selectedUncalledDate, setSelectedUncalledDate] = useState<string | null>(null);
+  const [selectedUncalledBucket, setSelectedUncalledBucket] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -195,7 +196,7 @@ export default function LeadsBoard() {
   }, [load]);
 
   useEffect(() => {
-    setSelectedUncalledDate(null);
+    setSelectedUncalledBucket(null);
   }, [store]);
 
   const matchesSearch = useCallback(
@@ -229,11 +230,18 @@ export default function LeadsBoard() {
     [rangeFilteredLeads, q, searching, matchesSearch]
   );
 
-  const matchesSelectedDate = useCallback(
-    (lead: LeadRow) =>
-      selectedUncalledDate == null ||
-      isUncalledLeadOnDate(lead, selectedUncalledDate),
-    [selectedUncalledDate]
+  const [chartNow] = useState(() => new Date());
+  const olderBucketKey = `older-than-${UNCALLED_CHART_DAYS}`;
+
+  const matchesSelectedBucket = useCallback(
+    (lead: LeadRow) => {
+      if (selectedUncalledBucket == null) return true;
+      if (selectedUncalledBucket === olderBucketKey) {
+        return isUncalledLeadOlderThanWindow(lead, chartNow, UNCALLED_CHART_DAYS);
+      }
+      return isUncalledLeadOnDate(lead, selectedUncalledBucket);
+    },
+    [chartNow, olderBucketKey, selectedUncalledBucket]
   );
 
   const stagePriority = (stage: BoardStage) => {
@@ -244,13 +252,13 @@ export default function LeadsBoard() {
   const visibleLeads = useMemo(() => {
     if (searching) {
       return searchMatches
-        .filter(matchesSelectedDate)
+        .filter(matchesSelectedBucket)
         .sort((a, b) => stagePriority(a.board_stage) - stagePriority(b.board_stage));
     }
     if (activeStage === "agenda") {
       return rangeFilteredLeads
         .filter((l) => l.next_followup_at != null)
-        .filter(matchesSelectedDate)
+        .filter(matchesSelectedBucket)
         .sort((a, b) => (a.next_followup_at ?? "").localeCompare(b.next_followup_at ?? ""));
     }
     const byInteraction = (a: LeadRow, b: LeadRow) => {
@@ -259,9 +267,9 @@ export default function LeadsBoard() {
     };
     return rangeFilteredLeads
       .filter((l) => l.board_stage === activeStage)
-      .filter(matchesSelectedDate)
+      .filter(matchesSelectedBucket)
       .sort(byInteraction);
-  }, [rangeFilteredLeads, activeStage, searching, searchMatches, sortDir, matchesSelectedDate]);
+  }, [rangeFilteredLeads, activeStage, searching, searchMatches, sortDir, matchesSelectedBucket]);
 
   const chartContextLeads = useMemo(() => {
     if (searching) return searchMatches;
@@ -269,22 +277,22 @@ export default function LeadsBoard() {
     return rangeFilteredLeads.filter((l) => l.board_stage === activeStage);
   }, [activeStage, rangeFilteredLeads, searchMatches, searching]);
 
-  const uncalledSeries = useMemo(() => {
-    return buildUncalledLeadSeries(chartContextLeads, new Date(), UNCALLED_CHART_DAYS);
-  }, [chartContextLeads]);
+  const uncalledBuckets = useMemo(() => {
+    return buildUncalledLeadBuckets(chartContextLeads, chartNow, UNCALLED_CHART_DAYS);
+  }, [chartContextLeads, chartNow]);
 
-  const maxUncalled = Math.max(1, ...uncalledSeries.map((day) => day.count));
-  const uncalledTotal = uncalledSeries.reduce((total, day) => total + day.count, 0);
+  const maxUncalled = Math.max(1, ...uncalledBuckets.map((bucket) => bucket.count));
+  const uncalledTotal = uncalledBuckets.reduce((total, bucket) => total + bucket.count, 0);
 
   const facetedLeads = useMemo(() => {
     let result = searching ? searchMatches : rangeFilteredLeads;
-    if (selectedUncalledDate) result = result.filter(matchesSelectedDate);
+    if (selectedUncalledBucket) result = result.filter(matchesSelectedBucket);
     return result;
-  }, [matchesSelectedDate, rangeFilteredLeads, searchMatches, searching, selectedUncalledDate]);
+  }, [matchesSelectedBucket, rangeFilteredLeads, searchMatches, searching, selectedUncalledBucket]);
 
   // Conteo por etapa: refleja los resultados de busqueda cuando hay query.
   const stageCount = (stage: BoardStage) =>
-    searching || selectedUncalledDate || hasInteractionRange
+    searching || selectedUncalledBucket || hasInteractionRange
       ? facetedLeads.filter((l) => l.board_stage === stage).length
       : counts?.byStage[stage] ?? 0;
 
@@ -359,44 +367,53 @@ export default function LeadsBoard() {
                 <div>
                   <h2 className="font-medium">Leads sin llamar</h2>
                   <p className="text-xs text-muted-foreground">
-                    Nuevos por día durante los últimos {UNCALLED_CHART_DAYS} días
+                    Por antigüedad: acumulado anterior y detalle de los últimos {UNCALLED_CHART_DAYS} días
                     {searching ? " en esta busqueda" : activeStage === "agenda" ? " en Agenda" : ` en ${STAGE_META[activeStage].label}`}.
                   </p>
                 </div>
               </div>
               <div className="text-right">
                 <p className="text-2xl font-semibold tabular-nums text-foreground">{uncalledTotal}</p>
-                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">pendientes</p>
+                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">sin llamar</p>
+                {uncalledTotal !== chartContextLeads.length && (
+                  <p className="mt-0.5 text-[10px] text-muted-foreground/70">
+                    de {chartContextLeads.length} {searching ? "en la búsqueda" : activeStage === "agenda" ? "en Agenda" : "en la etapa"}
+                  </p>
+                )}
               </div>
             </div>
 
             <div className="overflow-x-auto px-3 pb-3 pt-4">
               <div
-                className="grid min-w-[680px] grid-cols-[repeat(14,minmax(0,1fr))] gap-2"
+                className="grid min-w-[720px] grid-cols-[repeat(15,minmax(0,1fr))] gap-2"
                 role="group"
-                aria-label="Leads sin llamar por día"
+                aria-label="Leads sin llamar por antigüedad"
               >
-                {uncalledSeries.map((day) => {
-                  const selected = selectedUncalledDate === day.date;
-                  const barHeight = day.count === 0 ? 3 : Math.max(12, Math.round((day.count / maxUncalled) * 92));
+                {uncalledBuckets.map((bucket) => {
+                  const selected = selectedUncalledBucket === bucket.key;
+                  const barHeight = bucket.count === 0 ? 3 : Math.max(12, Math.round((bucket.count / maxUncalled) * 92));
+                  const bucketLabel = bucket.kind === "older" ? `+${UNCALLED_CHART_DAYS} d` : fmtDayLabel(bucket.date as string);
+                  const bucketAriaLabel = bucket.kind === "older"
+                    ? `${bucket.count} lead${bucket.count === 1 ? "" : "s"} sin llamar con más de ${UNCALLED_CHART_DAYS} días de antigüedad`
+                    : `${bucket.count} lead${bucket.count === 1 ? "" : "s"} sin llamar el ${fmtDayLabel(bucket.date as string, true)}`;
                   return (
                     <button
-                      key={day.date}
+                      key={bucket.key}
                       type="button"
-                      disabled={day.count === 0}
+                      disabled={bucket.count === 0}
                       aria-pressed={selected}
-                      aria-label={`${day.count} lead${day.count === 1 ? "" : "s"} sin llamar el ${fmtDayLabel(day.date, true)}`}
-                      onClick={() => setSelectedUncalledDate(selected ? null : day.date)}
+                      aria-label={bucketAriaLabel}
+                      onClick={() => setSelectedUncalledBucket(selected ? null : bucket.key)}
                       className={`group flex h-40 flex-col items-center justify-end rounded-md border px-1 pb-1.5 pt-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                         selected
                           ? "border-primary bg-primary/10"
-                          : day.count > 0
+                          : bucket.count > 0
                             ? "border-transparent hover:border-primary/35 hover:bg-accent/60"
                             : "cursor-default border-transparent opacity-45"
                       }`}
                     >
                       <span className={`mb-1 text-xs font-medium tabular-nums ${selected ? "text-primary" : "text-muted-foreground"}`}>
-                        {day.count}
+                        {bucket.count}
                       </span>
                       <span className="flex h-[92px] w-full items-end justify-center">
                         <span
@@ -407,7 +424,7 @@ export default function LeadsBoard() {
                         />
                       </span>
                       <span className={`mt-1 text-[10px] capitalize ${selected ? "text-foreground" : "text-muted-foreground"}`}>
-                        {fmtDayLabel(day.date)}
+                        {bucketLabel}
                       </span>
                     </button>
                   );
@@ -415,14 +432,17 @@ export default function LeadsBoard() {
               </div>
             </div>
 
-            {selectedUncalledDate && (
+            {selectedUncalledBucket && (
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 bg-primary/5 px-4 py-2.5 text-xs">
                 <span>
-                  Mostrando <strong className="font-medium text-foreground">{visibleLeads.length}</strong> lead{visibleLeads.length === 1 ? "" : "s"} sin llamar del {fmtDayLabel(selectedUncalledDate, true)}.
+                  Mostrando <strong className="font-medium text-foreground">{visibleLeads.length}</strong> lead{visibleLeads.length === 1 ? "" : "s"} sin llamar
+                  {selectedUncalledBucket === olderBucketKey
+                    ? ` con más de ${UNCALLED_CHART_DAYS} días de antigüedad.`
+                    : ` del ${fmtDayLabel(selectedUncalledBucket, true)}.`}
                 </span>
                 <button
                   type="button"
-                  onClick={() => setSelectedUncalledDate(null)}
+                  onClick={() => setSelectedUncalledBucket(null)}
                   className="inline-flex items-center gap-1 rounded px-2 py-1 font-medium text-primary hover:bg-primary/10"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -571,8 +591,8 @@ export default function LeadsBoard() {
           <p className="py-12 text-center text-muted-foreground">
             {searching
               ? "Sin resultados para la búsqueda."
-              : selectedUncalledDate
-                ? "No hay leads sin llamar para la fecha seleccionada en este filtro."
+              : selectedUncalledBucket
+                ? "No hay leads sin llamar para la barra seleccionada en este filtro."
                 : hasInteractionRange
                   ? "No hay leads con última interacción en este rango y etapa."
                   : "No hay leads en esta etapa."}

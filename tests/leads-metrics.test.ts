@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildUncalledLeadBuckets,
   buildUncalledLeadSeries,
   crRange,
   daysAgoIso,
   isUncalledLeadOnDate,
+  isUncalledLeadOlderThanWindow,
   localDateKey,
   matchesLocalDateRange,
   parseRange,
@@ -90,5 +92,13 @@ describe("dias locales para el grafico de leads", () => {
     ]);
     expect(isUncalledLeadOnDate(leads[0], "2026-07-20")).toBe(true);
     expect(isUncalledLeadOnDate(leads[2], "2026-07-20")).toBe(false);
+    expect(isUncalledLeadOlderThanWindow(leads[3], NOW, 4)).toBe(true);
+    expect(buildUncalledLeadBuckets(leads, NOW, 4)).toEqual([
+      { key: "older-than-4", date: null, count: 1, kind: "older" },
+      { key: "2026-07-17", date: "2026-07-17", count: 0, kind: "day" },
+      { key: "2026-07-18", date: "2026-07-18", count: 0, kind: "day" },
+      { key: "2026-07-19", date: "2026-07-19", count: 0, kind: "day" },
+      { key: "2026-07-20", date: "2026-07-20", count: 2, kind: "day" },
+    ]);
   });
 });
