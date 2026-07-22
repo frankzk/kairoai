@@ -26,6 +26,16 @@ const MOOVIN_STATUS_GROUP: Record<string, MoovinGroup> = {
   CANCELED: "returned",
   CANCELLED: "returned",
   CANCEL: "returned",
+  // Incidencias de GESTION de Moovin. Las reporta con codigos propios (no FAILED),
+  // pero en su panel son "Problemas en gestion / Estado de incidencia: Abierto":
+  // entregas NO realizadas que hay que gestionar (cliente no contesta, datos de
+  // contacto erroneos, cliente no esta en el punto de entrega, etc.). Sin este
+  // mapeo quedaban como "en transito sin clasificar -> en_route" y NO generaban
+  // novedad, aunque el courier ya las tuviera abiertas.
+  //   REVIEW            -> "paquete en revision"
+  //   CHANGECONTACTPOINT-> "cambio de informacion en el punto de entrega"
+  REVIEW: "failed",
+  CHANGECONTACTPOINT: "failed",
 };
 
 export type MoovinGroup = "delivered" | "failed" | "returned" | "in_progress";
@@ -442,10 +452,10 @@ interface MoovinDetail {
 
 // Clasifica el grupo por codigo; si el codigo es desconocido, rescata las
 // cancelaciones por titulo ("Cancelado") para que cuenten como no entregado.
-function classifyMoovinGroup(code: string, title: string): MoovinGroup {
-  const mapped = MOOVIN_STATUS_GROUP[code];
+export function classifyMoovinGroup(code: string, title: string): MoovinGroup {
+  const mapped = MOOVIN_STATUS_GROUP[String(code ?? "").toUpperCase()];
   if (mapped) return mapped;
-  if (title.toLowerCase().includes("cancelado")) return "returned";
+  if (String(title ?? "").toLowerCase().includes("cancelado")) return "returned";
   return "in_progress";
 }
 
