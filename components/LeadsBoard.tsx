@@ -1,12 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, Copy, MessageSquare, Phone, RefreshCw, ShoppingCart, X } from "lucide-react";
+import {
+  ArrowLeft,
+  BarChart3,
+  CalendarClock,
+  CalendarRange,
+  Check,
+  Copy,
+  MessageSquare,
+  Phone,
+  PhoneOff,
+  RefreshCw,
+  ShoppingCart,
+  X,
+} from "lucide-react";
 import CreateOrderPanel from "@/components/CreateOrderPanel";
 import GestionBar from "@/components/GestionBar";
 import ProductivityPanel from "@/components/ProductivityPanel";
 import LeadHistory from "@/components/LeadHistory";
-import { BarChart3, CalendarClock } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,6 +27,13 @@ import { Badge } from "@/components/ui/badge";
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import { BOARD_VIEWS, BOARD_STAGE_PRIORITY, type BoardStage } from "@/lib/leads-classify";
+import {
+  buildUncalledLeadSeries,
+  isUncalledLeadOnDate,
+  matchesLocalDateRange,
+} from "@/lib/leads-metrics";
+
+const UNCALLED_CHART_DAYS = 14;
 
 // Fecha/hora del ultimo mensaje en hora CR (dd/mm hh:mm).
 function fmtDateTime(iso: string | null): string {
@@ -39,6 +58,19 @@ function formatPhone(phone: string): string {
     return `+506 ${n.slice(0, 4)}-${n.slice(4)}`;
   }
   return phone;
+}
+
+function fmtDayLabel(dateKey: string, long = false): string {
+  try {
+    return new Date(`${dateKey}T12:00:00Z`).toLocaleDateString("es-CR", {
+      timeZone: "UTC",
+      weekday: long ? "long" : "short",
+      day: "numeric",
+      month: long ? "long" : undefined,
+    });
+  } catch {
+    return dateKey;
+  }
 }
 
 function PhoneWithCopy({ phone }: { phone: string }) {
@@ -104,6 +136,8 @@ interface LeadRow {
   next_followup_at: string | null;
   needs_attention: boolean;
   crm_conversation_id: string | null;
+  first_seen_at: string | null;
+  created_at: string;
 }
 
 interface BoardCounts {
@@ -127,6 +161,8 @@ export default function LeadsBoard() {
   const [counts, setCounts] = useState<BoardCounts | null>(null);
   const [activeStage, setActiveStage] = useState<BoardStage | "agenda">("por_cerrar");
   const [search, setSearch] = useState("");
+  const [interactionFrom, setInteractionFrom] = useState("");
+  const [interactionTo, setInteractionTo] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
@@ -134,6 +170,7 @@ export default function LeadsBoard() {
   const [includeOld, setIncludeOld] = useState(false);
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
   const [drawerLead, setDrawerLead] = useState<LeadRow | null>(null);
+  const [selectedUncalledDate, setSelectedUncalledDate] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,6 +194,10 @@ export default function LeadsBoard() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    setSelectedUncalledDate(null);
+  }, [store]);
+
   const matchesSearch = useCallback(
     (l: LeadRow, q: string) =>
       q
@@ -169,11 +210,30 @@ export default function LeadsBoard() {
 
   const q = search.trim().toLowerCase();
   const searching = q.length > 0;
+  const hasInteractionRange = interactionFrom.length > 0 || interactionTo.length > 0;
+
+  const matchesInteractionRange = useCallback(
+    (lead: LeadRow) =>
+      matchesLocalDateRange(lead.last_interaction_at, interactionFrom, interactionTo),
+    [interactionFrom, interactionTo]
+  );
+
+  const rangeFilteredLeads = useMemo(
+    () => (hasInteractionRange ? leads.filter(matchesInteractionRange) : leads),
+    [hasInteractionRange, leads, matchesInteractionRange]
+  );
 
   // Al buscar, los resultados son de TODAS las etapas (busqueda global).
   const searchMatches = useMemo(
-    () => (searching ? leads.filter((l) => matchesSearch(l, q)) : []),
-    [leads, q, searching, matchesSearch]
+    () => (searching ? rangeFilteredLeads.filter((l) => matchesSearch(l, q)) : []),
+    [rangeFilteredLeads, q, searching, matchesSearch]
+  );
+
+  const matchesSelectedDate = useCallback(
+    (lead: LeadRow) =>
+      selectedUncalledDate == null ||
+      isUncalledLeadOnDate(lead, selectedUncalledDate),
+    [selectedUncalledDate]
   );
 
   const stagePriority = (stage: BoardStage) => {
@@ -183,31 +243,58 @@ export default function LeadsBoard() {
 
   const visibleLeads = useMemo(() => {
     if (searching) {
-      return [...searchMatches].sort((a, b) => stagePriority(a.board_stage) - stagePriority(b.board_stage));
+      return searchMatches
+        .filter(matchesSelectedDate)
+        .sort((a, b) => stagePriority(a.board_stage) - stagePriority(b.board_stage));
     }
     if (activeStage === "agenda") {
-      return leads
+      return rangeFilteredLeads
         .filter((l) => l.next_followup_at != null)
+        .filter(matchesSelectedDate)
         .sort((a, b) => (a.next_followup_at ?? "").localeCompare(b.next_followup_at ?? ""));
     }
     const byInteraction = (a: LeadRow, b: LeadRow) => {
       const cmp = (a.last_interaction_at ?? "").localeCompare(b.last_interaction_at ?? "");
       return sortDir === "desc" ? -cmp : cmp;
     };
-    return leads.filter((l) => l.board_stage === activeStage).sort(byInteraction);
-  }, [leads, activeStage, searching, searchMatches, sortDir]);
+    return rangeFilteredLeads
+      .filter((l) => l.board_stage === activeStage)
+      .filter(matchesSelectedDate)
+      .sort(byInteraction);
+  }, [rangeFilteredLeads, activeStage, searching, searchMatches, sortDir, matchesSelectedDate]);
+
+  const chartContextLeads = useMemo(() => {
+    if (searching) return searchMatches;
+    if (activeStage === "agenda") return rangeFilteredLeads.filter((l) => l.next_followup_at != null);
+    return rangeFilteredLeads.filter((l) => l.board_stage === activeStage);
+  }, [activeStage, rangeFilteredLeads, searchMatches, searching]);
+
+  const uncalledSeries = useMemo(() => {
+    return buildUncalledLeadSeries(chartContextLeads, new Date(), UNCALLED_CHART_DAYS);
+  }, [chartContextLeads]);
+
+  const maxUncalled = Math.max(1, ...uncalledSeries.map((day) => day.count));
+  const uncalledTotal = uncalledSeries.reduce((total, day) => total + day.count, 0);
+
+  const facetedLeads = useMemo(() => {
+    let result = searching ? searchMatches : rangeFilteredLeads;
+    if (selectedUncalledDate) result = result.filter(matchesSelectedDate);
+    return result;
+  }, [matchesSelectedDate, rangeFilteredLeads, searchMatches, searching, selectedUncalledDate]);
 
   // Conteo por etapa: refleja los resultados de busqueda cuando hay query.
   const stageCount = (stage: BoardStage) =>
-    searching ? searchMatches.filter((l) => l.board_stage === stage).length : counts?.byStage[stage] ?? 0;
+    searching || selectedUncalledDate || hasInteractionRange
+      ? facetedLeads.filter((l) => l.board_stage === stage).length
+      : counts?.byStage[stage] ?? 0;
 
   // Agenda: seguimientos programados y cuantos ya vencieron.
   const agenda = useMemo(() => {
     const now = Date.now();
-    const scheduled = leads.filter((l) => l.next_followup_at != null);
+    const scheduled = facetedLeads.filter((l) => l.next_followup_at != null);
     const due = scheduled.filter((l) => new Date(l.next_followup_at as string).getTime() <= now).length;
     return { total: scheduled.length, due };
-  }, [leads]);
+  }, [facetedLeads]);
 
   const views = showHidden ? BOARD_VIEWS : BOARD_VIEWS.filter((v) => !v.hiddenByDefault);
 
@@ -262,16 +349,155 @@ export default function LeadsBoard() {
 
         {showProductivity && <ProductivityPanel store={store} />}
 
-        {/* Buscador (por encima de las etapas: busca en TODAS) */}
+        <Card className="mb-4 overflow-hidden border-border/80 bg-card/80">
+          <CardContent className="p-0">
+            <div className="flex flex-wrap items-start gap-3 border-b border-border/70 px-4 py-3">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
+                <div className="mt-0.5 rounded-md border border-primary/25 bg-primary/10 p-2 text-primary">
+                  <PhoneOff className="h-4 w-4" />
+                </div>
+                <div>
+                  <h2 className="font-medium">Leads sin llamar</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Nuevos por día durante los últimos {UNCALLED_CHART_DAYS} días
+                    {searching ? " en esta busqueda" : activeStage === "agenda" ? " en Agenda" : ` en ${STAGE_META[activeStage].label}`}.
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-2xl font-semibold tabular-nums text-foreground">{uncalledTotal}</p>
+                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">pendientes</p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto px-3 pb-3 pt-4">
+              <div
+                className="grid min-w-[680px] grid-cols-[repeat(14,minmax(0,1fr))] gap-2"
+                role="group"
+                aria-label="Leads sin llamar por día"
+              >
+                {uncalledSeries.map((day) => {
+                  const selected = selectedUncalledDate === day.date;
+                  const barHeight = day.count === 0 ? 3 : Math.max(12, Math.round((day.count / maxUncalled) * 92));
+                  return (
+                    <button
+                      key={day.date}
+                      type="button"
+                      disabled={day.count === 0}
+                      aria-pressed={selected}
+                      aria-label={`${day.count} lead${day.count === 1 ? "" : "s"} sin llamar el ${fmtDayLabel(day.date, true)}`}
+                      onClick={() => setSelectedUncalledDate(selected ? null : day.date)}
+                      className={`group flex h-40 flex-col items-center justify-end rounded-md border px-1 pb-1.5 pt-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+                        selected
+                          ? "border-primary bg-primary/10"
+                          : day.count > 0
+                            ? "border-transparent hover:border-primary/35 hover:bg-accent/60"
+                            : "cursor-default border-transparent opacity-45"
+                      }`}
+                    >
+                      <span className={`mb-1 text-xs font-medium tabular-nums ${selected ? "text-primary" : "text-muted-foreground"}`}>
+                        {day.count}
+                      </span>
+                      <span className="flex h-[92px] w-full items-end justify-center">
+                        <span
+                          className={`block w-full max-w-7 rounded-t-sm transition-[height,background-color] duration-200 ${
+                            selected ? "bg-primary" : "bg-primary/55 group-hover:bg-primary/80"
+                          }`}
+                          style={{ height: `${barHeight}px` }}
+                        />
+                      </span>
+                      <span className={`mt-1 text-[10px] capitalize ${selected ? "text-foreground" : "text-muted-foreground"}`}>
+                        {fmtDayLabel(day.date)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {selectedUncalledDate && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 bg-primary/5 px-4 py-2.5 text-xs">
+                <span>
+                  Mostrando <strong className="font-medium text-foreground">{visibleLeads.length}</strong> lead{visibleLeads.length === 1 ? "" : "s"} sin llamar del {fmtDayLabel(selectedUncalledDate, true)}.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedUncalledDate(null)}
+                  className="inline-flex items-center gap-1 rounded px-2 py-1 font-medium text-primary hover:bg-primary/10"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Quitar filtro
+                </button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Buscador + rango de última interacción */}
         <div className="mb-4">
-          <Input
-            placeholder="Buscar por nombre, telefono o mensaje... (en todas las etapas)"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          {searching && (
+          <div className="flex flex-col gap-2 lg:flex-row">
+            <Input
+              className="min-w-0 flex-1"
+              placeholder="Buscar por nombre, telefono o mensaje... (en todas las etapas)"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-md border border-input bg-background px-2 py-1 lg:flex-nowrap">
+              <CalendarRange className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span>Desde</span>
+                <input
+                  type="date"
+                  aria-label="Fecha inicial de última interacción"
+                  value={interactionFrom}
+                  max={interactionTo || undefined}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setInteractionFrom(next);
+                    if (next && interactionTo && next > interactionTo) setInteractionTo(next);
+                  }}
+                  className="h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+                />
+              </label>
+              <span className="text-muted-foreground/50" aria-hidden="true">—</span>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span>Hasta</span>
+                <input
+                  type="date"
+                  aria-label="Fecha final de última interacción"
+                  value={interactionTo}
+                  min={interactionFrom || undefined}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setInteractionTo(next);
+                    if (next && interactionFrom && next < interactionFrom) setInteractionFrom(next);
+                  }}
+                  className="h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+                />
+              </label>
+              {hasInteractionRange && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInteractionFrom("");
+                    setInteractionTo("");
+                  }}
+                  aria-label="Quitar rango de última interacción"
+                  title="Quitar rango"
+                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+          {(searching || hasInteractionRange) && (
             <p className="mt-1 text-xs text-muted-foreground">
-              {visibleLeads.length} resultado{visibleLeads.length === 1 ? "" : "s"} en todas las etapas · los números de cada etapa muestran las coincidencias
+              {searching
+                ? `${visibleLeads.length} resultado${visibleLeads.length === 1 ? "" : "s"} en todas las etapas`
+                : "Rango aplicado sobre la fecha de última interacción"}
+              {hasInteractionRange && searching ? " · rango de última interacción aplicado" : ""}
+              {" · los números de cada etapa muestran las coincidencias"}
             </p>
           )}
         </div>
@@ -345,7 +571,11 @@ export default function LeadsBoard() {
           <p className="py-12 text-center text-muted-foreground">
             {searching
               ? "Sin resultados para la búsqueda."
-              : "No hay leads en esta etapa."}
+              : selectedUncalledDate
+                ? "No hay leads sin llamar para la fecha seleccionada en este filtro."
+                : hasInteractionRange
+                  ? "No hay leads con última interacción en este rango y etapa."
+                  : "No hay leads en esta etapa."}
           </p>
         ) : (
           <>

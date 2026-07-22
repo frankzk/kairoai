@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { crRange, daysAgoIso, parseRange } from "../lib/leads-metrics";
+import {
+  buildUncalledLeadSeries,
+  crRange,
+  daysAgoIso,
+  isUncalledLeadOnDate,
+  localDateKey,
+  matchesLocalDateRange,
+  parseRange,
+  recentLocalDateKeys,
+} from "../lib/leads-metrics";
 
 // Referencia: 2026-07-20T18:00:00Z = 12:00 CR (mediodia).
 const NOW = new Date("2026-07-20T18:00:00Z");
@@ -37,5 +46,49 @@ describe("crRange (hora CR, UTC-6)", () => {
 describe("daysAgoIso", () => {
   it("resta dias en milisegundos", () => {
     expect(daysAgoIso(NOW, 30)).toBe(new Date(NOW.getTime() - 30 * 86400_000).toISOString());
+  });
+});
+
+describe("dias locales para el grafico de leads", () => {
+  it("convierte el instante a fecha de Costa Rica", () => {
+    expect(localDateKey("2026-07-20T05:59:59Z")).toBe("2026-07-19");
+    expect(localDateKey("2026-07-20T06:00:00Z")).toBe("2026-07-20");
+    expect(localDateKey("fecha-invalida")).toBeNull();
+  });
+
+  it("genera una ventana cronologica que incluye hoy local", () => {
+    expect(recentLocalDateKeys(NOW, 4)).toEqual([
+      "2026-07-17",
+      "2026-07-18",
+      "2026-07-19",
+      "2026-07-20",
+    ]);
+  });
+
+  it("filtra la ultima interaccion por un rango local inclusivo", () => {
+    expect(matchesLocalDateRange("2026-07-20T05:59:59Z", "2026-07-20", "2026-07-22")).toBe(false);
+    expect(matchesLocalDateRange("2026-07-20T06:00:00Z", "2026-07-20", "2026-07-22")).toBe(true);
+    expect(matchesLocalDateRange("2026-07-23T05:59:59Z", "2026-07-20", "2026-07-22")).toBe(true);
+    expect(matchesLocalDateRange("2026-07-23T06:00:00Z", "2026-07-20", "2026-07-22")).toBe(false);
+    expect(matchesLocalDateRange(null, "", "")).toBe(true);
+    expect(matchesLocalDateRange(null, "2026-07-20", "")).toBe(false);
+  });
+
+  it("agrupa solo leads sin gestion manual y usa created_at como respaldo", () => {
+    const leads = [
+      { status_source: "auto", first_seen_at: "2026-07-20T06:00:00Z" },
+      { status_source: "auto", first_seen_at: null, created_at: "2026-07-20T08:00:00Z" },
+      { status_source: "manual", first_seen_at: "2026-07-20T10:00:00Z" },
+      { status_source: "auto", first_seen_at: "2026-07-16T10:00:00Z" },
+    ];
+
+    expect(buildUncalledLeadSeries(leads, NOW, 4)).toEqual([
+      { date: "2026-07-17", count: 0 },
+      { date: "2026-07-18", count: 0 },
+      { date: "2026-07-19", count: 0 },
+      { date: "2026-07-20", count: 2 },
+    ]);
+    expect(isUncalledLeadOnDate(leads[0], "2026-07-20")).toBe(true);
+    expect(isUncalledLeadOnDate(leads[2], "2026-07-20")).toBe(false);
   });
 });

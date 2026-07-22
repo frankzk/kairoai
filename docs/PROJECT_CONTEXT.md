@@ -912,6 +912,19 @@ Supervisa el despacho de pedidos COD en dos momentos atribuibles a personas:
   atribución (Confirmó/Solicitó). Marca personas con actividad **no registradas
   en la planilla**.
 
+### Leads de WhatsApp: gráfico diario de pendientes
+
+- `/admin/leads` muestra los leads sin gestión manual de los últimos 14 días,
+  agrupados por `first_seen_at` en UTC-6 (con `created_at` como respaldo).
+- El gráfico se recalcula sobre la búsqueda global, etapa o Agenda activa. Una
+  barra filtra la lista a los leads sin llamar de esa fecha; el filtro convive
+  con las etapas y puede retirarse desde la barra o desde **Quitar filtro**.
+- El buscador incorpora a su derecha un rango inclusivo **Desde / Hasta** sobre
+  `last_interaction_at` en UTC-6, exactamente la fecha mostrada encima de
+  **Ver chat**. El rango actualiza lista, etapas, Agenda y gráfico.
+- “Sin llamar” se deriva de `status_source = 'auto'`; no se hace una consulta
+  extra a `lead_calls`, Supabase o Icomfly para pintar el gráfico.
+
 ### Pending Supabase migrations (run in SQL Editor, idempotent)
 At the time of writing these were not yet confirmed applied in production — check
 `supabase/migrations/README.md` for current state:

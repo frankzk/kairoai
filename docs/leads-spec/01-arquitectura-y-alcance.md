@@ -39,6 +39,28 @@ Principio clave: **no se consulta al CRM en vivo para pintar el tablero**. El
 tablero lee la BD propia. El CRM solo se consulta en vivo para (a) el chat del
 drawer (transcript bajo demanda) y (b) enviar mensajes.
 
+## Tablero operativo actual en Kairo
+
+`/admin/leads` conserva la búsqueda global y las etapas del tablero, y añade un
+gráfico de barras de **leads sin llamar por día** para priorizar el rezago:
+
+- “Sin llamar” significa que el lead todavía no tiene una gestión manual
+  (`status_source = 'auto'`). Las transiciones automáticas del CRM no cuentan
+  como una llamada de la asesora.
+- El día corresponde a `first_seen_at` en hora local de Costa Rica/Honduras
+  (UTC-6), con `created_at` como respaldo. La ventana visible comprende los
+  últimos 14 días calendario.
+- El gráfico respeta el contexto actual: la etapa seleccionada, Agenda o una
+  búsqueda global. Al pulsar una barra, la lista muestra únicamente los leads
+  sin llamar de ese día dentro del mismo contexto.
+- El filtro de fecha se puede combinar con las etapas y la búsqueda, se refleja
+  en sus conteos y se quita pulsando de nuevo la barra o **Quitar filtro**.
+- A la derecha del buscador, el rango inclusivo **Desde / Hasta** filtra por
+  `last_interaction_at`, la misma fecha local UTC-6 que aparece encima de
+  **Ver chat**. También se combina con búsqueda, etapas y barras del gráfico.
+- La agregación se calcula con los leads ya entregados por `GET /api/leads`; no
+  añade lecturas de Supabase ni consultas en vivo a Icomfly.
+
 ## Inventario de portabilidad
 
 ### ✅ Portable tal cual (re-implementar idéntico en Kairo)
