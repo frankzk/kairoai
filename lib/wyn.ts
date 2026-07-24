@@ -55,6 +55,14 @@ export function buildWynTrackingUrl(value: string): string {
 export function normalizeWynStatus(status: string, stepName = "", description = ""): CourierNormalizedStatus {
   const text = normalizeText(`${status} ${stepName} ${description}`);
   if (includesAny(text, ["returned", "devuelto", "retorno", "devolucion"])) return "returned";
+  // "Entregado a Distribuidor" (handoff a la ultima milla, eventStep 5 /
+  // "Transito a destino") NO es entrega al cliente: el paquete sigue en
+  // transito. Se evalua antes que "entregado"/"no entregado" porque el texto
+  // "...a destino Entregado a Distribuidor" contiene el substring "entregado"
+  // (lo clasificaba como delivered e inflaba la tasa de entrega) y ademas
+  // "destino entregado" contiene "no entregado" (lo confundia con un fallo).
+  // Solo "Entregado" / "Proceso finalizado" (eventStep 7) cuenta como delivered.
+  if (text.includes("distribuidor")) return "en_route";
   if (includesAny(text, ["not delivered", "no entregado", "fallido", "failed", "rechazado"])) {
     return "not_delivered";
   }
