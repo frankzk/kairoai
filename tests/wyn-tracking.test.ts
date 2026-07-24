@@ -43,6 +43,18 @@ describe("WYN tracking", () => {
     ).toBe("incident");
   });
 
+  it("no cuenta el handoff a distribuidor como entrega al cliente", () => {
+    // eventStep 5 de MailAmericas: el paquete se entrega al distribuidor de
+    // ultima milla pero sigue en transito hacia el cliente.
+    expect(
+      normalizeWynStatus("Transito a destino", "Transito a destino", "Entregado a Distribuidor")
+    ).toBe("en_route");
+    // eventStep 7: entrega real al cliente.
+    expect(normalizeWynStatus("Proceso finalizado", "Proceso finalizado", "Entregado")).toBe(
+      "delivered"
+    );
+  });
+
   it("traduce todos los estados WYN al seguimiento operativo", () => {
     expect(wynGroupToStatus("returned")).toBe("not_delivered");
     expect(wynGroupToStatus("not_delivered")).toBe("not_delivered");
