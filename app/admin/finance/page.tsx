@@ -6377,6 +6377,7 @@ function MonthlyCloseTab({
       pending: 0,
       settled: 0,
       unsettled: 0,
+      unsettled_expected: 0,
       to_claim: 0,
       to_claim_fresh: 0,
       to_claim_overdue: 0,
@@ -6393,6 +6394,7 @@ function MonthlyCloseTab({
       acc.pending += row.pending;
       acc.settled += row.settled;
       acc.unsettled += row.unsettled;
+      acc.unsettled_expected += row.unsettled_expected;
       acc.to_claim += row.to_claim;
       acc.to_claim_fresh += row.to_claim_fresh;
       acc.to_claim_overdue += row.to_claim_overdue;
@@ -6556,7 +6558,12 @@ function MonthlyCloseTab({
             <span className="hidden text-right lg:block">Entregados</span>
             <span className="hidden text-right lg:block">Pendientes</span>
             <span className="hidden text-right lg:block">Liquidados</span>
-            <span className="hidden text-right lg:block">Sin liquidacion</span>
+            <span
+              className="hidden text-right lg:block"
+              title="Sin liquidacion pero con movimiento real (entregado / no entregado / devuelto). Excluye anulados sin despacho: la brecha financiera real por cuadrar."
+            >
+              Falta cuadrar
+            </span>
             <span className="hidden text-right lg:block">Pend. liquidacion</span>
             <span className="hidden text-right lg:block">Costos</span>
             <span className="text-right">Utilidad neta</span>
@@ -6604,7 +6611,7 @@ function MonthlyCloseTab({
                 </span>
               )}
             </span>
-            <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.unsettled}</span>
+            <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.unsettled_expected}</span>
             <span className="hidden text-right font-mono text-xs font-semibold lg:block">{totals.to_claim}</span>
             <span className="hidden text-right font-mono text-xs font-semibold lg:block">{currency(totals.costs)}</span>
             <span className={`text-right font-mono text-xs font-semibold ${totals.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
@@ -6705,7 +6712,7 @@ function MonthlyCloseMonthRow({
             <span className="ml-1 text-[10px] text-muted-foreground">{settledPct}%</span>
           )}
         </span>
-        <span className="hidden text-right font-mono text-xs lg:block">{row.unsettled}</span>
+        <span className="hidden text-right font-mono text-xs lg:block">{row.unsettled_expected}</span>
         <span className="hidden text-right font-mono text-xs lg:block">{row.to_claim}</span>
         <span className="hidden text-right font-mono text-xs lg:block">{currency(registeredCosts)}</span>
         <span className={`flex items-baseline justify-end gap-1 font-mono text-xs ${row.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
