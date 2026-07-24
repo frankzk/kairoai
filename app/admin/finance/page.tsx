@@ -92,7 +92,13 @@ type ProductAnalysisFilter =
   | "annulled"
   | "delivered"
   | "not_delivered";
-type OrderSettlementFilter = "all" | "settled" | "unsettled" | "to_claim" | "duplicate";
+type OrderSettlementFilter =
+  | "all"
+  | "settled"
+  | "unsettled"
+  | "unsettled_expected"
+  | "to_claim"
+  | "duplicate";
 type OrderPeriodMode = "all" | "month" | "range";
 type MonthlyOrderFilter =
   | "all"
@@ -102,6 +108,7 @@ type MonthlyOrderFilter =
   | "annulled"
   | "settled"
   | "unsettled"
+  | "unsettled_expected"
   | "to_claim"
   | "duplicate";
 type SettlementImportSort = "recent" | "oldest";
@@ -304,6 +311,7 @@ const ORDER_SETTLEMENT_FILTERS: Array<{ value: OrderSettlementFilter; label: str
   { value: "all", label: "Todos" },
   { value: "settled", label: "Liquidados" },
   { value: "unsettled", label: "Sin liquidacion" },
+  { value: "unsettled_expected", label: "Falta cuadrar" },
   { value: "to_claim", label: "Pend. liquidacion" },
   { value: "duplicate", label: "Duplicados" },
 ];
@@ -340,6 +348,7 @@ const EMPTY_SETTLEMENT_COUNTS: Record<OrderSettlementFilter, number> = {
   all: 0,
   settled: 0,
   unsettled: 0,
+  unsettled_expected: 0,
   to_claim: 0,
   duplicate: 0,
 };
@@ -389,6 +398,7 @@ const MONTHLY_ORDER_FILTERS: Array<{ value: MonthlyOrderFilter; label: string }>
   { value: "annulled", label: "Anulados" },
   { value: "settled", label: "Liquidados" },
   { value: "unsettled", label: "Sin liquidacion" },
+  { value: "unsettled_expected", label: "Falta cuadrar" },
   { value: "to_claim", label: "Pend. liquidacion" },
   { value: "duplicate", label: "Duplicados" },
 ];
@@ -1432,6 +1442,10 @@ export default function FinancePage() {
               <AlertStat label="Reintentos" value={operationalCountsLoading ? "..." : formatInt(alertCounts.trackingCounts.en_route_retry)} tone="bad" />
               <AlertStat label="Incidencias" value={operationalCountsLoading ? "..." : formatInt(alertCounts.trackingCounts.incident_solvable + alertCounts.trackingCounts.incident_unsolvable)} tone="bad" />
               <AlertStat label="Por reclamar" value={operationalCountsLoading ? "..." : formatInt(alertCounts.settlementCounts.to_claim)} tone="warn" />
+              {/* Falta cuadrar: sin liquidacion PERO con movimiento real
+                  (entregado/no entregado/devuelto). Excluye anulados sin
+                  despacho; es la brecha financiera real, no el 934 mecanico. */}
+              <AlertStat label="Falta cuadrar" value={operationalCountsLoading ? "..." : formatInt(alertCounts.settlementCounts.unsettled_expected)} tone="warn" />
               <AlertStat
                 label="Anomalías"
                 // Equivale al calculo previo en cliente (liquidationAlertRows +
@@ -7153,6 +7167,13 @@ function MonthCloseDetail({
               onClick={() => setOrdersModalFilter("pending")}
             />
             <CloseSignalRow
+              label="Falta cuadrar (sin liquidar)"
+              value={close.unsettled_expected}
+              hint="Entregados o devueltos sin liquidacion: la brecha real por cuadrar (excluye anulados)."
+              tone={close.unsettled_expected ? "warning" : "ok"}
+              onClick={() => setOrdersModalFilter("unsettled_expected")}
+            />
+            <CloseSignalRow
               label="Entregados sin liquidacion"
               value={close.to_claim}
               hint="Si Boxful ya los entrego, toca reclamar pago."
@@ -8927,6 +8948,7 @@ function getMonthlyOrderFilterCounts(orders: OrderProfitabilityRow[]): Record<Mo
     annulled: 0,
     settled: 0,
     unsettled: 0,
+    unsettled_expected: 0,
     to_claim: 0,
     duplicate: 0,
   };
@@ -8938,6 +8960,7 @@ function getMonthlyOrderFilterCounts(orders: OrderProfitabilityRow[]): Record<Mo
     if (matchesMonthlyOrderFilter(order, "annulled")) counts.annulled += 1;
     if (matchesMonthlyOrderFilter(order, "settled")) counts.settled += 1;
     if (matchesMonthlyOrderFilter(order, "unsettled")) counts.unsettled += 1;
+    if (matchesMonthlyOrderFilter(order, "unsettled_expected")) counts.unsettled_expected += 1;
     if (matchesMonthlyOrderFilter(order, "to_claim")) counts.to_claim += 1;
     if (matchesMonthlyOrderFilter(order, "duplicate")) counts.duplicate += 1;
   }
@@ -8955,6 +8978,9 @@ function matchesMonthlyOrderFilter(order: OrderProfitabilityRow, filter: Monthly
   if (filter === "annulled") return order.tracking_status === "annulled";
   if (filter === "settled") return order.settlement_count === 1;
   if (filter === "unsettled") return order.settlement_count === 0;
+  if (filter === "unsettled_expected") {
+    return order.settlement_count === 0 && expectsSettlement(order.tracking_status);
+  }
   if (filter === "to_claim") return order.tracking_status === "delivered" && order.settlement_count === 0;
   return order.settlement_count > 1;
 }
@@ -9426,6 +9452,17 @@ function isPendingLike(status: string): boolean {
     status === "en_route" ||
     status === "en_route_retry" ||
     status === "incident"
+  );
+}
+
+// Un pedido con movimiento terminal real deberia tener liquidacion: entregado
+// (cobrar COD) o no entregado/devuelto (reconocer costos). Los anulados sin
+// despacho no cuentan: su count=0 es correcto y no es brecha por cuadrar.
+function expectsSettlement(status: string): boolean {
+  return (
+    status === "delivered" ||
+    status === "not_delivered" ||
+    status === "returned"
   );
 }
 
