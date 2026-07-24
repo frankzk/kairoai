@@ -3,6 +3,7 @@ import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import {
   buildEnRouteGuides,
+  expectsSettlement,
   getEffectiveTrackingStatus,
   getSettlementTracesForLogisticsRow,
   getTrackingFilterFromStatus,
@@ -40,7 +41,13 @@ type TrackingFilter =
   | "annulled"
   | "delivered"
   | "not_delivered";
-type SettlementFilter = "all" | "settled" | "unsettled" | "to_claim" | "duplicate";
+type SettlementFilter =
+  | "all"
+  | "settled"
+  | "unsettled"
+  | "unsettled_expected"
+  | "to_claim"
+  | "duplicate";
 type PeriodMode = "all" | "month" | "range" | "today" | "7d" | "30d";
 
 const TRACKING_FILTERS: TrackingFilter[] = [
@@ -56,7 +63,14 @@ const TRACKING_FILTERS: TrackingFilter[] = [
   "delivered",
   "not_delivered",
 ];
-const SETTLEMENT_FILTERS: SettlementFilter[] = ["all", "settled", "unsettled", "to_claim", "duplicate"];
+const SETTLEMENT_FILTERS: SettlementFilter[] = [
+  "all",
+  "settled",
+  "unsettled",
+  "unsettled_expected",
+  "to_claim",
+  "duplicate",
+];
 const PERIOD_MODES: PeriodMode[] = ["all", "month", "range", "today", "7d", "30d"];
 
 function parsePeriod(value: string | null): PeriodMode {
@@ -159,12 +173,14 @@ function countSettlements(rows: ResolvedRow[]): Record<SettlementFilter, number>
     all: rows.length,
     settled: 0,
     unsettled: 0,
+    unsettled_expected: 0,
     to_claim: 0,
     duplicate: 0,
   };
   for (const item of rows) {
     if (item.traces.length === 1) counts.settled += 1;
     if (item.traces.length === 0) counts.unsettled += 1;
+    if (item.traces.length === 0 && expectsSettlement(item.status)) counts.unsettled_expected += 1;
     if (item.traces.length === 0 && item.status === "delivered") counts.to_claim += 1;
     if (item.traces.length > 1) counts.duplicate += 1;
   }
@@ -181,6 +197,7 @@ function matchesSettlement(
   if (filter === "all") return true;
   if (filter === "settled") return traces.length === 1;
   if (filter === "unsettled") return traces.length === 0;
+  if (filter === "unsettled_expected") return traces.length === 0 && expectsSettlement(effectiveStatus);
   if (filter === "to_claim") return traces.length === 0 && effectiveStatus === "delivered";
   return traces.length > 1; // duplicate
 }

@@ -960,6 +960,20 @@ export function isPendingLike(status: string): boolean {
   );
 }
 
+// Un pedido "deberia" tener liquidacion cuando tuvo movimiento terminal real:
+// entregado (toca cobrar el COD) o no entregado/devuelto (toca reconocer los
+// costos logisticos del courier). Los anulados sin despacho quedan fuera: nunca
+// generan liquidacion, asi que un settlement_count=0 en ellos es correcto y NO
+// es una brecha por cuadrar. Sirve para distinguir "sin liquidacion" (mecanico,
+// count=0) de "falta cuadrar" (count=0 pero deberia existir liquidacion).
+export function expectsSettlement(status: string): boolean {
+  return (
+    status === "delivered" ||
+    status === "not_delivered" ||
+    status === "returned"
+  );
+}
+
 export function inferTrackingStatusFromText(status: string): string {
   const lower = status.toLowerCase();
   if (lower.includes("no entregado") || lower.includes("devuelto")) return "not_delivered";
@@ -1517,6 +1531,9 @@ export interface MonthlyCloseRow {
   pending: number;
   settled: number;
   unsettled: number;
+  // Subconjunto de unsettled con movimiento real (entregado/no entregado/
+  // devuelto): lo que de verdad falta liquidar. Excluye anulados sin despacho.
+  unsettled_expected: number;
   to_claim: number;
   to_claim_fresh: number;
   to_claim_overdue: number;
@@ -2208,6 +2225,7 @@ export function buildMonthlyCloseRows(
       pending: 0,
       settled: 0,
       unsettled: 0,
+      unsettled_expected: 0,
       to_claim: 0,
       to_claim_fresh: 0,
       to_claim_overdue: 0,
@@ -2243,6 +2261,11 @@ export function buildMonthlyCloseRows(
     if (isPendingLike(order.tracking_status)) row.pending += 1;
     if (order.settlement_count === 1) row.settled += 1;
     if (!order.settlement_count) row.unsettled += 1;
+    // "Falta cuadrar": sin liquidacion PERO con movimiento terminal real. Los
+    // anulados sin despacho no entran aunque tengan count=0.
+    if (!order.settlement_count && expectsSettlement(order.tracking_status)) {
+      row.unsettled_expected += 1;
+    }
     if (order.tracking_status === "delivered" && !order.settlement_count) {
       row.to_claim += 1;
       // <=7 dias desde la entrega: pendiente normal del proximo corte de
