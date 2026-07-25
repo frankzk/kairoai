@@ -72,11 +72,9 @@ export async function getChatAuthHeaders(
   };
 }
 
-// Hosts desde los que el proxy de media acepta descargar. Base: el host de
-// ICOMFLY_BASE y cualquier subdominio *.icomfly.com. Extensible sin deploy via
-// LEADS_MEDIA_ALLOWED_HOSTS (coma-separado) porque los CRM cambian de CDN sin
-// avisar.
-export function isAllowedMediaHost(host: string): boolean {
+// Hosts de Icomfly: a estos (y solo a estos) el proxy de media adjunta el JWT.
+// Incluye el host de ICOMFLY_BASE por si difiere de *.icomfly.com.
+export function isIcomflyHost(host: string): boolean {
   const h = host.toLowerCase();
   let baseHost = "";
   try {
@@ -85,14 +83,7 @@ export function isAllowedMediaHost(host: string): boolean {
     baseHost = "";
   }
   if (baseHost && h === baseHost) return true;
-  if (h === "icomfly.com" || h.endsWith(".icomfly.com")) return true;
-  const extra = (process.env.LEADS_MEDIA_ALLOWED_HOSTS || "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  return extra.some((allowed) =>
-    allowed.startsWith(".") ? h.endsWith(allowed) : h === allowed
-  );
+  return h === "icomfly.com" || h.endsWith(".icomfly.com");
 }
 
 async function chatFetch(path: string, externalStoreId: number): Promise<unknown> {
