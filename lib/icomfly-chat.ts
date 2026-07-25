@@ -58,6 +58,43 @@ async function getChatToken(forceFresh = false): Promise<string> {
   throw new Error("iComfly no configurado: define ICOMFLY_EMAIL + ICOMFLY_PASSWORD (o ICOMFLY_TOKEN).");
 }
 
+// Cabeceras de autenticacion para consumir recursos de Icomfly fuera de
+// chatFetch (p.ej. el proxy de media del drawer). No fija Content-Type porque
+// se usa para GETs de binarios. `forceFresh` re-loguea (mismo patron 401).
+export async function getChatAuthHeaders(
+  externalStoreId: number,
+  forceFresh = false
+): Promise<Record<string, string>> {
+  const token = await getChatToken(forceFresh);
+  return {
+    Authorization: `Bearer ${token}`,
+    "X-Active-Store-Ids": String(externalStoreId),
+  };
+}
+
+// Hosts desde los que el proxy de media acepta descargar. Base: el host de
+// ICOMFLY_BASE y cualquier subdominio *.icomfly.com. Extensible sin deploy via
+// LEADS_MEDIA_ALLOWED_HOSTS (coma-separado) porque los CRM cambian de CDN sin
+// avisar.
+export function isAllowedMediaHost(host: string): boolean {
+  const h = host.toLowerCase();
+  let baseHost = "";
+  try {
+    baseHost = new URL(BASE).hostname.toLowerCase();
+  } catch {
+    baseHost = "";
+  }
+  if (baseHost && h === baseHost) return true;
+  if (h === "icomfly.com" || h.endsWith(".icomfly.com")) return true;
+  const extra = (process.env.LEADS_MEDIA_ALLOWED_HOSTS || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return extra.some((allowed) =>
+    allowed.startsWith(".") ? h.endsWith(allowed) : h === allowed
+  );
+}
+
 async function chatFetch(path: string, externalStoreId: number): Promise<unknown> {
   const token = await getChatToken();
   const headers = {

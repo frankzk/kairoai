@@ -11,6 +11,9 @@ interface Body {
   vendedora_id?: number;
   status?: string;
   note?: string;
+  // Fecha de recontacto elegida por la asesora ("llamame el 1 de agosto").
+  // Opcional: si no viene, aplica la regla por defecto de schedulesFollowup.
+  next_followup_at?: string;
 }
 
 // POST: registra el "resultado de la llamada" de la asesora sobre un lead.
@@ -33,11 +36,27 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
     return NextResponse.json({ error: `Estado invalido: ${status}` }, { status: 400 });
   }
 
+  // Fecha custom: cualquier disposition puede agendar recontacto si la
+  // asesora eligio fecha. Debe ser valida y a futuro (1 min de gracia por
+  // desfase de reloj del cliente).
+  let customFollowupAt: string | null = null;
+  if (body?.next_followup_at) {
+    const t = Date.parse(body.next_followup_at);
+    if (Number.isNaN(t)) {
+      return NextResponse.json({ error: "Fecha de recontacto invalida" }, { status: 400 });
+    }
+    if (t <= Date.now() - 60_000) {
+      return NextResponse.json({ error: "La fecha de recontacto debe ser a futuro" }, { status: 400 });
+    }
+    customFollowupAt = new Date(t).toISOString();
+  }
+
   try {
     const lead = await getLead(store.id, leadId);
     if (!lead) return NextResponse.json({ error: "lead no encontrado" }, { status: 404 });
 
-    const nextFollowupAt = schedulesFollowup(status) ? defaultFollowupAt(new Date()) : null;
+    const nextFollowupAt =
+      customFollowupAt ?? (schedulesFollowup(status) ? defaultFollowupAt(new Date()) : null);
     const result = await applyDisposition({
       storeId: store.id,
       leadId,

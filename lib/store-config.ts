@@ -10,6 +10,9 @@ export interface FinanceStorePublic {
   currency: "CRC" | "HNL";
   locale: string;
   logisticsProvider: LogisticsProviderCode;
+  // Link del catalogo que las asesoras comparten por WhatsApp. Viene de
+  // NEXT_PUBLIC_CATALOG_URL_{CR|HN} (build-time); sin env el boton se oculta.
+  catalogUrl?: string;
 }
 
 export const DEFAULT_FINANCE_STORE_CODE: FinanceStoreCode = "mireva-cr";
@@ -25,6 +28,7 @@ export const FINANCE_STORES: FinanceStorePublic[] = [
     currency: "CRC",
     locale: "es-CR",
     logisticsProvider: "moovin",
+    catalogUrl: process.env.NEXT_PUBLIC_CATALOG_URL_CR || undefined,
   },
   {
     id: 2,
@@ -35,6 +39,7 @@ export const FINANCE_STORES: FinanceStorePublic[] = [
     currency: "HNL",
     locale: "es-HN",
     logisticsProvider: "forza",
+    catalogUrl: process.env.NEXT_PUBLIC_CATALOG_URL_HN || undefined,
   },
 ];
 
