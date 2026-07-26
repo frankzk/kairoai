@@ -18,8 +18,7 @@ import {
 import CreateOrderPanel from "@/components/CreateOrderPanel";
 import GestionBar from "@/components/GestionBar";
 import ProductivityPanel from "@/components/ProductivityPanel";
-import LeadHistory from "@/components/LeadHistory";
-import LeadPurchases from "@/components/LeadPurchases";
+import CustomerPanel from "@/components/CustomerPanel";
 import ChatComposer from "@/components/ChatComposer";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -883,10 +882,11 @@ function LeadDrawer({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
+      {/* Drawer SIEMPRE ancho: columna izquierda solo chat, derecha el panel
+          del cliente. "Crear pedido" se superpone sobre la derecha y al
+          terminar vuelve al panel. */}
       <div
-        className={`flex h-full w-full flex-col border-l border-border bg-card transition-[max-width] ${
-          showOrder ? "max-w-4xl" : "max-w-md"
-        }`}
+        className="flex h-full w-full max-w-[92rem] flex-col border-l border-border bg-card"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border p-4">
@@ -900,14 +900,14 @@ function LeadDrawer({
             <ShoppingCart className="mr-2 h-4 w-4" />
             {showOrder ? "Ocultar pedido" : "Crear pedido"}
           </Button>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground" aria-label="Cerrar">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Dos columnas: chat (izquierda) + pedido (derecha) */}
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          <div className={`flex min-h-0 flex-col ${showOrder ? "md:w-1/2 md:border-r md:border-border" : "w-full"}`}>
+          {/* Columna izquierda: SOLO el chat + composer + gestion */}
+          <div className="flex min-h-0 flex-col md:w-1/2 md:border-r md:border-border lg:w-[55%]">
             {lead.labels.length > 0 && (
               <div className="flex flex-wrap gap-1 border-b border-border p-3">
                 {lead.labels.map((l) => (
@@ -917,8 +917,6 @@ function LeadDrawer({
                 ))}
               </div>
             )}
-            <LeadHistory leadId={lead.id} store={store} refreshKey={historyKey} />
-            <LeadPurchases leadId={lead.id} store={store} />
             <div ref={chatScrollRef} className="flex-1 space-y-2 overflow-y-auto p-4">
               {loading ? (
                 <p className="text-center text-sm text-muted-foreground">Cargando chat...</p>
@@ -969,18 +967,25 @@ function LeadDrawer({
             />
           </div>
 
-          {showOrder && (
-            <div className="min-h-0 flex-1 border-t border-border md:w-1/2 md:border-t-0">
-              <CreateOrderPanel
-                lead={{ id: lead.id, name: lead.name, phone: lead.phone }}
-                store={store}
-                onCreated={() => {
-                  onRefresh();
-                  setHistoryKey((k) => k + 1);
-                }}
-              />
-            </div>
-          )}
+          {/* Columna derecha: historial del cliente. "Crear pedido" se
+              superpone encima y al crearse vuelve solo al panel. */}
+          <div className="relative min-h-0 flex-1 border-t border-border md:border-t-0">
+            <CustomerPanel leadId={lead.id} store={store} historyKey={historyKey} />
+            {showOrder && (
+              <div className="absolute inset-0 z-10 overflow-y-auto bg-card">
+                <CreateOrderPanel
+                  lead={{ id: lead.id, name: lead.name, phone: lead.phone }}
+                  store={store}
+                  onCreated={() => {
+                    onRefresh();
+                    setHistoryKey((k) => k + 1);
+                    // Pedido creado: volver al historial, que ya lo incluye.
+                    setShowOrder(false);
+                  }}
+                />
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
