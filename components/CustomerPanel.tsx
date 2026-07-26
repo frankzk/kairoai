@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Check, Copy, MapPin, Package, ShoppingCart } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import LeadHistory from "@/components/LeadHistory";
+import GestionBar from "@/components/GestionBar";
 import {
   groupOrdersByState,
   type CustomerOrder,
@@ -93,10 +94,12 @@ export default function CustomerPanel({
   leadId,
   store,
   historyKey,
+  onGestionDone,
 }: {
   leadId: number;
   store: string;
   historyKey: number;
+  onGestionDone: () => void;
 }) {
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [summary, setSummary] = useState<CustomerSummary | null>(null);
@@ -284,6 +287,14 @@ export default function CustomerPanel({
             ))}
           </div>
         )}
+      </section>
+
+      {/* Gestion de la llamada: va justo despues de los pedidos porque es lo
+          que la asesora registra apenas termina de hablar. */}
+      <section>
+        <div className="-mx-4 border-y border-border">
+          <GestionBar leadId={leadId} store={store} onDone={onGestionDone} />
+        </div>
       </section>
 
       {/* Carritos abandonados */}
