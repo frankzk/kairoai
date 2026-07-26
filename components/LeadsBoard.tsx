@@ -884,8 +884,10 @@ function LeadDrawer({
       {/* Drawer SIEMPRE ancho: columna izquierda solo chat, derecha el panel
           del cliente. "Crear pedido" se superpone sobre la derecha y al
           terminar vuelve al panel. */}
+      {/* 70rem = dos columnas del ancho que tenia el chat (~35rem cada una).
+          Mitad y mitad: ninguna necesita mas espacio que la otra. */}
       <div
-        className="flex h-full w-full max-w-[92rem] flex-col border-l border-border bg-card"
+        className="flex h-full w-full max-w-[70rem] flex-col border-l border-border bg-card"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border p-4">
@@ -906,7 +908,7 @@ function LeadDrawer({
 
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {/* Columna izquierda: SOLO el chat + composer */}
-          <div className="flex min-h-0 flex-col md:w-[40%] md:border-r md:border-border lg:w-[38%]">
+          <div className="flex min-h-0 flex-col md:w-1/2 md:border-r md:border-border">
             {lead.labels.length > 0 && (
               <div className="flex flex-wrap gap-1 border-b border-border p-3">
                 {lead.labels.map((l) => (
