@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody } from "@/lib/stores";
 import { applyDisposition, getLead } from "@/lib/leads";
-import { defaultFollowupAt, isValidDisposition, schedulesFollowup } from "@/lib/leads-classify";
+import { defaultFollowupForStatus, isValidDisposition } from "@/lib/leads-classify";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -55,8 +55,9 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
     const lead = await getLead(store.id, leadId);
     if (!lead) return NextResponse.json({ error: "lead no encontrado" }, { status: 404 });
 
-    const nextFollowupAt =
-      customFollowupAt ?? (schedulesFollowup(status) ? defaultFollowupAt(new Date()) : null);
+    // Prioridad: fecha elegida por la asesora > regla automatica del estado
+    // (casi_cierra/volver_a_llamar -> regla del panel; no contesto -> +24h).
+    const nextFollowupAt = customFollowupAt ?? defaultFollowupForStatus(status, new Date());
     const result = await applyDisposition({
       storeId: store.id,
       leadId,

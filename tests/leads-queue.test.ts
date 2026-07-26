@@ -92,6 +92,32 @@ describe("buildWorkQueue", () => {
     ]);
   });
 
+  it("promueve reintentos vencidos arriba de por_cerrar, debajo de pago_verificar", () => {
+    const queue = buildWorkQueue(
+      [
+        lead("cerrar-nuevo", "por_cerrar", "2026-07-25T17:55:00Z"),
+        // "No contesto" de ayer: reintento agendado que ya vencio.
+        lead("reintento", "seguimiento", "2026-07-24T15:00:00Z", "2026-07-25T15:00:00Z"),
+        lead("pago", "pago_verificar", "2026-07-25T12:00:00Z"),
+        lead("tibio-vencido", "tibios", "2026-07-24T10:00:00Z", "2026-07-25T10:00:00Z"),
+      ],
+      NOW
+    );
+    // pago primero; luego los vencidos (mas vencido arriba); luego por_cerrar.
+    expect(ids(queue)).toEqual(["pago", "tibio-vencido", "reintento", "cerrar-nuevo"]);
+  });
+
+  it("una agenda a futuro NO promueve: espera su hora en su etapa", () => {
+    const queue = buildWorkQueue(
+      [
+        lead("agendado-futuro", "seguimiento", "2026-07-25T17:00:00Z", "2026-07-28T15:00:00Z"),
+        lead("tibio", "tibios", "2026-07-25T10:00:00Z"),
+      ],
+      NOW
+    );
+    expect(ids(queue)).toEqual(["tibio", "agendado-futuro"]);
+  });
+
   it("tolera fechas nulas sin romper el orden de etapas", () => {
     const queue = buildWorkQueue(
       [

@@ -10,6 +10,7 @@ import {
   isValidDisposition,
   schedulesFollowup,
   defaultFollowupAt,
+  defaultFollowupForStatus,
   DISPOSITION_OPTIONS,
 } from "../lib/leads-classify";
 import type { ConversationMessage, IcomflyConversation, LeadStateSnapshot } from "../lib/leads-types";
@@ -308,5 +309,23 @@ describe("defaultFollowupAt (hora CR, UTC-6)", () => {
     const iso = defaultFollowupAt(now);
     // manana 10:00 CR = 16:00 UTC del 21
     expect(iso).toBe("2026-07-21T16:00:00.000Z");
+  });
+});
+
+describe("defaultFollowupForStatus (reintento automatico)", () => {
+  const now = new Date("2026-07-20T16:00:00Z");
+  it("casi_cierra / volver_a_llamar usan la regla del panel", () => {
+    expect(defaultFollowupForStatus("casi_cierra", now)).toBe(defaultFollowupAt(now));
+    expect(defaultFollowupForStatus("volver_a_llamar", now)).toBe(defaultFollowupAt(now));
+  });
+  it("no contesto (no_responde/buzon/cuelga) agenda reintento a las 24h", () => {
+    expect(defaultFollowupForStatus("no_responde", now)).toBe("2026-07-21T16:00:00.000Z");
+    expect(defaultFollowupForStatus("buzon", now)).toBe("2026-07-21T16:00:00.000Z");
+    expect(defaultFollowupForStatus("cuelga", now)).toBe("2026-07-21T16:00:00.000Z");
+  });
+  it("estados terminales o informativos no agendan nada", () => {
+    expect(defaultFollowupForStatus("contactado_dejo_wsp", now)).toBeNull();
+    expect(defaultFollowupForStatus("sin_stock", now)).toBeNull();
+    expect(defaultFollowupForStatus("cancelado", now)).toBeNull();
   });
 });
