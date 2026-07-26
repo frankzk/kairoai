@@ -326,7 +326,11 @@ export default function CustomerPanel({
         <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Gestiones
         </h3>
-        <LeadHistory leadId={leadId} store={store} refreshKey={historyKey} alwaysOpen />
+        {/* Tope con scroll propio: el historial no debe empujar fuera de vista
+            al resumen y los pedidos, que es lo que mas se consulta. */}
+        <div className="max-h-64 overflow-y-auto pr-1">
+          <LeadHistory leadId={leadId} store={store} refreshKey={historyKey} alwaysOpen />
+        </div>
       </section>
     </div>
   );

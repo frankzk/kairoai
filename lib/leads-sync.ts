@@ -147,7 +147,12 @@ export async function runLeadsSync(opts: {
         status,
         status_source: statusSource,
         auto_reason: autoReason,
-        has_order: hasShopifyOrder || category === "won",
+        // has_order NUNCA baja de true a false: lo pone el cruce con ordenes
+        // reales (RPC match_leads_to_shopify_orders) y este sync no tiene esa
+        // informacion (orderPhones quedo vacio a proposito, ver arriba). Si lo
+        // pisaba con false, el cruce volvia a "descubrir" el mismo pedido cada
+        // hora y ensuciaba el historial con una gestion repetida.
+        has_order: hasShopifyOrder || category === "won" || current?.hasOrder === true,
         shopify_order_name: null,
         last_message_text: conv.lastMessageText || null,
         last_message_sender: conv.lastMessageSender || null,
