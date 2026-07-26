@@ -1,8 +1,9 @@
-// Adaptador de LECTURA de las conversaciones de WhatsApp de Icomfly.
-// Consume el namespace interno /api/chat/* (descubierto en Fase 0):
-//   GET /api/chat/conversations?limit&page   -> lista paginada
-//   GET /api/chat/conversations/:id/messages -> transcript
-//   GET /api/chat/labels                      -> catalogo de etiquetas
+// Adaptador de las conversaciones de WhatsApp de Icomfly.
+// Consume el namespace interno /api/chat/*:
+//   GET  /api/chat/conversations?limit&page   -> lista paginada
+//   GET  /api/chat/conversations/:id/messages -> transcript
+//   GET  /api/chat/labels                     -> catalogo de etiquetas
+//   POST /api/chat/conversations/:id/send     -> ENVIAR mensaje (unica escritura)
 // Se autentica con el MISMO JWT que /auth/login (reutiliza getChatToken, igual
 // flujo que lib/icomfly.ts). Multi-tienda via header X-Active-Store-Ids.
 //
@@ -113,6 +114,44 @@ async function chatFetch(path: string, externalStoreId: number): Promise<unknown
   }
   if (!res.ok) throw new Error(`iComfly chat ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return res.json();
+}
+
+// ─── Envio (unica operacion de ESCRITURA del adaptador) ──────────────────────
+// Contrato verificado en el panel de Icomfly (DevTools, 2026-07):
+//   POST /api/chat/conversations/{id}/send   body {"message": "..."}
+// Sale por el MISMO numero de WhatsApp que usa el bot, asi que el cliente ve
+// una sola conversacion continua.
+export async function sendChatMessage(
+  conversationId: string,
+  externalStoreId: number,
+  message: string
+): Promise<void> {
+  const text = message.trim();
+  if (!text) throw new Error("El mensaje esta vacio.");
+  const path = `/chat/conversations/${encodeURIComponent(conversationId)}/send`;
+
+  const post = async (forceFresh: boolean) => {
+    const token = await getChatToken(forceFresh);
+    return fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Active-Store-Ids": String(externalStoreId),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ message: text }),
+      cache: "no-store",
+    });
+  };
+
+  let res = await post(false);
+  if (res.status === 401) {
+    cachedToken = null;
+    res = await post(true);
+  }
+  if (!res.ok) {
+    throw new Error(`iComfly send ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
 }
 
 // ─── Helpers de normalizacion ────────────────────────────────────────────────
