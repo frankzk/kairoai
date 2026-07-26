@@ -16,7 +16,6 @@ import {
   X,
 } from "lucide-react";
 import CreateOrderPanel from "@/components/CreateOrderPanel";
-import GestionBar from "@/components/GestionBar";
 import ProductivityPanel from "@/components/ProductivityPanel";
 import CustomerPanel from "@/components/CustomerPanel";
 import ChatComposer from "@/components/ChatComposer";
@@ -906,8 +905,8 @@ function LeadDrawer({
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          {/* Columna izquierda: SOLO el chat + composer + gestion */}
-          <div className="flex min-h-0 flex-col md:w-1/2 md:border-r md:border-border lg:w-[55%]">
+          {/* Columna izquierda: SOLO el chat + composer */}
+          <div className="flex min-h-0 flex-col md:w-[40%] md:border-r md:border-border lg:w-[38%]">
             {lead.labels.length > 0 && (
               <div className="flex flex-wrap gap-1 border-b border-border p-3">
                 {lead.labels.map((l) => (
@@ -957,20 +956,20 @@ function LeadDrawer({
                 setHistoryKey((k) => k + 1);
               }}
             />
-            <GestionBar
-              leadId={lead.id}
-              store={store}
-              onDone={() => {
-                onRefresh();
-                setHistoryKey((k) => k + 1);
-              }}
-            />
           </div>
 
           {/* Columna derecha: historial del cliente. "Crear pedido" se
               superpone encima y al crearse vuelve solo al panel. */}
           <div className="relative min-h-0 flex-1 border-t border-border md:border-t-0">
-            <CustomerPanel leadId={lead.id} store={store} historyKey={historyKey} />
+            <CustomerPanel
+              leadId={lead.id}
+              store={store}
+              historyKey={historyKey}
+              onGestionDone={() => {
+                onRefresh();
+                setHistoryKey((k) => k + 1);
+              }}
+            />
             {showOrder && (
               <div className="absolute inset-0 z-10 overflow-y-auto bg-card">
                 <CreateOrderPanel
