@@ -413,6 +413,32 @@ export function schedulesFollowup(code: string): boolean {
 }
 
 /**
+ * Estados "no contesto": el cliente no atendio, asi que se agenda un segundo
+ * intento automatico 24h despues (regla acordada: reintento a las 24-48h sin
+ * que nadie tenga que revisar Seguimiento; el vencido sube solo a la Cola).
+ */
+const NO_ANSWER_RETRY = new Set(["no_responde", "buzon", "cuelga"]);
+
+export function isNoAnswerStatus(code: string): boolean {
+  return NO_ANSWER_RETRY.has(code);
+}
+
+export const NO_ANSWER_RETRY_HOURS = 24;
+
+/**
+ * Seguimiento automatico segun el estado registrado: casi_cierra /
+ * volver_a_llamar usan la regla del panel (hoy 18:00 / manana 10:00); los
+ * "no contesto" reintentan a las 24h. El resto no agenda nada.
+ */
+export function defaultFollowupForStatus(code: string, now: Date): string | null {
+  if (schedulesFollowup(code)) return defaultFollowupAt(now);
+  if (isNoAnswerStatus(code)) {
+    return new Date(now.getTime() + NO_ANSWER_RETRY_HOURS * 3600_000).toISOString();
+  }
+  return null;
+}
+
+/**
  * Proximo seguimiento por defecto (hora local de la tienda). Regla del panel:
  * si es antes de las 16:00 -> hoy 18:00; si no -> manana 10:00.
  * CR y HN son UTC-6 (sin horario de verano), asi que usamos offset fijo -6.

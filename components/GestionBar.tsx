@@ -30,6 +30,9 @@ export default function GestionBar({
   const [followupAt, setFollowupAt] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
   const [savedStatus, setSavedStatus] = useState<string | null>(null);
+  // Fecha de recontacto que quedo agendada (custom o automatica), para que la
+  // asesora vea que el reintento existe sin ir a la Agenda.
+  const [savedFollowup, setSavedFollowup] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -83,10 +86,14 @@ export default function GestionBar({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error al gestionar");
       setSavedStatus(status);
+      setSavedFollowup(data.next_followup_at ?? null);
       setNote("");
       setFollowupAt("");
       onDone(status);
-      setTimeout(() => setSavedStatus(null), 2500);
+      setTimeout(() => {
+        setSavedStatus(null);
+        setSavedFollowup(null);
+      }, 4000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al gestionar");
     } finally {
@@ -102,6 +109,18 @@ export default function GestionBar({
       {savedStatus && (
         <p className="flex items-center gap-1 text-xs text-emerald-400">
           <Check className="h-3 w-3" /> Guardado
+          {savedFollowup && (
+            <span className="text-muted-foreground">
+              · reintento agendado el{" "}
+              {new Date(savedFollowup).toLocaleString("es-CR", {
+                timeZone: "America/Costa_Rica",
+                day: "2-digit",
+                month: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+          )}
         </p>
       )}
 

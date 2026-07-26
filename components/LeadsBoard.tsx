@@ -567,7 +567,7 @@ export default function LeadsBoard() {
                 ? "border-primary bg-primary text-primary-foreground"
                 : "border-border bg-card hover:bg-accent"
             }`}
-            title="Orden de atencion: pagos por verificar, por cerrar (mas nuevo primero), tibios y seguimientos"
+            title="Orden de atencion: pagos por verificar, reintentos vencidos, por cerrar (mas nuevo primero), tibios y seguimientos"
           >
             <span>🎯</span>
             <span>Cola</span>
@@ -667,7 +667,7 @@ export default function LeadsBoard() {
             )}
             {!searching && activeStage === "cola" && (
               <p className="mb-2 text-xs text-muted-foreground">
-                Orden de atención: 💰 pagos por verificar → 🔥 por cerrar (el más nuevo primero) → 🌡️ tibios → 💬 seguimientos (vencidos primero).
+                Orden de atención: 💰 pagos por verificar → 🔁 reintentos vencidos (los &quot;no contestó&quot; vuelven solos a las 24h) → 🔥 por cerrar (el más nuevo primero) → 🌡️ tibios → 💬 seguimientos.
               </p>
             )}
             <div className="space-y-2">
