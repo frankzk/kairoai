@@ -733,7 +733,25 @@ function MediaAttachment({ message, store }: { message: Message; store: string }
   }
   if (kind === "audio") {
     return (
-      <audio controls preload="none" src={src} onError={() => setFailed(true)} className="mt-1 w-full min-w-56 max-w-full" />
+      <div className="mt-1">
+        <audio
+          controls
+          preload="metadata"
+          src={src}
+          onError={() => setFailed(true)}
+          className="w-full min-w-56 max-w-full"
+        />
+        {/* Respaldo: si el navegador no reproduce el codec de la nota de voz,
+            siempre se puede abrir/descargar el archivo. */}
+        <a
+          href={src}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[10px] underline underline-offset-2 opacity-70 hover:opacity-100"
+        >
+          abrir audio
+        </a>
+      </div>
     );
   }
   if (kind === "video") {
