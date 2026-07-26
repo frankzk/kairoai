@@ -118,6 +118,20 @@ describe("buildWorkQueue", () => {
     expect(ids(queue)).toEqual(["tibio", "agendado-futuro"]);
   });
 
+  it("excluye leads que ya tienen pedido: la cola es para vender", () => {
+    const queue = buildWorkQueue(
+      [
+        // Pedido en curso + el clasificador lo colo en un bucket de venta
+        // (SINPE del propio pedido leido como pago nuevo).
+        { ...lead("con-pedido", "pago_verificar", "2026-07-25T17:55:00Z"), has_order: true },
+        { ...lead("vencido-con-pedido", "seguimiento", "2026-07-24T10:00:00Z", "2026-07-25T10:00:00Z"), has_order: true },
+        lead("sin-pedido", "tibios", "2026-07-25T10:00:00Z"),
+      ],
+      NOW
+    );
+    expect(ids(queue)).toEqual(["sin-pedido"]);
+  });
+
   it("tolera fechas nulas sin romper el orden de etapas", () => {
     const queue = buildWorkQueue(
       [
