@@ -388,6 +388,10 @@ export async function markLeadWonAuto(
     .eq("store_id", storeId)
     .eq("id", leadId)
     .neq("status_source", "manual")
+    // Solo si TODAVIA no esta marcado: sin este filtro el afinado volvia a
+    // "detectar" el mismo pedido en cada corrida (cada 10 min) y sumaba una
+    // gestion repetida al historial del lead.
+    .neq("status", "pedido_en_curso")
     .select("id");
   if (error) throw new Error(`markLeadWonAuto: ${error.message}`);
   const changed = (data ?? []).length > 0;
