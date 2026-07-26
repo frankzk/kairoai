@@ -20,6 +20,7 @@ import GestionBar from "@/components/GestionBar";
 import ProductivityPanel from "@/components/ProductivityPanel";
 import LeadHistory from "@/components/LeadHistory";
 import LeadPurchases from "@/components/LeadPurchases";
+import ChatComposer from "@/components/ChatComposer";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -696,29 +697,6 @@ export default function LeadsBoard() {
   );
 }
 
-// Un click -> link del catalogo en el portapapeles, listo para pegar en
-// WhatsApp. Solo aparece si la tienda tiene NEXT_PUBLIC_CATALOG_URL_*.
-function CatalogCopyButton({ store }: { store: string }) {
-  const [copied, setCopied] = useState(false);
-  const catalogUrl = FINANCE_STORES.find((s) => s.code === store)?.catalogUrl;
-  if (!catalogUrl) return null;
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(catalogUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard no disponible (contexto no seguro): ignora en silencio.
-    }
-  };
-  return (
-    <Button size="sm" variant="outline" onClick={copy} title="Copiar link del catálogo para pegarlo en WhatsApp">
-      {copied ? <Check className="mr-2 h-4 w-4 text-emerald-400" /> : <Copy className="mr-2 h-4 w-4" />}
-      {copied ? "Copiado" : "Catálogo"}
-    </Button>
-  );
-}
-
 // Media del transcript via el proxy autenticado (/api/leads/media). Si el
 // proxy falla (host no permitido, media expirada) cae al placeholder de texto
 // que se mostraba antes.
@@ -918,7 +896,6 @@ function LeadDrawer({
               <PhoneWithCopy phone={lead.phone} />
             </div>
           </div>
-          <CatalogCopyButton store={store} />
           <Button size="sm" variant={showOrder ? "outline" : "default"} onClick={() => setShowOrder((v) => !v)}>
             <ShoppingCart className="mr-2 h-4 w-4" />
             {showOrder ? "Ocultar pedido" : "Crear pedido"}
@@ -966,6 +943,20 @@ function LeadDrawer({
                 ))
               )}
             </div>
+            <ChatComposer
+              leadId={lead.id}
+              store={store}
+              catalogUrl={FINANCE_STORES.find((s) => s.code === store)?.catalogUrl}
+              onSent={(text) => {
+                // Optimista: el transcript real lo confirma en la proxima
+                // lectura (Icomfly tarda unos segundos en reflejarlo).
+                setMessages((prev) => [
+                  ...prev,
+                  { id: `local-${Date.now()}`, direction: "outbound", timestamp: Date.now(), text },
+                ]);
+                setHistoryKey((k) => k + 1);
+              }}
+            />
             <GestionBar
               leadId={lead.id}
               store={store}
