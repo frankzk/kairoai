@@ -945,7 +945,9 @@ function LeadDrawer({
             </div>
             <ChatComposer
               leadId={lead.id}
+              leadName={lead.name}
               store={store}
+              storeLabel={FINANCE_STORES.find((s) => s.code === store)?.shortLabel ?? ""}
               catalogUrl={FINANCE_STORES.find((s) => s.code === store)?.catalogUrl}
               onSent={(text) => {
                 // Optimista: el transcript real lo confirma en la proxima
