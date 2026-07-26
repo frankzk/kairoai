@@ -23,6 +23,39 @@ function isSafePublicHost(host: string): boolean {
   return true;
 }
 
+// Tipos por extension. Las notas de voz de WhatsApp son OGG/Opus y varios CDN
+// las sirven como application/octet-stream; con ese tipo el navegador no las
+// decodifica bien, asi que se corrige por la extension de la URL.
+const EXT_CONTENT_TYPE: Record<string, string> = {
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  opus: "audio/ogg",
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  wav: "audio/wav",
+  amr: "audio/amr",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  webp: "image/webp",
+  pdf: "application/pdf",
+};
+
+function resolveContentType(upstream: string | null, pathname: string): string {
+  const ext = pathname.split(".").pop()?.toLowerCase() ?? "";
+  const byExt = EXT_CONTENT_TYPE[ext];
+  const type = (upstream ?? "").split(";")[0].trim().toLowerCase();
+  // Se confia en el origen salvo que sea generico y la extension diga mas.
+  if (!type || type === "application/octet-stream" || type === "binary/octet-stream") {
+    return byExt ?? "application/octet-stream";
+  }
+  return upstream as string;
+}
+
 // Proxy de media del chat (imagenes/audios/videos del transcript de Icomfly).
 // El navegador no puede pedir la media directo: la URL puede requerir el JWT
 // de Icomfly y exponerla seria filtrar el token. Streamea el binario y queda
@@ -55,11 +88,16 @@ export async function GET(req: NextRequest) {
   const externalStoreId = getIcomflyExternalStoreId(store.code);
   const withAuth = isIcomflyHost(target.hostname) && externalStoreId != null;
 
+  // El <audio> pide rangos de bytes para poder reproducir y buscar; hay que
+  // reenviar el Range al origen y devolver el 206 tal cual.
+  const range = req.headers.get("range");
+
   try {
     const fetchMedia = async (forceFresh: boolean) => {
       const headers: Record<string, string> = withAuth
         ? await getChatAuthHeaders(externalStoreId as number, forceFresh)
         : {};
+      if (range) headers.Range = range;
       return fetch(target.toString(), { headers, cache: "no-store" });
     };
     let res = await fetchMedia(false);
@@ -74,13 +112,23 @@ export async function GET(req: NextRequest) {
         { status: res.status === 404 ? 404 : 502 }
       );
     }
+
     const headers = new Headers();
-    headers.set("Content-Type", res.headers.get("content-type") ?? "application/octet-stream");
+    headers.set("Content-Type", resolveContentType(res.headers.get("content-type"), target.pathname));
+    // Content-Length SOLO si el origen no comprimio: fetch descomprime solo, y
+    // reenviar el largo comprimido le entrega al navegador un stream con el
+    // tamano equivocado (se corta => audio mudo, imagen a medias).
+    const encoding = res.headers.get("content-encoding");
     const length = res.headers.get("content-length");
-    if (length) headers.set("Content-Length", length);
+    if (length && !encoding) headers.set("Content-Length", length);
+
+    headers.set("Accept-Ranges", res.headers.get("accept-ranges") ?? "bytes");
+    const contentRange = res.headers.get("content-range");
+    if (contentRange) headers.set("Content-Range", contentRange);
     // La media de un chat es privada; cache solo en el navegador del usuario.
     headers.set("Cache-Control", "private, max-age=3600");
-    return new NextResponse(res.body, { status: 200, headers });
+
+    return new NextResponse(res.body, { status: res.status === 206 ? 206 : 200, headers });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al descargar media";
     return NextResponse.json({ error: message }, { status: 502 });
