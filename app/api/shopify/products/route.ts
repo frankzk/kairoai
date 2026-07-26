@@ -31,27 +31,41 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const url = `https://${shop}/admin/api/2024-01/products.json?limit=250&fields=id,title,variants,image`;
-  const res = await fetch(url, {
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Content-Type": "application/json",
-    },
-    next: { revalidate: 300 },
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    return NextResponse.json(
-      { error: `Shopify error ${res.status}: ${text}` },
-      { status: res.status }
-    );
+  // Pagina con el cursor page_info (Link header) para no topar en 250
+  // productos: con el tope, variantes reales quedaban fuera del picker y la
+  // asesora "no podia elegir talla". MAX_PAGES es un freno de seguridad
+  // (20 x 250 = 5000 productos).
+  const MAX_PAGES = 20;
+  const headers = {
+    "X-Shopify-Access-Token": token,
+    "Content-Type": "application/json",
+  };
+  const rawProducts: Array<Record<string, unknown>> = [];
+  let url = `https://${shop}/admin/api/2024-01/products.json?limit=250&fields=id,title,variants,image`;
+  for (let page = 0; page < MAX_PAGES && url; page++) {
+    const res = await fetch(url, { headers, next: { revalidate: 300 } });
+    if (!res.ok) {
+      const text = await res.text();
+      return NextResponse.json(
+        { error: `Shopify error ${res.status}: ${text}` },
+        { status: res.status }
+      );
+    }
+    const data = await res.json();
+    rawProducts.push(...(data.products ?? []));
+    const link = res.headers.get("link") ?? "";
+    const next = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = next ? next[1] : "";
   }
 
-  const data = await res.json();
   const products: ShopifyProductOption[] = [];
 
-  for (const product of data.products ?? []) {
+  for (const product of rawProducts as Array<{
+    id: number;
+    title: string;
+    image?: { src?: string };
+    variants?: Array<{ id: number; title?: string; sku?: string; price?: string }>;
+  }>) {
     const imageUrl = product.image?.src ?? undefined;
     for (const variant of product.variants ?? []) {
       const variantLabel =

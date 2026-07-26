@@ -35,6 +35,25 @@ export function ProductPicker({
       )
     : products;
 
+  // Agrupar por producto para que la talla/variante sea obvia de encontrar:
+  // un producto con varias variantes se muestra como encabezado + sus tallas,
+  // en vez de N filas planas "Producto - Talla" mezcladas.
+  const groups: Array<{ productId: number; title: string; variants: ShopifyProductOption[] }> = [];
+  {
+    const byProduct = new Map<number, { productId: number; title: string; variants: ShopifyProductOption[] }>();
+    for (const p of filtered) {
+      const existing = byProduct.get(p.product_id);
+      if (existing) {
+        existing.variants.push(p);
+      } else {
+        const group = { productId: p.product_id, title: p.product_title, variants: [p] };
+        byProduct.set(p.product_id, group);
+        groups.push(group);
+      }
+    }
+  }
+  const visibleGroups = groups.slice(0, 80);
+
   // Close on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -126,25 +145,54 @@ export function ProductPicker({
                 {search ? "Sin resultados." : "No hay productos."}
               </div>
             ) : (
-              filtered.slice(0, 100).map((p) => (
-                <button
-                  key={p.variant_id}
-                  type="button"
-                  onClick={() => handleSelect(p)}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-muted/50 transition-colors
-                    ${value?.variant_id === p.variant_id ? "bg-primary/10" : ""}`}
-                >
-                  <div>
-                    <p className="text-sm text-foreground leading-tight">{p.display_name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {p.sku ? `SKU: ${p.sku}` : "sin SKU"}
+              visibleGroups.map((group) =>
+                group.variants.length === 1 ? (
+                  <button
+                    key={group.variants[0].variant_id}
+                    type="button"
+                    onClick={() => handleSelect(group.variants[0])}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-muted/50 transition-colors
+                      ${value?.variant_id === group.variants[0].variant_id ? "bg-primary/10" : ""}`}
+                  >
+                    <div>
+                      <p className="text-sm text-foreground leading-tight">{group.variants[0].display_name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {group.variants[0].sku ? `SKU: ${group.variants[0].sku}` : "sin SKU"}
+                      </p>
+                    </div>
+                    <span className="text-xs font-mono text-muted-foreground ml-3 shrink-0">
+                      ₡{group.variants[0].price.toLocaleString("es-CR")}
+                    </span>
+                  </button>
+                ) : (
+                  <div key={group.productId} className="border-b border-border/50 last:border-b-0">
+                    <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
+                      {group.title}
                     </p>
+                    {group.variants.map((p) => (
+                      <button
+                        key={p.variant_id}
+                        type="button"
+                        onClick={() => handleSelect(p)}
+                        className={`w-full flex items-center justify-between pl-6 pr-3 py-2 text-left hover:bg-muted/50 transition-colors
+                          ${value?.variant_id === p.variant_id ? "bg-primary/10" : ""}`}
+                      >
+                        <div>
+                          <p className="text-sm text-foreground leading-tight">
+                            {p.variant_title && p.variant_title !== "Default Title" ? p.variant_title : "Única"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {p.sku ? `SKU: ${p.sku}` : "sin SKU"}
+                          </p>
+                        </div>
+                        <span className="text-xs font-mono text-muted-foreground ml-3 shrink-0">
+                          ₡{p.price.toLocaleString("es-CR")}
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                  <span className="text-xs font-mono text-muted-foreground ml-3 shrink-0">
-                    ₡{p.price.toLocaleString("es-CR")}
-                  </span>
-                </button>
-              ))
+                )
+              )
             )}
           </div>
         </div>

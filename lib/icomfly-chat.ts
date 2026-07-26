@@ -58,6 +58,34 @@ async function getChatToken(forceFresh = false): Promise<string> {
   throw new Error("iComfly no configurado: define ICOMFLY_EMAIL + ICOMFLY_PASSWORD (o ICOMFLY_TOKEN).");
 }
 
+// Cabeceras de autenticacion para consumir recursos de Icomfly fuera de
+// chatFetch (p.ej. el proxy de media del drawer). No fija Content-Type porque
+// se usa para GETs de binarios. `forceFresh` re-loguea (mismo patron 401).
+export async function getChatAuthHeaders(
+  externalStoreId: number,
+  forceFresh = false
+): Promise<Record<string, string>> {
+  const token = await getChatToken(forceFresh);
+  return {
+    Authorization: `Bearer ${token}`,
+    "X-Active-Store-Ids": String(externalStoreId),
+  };
+}
+
+// Hosts de Icomfly: a estos (y solo a estos) el proxy de media adjunta el JWT.
+// Incluye el host de ICOMFLY_BASE por si difiere de *.icomfly.com.
+export function isIcomflyHost(host: string): boolean {
+  const h = host.toLowerCase();
+  let baseHost = "";
+  try {
+    baseHost = new URL(BASE).hostname.toLowerCase();
+  } catch {
+    baseHost = "";
+  }
+  if (baseHost && h === baseHost) return true;
+  return h === "icomfly.com" || h.endsWith(".icomfly.com");
+}
+
 async function chatFetch(path: string, externalStoreId: number): Promise<unknown> {
   const token = await getChatToken();
   const headers = {

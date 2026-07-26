@@ -19,6 +19,7 @@ import CreateOrderPanel from "@/components/CreateOrderPanel";
 import GestionBar from "@/components/GestionBar";
 import ProductivityPanel from "@/components/ProductivityPanel";
 import LeadHistory from "@/components/LeadHistory";
+import LeadPurchases from "@/components/LeadPurchases";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,6 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import { BOARD_VIEWS, BOARD_STAGE_PRIORITY, type BoardStage } from "@/lib/leads-classify";
+import { buildWorkQueue, QUEUE_STAGES } from "@/lib/leads-queue";
 import {
   buildUncalledLeadBuckets,
   isUncalledLeadOnDate,
@@ -160,7 +162,7 @@ export default function LeadsBoard() {
   const [store, setStore] = useSelectedStore();
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [counts, setCounts] = useState<BoardCounts | null>(null);
-  const [activeStage, setActiveStage] = useState<BoardStage | "agenda">("por_cerrar");
+  const [activeStage, setActiveStage] = useState<BoardStage | "agenda" | "cola">("cola");
   const [search, setSearch] = useState("");
   const [interactionFrom, setInteractionFrom] = useState("");
   const [interactionTo, setInteractionTo] = useState("");
@@ -255,6 +257,11 @@ export default function LeadsBoard() {
         .filter(matchesSelectedBucket)
         .sort((a, b) => stagePriority(a.board_stage) - stagePriority(b.board_stage));
     }
+    if (activeStage === "cola") {
+      // Orden de atencion acordado: pago_verificar -> por_cerrar (mas nuevo
+      // primero) -> tibios -> seguimiento (vencidos primero).
+      return buildWorkQueue(rangeFilteredLeads.filter(matchesSelectedBucket), chartNow);
+    }
     if (activeStage === "agenda") {
       return rangeFilteredLeads
         .filter((l) => l.next_followup_at != null)
@@ -269,13 +276,14 @@ export default function LeadsBoard() {
       .filter((l) => l.board_stage === activeStage)
       .filter(matchesSelectedBucket)
       .sort(byInteraction);
-  }, [rangeFilteredLeads, activeStage, searching, searchMatches, sortDir, matchesSelectedBucket]);
+  }, [rangeFilteredLeads, activeStage, searching, searchMatches, sortDir, matchesSelectedBucket, chartNow]);
 
   const chartContextLeads = useMemo(() => {
     if (searching) return searchMatches;
+    if (activeStage === "cola") return buildWorkQueue(rangeFilteredLeads, chartNow);
     if (activeStage === "agenda") return rangeFilteredLeads.filter((l) => l.next_followup_at != null);
     return rangeFilteredLeads.filter((l) => l.board_stage === activeStage);
-  }, [activeStage, rangeFilteredLeads, searchMatches, searching]);
+  }, [activeStage, rangeFilteredLeads, searchMatches, searching, chartNow]);
 
   const uncalledBuckets = useMemo(() => {
     return buildUncalledLeadBuckets(chartContextLeads, chartNow, UNCALLED_CHART_DAYS);
@@ -303,6 +311,19 @@ export default function LeadsBoard() {
     const due = scheduled.filter((l) => new Date(l.next_followup_at as string).getTime() <= now).length;
     return { total: scheduled.length, due };
   }, [facetedLeads]);
+
+  const queueTotal = useMemo(
+    () => facetedLeads.filter((l) => QUEUE_STAGES.includes(l.board_stage)).length,
+    [facetedLeads]
+  );
+
+  // Vencidos globales (sin filtros): alimenta el banner rojo de recontactos.
+  const overdueFollowups = useMemo(() => {
+    const now = Date.now();
+    return leads.filter(
+      (l) => l.next_followup_at != null && new Date(l.next_followup_at).getTime() <= now
+    ).length;
+  }, [leads]);
 
   const views = showHidden ? BOARD_VIEWS : BOARD_VIEWS.filter((v) => !v.hiddenByDefault);
 
@@ -368,7 +389,7 @@ export default function LeadsBoard() {
                   <h2 className="font-medium">Leads sin llamar</h2>
                   <p className="text-xs text-muted-foreground">
                     Por antigüedad: acumulado anterior y detalle de los últimos {UNCALLED_CHART_DAYS} días
-                    {searching ? " en esta busqueda" : activeStage === "agenda" ? " en Agenda" : ` en ${STAGE_META[activeStage].label}`}.
+                    {searching ? " en esta busqueda" : activeStage === "agenda" ? " en Agenda" : activeStage === "cola" ? " en la Cola" : ` en ${STAGE_META[activeStage].label}`}.
                   </p>
                 </div>
               </div>
@@ -377,7 +398,7 @@ export default function LeadsBoard() {
                 <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">sin llamar</p>
                 {uncalledTotal !== chartContextLeads.length && (
                   <p className="mt-0.5 text-[10px] text-muted-foreground/70">
-                    de {chartContextLeads.length} {searching ? "en la búsqueda" : activeStage === "agenda" ? "en Agenda" : "en la etapa"}
+                    de {chartContextLeads.length} {searching ? "en la búsqueda" : activeStage === "agenda" ? "en Agenda" : activeStage === "cola" ? "en la cola" : "en la etapa"}
                   </p>
                 )}
               </div>
@@ -522,8 +543,42 @@ export default function LeadsBoard() {
           )}
         </div>
 
+        {/* Recontactos vencidos: la promesa al cliente ("llamame el 1 de
+            agosto") no puede depender de que alguien recuerde abrir Agenda. */}
+        {overdueFollowups > 0 && activeStage !== "agenda" && (
+          <button
+            type="button"
+            onClick={() => setActiveStage("agenda")}
+            className="mb-4 flex w-full items-center gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/20"
+          >
+            <CalendarClock className="h-4 w-4 shrink-0" />
+            <span>
+              <strong>{overdueFollowups}</strong> recontacto{overdueFollowups === 1 ? "" : "s"} vencido{overdueFollowups === 1 ? "" : "s"} — clientes que pidieron que los llamáramos. Abrir Agenda.
+            </span>
+          </button>
+        )}
+
         {/* Pestañas por bucket */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setActiveStage("cola")}
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
+              activeStage === "cola"
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-card hover:bg-accent"
+            }`}
+            title="Orden de atencion: pagos por verificar, por cerrar (mas nuevo primero), tibios y seguimientos"
+          >
+            <span>🎯</span>
+            <span>Cola</span>
+            <span
+              className={`rounded-full px-1.5 text-xs ${
+                activeStage === "cola" ? "bg-primary-foreground/20" : "bg-muted"
+              }`}
+            >
+              {queueTotal}
+            </span>
+          </button>
           <button
             onClick={() => setActiveStage("agenda")}
             className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
@@ -599,7 +654,7 @@ export default function LeadsBoard() {
           </p>
         ) : (
           <>
-            {!searching && activeStage !== "agenda" && (
+            {!searching && activeStage !== "agenda" && activeStage !== "cola" && (
               <div className="mb-2 flex justify-end">
                 <button
                   onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
@@ -610,9 +665,19 @@ export default function LeadsBoard() {
                 </button>
               </div>
             )}
+            {!searching && activeStage === "cola" && (
+              <p className="mb-2 text-xs text-muted-foreground">
+                Orden de atención: 💰 pagos por verificar → 🔥 por cerrar (el más nuevo primero) → 🌡️ tibios → 💬 seguimientos (vencidos primero).
+              </p>
+            )}
             <div className="space-y-2">
-              {visibleLeads.map((lead) => (
-                <LeadCard key={lead.id} lead={lead} onOpen={() => setDrawerLead(lead)} />
+              {visibleLeads.map((lead, index) => (
+                <LeadCard
+                  key={lead.id}
+                  lead={lead}
+                  onOpen={() => setDrawerLead(lead)}
+                  queuePosition={!searching && activeStage === "cola" ? index + 1 : undefined}
+                />
               ))}
             </div>
           </>
@@ -628,6 +693,81 @@ export default function LeadsBoard() {
         />
       )}
     </div>
+  );
+}
+
+// Un click -> link del catalogo en el portapapeles, listo para pegar en
+// WhatsApp. Solo aparece si la tienda tiene NEXT_PUBLIC_CATALOG_URL_*.
+function CatalogCopyButton({ store }: { store: string }) {
+  const [copied, setCopied] = useState(false);
+  const catalogUrl = FINANCE_STORES.find((s) => s.code === store)?.catalogUrl;
+  if (!catalogUrl) return null;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(catalogUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard no disponible (contexto no seguro): ignora en silencio.
+    }
+  };
+  return (
+    <Button size="sm" variant="outline" onClick={copy} title="Copiar link del catálogo para pegarlo en WhatsApp">
+      {copied ? <Check className="mr-2 h-4 w-4 text-emerald-400" /> : <Copy className="mr-2 h-4 w-4" />}
+      {copied ? "Copiado" : "Catálogo"}
+    </Button>
+  );
+}
+
+// Media del transcript via el proxy autenticado (/api/leads/media). Si el
+// proxy falla (host no permitido, media expirada) cae al placeholder de texto
+// que se mostraba antes.
+function MediaAttachment({ message, store }: { message: Message; store: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!message.mediaUrl) return null;
+  const src = `/api/leads/media?store=${store}&url=${encodeURIComponent(message.mediaUrl)}`;
+  const kind = message.mediaKind ?? "media";
+
+  if (failed || kind === "document") {
+    return (
+      <a
+        href={src}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-1 block text-xs italic underline underline-offset-2 opacity-80"
+      >
+        [{kind}] abrir
+      </a>
+    );
+  }
+  if (kind === "image" || kind === "sticker") {
+    return (
+      <a href={src} target="_blank" rel="noreferrer" className="mt-1 block">
+        {/* eslint-disable-next-line @next/next/no-img-element -- media efimera del chat, dimensiones desconocidas */}
+        <img
+          src={src}
+          alt={message.caption || "Imagen del chat"}
+          loading="lazy"
+          onError={() => setFailed(true)}
+          className="max-h-64 max-w-full rounded-md object-contain"
+        />
+      </a>
+    );
+  }
+  if (kind === "audio") {
+    return (
+      <audio controls preload="none" src={src} onError={() => setFailed(true)} className="mt-1 w-full min-w-56 max-w-full" />
+    );
+  }
+  if (kind === "video") {
+    return (
+      <video controls preload="metadata" src={src} onError={() => setFailed(true)} className="mt-1 max-h-64 max-w-full rounded-md" />
+    );
+  }
+  return (
+    <a href={src} target="_blank" rel="noreferrer" className="mt-1 block text-xs italic underline underline-offset-2 opacity-80">
+      [{kind}] abrir
+    </a>
   );
 }
 
@@ -654,11 +794,30 @@ function FollowupBadge({ iso }: { iso: string }) {
   );
 }
 
-function LeadCard({ lead, onOpen }: { lead: LeadRow; onOpen: () => void }) {
+function LeadCard({
+  lead,
+  onOpen,
+  queuePosition,
+}: {
+  lead: LeadRow;
+  onOpen: () => void;
+  queuePosition?: number;
+}) {
   const meta = STAGE_META[lead.board_stage];
+  const isNext = queuePosition === 1;
   return (
-    <Card className="transition-colors hover:border-primary/50">
+    <Card className={`transition-colors hover:border-primary/50 ${isNext ? "border-primary/70 bg-primary/5" : ""}`}>
       <CardContent className="flex items-center gap-3 py-3">
+        {queuePosition != null && (
+          <span
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${
+              isNext ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+            }`}
+            title={isNext ? "Siguiente en la cola" : `Posición ${queuePosition} en la cola`}
+          >
+            {queuePosition}
+          </span>
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate font-medium">{lead.name || "Sin nombre"}</span>
@@ -759,6 +918,7 @@ function LeadDrawer({
               <PhoneWithCopy phone={lead.phone} />
             </div>
           </div>
+          <CatalogCopyButton store={store} />
           <Button size="sm" variant={showOrder ? "outline" : "default"} onClick={() => setShowOrder((v) => !v)}>
             <ShoppingCart className="mr-2 h-4 w-4" />
             {showOrder ? "Ocultar pedido" : "Crear pedido"}
@@ -781,6 +941,7 @@ function LeadDrawer({
               </div>
             )}
             <LeadHistory leadId={lead.id} store={store} refreshKey={historyKey} />
+            <LeadPurchases leadId={lead.id} store={store} />
             <div ref={chatScrollRef} className="flex-1 space-y-2 overflow-y-auto p-4">
               {loading ? (
                 <p className="text-center text-sm text-muted-foreground">Cargando chat...</p>
@@ -799,9 +960,8 @@ function LeadDrawer({
                     }`}
                   >
                     {m.text && <p className="whitespace-pre-wrap break-words">{m.text}</p>}
-                    {m.mediaUrl && (
-                      <p className="mt-1 text-xs italic opacity-80">[{m.mediaKind || "media"}]</p>
-                    )}
+                    {m.mediaUrl && <MediaAttachment message={m} store={store} />}
+                    {m.caption && <p className="mt-0.5 text-xs opacity-80">{m.caption}</p>}
                   </div>
                 ))
               )}

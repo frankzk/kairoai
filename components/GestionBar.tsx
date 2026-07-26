@@ -25,6 +25,9 @@ export default function GestionBar({
   const [staff, setStaff] = useState<Staff[]>([]);
   const [vendedoraId, setVendedoraId] = useState<number | null>(null);
   const [note, setNote] = useState("");
+  // "Llamame el 1 de agosto": fecha de recontacto elegida por la asesora
+  // (datetime-local, hora local del navegador). Vacio = regla por defecto.
+  const [followupAt, setFollowupAt] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
   const [savedStatus, setSavedStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,18 +62,29 @@ export default function GestionBar({
       setError("Selecciona quien eres antes de gestionar.");
       return;
     }
+    if (followupAt && new Date(followupAt).getTime() <= Date.now()) {
+      setError("La fecha de recontacto debe ser a futuro.");
+      return;
+    }
     setSaving(status);
     setError(null);
     try {
       const res = await fetch(`/api/leads/${leadId}/disposition`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ store, vendedora_id: vendedoraId, status, note: note || undefined }),
+        body: JSON.stringify({
+          store,
+          vendedora_id: vendedoraId,
+          status,
+          note: note || undefined,
+          next_followup_at: followupAt ? new Date(followupAt).toISOString() : undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error al gestionar");
       setSavedStatus(status);
       setNote("");
+      setFollowupAt("");
       onDone(status);
       setTimeout(() => setSavedStatus(null), 2500);
     } catch (err) {
@@ -144,6 +158,31 @@ export default function GestionBar({
         value={note}
         onChange={(e) => setNote(e.target.value)}
       />
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="shrink-0">Recontactar el</span>
+        <input
+          type="datetime-local"
+          aria-label="Fecha y hora de recontacto"
+          value={followupAt}
+          onChange={(e) => setFollowupAt(e.target.value)}
+          className="h-8 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+        />
+        {followupAt && (
+          <button
+            type="button"
+            onClick={() => setFollowupAt("")}
+            className="text-muted-foreground hover:text-foreground"
+            title="Quitar fecha"
+          >
+            ×
+          </button>
+        )}
+      </label>
+      {followupAt && (
+        <p className="text-[10px] text-muted-foreground">
+          Se agenda con la próxima gestión que registres y saldrá en la pestaña Agenda.
+        </p>
+      )}
     </div>
   );
 }
