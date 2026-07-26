@@ -137,6 +137,7 @@ interface LeadRow {
   last_interaction_at: string | null;
   next_followup_at: string | null;
   needs_attention: boolean;
+  has_order: boolean;
   crm_conversation_id: string | null;
   first_seen_at: string | null;
   created_at: string;
@@ -808,6 +809,11 @@ function LeadCard({
             {lead.unread_count > 0 && (
               <Badge variant="info" className="shrink-0">
                 {lead.unread_count} sin leer
+              </Badge>
+            )}
+            {lead.has_order && (
+              <Badge variant="success" className="shrink-0" title="Ya tiene pedido: fuera de la cola de venta">
+                ya tiene pedido
               </Badge>
             )}
             {lead.next_followup_at && <FollowupBadge iso={lead.next_followup_at} />}

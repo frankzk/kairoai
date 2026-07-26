@@ -12,6 +12,8 @@ export interface QueueLead {
   board_stage: BoardStage;
   last_interaction_at: string | null;
   next_followup_at: string | null;
+  /** Ya tiene un pedido: no hay nada que venderle todavia. */
+  has_order?: boolean;
 }
 
 export const QUEUE_STAGES: BoardStage[] = [
@@ -54,6 +56,11 @@ export function buildWorkQueue<T extends QueueLead>(leads: T[], now: Date): T[] 
   const nowMs = now.getTime();
   return leads
     .filter((l) => QUEUE_STAGES.includes(l.board_stage))
+    // La cola es para VENDER. Un cliente con pedido en curso solo espera su
+    // entrega: eso lo lleva el equipo de gestion de pedidos, no la asesora.
+    // (Un pedido puede colar al lead en un bucket de venta si el clasificador
+    // ve un SINPE o carrito que en realidad corresponde a ese mismo pedido.)
+    .filter((l) => !l.has_order)
     .slice()
     .sort((a, b) => {
       const rankA = queueRank(a, nowMs);
