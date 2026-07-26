@@ -35,18 +35,21 @@ function fmt(iso: string): string {
   }
 }
 
-// key para forzar recarga cuando cambia (p.ej. tras una gestion)
+// key para forzar recarga cuando cambia (p.ej. tras una gestion).
+// alwaysOpen: sin acordeon, para el panel del cliente que va apilado.
 export default function LeadHistory({
   leadId,
   store,
   refreshKey = 0,
+  alwaysOpen = false,
 }: {
   leadId: number;
   store: string;
   refreshKey?: number;
+  alwaysOpen?: boolean;
 }) {
   const [rows, setRows] = useState<HistoryRow[]>([]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(alwaysOpen);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -68,20 +71,26 @@ export default function LeadHistory({
     };
   }, [leadId, store, refreshKey]);
 
-  if (!loading && rows.length === 0) return null;
+  if (!loading && rows.length === 0) {
+    return alwaysOpen ? (
+      <p className="text-xs text-muted-foreground">Sin gestiones registradas.</p>
+    ) : null;
+  }
 
   return (
-    <div className="border-b border-border">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-4 py-2 text-xs text-muted-foreground hover:text-foreground"
-      >
-        <History className="h-3.5 w-3.5" />
-        <span>Historial de gestiones{rows.length ? ` (${rows.length})` : ""}</span>
-        {open ? <ChevronUp className="ml-auto h-3.5 w-3.5" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
-      </button>
+    <div className={alwaysOpen ? "" : "border-b border-border"}>
+      {!alwaysOpen && (
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center gap-2 px-4 py-2 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <History className="h-3.5 w-3.5" />
+          <span>Historial de gestiones{rows.length ? ` (${rows.length})` : ""}</span>
+          {open ? <ChevronUp className="ml-auto h-3.5 w-3.5" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
+        </button>
+      )}
       {open && (
-        <div className="max-h-48 space-y-2 overflow-y-auto px-4 pb-3">
+        <div className={alwaysOpen ? "space-y-2" : "max-h-48 space-y-2 overflow-y-auto px-4 pb-3"}>
           {rows.map((r) => {
             const statusLabel = r.new_status ? getStatusDef(r.new_status)?.label ?? r.new_status : null;
             return (
