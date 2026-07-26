@@ -4,6 +4,7 @@ import { getIcomflyExternalStoreId } from "@/lib/icomfly";
 import { sendChatMessage } from "@/lib/icomfly-chat";
 import { getDB } from "@/lib/db";
 import { insertLeadCall } from "@/lib/leads";
+import { bumpQuickReplyUsage } from "@/lib/quick-replies";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -14,6 +15,9 @@ interface Body {
   store?: string;
   vendedora_id?: number;
   message?: string;
+  // Si el texto salio de una respuesta rapida, se suma a su contador de uso
+  // para ordenar los chips del composer. Es telemetria, nunca bloquea.
+  quick_reply_id?: number;
 }
 
 // POST: envia un mensaje de WhatsApp al lead desde Kairo (sale por el mismo
@@ -85,6 +89,15 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
       });
     } catch (auditErr) {
       console.error("send: fallo la auditoria en lead_calls", auditErr);
+    }
+
+    const quickReplyId = Number(body?.quick_reply_id);
+    if (Number.isFinite(quickReplyId) && quickReplyId > 0) {
+      try {
+        await bumpQuickReplyUsage(store.id, quickReplyId);
+      } catch (usageErr) {
+        console.error("send: fallo el contador de respuesta rapida", usageErr);
+      }
     }
 
     return NextResponse.json({ ok: true });
