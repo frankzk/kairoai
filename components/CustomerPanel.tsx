@@ -14,10 +14,14 @@ import {
 
 interface CartRow {
   id: string;
+  source: "draft_order" | "checkout";
+  name: string;
   products: string;
   total: number;
   currency: string;
+  status: string;
   created_at: string;
+  updated_at: string;
   checkout_url: string;
 }
 
@@ -302,20 +306,36 @@ export default function CustomerPanel({
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Carritos abandonados {carts.length > 0 && `(${carts.length})`}
         </h3>
-        {cartsUnavailable ? (
-          <p className="text-[11px] text-muted-foreground">{cartsUnavailable}</p>
-        ) : carts.length === 0 ? (
+        {cartsUnavailable && (
+          <p className="mb-1.5 text-[11px] text-amber-300">{cartsUnavailable}</p>
+        )}
+        {carts.length === 0 ? (
           <p className="text-xs text-muted-foreground">Sin carritos abiertos.</p>
         ) : (
           <div className="space-y-1.5">
             {carts.map((cart) => (
               <div key={cart.id} className="rounded-md border border-border bg-background p-2.5 text-xs">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-1 font-mono font-semibold">
+                  <span className="flex min-w-0 items-center gap-1 font-semibold">
                     <ShoppingCart className="h-3 w-3" />
+                    <span className="truncate">
+                      {cart.source === "draft_order" ? cart.name : "Checkout"}
+                    </span>
+                  </span>
+                  <Badge
+                    variant={cart.source === "draft_order" ? "info" : "muted"}
+                    className="shrink-0 text-[10px]"
+                  >
+                    {cart.source === "draft_order" ? "Borrador" : "Abandonado"}
+                  </Badge>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <span className="font-mono font-semibold">
                     {fmtMoney(cart.total, cart.currency)}
                   </span>
-                  <span className="text-muted-foreground">{fmtDate(cart.created_at)}</span>
+                  <span className="text-muted-foreground">
+                    {fmtDate(cart.updated_at || cart.created_at)}
+                  </span>
                 </div>
                 {cart.products && <p className="mt-1 text-muted-foreground">{cart.products}</p>}
                 {cart.checkout_url && (

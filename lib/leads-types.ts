@@ -75,4 +75,8 @@ export interface LeadStateSnapshot {
   statusSource: StatusSource;
   hasOrder: boolean;
   hasCartSignal: boolean;
+  /** Senales separadas para que una fuente no borre la otra. */
+  icomflyCartSignal?: boolean;
+  shopifyCartOpen?: boolean;
+  shopifyDraftUpdatedAt?: string | null;
 }

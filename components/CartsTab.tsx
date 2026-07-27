@@ -4,6 +4,11 @@ import { useEffect, useState } from "react";
 import { Phone, RefreshCw, AlertCircle, PhoneOff, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useSelectedStore } from "@/lib/use-selected-store";
+import {
+  normalizePhone as normalizeStorePhone,
+  phoneConfigForStore,
+} from "@/lib/phone-cr";
 
 interface DraftOrderSummary {
   id: string;
@@ -18,17 +23,13 @@ interface DraftOrderSummary {
   updated_at: string;
 }
 
-function normalizePhone(phone: string): string {
-  let cleaned = phone.replace(/[\s\-().]/g, "");
-  if (!cleaned.startsWith("+")) {
-    if (cleaned.length === 8) cleaned = `+506${cleaned}`;
-    else if (!cleaned.startsWith("506")) cleaned = `+${cleaned}`;
-    else cleaned = `+${cleaned}`;
-  }
-  return cleaned;
+function normalizePhone(phone: string, store: string): string {
+  const normalized = normalizeStorePhone(phone, phoneConfigForStore(store));
+  return normalized ? `+${normalized}` : phone;
 }
 
 export function CartsTab() {
+  const [store] = useSelectedStore();
   const [orders, setOrders] = useState<DraftOrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -40,7 +41,9 @@ export function CartsTab() {
     if (showRefreshing) setRefreshing(true);
     setError("");
     try {
-      const res = await fetch("/api/shopify/draft-orders", { cache: "no-store" });
+      const res = await fetch(`/api/shopify/draft-orders?store=${store}`, {
+        cache: "no-store",
+      });
       const data = await res.json();
       if (data.error) setError(data.error);
       else setOrders(data.orders ?? []);
@@ -54,7 +57,10 @@ export function CartsTab() {
 
   useEffect(() => {
     fetchOrders();
-  }, []);
+    // fetchOrders cambia con la tienda activa; esta vista antigua comparte la
+    // misma seleccion persistente que Finance y Leads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store]);
 
   async function handleCall(order: DraftOrderSummary) {
     if (!order.phone) return;
@@ -65,7 +71,7 @@ export function CartsTab() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          phone: normalizePhone(order.phone),
+          phone: normalizePhone(order.phone, store),
           order_id: orderId,
           force: true,
           customer_name: order.customer_name,

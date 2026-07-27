@@ -138,6 +138,11 @@ interface LeadRow {
   next_followup_at: string | null;
   needs_attention: boolean;
   has_order: boolean;
+  cart_value: number | null;
+  cart_item_count: number | null;
+  cart_summary: string | null;
+  shopify_cart_open: boolean;
+  shopify_draft_cart_count: number;
   crm_conversation_id: string | null;
   first_seen_at: string | null;
   created_at: string;
@@ -162,6 +167,8 @@ export default function LeadsBoard() {
   const [showProductivity, setShowProductivity] = useState(false);
   const [includeOld, setIncludeOld] = useState(false);
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+  const [syncingShopifyCarts, setSyncingShopifyCarts] = useState(false);
+  const [cartSyncMessage, setCartSyncMessage] = useState<string | null>(null);
   const [drawerLead, setDrawerLead] = useState<LeadRow | null>(null);
   const [selectedUncalledBucket, setSelectedUncalledBucket] = useState<string | null>(null);
 
@@ -189,7 +196,33 @@ export default function LeadsBoard() {
 
   useEffect(() => {
     setSelectedUncalledBucket(null);
+    setCartSyncMessage(null);
   }, [store]);
+
+  const syncShopifyCarts = useCallback(async () => {
+    setSyncingShopifyCarts(true);
+    setCartSyncMessage(null);
+    setError(null);
+    try {
+      const response = await fetch(`/api/shopify/draft-orders?store=${store}`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Error al sincronizar Borradores de Shopify");
+      }
+      setCartSyncMessage(
+        `${data.drafts_open ?? 0} borradores abiertos, ${data.leads_with_open_drafts ?? 0} clientes`
+      );
+      await load();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Error al sincronizar Borradores de Shopify"
+      );
+    } finally {
+      setSyncingShopifyCarts(false);
+    }
+  }, [load, store]);
 
   const matchesSearch = useCallback(
     (l: LeadRow, q: string) =>
@@ -630,6 +663,26 @@ export default function LeadsBoard() {
           </button>
         </div>
 
+        {!searching && activeStage === "carrito" && (
+          <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+            {cartSyncMessage && (
+              <span className="text-xs text-muted-foreground">{cartSyncMessage}</span>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={syncShopifyCarts}
+              disabled={syncingShopifyCarts}
+            >
+              <RefreshCw
+                className={`mr-2 h-4 w-4 ${syncingShopifyCarts ? "animate-spin" : ""}`}
+              />
+              {syncingShopifyCarts ? "Sincronizando..." : "Sincronizar Shopify"}
+            </Button>
+          </div>
+        )}
+
         {loading ? (
           <p className="py-12 text-center text-muted-foreground">Cargando...</p>
         ) : visibleLeads.length === 0 ? (
@@ -761,6 +814,16 @@ function LeadCard({
           </div>
           {lead.auto_reason && (
             <p className="mt-0.5 truncate text-xs text-muted-foreground/70">{lead.auto_reason}</p>
+          )}
+          {lead.board_stage === "carrito" && lead.cart_summary && (
+            <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              {lead.shopify_cart_open && (
+                <Badge variant="outline" className="shrink-0 text-[10px]">
+                  Shopify {lead.shopify_draft_cart_count || 1}
+                </Badge>
+              )}
+              <span className="truncate">{lead.cart_summary}</span>
+            </div>
           )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">

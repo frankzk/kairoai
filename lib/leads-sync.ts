@@ -158,7 +158,11 @@ export async function runLeadsSync(opts: {
         last_message_sender: conv.lastMessageSender || null,
         unread_count: conv.unreadCount,
         chatbot_disabled: conv.chatbotDisabled,
-        has_cart_signal: classification.hasCartSignal,
+        // Cada fuente conserva su propia senal. El agregado solo baja a false
+        // cuando ni Icomfly ni Shopify mantienen un carrito abierto.
+        icomfly_cart_signal: classification.hasCartSignal,
+        has_cart_signal:
+          classification.hasCartSignal || current?.shopifyCartOpen === true,
         labels: conv.labels,
         first_seen_at: conv.createdAt,
         last_interaction_at: conv.lastMessageAt,
@@ -186,6 +190,10 @@ export async function runLeadsSync(opts: {
         statusSource: row.status_source,
         hasOrder: row.has_order,
         hasCartSignal: row.has_cart_signal,
+        icomflyCartSignal: row.icomfly_cart_signal,
+        shopifyCartOpen: snapshots.get(row.phone)?.shopifyCartOpen ?? false,
+        shopifyDraftUpdatedAt:
+          snapshots.get(row.phone)?.shopifyDraftUpdatedAt ?? null,
       });
     }
 

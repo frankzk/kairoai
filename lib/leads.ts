@@ -41,10 +41,25 @@ export interface LeadRecord {
   cart_item_count: number | null;
   cart_summary: string | null;
   has_cart_signal: boolean;
+  icomfly_cart_signal: boolean;
+  shopify_cart_open: boolean;
+  shopify_draft_cart_count: number;
+  shopify_draft_updated_at: string | null;
   inbound_count: number;
   labels: string[];
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Un Borrador abierto es una cola operativa aunque el cliente conserve un
+ * estado manual interno. Al cerrarse, vuelve a verse en el bucket de su status
+ * sin haber perdido la gestion de la asesora.
+ */
+export function leadBoardStage(
+  lead: Pick<LeadRecord, "status" | "shopify_cart_open">
+): BoardStage {
+  return lead.shopify_cart_open ? "carrito" : statusBoardStage(lead.status);
 }
 
 /** Columnas que la ingesta escribe (uniforme para el upsert por lotes). */
@@ -67,6 +82,7 @@ export type LeadUpsertRow = Pick<
   | "unread_count"
   | "chatbot_disabled"
   | "has_cart_signal"
+  | "icomfly_cart_signal"
   | "labels"
   | "first_seen_at"
   | "last_interaction_at"
@@ -92,7 +108,9 @@ export async function loadLeadSnapshots(storeId: number): Promise<Map<string, Le
   for (let from = 0; from < 200000; from += pageSize) {
     const { data, error } = await getDB()
       .from("leads")
-      .select("phone,category,status,status_source,has_order,has_cart_signal")
+      .select(
+        "phone,category,status,status_source,has_order,has_cart_signal,icomfly_cart_signal,shopify_cart_open,shopify_draft_updated_at"
+      )
       .eq("store_id", storeId)
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`loadLeadSnapshots: ${error.message}`);
@@ -104,6 +122,12 @@ export async function loadLeadSnapshots(storeId: number): Promise<Map<string, Le
         statusSource: row.status_source as StatusSource,
         hasOrder: Boolean(row.has_order),
         hasCartSignal: Boolean(row.has_cart_signal),
+        icomflyCartSignal: Boolean(row.icomfly_cart_signal),
+        shopifyCartOpen: Boolean(row.shopify_cart_open),
+        shopifyDraftUpdatedAt:
+          typeof row.shopify_draft_updated_at === "string"
+            ? row.shopify_draft_updated_at
+            : null,
       });
     }
     if (page.length < pageSize) break;
@@ -175,7 +199,7 @@ export async function listLeads(opts: ListLeadsOptions): Promise<LeadRecord[]> {
     if (page.length < pageSize) break;
   }
   // El bucket del tablero se deriva del status; filtrar en memoria si se pidio.
-  if (opts.stage) return all.filter((l) => statusBoardStage(l.status) === opts.stage);
+  if (opts.stage) return all.filter((lead) => leadBoardStage(lead) === opts.stage);
   return all;
 }
 
@@ -252,7 +276,7 @@ export function countByStage(leads: LeadRecord[]): LeadBoardCounts {
     ganado: 0,
     descartado: 0,
   };
-  for (const l of leads) byStage[statusBoardStage(l.status)] += 1;
+  for (const lead of leads) byStage[leadBoardStage(lead)] += 1;
   return { total: leads.length, byStage };
 }
 
