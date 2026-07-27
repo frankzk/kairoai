@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody, getRequiredStoreFromSearchParams } from "@/lib/stores";
-import { countByStage, listLeads } from "@/lib/leads";
+import { countByStage, leadBoardStage, listLeads } from "@/lib/leads";
 import { runLeadsSync, reclassifyStage } from "@/lib/leads-sync";
-import { BOARD_VIEWS, statusBoardStage } from "@/lib/leads-classify";
+import { BOARD_VIEWS } from "@/lib/leads-classify";
 import { daysAgoIso } from "@/lib/leads-metrics";
 
 export const runtime = "nodejs";
@@ -24,7 +24,10 @@ export async function GET(req: NextRequest) {
     const sinceIso = includeAll ? undefined : daysAgoIso(new Date(), 30);
     const leads = await listLeads({ storeId: store.id, sinceIso });
     const counts = countByStage(leads);
-    const withStage = leads.map((l) => ({ ...l, board_stage: statusBoardStage(l.status) }));
+    const withStage = leads.map((lead) => ({
+      ...lead,
+      board_stage: leadBoardStage(lead),
+    }));
     return NextResponse.json({
       store: store.code,
       views: BOARD_VIEWS,
