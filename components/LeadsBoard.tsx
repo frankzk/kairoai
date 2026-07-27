@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   BarChart3,
@@ -18,7 +18,7 @@ import {
 import CreateOrderPanel from "@/components/CreateOrderPanel";
 import ProductivityPanel from "@/components/ProductivityPanel";
 import CustomerPanel from "@/components/CustomerPanel";
-import ChatComposer from "@/components/ChatComposer";
+import LeadChatPanel from "@/components/LeadChatPanel";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -146,16 +146,6 @@ interface LeadRow {
 interface BoardCounts {
   total: number;
   byStage: Record<BoardStage, number>;
-}
-
-interface Message {
-  id: string;
-  direction: "inbound" | "outbound";
-  timestamp: number;
-  text?: string;
-  mediaKind?: string;
-  mediaUrl?: string;
-  caption?: string;
 }
 
 export default function LeadsBoard() {
@@ -696,76 +686,6 @@ export default function LeadsBoard() {
   );
 }
 
-// Media del transcript via el proxy autenticado (/api/leads/media). Si el
-// proxy falla (host no permitido, media expirada) cae al placeholder de texto
-// que se mostraba antes.
-function MediaAttachment({ message, store }: { message: Message; store: string }) {
-  const [failed, setFailed] = useState(false);
-  if (!message.mediaUrl) return null;
-  const src = `/api/leads/media?store=${store}&url=${encodeURIComponent(message.mediaUrl)}`;
-  const kind = message.mediaKind ?? "media";
-
-  if (failed || kind === "document") {
-    return (
-      <a
-        href={src}
-        target="_blank"
-        rel="noreferrer"
-        className="mt-1 block text-xs italic underline underline-offset-2 opacity-80"
-      >
-        [{kind}] abrir
-      </a>
-    );
-  }
-  if (kind === "image" || kind === "sticker") {
-    return (
-      <a href={src} target="_blank" rel="noreferrer" className="mt-1 block">
-        {/* eslint-disable-next-line @next/next/no-img-element -- media efimera del chat, dimensiones desconocidas */}
-        <img
-          src={src}
-          alt={message.caption || "Imagen del chat"}
-          loading="lazy"
-          onError={() => setFailed(true)}
-          className="max-h-64 max-w-full rounded-md object-contain"
-        />
-      </a>
-    );
-  }
-  if (kind === "audio") {
-    return (
-      <div className="mt-1">
-        <audio
-          controls
-          preload="metadata"
-          src={src}
-          onError={() => setFailed(true)}
-          className="w-full min-w-56 max-w-full"
-        />
-        {/* Respaldo: si el navegador no reproduce el codec de la nota de voz,
-            siempre se puede abrir/descargar el archivo. */}
-        <a
-          href={src}
-          target="_blank"
-          rel="noreferrer"
-          className="text-[10px] underline underline-offset-2 opacity-70 hover:opacity-100"
-        >
-          abrir audio
-        </a>
-      </div>
-    );
-  }
-  if (kind === "video") {
-    return (
-      <video controls preload="metadata" src={src} onError={() => setFailed(true)} className="mt-1 max-h-64 max-w-full rounded-md" />
-    );
-  }
-  return (
-    <a href={src} target="_blank" rel="noreferrer" className="mt-1 block text-xs italic underline underline-offset-2 opacity-80">
-      [{kind}] abrir
-    </a>
-  );
-}
-
 function FollowupBadge({ iso }: { iso: string }) {
   const overdue = new Date(iso).getTime() <= Date.now();
   const when = (() => {
@@ -868,40 +788,8 @@ function LeadDrawer({
   onClose: () => void;
   onRefresh: () => void;
 }) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [showOrder, setShowOrder] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
-  const chatScrollRef = useRef<HTMLDivElement>(null);
-
-  // Al cargar el chat, mostrar el ULTIMO mensaje (scroll al fondo, como WhatsApp).
-  useEffect(() => {
-    if (!loading && chatScrollRef.current) {
-      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-    }
-  }, [loading, messages]);
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`/api/leads/${lead.id}/messages?store=${store}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Error al leer el chat");
-        if (alive) setMessages(data.messages ?? []);
-      } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : "Error al leer el chat");
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [lead.id, store]);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
@@ -933,52 +821,16 @@ function LeadDrawer({
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {/* Columna izquierda: SOLO el chat + composer */}
           <div className="flex min-h-0 flex-col md:w-1/2 md:border-r md:border-border">
-            {lead.labels.length > 0 && (
-              <div className="flex flex-wrap gap-1 border-b border-border p-3">
-                {lead.labels.map((l) => (
-                  <Badge key={l} variant="muted" className="text-[10px]">
-                    {l}
-                  </Badge>
-                ))}
-              </div>
-            )}
-            <div ref={chatScrollRef} className="flex-1 space-y-2 overflow-y-auto p-4">
-              {loading ? (
-                <p className="text-center text-sm text-muted-foreground">Cargando chat...</p>
-              ) : error ? (
-                <p className="text-center text-sm text-destructive">{error}</p>
-              ) : messages.length === 0 ? (
-                <p className="text-center text-sm text-muted-foreground">Sin mensajes.</p>
-              ) : (
-                messages.map((m) => (
-                  <div
-                    key={m.id}
-                    className={`max-w-[80%] select-text rounded-lg px-3 py-2 text-sm ${
-                      m.direction === "inbound"
-                        ? "bg-muted"
-                        : "ml-auto bg-primary text-primary-foreground"
-                    }`}
-                  >
-                    {m.text && <p className="whitespace-pre-wrap break-words">{m.text}</p>}
-                    {m.mediaUrl && <MediaAttachment message={m} store={store} />}
-                    {m.caption && <p className="mt-0.5 text-xs opacity-80">{m.caption}</p>}
-                  </div>
-                ))
-              )}
-            </div>
-            <ChatComposer
-              leadId={lead.id}
-              leadName={lead.name}
+            <LeadChatPanel
+              lead={{
+                id: lead.id,
+                name: lead.name,
+                phone: lead.phone,
+                labels: lead.labels,
+                hasConversation: Boolean(lead.crm_conversation_id),
+              }}
               store={store}
-              storeLabel={FINANCE_STORES.find((s) => s.code === store)?.shortLabel ?? ""}
-              catalogUrl={FINANCE_STORES.find((s) => s.code === store)?.catalogUrl}
-              onSent={(text) => {
-                // Optimista: el transcript real lo confirma en la proxima
-                // lectura (Icomfly tarda unos segundos en reflejarlo).
-                setMessages((prev) => [
-                  ...prev,
-                  { id: `local-${Date.now()}`, direction: "outbound", timestamp: Date.now(), text },
-                ]);
+              onActivity={() => {
                 setHistoryKey((k) => k + 1);
               }}
             />

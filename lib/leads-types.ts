@@ -51,6 +51,15 @@ export interface ConversationMessage {
   template?: string;
 }
 
+/** Datos mínimos para reutilizar el chat de un lead en otros módulos. */
+export interface ChatLeadSummary {
+  id: number;
+  name: string | null;
+  phone: string;
+  labels: string[];
+  hasConversation: boolean;
+}
+
 /** Resultado de clasificar una conversacion (estado auto propuesto). */
 export interface Classification {
   category: LeadCategory;

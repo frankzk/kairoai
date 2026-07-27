@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import Link from "next/link";
 import {
   Activity, AlertTriangle, ArrowLeft, Ban, CalendarClock, Check, ChevronDown, ChevronsUpDown, ChevronUp, Copy,
-  Download, HelpCircle, History, MapPin, PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Undo2, X,
+  Download, HelpCircle, History, MapPin, MessageSquare, PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Undo2, X,
   type LucideIcon,
 } from "lucide-react";
+import LeadChatPanel from "@/components/LeadChatPanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,6 +16,7 @@ import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCa
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import { exportXlsx } from "@/lib/export-xlsx";
+import type { ChatLeadSummary } from "@/lib/leads-types";
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "muted";
 
@@ -507,6 +509,7 @@ export default function IncidenciasPage() {
   const [events, setEvents] = useState<IncidentEvent[]>([]);
   const [trackingEvents, setTrackingEvents] = useState<TrackingEvent[]>([]);
   const [orderProducts, setOrderProducts] = useState("");
+  const [chatLead, setChatLead] = useState<ChatLeadSummary | null | undefined>(undefined);
   const [reprogFecha, setReprogFecha] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(false);
@@ -550,6 +553,7 @@ export default function IncidenciasPage() {
     setEvents([]);
     setTrackingEvents([]);
     setOrderProducts("");
+    setChatLead(undefined);
     setReprogFecha(incident.reprogramada_para ?? "");
     void loadDetail(incident.id);
   }
@@ -564,14 +568,20 @@ export default function IncidenciasPage() {
     try {
       const res = await fetchWithTimeout(`/api/incidents?id=${id}&store=${selectedStoreCode}`, 12000);
       const json = await res.json();
-      if (!json.incident) { setDetailError(true); return; }
+      if (!json.incident) {
+        setDetailError(true);
+        setChatLead((current) => current === undefined ? null : current);
+        return;
+      }
       setSelected(json.incident);
       setEvents(json.events ?? []);
       setTrackingEvents(json.tracking_events ?? []);
       setOrderProducts(json.order_products ?? "");
+      setChatLead(json.chat_lead ?? null);
       setReprogFecha(json.incident.reprogramada_para ?? "");
     } catch {
       setDetailError(true);
+      setChatLead((current) => current === undefined ? null : current);
     } finally {
       setDetailLoading(false);
     }
@@ -1006,6 +1016,7 @@ export default function IncidenciasPage() {
           events={events}
           trackingEvents={trackingEvents}
           orderProducts={orderProducts}
+          chatLead={chatLead}
           busy={busy}
           detailLoading={detailLoading}
           detailError={detailError}
@@ -1027,10 +1038,11 @@ export default function IncidenciasPage() {
 }
 
 function DetailModal({
-  storeCode, incident, events, trackingEvents, orderProducts, busy, detailLoading, detailError, onRetry, reprogFecha, setReprogFecha, onClose, onPatch, onAction, onAddNote, onEditNote,
+  storeCode, incident, events, trackingEvents, orderProducts, chatLead, busy, detailLoading, detailError, onRetry, reprogFecha, setReprogFecha, onClose, onPatch, onAction, onAddNote, onEditNote,
 }: {
   storeCode: FinanceStoreCode;
   incident: Incident; events: IncidentEvent[]; trackingEvents: TrackingEvent[]; orderProducts: string; busy: boolean;
+  chatLead: ChatLeadSummary | null | undefined;
   detailLoading: boolean; detailError: boolean; onRetry: () => void;
   reprogFecha: string; setReprogFecha: (v: string) => void;
   onClose: () => void;
@@ -1130,10 +1142,10 @@ function DetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center overflow-y-auto p-4"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-2 sm:p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <Card className="w-full max-w-2xl lg:max-w-4xl my-8">
+      <Card className="my-1 flex h-[calc(100vh-1rem)] w-full max-w-[96rem] flex-col overflow-hidden sm:my-0 sm:h-[calc(100vh-2rem)]">
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2">
             <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[incident.status].badge}`}>{STATUS_META[incident.status].label}</span>
@@ -1142,10 +1154,10 @@ function DetailModal({
           <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
         </div>
 
-        <CardContent className="p-4">
-          <div className="grid gap-4 lg:grid-cols-2">
+        <CardContent className="min-h-0 flex-1 overflow-y-auto p-0 xl:overflow-hidden">
+          <div className="grid min-h-full xl:h-full xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1fr)_minmax(20rem,1.08fr)]">
           {/* Columna izquierda: datos y contexto de la novedad */}
-          <div className="space-y-3">
+          <div className="space-y-3 p-4 xl:overflow-y-auto">
           {/* Datos */}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
             <div><span className="text-muted-foreground">Cliente:</span> {incident.customer_name || "—"}</div>
@@ -1221,7 +1233,7 @@ function DetailModal({
           )}
           </div>
           {/* Columna derecha: gestion, notas e historial */}
-          <div className="space-y-3">
+          <div className="space-y-3 border-t border-border p-4 xl:overflow-y-auto xl:border-l xl:border-t-0">
 
           {showResultView ? (
             <div className="space-y-3">
@@ -1398,6 +1410,36 @@ function DetailModal({
             </div>
           </div>
           </div>
+
+          {/* Tercera columna: mismo chat operativo del modulo de Leads. */}
+          <div className="min-h-[34rem] border-t border-border xl:min-h-0 xl:border-l xl:border-t-0">
+            {chatLead === undefined ? (
+              <div className="flex h-full min-h-[24rem] items-center justify-center p-6 text-center">
+                <p className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  Buscando conversación de WhatsApp...
+                </p>
+              </div>
+            ) : chatLead ? (
+              <LeadChatPanel
+                lead={chatLead}
+                store={storeCode}
+                compact
+                title="Chat de WhatsApp"
+              />
+            ) : (
+              <div className="flex h-full min-h-[24rem] flex-col items-center justify-center gap-2 p-6 text-center">
+                <span className="rounded-md border border-border bg-muted/40 p-2 text-muted-foreground">
+                  <MessageSquare className="h-5 w-5" />
+                </span>
+                <p className="text-sm font-medium">Chat no encontrado</p>
+                <p className="max-w-xs text-[11px] leading-relaxed text-muted-foreground">
+                  No encontramos una conversación de Leads para el teléfono o pedido de esta novedad.
+                </p>
+              </div>
+            )}
+          </div>
+
           </div>
         </CardContent>
       </Card>

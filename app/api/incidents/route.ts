@@ -13,6 +13,7 @@ import {
   updateIncident,
 } from "@/lib/incidents";
 import { getForzaTrackingByGuide, getMoovinTrackingByPackage } from "@/lib/finance";
+import { findChatLeadForCustomer } from "@/lib/leads";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import type { Incident, IncidentCategory, IncidentSource, IncidentStatus, TrackingEvent } from "@/lib/incidents-types";
 
@@ -74,13 +75,28 @@ export async function GET(req: NextRequest) {
       const id = Number(idParam);
       const incident = await getIncident(id, store.id);
       if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
-      const events = await listIncidentEvents(id);
-      const tracking_events = await trackingEventsFor(incident);
-      let order_products = "";
-      try {
-        order_products = await getIncidentOrderProducts(incident.store_id, incident.shopify_order_id, incident.guide_number);
-      } catch { /* opcional */ }
-      return NextResponse.json({ incident, events, tracking_events, order_products });
+      const [events, tracking_events, order_products, chat_lead] = await Promise.all([
+        listIncidentEvents(id),
+        trackingEventsFor(incident),
+        getIncidentOrderProducts(
+          incident.store_id,
+          incident.shopify_order_id,
+          incident.guide_number
+        ).catch(() => ""),
+        findChatLeadForCustomer({
+          storeId: store.id,
+          storeCode: store.code,
+          phone: incident.customer_phone,
+          orderName: incident.order_name,
+        }).catch(() => null),
+      ]);
+      return NextResponse.json({
+        incident,
+        events,
+        tracking_events,
+        order_products,
+        chat_lead,
+      });
     }
 
     const storeId = store.id;
