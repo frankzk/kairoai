@@ -7,13 +7,23 @@ import {
   upsertForzaTracking,
 } from "@/lib/finance";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
+import { forEachRateLimited } from "@/lib/concurrency";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+// Espaciado MINIMO entre el ARRANQUE de dos consultas a Forza: es el limite de
+// tasa acordado con el courier y no se toca (<= 1 consulta cada 300 ms).
 const PER_REQUEST_DELAY_MS = 300;
+// Consultas en vuelo a la vez. Antes era 1: se dormia 300 ms y RECIEN despues
+// se consultaba, asi que la latencia de Forza se sumaba a la espera y la
+// funcion facturaba ~800 ms por guia sin hacer nada. Con varias en vuelo el
+// costo por guia baja al espaciado (300 ms) sin subir la tasa contra Forza.
+const MAX_CONCURRENCY = 5;
 const MAX_GUIDES_PER_CALL = 80;
 const FRESH_WINDOW_MINUTES = 6 * 60;
+
+type ForzaUpsertRow = Parameters<typeof upsertForzaTracking>[0][number];
 
 interface RequestedGuide {
   guide: string;
@@ -74,41 +84,48 @@ export async function POST(req: NextRequest) {
     let failedLookups = 0;
     const results: Array<{ guide_number: string; latest_status: string | null; group: string | null; has_incident: boolean }> = [];
 
-    for (let i = 0; i < toCheck.length; i++) {
-      if (i > 0) await sleep(PER_REQUEST_DELAY_MS);
-      const tracking = await fetchForzaTracking(toCheck[i].guide);
-      if (!tracking.ok || !tracking.latest_status) {
-        failedLookups += 1;
-        continue;
-      }
-      checked += 1;
-      if (tracking.has_incident) incidents += 1;
-      if (tracking.latest_group === "delivered") delivered += 1;
-      results.push({
-        guide_number: tracking.guide_number,
-        latest_status: tracking.latest_status,
-        group: tracking.latest_group,
-        has_incident: tracking.has_incident,
-      });
+    const pending: ForzaUpsertRow[] = [];
+
+    // JS corre en un solo hilo: los contadores no necesitan lock.
+    await forEachRateLimited(
+      toCheck,
+      async (item) => {
+        const tracking = await fetchForzaTracking(item.guide);
+        if (!tracking.ok || !tracking.latest_status) {
+          failedLookups += 1;
+          return;
+        }
+        checked += 1;
+        if (tracking.has_incident) incidents += 1;
+        if (tracking.latest_group === "delivered") delivered += 1;
+        results.push({
+          guide_number: tracking.guide_number,
+          latest_status: tracking.latest_status,
+          group: tracking.latest_group,
+          has_incident: tracking.has_incident,
+        });
+        pending.push({
+          guide_number: tracking.guide_number,
+          tracking_number: tracking.tracking_number,
+          latest_status: tracking.latest_status ?? "",
+          latest_code: tracking.latest_status_code ?? "",
+          latest_group: tracking.latest_group ?? "",
+          latest_at: tracking.latest_at,
+          has_incident: tracking.has_incident,
+          incident_reason: tracking.incident_reason,
+          delivery_address: tracking.delivery_address,
+          receiver_name: tracking.receiver_name,
+          events: tracking.events,
+        });
+      },
+      { concurrency: MAX_CONCURRENCY, minIntervalMs: PER_REQUEST_DELAY_MS }
+    );
+
+    // Un solo upsert por tanda en vez de uno por guia (antes eran hasta 80
+    // viajes a la base, cada uno bloqueando el bucle).
+    if (pending.length) {
       try {
-        await upsertForzaTracking(
-          [
-            {
-              guide_number: tracking.guide_number,
-              tracking_number: tracking.tracking_number,
-              latest_status: tracking.latest_status ?? "",
-              latest_code: tracking.latest_status_code ?? "",
-              latest_group: tracking.latest_group ?? "",
-              latest_at: tracking.latest_at,
-              has_incident: tracking.has_incident,
-              incident_reason: tracking.incident_reason,
-              delivery_address: tracking.delivery_address,
-              receiver_name: tracking.receiver_name,
-              events: tracking.events,
-            },
-          ],
-          store.id
-        );
+        await upsertForzaTracking(pending, store.id);
       } catch (err) {
         console.warn("[forza-sync cache]", err);
       }
@@ -135,8 +152,4 @@ export async function POST(req: NextRequest) {
     const message = err instanceof Error ? err.message : "Error sincronizando Forza";
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
