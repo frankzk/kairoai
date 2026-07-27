@@ -339,18 +339,14 @@ export interface BoardView {
   hiddenByDefault?: boolean;
 }
 
-export const BOARD_VIEWS: BoardView[] = [
-  { key: "por_cerrar", label: "Por cerrar" },
-  { key: "pago_verificar", label: "Pago por verificar" },
-  { key: "carrito", label: "Carritos" },
-  { key: "tibios", label: "Tibios" },
-  { key: "seguimiento", label: "Seguimiento" },
-  { key: "frio", label: "Frios" },
-  { key: "ganado", label: "Ganados", hiddenByDefault: true },
-  { key: "descartado", label: "Descartados", hiddenByDefault: true },
-];
+// ─── Tabs del tablero ────────────────────────────────────────────────────────
+export interface BoardView {
+  key: BoardStage;
+  label: string;
+  hiddenByDefault?: boolean;
+}
 
-/** Orden de prioridad de los buckets para "a quien contacto ahora". */
+// Orden de prioridad de los buckets para "a quien contacto ahora" (usado por la cola).
 export const BOARD_STAGE_PRIORITY: BoardStage[] = [
   "pago_verificar",
   "por_cerrar",
@@ -360,6 +356,18 @@ export const BOARD_STAGE_PRIORITY: BoardStage[] = [
   "frio",
   "ganado",
   "descartado",
+];
+
+// Tabs del tablero en orden de prioridad real (pago_verificar primero).
+export const BOARD_VIEWS: BoardView[] = [
+  { key: "pago_verificar", label: "Pago por verificar" },
+  { key: "por_cerrar", label: "Por cerrar" },
+  { key: "carrito", label: "Carritos" },
+  { key: "tibios", label: "Tibios" },
+  { key: "seguimiento", label: "Seguimiento" },
+  { key: "frio", label: "Fríos" },
+  { key: "ganado", label: "Ganados", hiddenByDefault: true },
+  { key: "descartado", label: "Descartados", hiddenByDefault: true },
 ];
 
 // ─── Desplegable "Resultado de la llamada" (gestion manual de la asesora) ─────
