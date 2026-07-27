@@ -19,6 +19,7 @@ export default function ChatComposer({
   store,
   storeLabel,
   catalogUrl,
+  compact = false,
   onSent,
 }: {
   leadId: number;
@@ -26,6 +27,7 @@ export default function ChatComposer({
   store: string;
   storeLabel: string;
   catalogUrl?: string;
+  compact?: boolean;
   onSent: (text: string) => void;
 }) {
   const [text, setText] = useState("");
@@ -188,10 +190,11 @@ export default function ChatComposer({
   }
 
   const chips = replies.slice(0, CHIP_COUNT);
+  const chipClass = compact ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs";
 
   return (
-    <div className="relative space-y-1.5 border-t border-border bg-card p-3">
-      {error && <p className="text-xs text-destructive">{error}</p>}
+    <div className={`relative space-y-1.5 border-t border-border bg-card ${compact ? "p-2" : "p-3"}`}>
+      {error && <p className={compact ? "text-[11px] text-destructive" : "text-xs text-destructive"}>{error}</p>}
 
       {/* Nivel 1: chips de las mas usadas + acceso al popup */}
       <div className="flex flex-wrap items-center gap-1.5">
@@ -202,7 +205,7 @@ export default function ChatComposer({
             disabled={sending}
             onClick={() => insertReply(reply)}
             title={renderQuickReply(reply.body, vars).slice(0, 160)}
-            className="rounded-full border border-border bg-background px-2.5 py-1 text-xs hover:bg-accent disabled:opacity-50"
+            className={`rounded-full border border-border bg-background hover:bg-accent disabled:opacity-50 ${chipClass}`}
           >
             {reply.title}
           </button>
@@ -214,7 +217,7 @@ export default function ChatComposer({
             onClick={() =>
               setText((t) => (t ? `${t}\n${catalogUrl}` : `Este es nuestro catálogo: ${catalogUrl}`))
             }
-            className="rounded-full border border-border bg-background px-2.5 py-1 text-xs hover:bg-accent disabled:opacity-50"
+            className={`rounded-full border border-border bg-background hover:bg-accent disabled:opacity-50 ${chipClass}`}
           >
             + Catálogo
           </button>
@@ -222,7 +225,7 @@ export default function ChatComposer({
         <button
           type="button"
           onClick={() => setShowManager(true)}
-          className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs text-primary hover:bg-primary/20"
+          className={`inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 ${chipClass}`}
           title="Ver todas, crear y editar respuestas rápidas (o escribe / en el mensaje)"
         >
           <Zap className="h-3 w-3" />
@@ -264,7 +267,7 @@ export default function ChatComposer({
           onChange={(e) => handleChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Escribe un mensaje… (/ para respuestas rápidas · Enter envía)"
-          className="min-h-[38px] flex-1 resize-y rounded-md border border-input bg-background px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+          className={`min-h-[38px] flex-1 resize-y rounded-md border border-input bg-background px-2 py-1.5 outline-none focus:ring-1 focus:ring-ring ${compact ? "text-[11px]" : "text-xs"}`}
         />
         <button
           type="button"

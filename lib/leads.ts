@@ -4,7 +4,7 @@
 
 import { getDB } from "./db";
 import { statusBoardStage, statusCategory, type BoardStage } from "./leads-classify";
-import type { LeadCategory, LeadStateSnapshot, StatusSource } from "./leads-types";
+import type { ChatLeadSummary, LeadCategory, LeadStateSnapshot, StatusSource } from "./leads-types";
 import { normalizePhone, phoneConfigForStore } from "./phone-cr";
 
 export interface LeadRecord {
@@ -265,6 +265,69 @@ export async function getLead(storeId: number, leadId: number): Promise<LeadReco
     .maybeSingle();
   if (error) throw new Error(`getLead: ${error.message}`);
   return (data as LeadRecord) ?? null;
+}
+
+type ChatLeadRow = Pick<
+  LeadRecord,
+  "id" | "name" | "phone" | "labels" | "crm_conversation_id"
+>;
+
+function toChatLeadSummary(row: ChatLeadRow): ChatLeadSummary {
+  return {
+    id: row.id,
+    name: row.name,
+    phone: row.phone,
+    labels: Array.isArray(row.labels) ? row.labels : [],
+    hasConversation: Boolean(row.crm_conversation_id),
+  };
+}
+
+/**
+ * Enlaza un cliente de otro modulo con su conversacion de Leads.
+ * Siempre limita por tienda; el telefono normalizado es la llave principal y
+ * el pedido de Shopify solo se usa como respaldo.
+ */
+export async function findChatLeadForCustomer(opts: {
+  storeId: number;
+  storeCode: string;
+  phone?: string | null;
+  orderName?: string | null;
+}): Promise<ChatLeadSummary | null> {
+  const select = "id,name,phone,labels,crm_conversation_id,last_interaction_at";
+  const normalizedPhone = normalizePhone(
+    opts.phone,
+    phoneConfigForStore(opts.storeCode)
+  );
+
+  if (normalizedPhone) {
+    const { data, error } = await getDB()
+      .from("leads")
+      .select(select)
+      .eq("store_id", opts.storeId)
+      .eq("phone", normalizedPhone)
+      .order("last_interaction_at", { ascending: false, nullsFirst: false })
+      .limit(1);
+    if (error) throw new Error(`findChatLeadForCustomer(phone): ${error.message}`);
+    const row = data?.[0] as ChatLeadRow | undefined;
+    if (row) return toChatLeadSummary(row);
+  }
+
+  const rawOrder = String(opts.orderName ?? "").trim();
+  if (!rawOrder) return null;
+  const bareOrder = rawOrder.replace(/^#/, "");
+  const orderCandidates = Array.from(
+    new Set([rawOrder, bareOrder, `#${bareOrder}`].filter(Boolean))
+  );
+  const { data, error } = await getDB()
+    .from("leads")
+    .select(select)
+    .eq("store_id", opts.storeId)
+    .in("shopify_order_name", orderCandidates)
+    .order("last_interaction_at", { ascending: false, nullsFirst: false })
+    .limit(1);
+  if (error) throw new Error(`findChatLeadForCustomer(order): ${error.message}`);
+  const row = data?.[0] as ChatLeadRow | undefined;
+  return row ? toChatLeadSummary(row) : null;
 }
 
 /** Registra una gestion en el historial (auditoria + productividad). */
