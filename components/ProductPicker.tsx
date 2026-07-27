@@ -12,6 +12,8 @@ interface ProductPickerProps {
   loading: boolean;
   error: string;
   placeholder?: string;
+  /** Simbolo de moneda de la tienda (colon / lempira). */
+  currencySymbol?: string;
 }
 
 export function ProductPicker({
@@ -22,6 +24,7 @@ export function ProductPicker({
   loading,
   error,
   placeholder = "Buscar producto...",
+  currencySymbol = "₡",
 }: ProductPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -109,7 +112,7 @@ export function ProductPicker({
       {value?.sku && (
         <p className="text-xs text-muted-foreground">
           SKU: <code className="bg-muted px-1 py-0.5 rounded">{value.sku}</code>
-          {" · "}₡{value.price.toLocaleString("es-CR")}
+          {" · "}{currencySymbol}{value.price.toLocaleString("es-CR")}
         </p>
       )}
 
@@ -161,7 +164,7 @@ export function ProductPicker({
                       </p>
                     </div>
                     <span className="text-xs font-mono text-muted-foreground ml-3 shrink-0">
-                      ₡{group.variants[0].price.toLocaleString("es-CR")}
+                      {currencySymbol}{group.variants[0].price.toLocaleString("es-CR")}
                     </span>
                   </button>
                 ) : (
@@ -186,7 +189,7 @@ export function ProductPicker({
                           </p>
                         </div>
                         <span className="text-xs font-mono text-muted-foreground ml-3 shrink-0">
-                          ₡{p.price.toLocaleString("es-CR")}
+                          {currencySymbol}{p.price.toLocaleString("es-CR")}
                         </span>
                       </button>
                     ))}

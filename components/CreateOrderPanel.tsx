@@ -7,17 +7,17 @@ import { Input } from "@/components/ui/input";
 import { ProductPicker } from "@/components/ProductPicker";
 import { Badge } from "@/components/ui/badge";
 import type { ShopifyProductOption } from "@/app/api/shopify/products/route";
+import { getCurrencySymbol, getStoreRegions } from "@/lib/store-config";
 
 const VENDEDORA_KEY = "kairo:leads-vendedora";
-const CR_PROVINCES = ["San José", "Alajuela", "Cartago", "Heredia", "Guanacaste", "Puntarenas", "Limón"];
 
 const norm = (s: string) =>
   s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 
-function matchProvince(raw?: string): string {
+function matchProvince(raw: string | undefined, options: string[]): string {
   if (!raw) return "";
   const n = norm(raw);
-  return CR_PROVINCES.find((p) => norm(p) === n || n.includes(norm(p))) ?? "";
+  return options.find((p) => norm(p) === n || n.includes(norm(p))) ?? "";
 }
 
 interface Staff {
@@ -51,6 +51,12 @@ export default function CreateOrderPanel({
   store: string;
   onCreated: (orderName: string) => void;
 }) {
+  // Division administrativa y moneda segun el pais de la tienda: CR usa
+  // provincia/canton y colones; HN departamento/municipio y lempiras.
+  // useMemo para que el objeto sea estable entre renders (lo usa un efecto).
+  const regions = useMemo(() => getStoreRegions(store), [store]);
+  const currency = getCurrencySymbol(store);
+
   const [staff, setStaff] = useState<Staff[]>([]);
   const [vendedoraId, setVendedoraId] = useState<number | null>(null);
   const [products, setProducts] = useState<ShopifyProductOption[]>([]);
@@ -117,7 +123,7 @@ export default function CreateOrderPanel({
         if (data?.found) {
           setExistingCustomer({ orders_count: data.orders_count });
           if (data.name) setName((prev) => prev || data.name);
-          const prov = matchProvince(data.province);
+          const prov = matchProvince(data.province, regions.options);
           if (prov) setProvince(prov);
           if (data.city) setCanton((prev) => prev || data.city);
           if (data.address1) setAddress((prev) => prev || data.address1);
@@ -126,7 +132,7 @@ export default function CreateOrderPanel({
         /* ignore: la precarga es best-effort */
       }
     })();
-  }, [lead.id, store]);
+  }, [lead.id, store, regions.options]);
 
   const selectVendedora = (id: number) => {
     setVendedoraId(id);
@@ -301,6 +307,7 @@ export default function CreateOrderPanel({
                 products={products}
                 loading={productsLoading}
                 error={productsError}
+                currencySymbol={currency}
               />
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <div>
@@ -313,7 +320,7 @@ export default function CreateOrderPanel({
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-[11px] text-muted-foreground">Precio unitario (₡)</label>
+                  <label className="mb-1 block text-[11px] text-muted-foreground">Precio unitario ({currency})</label>
                   <Input
                     type="number"
                     min={0}
@@ -340,7 +347,7 @@ export default function CreateOrderPanel({
               onChange={(e) => setDiscountType(e.target.value as "percentage" | "fixed_amount")}
             >
               <option value="percentage">% porcentaje</option>
-              <option value="fixed_amount">₡ monto fijo</option>
+              <option value="fixed_amount">{currency} monto fijo</option>
             </select>
           </div>
         </div>
@@ -352,14 +359,14 @@ export default function CreateOrderPanel({
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Provincia</label>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">{regions.label}</label>
             <select
               className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
               value={province}
               onChange={(e) => setProvince(e.target.value)}
             >
               <option value="">—</option>
-              {CR_PROVINCES.map((p) => (
+              {regions.options.map((p) => (
                 <option key={p} value={p}>
                   {p}
                 </option>
@@ -367,7 +374,7 @@ export default function CreateOrderPanel({
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Cantón</label>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">{regions.subLabel}</label>
             <Input value={canton} onChange={(e) => setCanton(e.target.value)} />
           </div>
         </div>
@@ -397,7 +404,7 @@ export default function CreateOrderPanel({
           <span className="text-muted-foreground">
             Total{validLines.length > 1 ? ` · ${validLines.length} productos` : ""}
           </span>
-          <span className="font-semibold">₡{total.toLocaleString("es-CR")}</span>
+          <span className="font-semibold">{currency}{total.toLocaleString("es-CR")}</span>
         </div>
         {!confirming ? (
           <Button className="w-full" disabled={!canSubmit} onClick={() => setConfirming(true)}>
@@ -406,7 +413,7 @@ export default function CreateOrderPanel({
         ) : (
           <div className="space-y-2">
             <p className="text-center text-xs text-muted-foreground">
-              Se creará un pedido REAL en Shopify por ₡{total.toLocaleString("es-CR")}. ¿Confirmas?
+              Se creará un pedido REAL en Shopify por {currency}{total.toLocaleString("es-CR")}. ¿Confirmas?
             </p>
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" disabled={submitting} onClick={() => setConfirming(false)}>
