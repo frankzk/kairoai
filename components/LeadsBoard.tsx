@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
+import { FINANCE_STORES, getFinanceStoreById, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import { BOARD_VIEWS, BOARD_STAGE_PRIORITY, type BoardStage } from "@/lib/leads-classify";
 import { buildWorkQueue, QUEUE_STAGES } from "@/lib/leads-queue";
@@ -122,6 +122,7 @@ const STAGE_META: Record<BoardStage, { label: string; variant: BadgeVariant; emo
 
 interface LeadRow {
   id: number;
+  store_id: number;
   phone: string;
   name: string | null;
   status: string;
@@ -854,6 +855,14 @@ function LeadDrawer({
   const [showOrder, setShowOrder] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
 
+  // El drawer opera SIEMPRE con la tienda del propio lead, no con la del
+  // selector del tablero. Si al cambiar de tienda el tablero alcanza a mostrar
+  // un lead de la tienda anterior (carrera de re-carga), los paneles (chat,
+  // pedidos, carritos, crear pedido) usaban el store equivocado: los endpoints
+  // filtran el lead por (store_id, id) y devolvian 404 ("lead no encontrado"),
+  // y peor aun, "Crear pedido" habria escrito el pedido en la otra tienda.
+  const leadStore = getFinanceStoreById(lead.store_id)?.code ?? store;
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
       {/* Drawer SIEMPRE ancho: columna izquierda solo chat, derecha el panel
@@ -892,7 +901,7 @@ function LeadDrawer({
                 labels: lead.labels,
                 hasConversation: Boolean(lead.crm_conversation_id),
               }}
-              store={store}
+              store={leadStore}
               onActivity={() => {
                 setHistoryKey((k) => k + 1);
               }}
@@ -904,7 +913,7 @@ function LeadDrawer({
           <div className="relative min-h-0 flex-1 border-t border-border md:border-t-0">
             <CustomerPanel
               leadId={lead.id}
-              store={store}
+              store={leadStore}
               historyKey={historyKey}
               onGestionDone={() => {
                 onRefresh();
@@ -915,7 +924,7 @@ function LeadDrawer({
               <div className="absolute inset-0 z-10 overflow-y-auto bg-card">
                 <CreateOrderPanel
                   lead={{ id: lead.id, name: lead.name, phone: lead.phone }}
-                  store={store}
+                  store={leadStore}
                   onCreated={() => {
                     onRefresh();
                     setHistoryKey((k) => k + 1);
