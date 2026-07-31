@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import SessionGuard from "@/components/SessionGuard";
 
 export const metadata: Metadata = {
   title: "Kairo AI — Voice Agents para E-commerce COD",
@@ -15,6 +16,7 @@ export default function RootLayout({
   return (
     <html lang="es" className="dark">
       <body style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
+        <SessionGuard />
         {children}
       </body>
     </html>
