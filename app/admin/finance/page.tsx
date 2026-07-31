@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { normalizeSearchText } from "@/lib/order-matching";
 import {
+  getMoovinPrepareAt,
   type CourierKairoStatus,
   type CourierPerformanceReport,
   type FinanceControlCenter,
@@ -1985,6 +1986,13 @@ function OrdersTab({
           Apellido: row.last_name ?? "",
           Celular: row.phone ?? "",
           "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
+          // Primer evento del ciclo Moovin: cuando el remitente empezo a
+          // preparar el paquete. Vacio si la guia no es Moovin o si su
+          // tracking todavia no se consulto.
+          'Fecha de ingreso a "Por preparar"': (() => {
+            const prepareAt = getMoovinPrepareAt(moovin?.events);
+            return prepareAt ? formatMoovinDate(prepareAt) : "";
+          })(),
           Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
           Fecha: row.shopify_created_at ? formatDate(row.shopify_created_at) : "",
           "Estado liquidacion": traces.map((t) => t.settlement_status).join(" | ") || "sin liquidacion",
