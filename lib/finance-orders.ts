@@ -1034,6 +1034,35 @@ export function moovinGroupToStatus(group: string | undefined): string {
   }
 }
 
+// Primer evento del ciclo de Moovin: el remitente esta preparando el paquete y
+// todavia no se pidio la recoleccion. Se matchea por CODIGO, no por el titulo
+// en espanol ("Por preparar"), que Moovin puede reescribir.
+export const MOOVIN_PREPARE_CODE = "PREPARE";
+
+/**
+ * Marca de tiempo en que el pedido entro a "Por preparar" (ISO, como la guarda
+ * Moovin). Devuelve null si la guia no tiene ese evento (p.ej. tracking aun no
+ * consultado). Hoy Moovin emite exactamente uno por guia; si algun dia hubiera
+ * varios se toma el MAS ANTIGUO, que es el ingreso real al estado.
+ */
+export function getMoovinPrepareAt(
+  events: Array<{ code?: string; date?: string | null }> | null | undefined
+): string | null {
+  if (!Array.isArray(events)) return null;
+  let earliest: string | null = null;
+  let earliestMs = Number.POSITIVE_INFINITY;
+  for (const event of events) {
+    if (event?.code !== MOOVIN_PREPARE_CODE || !event.date) continue;
+    const ms = Date.parse(event.date);
+    if (Number.isNaN(ms)) continue;
+    if (ms < earliestMs) {
+      earliestMs = ms;
+      earliest = event.date;
+    }
+  }
+  return earliest;
+}
+
 export function forzaGroupToStatus(group: string | undefined): string {
   switch (group) {
     case "delivered":
