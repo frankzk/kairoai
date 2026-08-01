@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCourierPerformanceReport,
+  resolveCourierFamily,
   type TrackableOrderRow,
 } from "../lib/finance-orders";
 
@@ -89,7 +90,11 @@ describe("courier performance report", () => {
     expect(report.periodLabel).toBe("Mes actual");
     expect(report.totalShopifyOrders).toBe(6);
     expect(report.withGuide).toBe(5);
-    expect(report.unassignedGuides).toBe(1);
+    // Una paqueteria que no conocemos ya NO se descarta: entra con su propio
+    // nombre. unassignedGuides queda solo para filas sin courier.
+    expect(report.unassignedGuides).toBe(0);
+    const nueva = report.rows.find((row) => row.label === "Transportadora nueva");
+    expect(nueva?.dispatched).toBe(1);
 
     expect(wyn).toMatchObject({
       dispatched: 2,
@@ -169,5 +174,37 @@ describe("courier performance report", () => {
 
     expect(report.periodLabel).toBe("Todo el histórico");
     expect(report.totalShopifyOrders).toBe(2);
+  });
+});
+
+describe("resolveCourierFamily", () => {
+  it("agrupa las variantes de servicio de un mismo transportista", () => {
+    expect(resolveCourierFamily("Forza", "X1")?.id).toBe("forza");
+    expect(resolveCourierFamily("Forza Same Day", "X2")?.id).toBe("forza");
+    expect(resolveCourierFamily("FORZA express", "X3")?.id).toBe("forza");
+  });
+
+  it("detecta WYN por el prefijo de guia aunque el texto diga MailAmericas", () => {
+    expect(resolveCourierFamily("MailAmericas CR Next Day", "MLCR000000101SD")).toMatchObject({
+      id: "wyn",
+      label: "WYN / MailAmericas",
+    });
+  });
+
+  it("conserva el nombre de una paqueteria desconocida en vez de descartarla", () => {
+    expect(resolveCourierFamily("Multilogic", "G1")).toMatchObject({
+      id: "multilogic",
+      label: "Multilogic",
+    });
+    // Mismo courier escrito con espacios de mas cae en el mismo grupo.
+    expect(resolveCourierFamily("Cargo   Expreso", "G2")?.id).toBe(
+      resolveCourierFamily("Cargo Expreso", "G3")?.id
+    );
+  });
+
+  it("devuelve null solo si la fila no dice quien la movio", () => {
+    expect(resolveCourierFamily("", "G1")).toBeNull();
+    expect(resolveCourierFamily(undefined, "G1")).toBeNull();
+    expect(resolveCourierFamily("   ", "G1")).toBeNull();
   });
 });

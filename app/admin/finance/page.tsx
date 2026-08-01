@@ -1421,7 +1421,9 @@ export default function FinancePage() {
 
           <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4 xl:grid-cols-7">
             {operationalKpis.cards.map(({ id, ...card }) =>
-              id === "lead" && selectedStoreCode === "mireva-cr" && courierPerformance ? (
+              // El comparativo reemplaza al lead time en cualquier tienda que
+              // tenga despachos: se arma con los couriers reales del periodo.
+              id === "lead" && courierPerformance?.rows.some((r) => r.dispatched > 0) ? (
                 <CourierPerformanceKpiCard
                   key={id}
                   report={courierPerformance}
@@ -8415,9 +8417,11 @@ function CourierPerformanceKpiCard({
   loading: boolean;
   onClick: () => void;
 }) {
-  const wyn = report.rows.find((row) => row.id === "wyn");
-  const moovin = report.rows.find((row) => row.id === "moovin");
+  // Los couriers vienen ordenados por volumen: se destaca el principal del
+  // periodo y el segundo va de comparacion. Antes estaban fijos a WYN/Moovin,
+  // asi que en Honduras (Forza/Multilogic) la tarjeta no decia nada.
   const hasDispatches = report.rows.some((row) => row.dispatched > 0);
+  const [primary, secondary] = report.rows.filter((row) => row.dispatched > 0);
 
   return (
     <button
@@ -8431,12 +8435,18 @@ function CourierPerformanceKpiCard({
         <Truck className="h-3.5 w-3.5 shrink-0 text-primary" />
       </div>
       <p className="mt-1 truncate text-base font-bold leading-none text-foreground sm:text-xl">
-        {loading ? "..." : hasDispatches ? `WYN ${wyn?.deliveryRate.toFixed(1) ?? "0.0"}%` : "Sin despachos"}
+        {loading
+          ? "..."
+          : hasDispatches && primary
+            ? `${primary.label} ${primary.deliveryRate.toFixed(1)}%`
+            : "Sin despachos"}
       </p>
       <p className="mt-1 truncate text-[10px] leading-tight text-muted-foreground">
         {loading
           ? "Calculando comparativo"
-          : `${report.periodLabel} | Moovin ${moovin?.deliveryRate.toFixed(1) ?? "0.0"}%`}
+          : secondary
+            ? `${report.periodLabel} | ${secondary.label} ${secondary.deliveryRate.toFixed(1)}%`
+            : report.periodLabel}
       </p>
     </button>
   );
