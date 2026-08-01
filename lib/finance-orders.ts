@@ -159,7 +159,10 @@ export type OrderTrackingFilter =
   | "delivered"
   | "not_delivered";
 
-export type CourierPerformanceId = "moovin" | "wyn";
+// Antes era la union "moovin" | "wyn": el reporte solo conocia las dos
+// paqueterias de Costa Rica y dejaba fuera al resto (Forza, Multilogic, Cargo
+// Expreso...), que caian en unassignedGuides. Ahora el id sale de los datos.
+export type CourierPerformanceId = string;
 export type CourierKairoStatus = Exclude<OrderTrackingFilter, "all">;
 
 export interface CourierPerformanceRow {
@@ -556,6 +559,31 @@ function pickCourierPerformanceRow(
 }
 
 /**
+ * Agrupa el texto libre de courier en una "familia" comparable. Las variantes
+ * de servicio del mismo transportista se suman ("Forza Same Day" -> Forza);
+ * los que no reconocemos conservan su nombre en vez de perderse.
+ * Devuelve null solo si la fila no dice quien la movio.
+ * Exportado para tests.
+ */
+export function resolveCourierFamily(
+  courier: string | undefined,
+  guide: string
+): { id: CourierPerformanceId; label: string } | null {
+  // WYN se detecta tambien por el prefijo de guia (MLCR), aunque el texto diga
+  // "MailAmericas CR Next Day".
+  if (isWynCourier(courier, guide)) return { id: "wyn", label: "WYN / MailAmericas" };
+
+  const text = String(courier ?? "").trim();
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  if (lower.includes("moovin")) return { id: "moovin", label: "Moovin" };
+  if (lower.includes("forza")) return { id: "forza", label: "Forza" };
+  if (lower.includes("boxful")) return { id: "boxful", label: "Boxful" };
+  // Desconocido: se agrupa por su propio nombre normalizado.
+  return { id: lower.replace(/\s+/g, " "), label: text.replace(/\s+/g, " ") };
+}
+
+/**
  * Compara paqueterias sobre una unica cohorte Shopify. Las filas Boxful/WYN
  * solo enriquecen el pedido; nunca aumentan el denominador de pedidos.
  */
@@ -579,32 +607,10 @@ export function buildCourierPerformanceReport(
     byShopifyOrder.set(orderKey, current ? pickCourierPerformanceRow(current, row) : row);
   }
 
-  const reportRows = new Map<CourierPerformanceId, CourierPerformanceRow>([
-    [
-      "moovin",
-      {
-        id: "moovin",
-        label: "Moovin",
-        dispatched: 0,
-        delivered: 0,
-        notDelivered: 0,
-        deliveryRate: 0,
-        statusCounts: createCourierStatusCounts(),
-      },
-    ],
-    [
-      "wyn",
-      {
-        id: "wyn",
-        label: "WYN / MailAmericas",
-        dispatched: 0,
-        delivered: 0,
-        notDelivered: 0,
-        deliveryRate: 0,
-        statusCounts: createCourierStatusCounts(),
-      },
-    ],
-  ]);
+  // Las filas se crean segun los couriers que aparezcan en el periodo, asi el
+  // comparativo sirve igual en Costa Rica (Moovin/WYN) que en Honduras
+  // (Forza/Multilogic) sin listas fijas por pais.
+  const reportRows = new Map<CourierPerformanceId, CourierPerformanceRow>();
 
   let withGuide = 0;
   let unassignedGuides = 0;
@@ -614,16 +620,24 @@ export function buildCourierPerformanceReport(
     if (!guide) continue;
     withGuide += 1;
 
-    const courierText = String(row.courier ?? "").toLowerCase();
-    const courierId: CourierPerformanceId | null = isWynCourier(row.courier, guide)
-      ? "wyn"
-      : courierText.includes("moovin")
-        ? "moovin"
-        : null;
-    if (!courierId) {
+    const family = resolveCourierFamily(row.courier, guide);
+    if (!family) {
+      // Solo cuando la fila no dice que paqueteria la movio.
       unassignedGuides += 1;
       continue;
     }
+    if (!reportRows.has(family.id)) {
+      reportRows.set(family.id, {
+        id: family.id,
+        label: family.label,
+        dispatched: 0,
+        delivered: 0,
+        notDelivered: 0,
+        deliveryRate: 0,
+        statusCounts: createCourierStatusCounts(),
+      });
+    }
+    const courierId = family.id;
 
     const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
     const effectiveStatus = mergeDispatchIntoTracking(
@@ -639,10 +653,13 @@ export function buildCourierPerformanceReport(
     if (status === "not_delivered") courierRow.notDelivered += 1;
   }
 
-  const normalizedRows = Array.from(reportRows.values()).map((row) => ({
-    ...row,
-    deliveryRate: row.dispatched ? (row.delivered / row.dispatched) * 100 : 0,
-  }));
+  // Mas volumen primero: la paqueteria principal encabeza el comparativo.
+  const normalizedRows = Array.from(reportRows.values())
+    .map((row) => ({
+      ...row,
+      deliveryRate: row.dispatched ? (row.delivered / row.dispatched) * 100 : 0,
+    }))
+    .sort((a, b) => b.dispatched - a.dispatched || a.label.localeCompare(b.label));
 
   return {
     periodLabel: window.rangeLabel,
