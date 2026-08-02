@@ -103,10 +103,10 @@ export async function GET(req: NextRequest) {
           )
         : null;
 
-    const courierPerformance =
-      store.code === "mireva-cr"
-        ? buildCourierPerformanceReport(rows, settlementTraceByKey, win)
-        : null;
+    // El reporte se arma con los couriers que aparecen en los datos, asi que
+    // sirve para cualquier tienda (CR: Moovin/WYN/Forza; HN: Forza/Multilogic).
+    // Antes estaba limitado a mireva-cr y Honduras recibia null.
+    const courierPerformance = buildCourierPerformanceReport(rows, settlementTraceByKey, win);
 
     const data: KpisPayload = { current, previous, courierPerformance };
     // Poda de vencidos: las claves de rango custom son abiertas (una por par de
