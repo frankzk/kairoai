@@ -2870,6 +2870,7 @@ function MoovinTrackingButton({
           idPackage={idPackage}
           lastName={lastName}
           fullName={fullName}
+          cached={cached}
           onClose={() => setOpen(false)}
         />
       )}
@@ -2881,11 +2882,13 @@ function MoovinTrackingModal({
   idPackage,
   lastName,
   fullName,
+  cached,
   onClose,
 }: {
   idPackage: string;
   lastName: string;
   fullName?: string;
+  cached?: MoovinTrackingRow;
   onClose: () => void;
 }) {
   const [loading, setLoading] = useState(true);
@@ -2919,10 +2922,16 @@ function MoovinTrackingModal({
     };
   }, [idPackage, lastName, fullName]);
 
-  const events = data?.events ?? [];
+  // La fila ya trae la ruta completa cacheada en moovin_tracking. Si la consulta
+  // en vivo falla (Moovin bloquea, rota el id de Server Action o tarda de mas)
+  // se muestra ese historial en lugar de dejar el modal vacio: el dato guardado
+  // sigue sirviendo, solo hay que avisar que no es de este momento.
+  const fallback = !data && cached?.events?.length ? cached : null;
+  const view = data ?? fallback;
+  const events: Array<Omit<MoovinTrackingEvent, "group"> & { group: string }> = view?.events ?? [];
   // Apellido que finalmente resolvio el lookup: puede diferir del enviado cuando
   // se reintento con un candidato derivado del nombre completo.
-  const matchedLastName = data?.last_name?.trim() || lastName;
+  const matchedLastName = data?.last_name?.trim() || fallback?.last_name?.trim() || lastName;
 
   return (
     <ModalOverlay onClose={onClose} labelledBy="moovin-tracking-title">
@@ -2946,28 +2955,34 @@ function MoovinTrackingModal({
           <div className="flex items-center gap-2 px-1 py-6 text-sm text-muted-foreground">
             <RefreshCw className="h-4 w-4 animate-spin" /> Consultando Moovin...
           </div>
-        ) : error ? (
+        ) : error && !fallback ? (
           <p className="border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{error}</p>
         ) : (
           <>
+            {error && fallback && (
+              <p className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+                No se pudo consultar Moovin ahora ({error}). Este es el ultimo seguimiento guardado
+                {fallback.checked_at ? `, del ${formatMoovinDate(fallback.checked_at)}` : ""}.
+              </p>
+            )}
             <div className="mb-3 border border-border bg-background p-3">
               <p className="text-[11px] text-muted-foreground">Ultimo estado</p>
               <p
                 className={`mt-0.5 text-sm font-semibold ${
-                  data?.latest_group === "delivered"
+                  view?.latest_group === "delivered"
                     ? "text-emerald-300"
-                    : data?.latest_group === "failed" || data?.latest_group === "returned"
+                    : view?.latest_group === "failed" || view?.latest_group === "returned"
                       ? "text-red-300"
                       : "text-foreground"
                 }`}
               >
-                {data?.latest_status ?? "Sin estado"}
+                {view?.latest_status || "Sin estado"}
               </p>
-              {data?.latest_at && (
-                <p className="text-[11px] text-muted-foreground">{formatMoovinDate(data.latest_at)}</p>
+              {view?.latest_at && (
+                <p className="text-[11px] text-muted-foreground">{formatMoovinDate(view.latest_at)}</p>
               )}
-              {data?.delivery_address && (
-                <p className="mt-1 text-[11px] text-muted-foreground">Entrega: {data.delivery_address}</p>
+              {view?.delivery_address && (
+                <p className="mt-1 text-[11px] text-muted-foreground">Entrega: {view.delivery_address}</p>
               )}
             </div>
             <div className="min-h-0 flex-1 space-y-2 overflow-auto">

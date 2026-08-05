@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractActionIds, moovinRouterStateTree, parseMoovinResponse } from "@/lib/moovin";
+import {
+  describeUnparsedMoovin,
+  extractActionIds,
+  moovinRouterStateTree,
+  parseMoovinResponse,
+} from "@/lib/moovin";
 
 // El next-router-state-tree va como header HTTP (solo bytes <= 255). Apellidos con
 // caracteres raros (p.ej. "ortega⁵" con U+2075 = 8309) reventaban el fetch con
@@ -86,5 +91,29 @@ describe("extractActionIds", () => {
 
   it("no inventa ids cuando no hay ninguno", () => {
     expect(extractActionIds("function x(){return 42}")).toEqual([]);
+  });
+});
+
+// El modal mostraba "No se pudo interpretar la respuesta de Moovin" tanto si el
+// courier bloqueaba como si el apellido no resolvia, asi que no se sabia si el
+// problema era del dato o de Moovin. Cada causa visible debe decir lo suyo.
+describe("describeUnparsedMoovin", () => {
+  it("distingue el bloqueo del courier del payload ilegible", () => {
+    expect(describeUnparsedMoovin(403, "")).toContain("HTTP 403");
+    expect(describeUnparsedMoovin(429, "")).toContain("limitando");
+    expect(describeUnparsedMoovin(502, "")).toContain("HTTP 502");
+  });
+
+  it("detecta CAPTCHA y HTML aunque el status sea 200", () => {
+    expect(describeUnparsedMoovin(200, '<div class="g-recaptcha">')).toContain("CAPTCHA");
+    expect(describeUnparsedMoovin(200, "<!DOCTYPE html><html>...")).toContain("HTML");
+  });
+
+  it("mantiene el mensaje generico cuando la respuesta no delata la causa", () => {
+    // Caso tipico: Moovin responde 200 con un stream RSC sin listStatus porque
+    // el apellido no resuelve. Ahi no hay nada mas que reportar.
+    expect(describeUnparsedMoovin(200, '0:{"a":1}')).toBe(
+      "No se pudo interpretar la respuesta de Moovin"
+    );
   });
 });

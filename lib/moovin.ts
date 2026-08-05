@@ -247,7 +247,7 @@ async function postMoovinAction(
         tracking: {
           ...base,
           http_status: res.status,
-          error: "No se pudo interpretar la respuesta de Moovin",
+          error: describeUnparsedMoovin(res.status, text),
           ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
         },
         parsed: false,
@@ -287,6 +287,24 @@ async function postMoovinAction(
   } finally {
     clearTimeout(abortTimer);
   }
+}
+
+// "No se pudo interpretar la respuesta de Moovin" tapaba por igual un bloqueo,
+// un HTML de error, un rate limit y un apellido que no resuelve, asi que el
+// modal no permitia distinguir un problema del courier de uno del dato. Se
+// reporta lo que si se puede leer de la respuesta. Exportado para tests.
+export function describeUnparsedMoovin(status: number, text: string): string {
+  const head = String(text ?? "").slice(0, 2000).trim().toLowerCase();
+  if (head.includes("captcha")) {
+    return "Moovin pidio verificacion (CAPTCHA); no se puede consultar automaticamente.";
+  }
+  if (status === 401 || status === 403) return `Moovin rechazo la consulta (HTTP ${status}).`;
+  if (status === 429) return "Moovin esta limitando las consultas (HTTP 429); reintenta en un momento.";
+  if (status >= 500) return `Moovin respondio con un error propio (HTTP ${status}).`;
+  if (head.startsWith("<!doctype") || head.startsWith("<html")) {
+    return "Moovin devolvio su pagina HTML en vez del seguimiento (posible bloqueo o cambio en su sitio).";
+  }
+  return "No se pudo interpretar la respuesta de Moovin";
 }
 
 async function attemptMoovinFetch(
