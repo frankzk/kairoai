@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { getMoovinPrepareAt, MOOVIN_PREPARE_CODE } from "../lib/finance-orders";
+import {
+  FORZA_PREPARE_CODE,
+  getForzaPrepareAt,
+  getMoovinPrepareAt,
+  getPreparedAt,
+  MOOVIN_PREPARE_CODE,
+} from "../lib/finance-orders";
 
 describe("getMoovinPrepareAt", () => {
   it("devuelve la fecha del evento PREPARE", () => {
@@ -48,5 +54,58 @@ describe("getMoovinPrepareAt", () => {
     expect(getMoovinPrepareAt(null)).toBeNull();
     expect(getMoovinPrepareAt(undefined)).toBeNull();
     expect(getMoovinPrepareAt([])).toBeNull();
+  });
+});
+
+describe("getForzaPrepareAt", () => {
+  // Forza guarda una plantilla fija de 5 eventos: los no alcanzados vienen con
+  // date=null. Este es el shape real de una guia en transito.
+  const forzaEvents = [
+    { code: FORZA_PREPARE_CODE, date: "2026-01-14T08:46:53.000Z" },
+    { code: "RECIBIDO_POR_FORZA", date: "2026-01-14T15:02:10.000Z" },
+    { code: "EN_INSTALACIONES", date: "2026-01-15T09:00:00.000Z" },
+    { code: "EN_RUTA", date: null },
+    { code: "ENTREGADO", date: null },
+  ];
+
+  it("devuelve la fecha del evento CREADO", () => {
+    expect(getForzaPrepareAt(forzaEvents)).toBe("2026-01-14T08:46:53.000Z");
+  });
+
+  it("no confunde el ciclo de Moovin con el de Forza", () => {
+    expect(getForzaPrepareAt([{ code: "PREPARE", date: "2026-07-29T00:11:40Z" }])).toBeNull();
+    expect(getMoovinPrepareAt(forzaEvents)).toBeNull();
+  });
+
+  it("devuelve null si CREADO todavia no tiene fecha", () => {
+    expect(getForzaPrepareAt([{ code: FORZA_PREPARE_CODE, date: null }])).toBeNull();
+  });
+});
+
+describe("getPreparedAt", () => {
+  it("resuelve la guia de Moovin (CR)", () => {
+    expect(getPreparedAt([{ code: "PREPARE", date: "2026-07-29T00:11:40Z" }], undefined)).toBe(
+      "2026-07-29T00:11:40Z"
+    );
+  });
+
+  it("resuelve la guia de Forza (HN), que antes salia vacia", () => {
+    expect(getPreparedAt(undefined, [{ code: "CREADO", date: "2026-01-14T08:46:53.000Z" }])).toBe(
+      "2026-01-14T08:46:53.000Z"
+    );
+  });
+
+  it("si por algun motivo llegaran ambos, gana el mas antiguo", () => {
+    expect(
+      getPreparedAt(
+        [{ code: "PREPARE", date: "2026-07-29T00:11:40Z" }],
+        [{ code: "CREADO", date: "2026-07-28T08:00:00Z" }]
+      )
+    ).toBe("2026-07-28T08:00:00Z");
+  });
+
+  it("null cuando ningun courier tiene tracking consultado", () => {
+    expect(getPreparedAt(undefined, undefined)).toBeNull();
+    expect(getPreparedAt([], [])).toBeNull();
   });
 });

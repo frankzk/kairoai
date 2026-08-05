@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { normalizeSearchText } from "@/lib/order-matching";
 import {
-  getMoovinPrepareAt,
+  getPreparedAt,
   type CourierKairoStatus,
   type CourierPerformanceReport,
   type FinanceControlCenter,
@@ -1988,11 +1988,11 @@ function OrdersTab({
           Apellido: row.last_name ?? "",
           Celular: row.phone ?? "",
           "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
-          // Primer evento del ciclo Moovin: cuando el remitente empezo a
-          // preparar el paquete. Vacio si la guia no es Moovin o si su
-          // tracking todavia no se consulto.
+          // Primer evento del ciclo del courier (Moovin "PREPARE" / Forza
+          // "CREADO"): cuando el remitente empezo a preparar el paquete.
+          // Vacio si el tracking de esa guia todavia no se consulto.
           'Fecha de ingreso a "Por preparar"': (() => {
-            const prepareAt = getMoovinPrepareAt(moovin?.events);
+            const prepareAt = getPreparedAt(moovin?.events, forza?.events);
             return prepareAt ? formatMoovinDate(prepareAt) : "";
           })(),
           Shopify: row.match_status === "matched" ? row.shopify_order_name : "sin match",
