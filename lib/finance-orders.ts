@@ -18,7 +18,8 @@ import type {
   WynTrackingRow,
 } from "@/lib/finance-types";
 import { mergeDispatchIntoTracking } from "@/lib/dispatch";
-import { isWynGuide, normalizeWynGuide } from "@/lib/wyn";
+import { isWynGuide, isWynIncidentCode, normalizeWynGuide } from "@/lib/wyn";
+import { matchesStatusKeyword } from "@/lib/courier-adapters";
 import {
   buildShopifyMatchIndex,
   extractExternalOrderCodesFromText,
@@ -719,7 +720,7 @@ export function buildVisibleOrderRows(
       forza_group: deriveForzaGroup(forzaHit),
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       wyn_group: deriveForzaGroup(wynHit),
-      wyn_incidents: wynHit ? countForzaIncidents(wynHit.events) : undefined,
+      wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
       phone: shopify?.phone || row.customer_phone || null,
@@ -783,7 +784,7 @@ export function buildVisibleOrderRows(
       forza_group: deriveForzaGroup(forzaHit),
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       wyn_group: deriveForzaGroup(wynHit),
-      wyn_incidents: wynHit ? countForzaIncidents(wynHit.events) : undefined,
+      wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
@@ -1180,10 +1181,25 @@ export function countMoovinRouteAttempts(events: MoovinTrackingRow["events"] | u
 
 export function countForzaIncidents(events: ForzaTrackingRow["events"] | undefined): number {
   if (!events?.length) return 0;
-  return events.filter((event) => {
-    const text = `${event.code ?? ""} ${event.title ?? ""} ${event.description ?? ""}`.toLowerCase();
-    return text.includes("fall") || text.includes("incid") || text.includes("no entreg");
-  }).length;
+  return events.filter((event) =>
+    // Con includes() a secas, "no entreg" aparecia dentro de "destiNO ENTREGado"
+    // y convertia un hito de transito en incidencia (ver matchesStatusKeyword).
+    matchesStatusKeyword(`${event.code ?? ""} ${event.title ?? ""} ${event.description ?? ""}`, [
+      "fall",
+      "incid",
+      "no entreg",
+    ])
+  ).length;
+}
+
+/**
+ * Intentos de entrega fallidos de WYN. WYN no se puede medir con el contador de
+ * Forza: sus eventos son texto libre de otra familia y el codigo es lo unico
+ * univoco, asi que se cuenta por la taxonomia (LM-6..LM-10, AV-2).
+ */
+export function countWynIncidents(events: WynTrackingRow["events"] | undefined): number {
+  if (!events?.length) return 0;
+  return events.filter((event) => isWynIncidentCode(String(event.code ?? ""))).length;
 }
 
 // Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"
