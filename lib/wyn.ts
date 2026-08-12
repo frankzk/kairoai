@@ -96,6 +96,37 @@ export function isWynIncidentCode(code: string): boolean {
   return wynGroupFromCode(code) === "incident";
 }
 
+/** Grupo de un evento suelto: manda el codigo y el texto queda de respaldo. */
+export function wynEventGroup(code: string, title = "", description = ""): CourierNormalizedStatus {
+  return wynGroupFromCode(code) ?? normalizeWynStatus(title, title, description);
+}
+
+/**
+ * Grupo vigente de una guia segun su historial (el evento mas reciente primero).
+ * La consulta a la API y la lectura de cache pasan las dos por aca para que no
+ * puedan divergir: si la taxonomia cambia, las filas ya guardadas se releen con
+ * la taxonomia nueva en vez de quedarse con el grupo viejo.
+ */
+export function deriveWynGroup(
+  events: Array<Pick<CourierTrackingEvent, "code" | "title" | "description">>,
+  fallbackText = ""
+): CourierNormalizedStatus {
+  const latest = events[0];
+  return (
+    wynGroupFromCode(String(latest?.code ?? "")) ??
+    normalizeWynStatus(fallbackText, String(latest?.title ?? ""), String(latest?.description ?? ""))
+  );
+}
+
+/**
+ * Incidencia ACTIVA: la guia quedo parada y necesita gestion. Se mide sobre el
+ * estado vigente, no sobre el historial: un intento fallido con movimiento
+ * posterior ya no bloquea la entrega.
+ */
+export function isWynIncidentGroup(group: CourierNormalizedStatus): boolean {
+  return group === "returned" || group === "not_delivered" || group === "incident";
+}
+
 export function normalizeWynStatus(status: string, stepName = "", description = ""): CourierNormalizedStatus {
   const text = `${status} ${stepName} ${description}`;
   const has = (needles: string[]) => matchesStatusKeyword(text, needles);
@@ -164,14 +195,8 @@ export async function fetchWynTracking(guide: string): Promise<WynTrackingResult
   const latestDescription = asText(data.lastEventDescription) || events[0]?.description || "";
   // El grupo del evento mas reciente ya viene del codigo, que es univoco; el
   // texto de cabecera de WYN solo se usa si ese codigo es desconocido.
-  const latestByCode = wynGroupFromCode(events[0]?.code ?? "");
-  const latestGroup: CourierNormalizedStatus =
-    latestByCode ?? normalizeWynStatus(asText(data.status), latestStatus, latestDescription);
-  // Incidencia ACTIVA: la guia quedo parada en un intento fallido. Un intento
-  // fallido seguido de movimiento posterior ya no bloquea la entrega, asi que
-  // no se marca por historial sino por el estado vigente.
-  const hasIncident =
-    latestGroup === "returned" || latestGroup === "not_delivered" || latestGroup === "incident";
+  const latestGroup = deriveWynGroup(events, `${asText(data.status)} ${latestStatus} ${latestDescription}`);
+  const hasIncident = isWynIncidentGroup(latestGroup);
 
   return {
     guideNumber,
@@ -198,7 +223,7 @@ function toTrackingEvent(event: WynApiEvent): CourierTrackingEvent {
   return {
     code,
     // El codigo manda sobre el texto (ver WYN_EVENT_GROUPS).
-    group: wynGroupFromCode(code) ?? normalizeWynStatus(title, title, description),
+    group: wynEventGroup(code, title, description),
     title,
     description,
     date: buildEventDate(date, time),
