@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type React from "react";
-import { AlertTriangle, Boxes, RefreshCw, Truck, UserCheck } from "lucide-react";
+import { AlertTriangle, Boxes, RefreshCw, Search, Truck, UserCheck, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import type { DispatchSearchHit } from "@/lib/dispatch-search";
+import { MATCH_LABEL, MIN_QUERY_LENGTH } from "@/lib/dispatch-search";
 import type { IcomflyOrderRecord, PayrollStaff } from "@/lib/finance-types";
 import type { FinanceStoreCode } from "@/lib/store-config";
 
@@ -66,11 +69,25 @@ function StateBadge({ row }: { row: IcomflyOrderRecord }) {
   return <Badge variant="muted">Pendiente</Badge>;
 }
 
+interface SearchResponse {
+  hits: DispatchSearchHit[];
+  query: string;
+  error?: string;
+}
+
 export default function DispatchTab({ storeCode }: { storeCode: FinanceStoreCode }) {
   const [data, setData] = useState<SyncResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<string>("");
+
+  // Busqueda por guia / celular / pedido. Va al servidor porque el telefono no
+  // esta en iComfly (se resuelve contra Shopify) y porque la tabla del tablero
+  // solo muestra los 100 mas recientes.
+  const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [hits, setHits] = useState<DispatchSearchHit[] | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,6 +106,46 @@ export default function DispatchTab({ storeCode }: { storeCode: FinanceStoreCode
   useEffect(() => {
     load();
   }, [load]);
+
+  // Al cambiar de tienda los resultados anteriores ya no aplican.
+  useEffect(() => {
+    setQuery("");
+    setHits(null);
+    setSearchError("");
+  }, [storeCode]);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < MIN_QUERY_LENGTH) {
+      setHits(null);
+      setSearchError("");
+      setSearching(false);
+      return;
+    }
+    const controller = new AbortController();
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/icomfly/search?store=${encodeURIComponent(storeCode)}&q=${encodeURIComponent(term)}`,
+          { cache: "no-store", signal: controller.signal }
+        );
+        const body = (await res.json()) as SearchResponse;
+        setHits(body.hits ?? []);
+        setSearchError(body.error ?? "");
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setHits([]);
+        setSearchError(err instanceof Error ? err.message : "Error al buscar");
+      } finally {
+        if (!controller.signal.aborted) setSearching(false);
+      }
+    }, 350);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [query, storeCode]);
 
   async function sync() {
     setSyncing(true);
@@ -168,6 +225,14 @@ export default function DispatchTab({ storeCode }: { storeCode: FinanceStoreCode
         .sort((a, b) => String(b.requested_at ?? b.icomfly_created_at ?? "").localeCompare(String(a.requested_at ?? a.icomfly_created_at ?? "")))
         .slice(0, 100),
     [orders]
+  );
+
+  // Con búsqueda activa la tabla muestra los resultados (y las columnas de
+  // guía/celular); sin búsqueda, los 100 más recientes de siempre.
+  const searchActive = hits !== null;
+  const rows = useMemo<DispatchSearchHit[]>(
+    () => hits ?? recent.map((order) => ({ order, phone: "", guide: "", matched: [] })),
+    [hits, recent]
   );
 
   return (
@@ -308,40 +373,101 @@ export default function DispatchTab({ storeCode }: { storeCode: FinanceStoreCode
             </CardContent>
           </Card>
 
-          {/* Pedidos con estado + atribución */}
+          {/* Pedidos con estado + atribución (con búsqueda por guía/celular) */}
           <Card>
-            <CardHeader>
-              <CardTitle>Pedidos ({recent.length} más recientes)</CardTitle>
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle className="flex items-center gap-2">
+                {searchActive
+                  ? `Resultados (${hits?.length ?? 0})`
+                  : `Pedidos (${recent.length} más recientes)`}
+                {searching && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />}
+              </CardTitle>
+              <div className="relative w-full sm:max-w-xs">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Buscar por guía, celular o pedido"
+                  aria-label="Buscar por guía, celular o pedido"
+                  className="pl-8 pr-8"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery("")}
+                    aria-label="Limpiar búsqueda"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="overflow-x-auto p-0">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2">Pedido</th>
-                    <th className="px-3 py-2">Estado</th>
-                    <th className="px-3 py-2">Confirmó</th>
-                    <th className="px-3 py-2">Solicitó</th>
-                    <th className="px-3 py-2">Guía final</th>
-                    <th className="px-3 py-2">Courier</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recent.map((o) => (
-                    <tr key={o.icomfly_order_id} className="border-t border-border">
-                      <td className="px-3 py-2 font-medium">{o.order_number || o.shopify_display_number || o.icomfly_order_id}</td>
-                      <td className="px-3 py-2"><StateBadge row={o} /></td>
-                      <td className="px-3 py-2">{nameOf(o.confirmed_by_staff_id, o.confirmed_by_name, staffName)}</td>
-                      <td className="px-3 py-2">{nameOf(o.requested_by_staff_id, o.requested_by_name, staffName)}</td>
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {o.dispatch_state === "despachado"
-                          ? `${crDateTime(o.guide_final_at)}${o.guide_final_source ? ` · ${o.guide_final_source}` : ""}`
-                          : "—"}
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">{o.carrier_name || "—"}</td>
+              {searchError && (
+                <div className="border-b border-border px-3 py-2 text-sm text-destructive">{searchError}</div>
+              )}
+              {searchActive && !searching && !searchError && rows.length === 0 ? (
+                <div className="px-3 py-10 text-center text-sm text-muted-foreground">
+                  <p>Sin resultados para «{query.trim()}».</p>
+                  <p className="mt-1 text-xs">
+                    Si buscás por celular, escribí el número completo (8 dígitos).
+                  </p>
+                </div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2">Pedido</th>
+                      {searchActive && <th className="px-3 py-2">Guía</th>}
+                      {searchActive && <th className="px-3 py-2">Celular</th>}
+                      <th className="px-3 py-2">Estado</th>
+                      <th className="px-3 py-2">Confirmó</th>
+                      <th className="px-3 py-2">Solicitó</th>
+                      <th className="px-3 py-2">Guía final</th>
+                      <th className="px-3 py-2">Courier</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rows.map(({ order: o, phone, guide, matched }) => (
+                      <tr key={o.icomfly_order_id} className="border-t border-border">
+                        <td className="px-3 py-2 font-medium">
+                          <span className="align-middle">
+                            {o.order_number || o.shopify_display_number || o.icomfly_order_id}
+                          </span>
+                          {matched.map((m) => (
+                            <Badge key={m} variant="info" className="ml-2 align-middle">
+                              {MATCH_LABEL[m]}
+                            </Badge>
+                          ))}
+                          {searchActive &&
+                            o.shopify_display_number &&
+                            o.shopify_display_number !== o.order_number && (
+                              <div className="text-xs font-normal text-muted-foreground">
+                                {o.shopify_display_number}
+                              </div>
+                            )}
+                        </td>
+                        {searchActive && (
+                          <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{guide || "—"}</td>
+                        )}
+                        {searchActive && (
+                          <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{phone || "—"}</td>
+                        )}
+                        <td className="px-3 py-2"><StateBadge row={o} /></td>
+                        <td className="px-3 py-2">{nameOf(o.confirmed_by_staff_id, o.confirmed_by_name, staffName)}</td>
+                        <td className="px-3 py-2">{nameOf(o.requested_by_staff_id, o.requested_by_name, staffName)}</td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {o.dispatch_state === "despachado"
+                            ? `${crDateTime(o.guide_final_at)}${o.guide_final_source ? ` · ${o.guide_final_source}` : ""}`
+                            : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">{o.carrier_name || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </CardContent>
           </Card>
         </>
