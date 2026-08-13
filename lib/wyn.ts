@@ -1,3 +1,4 @@
+import { matchesStatusKeyword } from "@/lib/courier-adapters";
 import type { CourierNormalizedStatus, CourierTrackingEvent } from "@/lib/courier-adapters";
 
 const WYN_TRACKING_ENDPOINT = "https://wynexpress.com/api/tracking";
@@ -52,27 +53,99 @@ export function buildWynTrackingUrl(value: string): string {
   return `${WYN_TRACKING_ORIGIN}/tracking?number_id=${encodeURIComponent(normalizeWynGuide(value))}`;
 }
 
+/**
+ * Taxonomia de eventos de WYN por codigo. El texto libre no alcanza para
+ * clasificar: "Entregado a Distribuidor" (RC-0) es el traspaso a la ultima
+ * milla, no una entrega al cliente, y "Entregado en direccion de retorno"
+ * (PF-2) es justo lo contrario de una entrega. El codigo si es univoco, asi
+ * que manda; el texto queda de respaldo para codigos que WYN agregue despues.
+ *
+ * Familias: OC = orden creada, WI = warehouse, RC = transito, LM = ultima
+ * milla, PF = proceso finalizado (los unicos estados finales), AV = aviso.
+ */
+export const WYN_EVENT_GROUPS: Record<string, CourierNormalizedStatus> = {
+  "OC-1": "pending", // Etiqueta impresa
+  "WI-3": "en_route", // Recepcion en Warehouse MailAmericas
+  "WI-4": "en_route", // Procesado
+  "RC-0": "en_route", // Entregado a Distribuidor (traspaso, sigue en transito)
+  "RC-4": "en_route", // Rectificacion de ruta
+  "LM-1": "en_route", // Recibido en sucursal de Distribucion
+  "LM-2": "en_route", // En manos del cartero
+  "LM-3": "en_route", // Visita a domicilio
+  "LM-4": "en_route", // Disponible para retiro en sucursal
+  "LM-11": "en_route", // Reprogramacion: sigue en reparto
+  "LM-6": "incident", // Zona de entrega intransitable
+  "LM-7": "incident", // Destinatario ausente
+  "LM-8": "incident", // Llego a domicilio y se rechazo el paquete
+  "LM-9": "incident", // Domicilio de entrega incorrecto
+  "LM-10": "incident", // Persona no autorizada para recibir
+  "AV-2": "incident", // En investigacion
+  "PF-1": "delivered", // Entregado
+  "PF-2": "returned", // Entregado en direccion de retorno
+  "PF-3": "not_delivered", // Siniestrado
+  "PF-5": "not_delivered", // Robado
+};
+
+/** Grupo segun el codigo de WYN, o null si el codigo no esta en la taxonomia. */
+export function wynGroupFromCode(code: string): CourierNormalizedStatus | null {
+  return WYN_EVENT_GROUPS[String(code ?? "").trim().toUpperCase()] ?? null;
+}
+
+/** Codigos de WYN que representan un intento de entrega que no prospero. */
+export function isWynIncidentCode(code: string): boolean {
+  return wynGroupFromCode(code) === "incident";
+}
+
+/** Grupo de un evento suelto: manda el codigo y el texto queda de respaldo. */
+export function wynEventGroup(code: string, title = "", description = ""): CourierNormalizedStatus {
+  return wynGroupFromCode(code) ?? normalizeWynStatus(title, title, description);
+}
+
+/**
+ * Grupo vigente de una guia segun su historial (el evento mas reciente primero).
+ * La consulta a la API y la lectura de cache pasan las dos por aca para que no
+ * puedan divergir: si la taxonomia cambia, las filas ya guardadas se releen con
+ * la taxonomia nueva en vez de quedarse con el grupo viejo.
+ */
+export function deriveWynGroup(
+  events: Array<Pick<CourierTrackingEvent, "code" | "title" | "description">>,
+  fallbackText = ""
+): CourierNormalizedStatus {
+  const latest = events[0];
+  return (
+    wynGroupFromCode(String(latest?.code ?? "")) ??
+    normalizeWynStatus(fallbackText, String(latest?.title ?? ""), String(latest?.description ?? ""))
+  );
+}
+
+/**
+ * Incidencia ACTIVA: la guia quedo parada y necesita gestion. Se mide sobre el
+ * estado vigente, no sobre el historial: un intento fallido con movimiento
+ * posterior ya no bloquea la entrega.
+ */
+export function isWynIncidentGroup(group: CourierNormalizedStatus): boolean {
+  return group === "returned" || group === "not_delivered" || group === "incident";
+}
+
 export function normalizeWynStatus(status: string, stepName = "", description = ""): CourierNormalizedStatus {
-  const text = normalizeText(`${status} ${stepName} ${description}`);
-  if (includesAny(text, ["returned", "devuelto", "retorno", "devolucion"])) return "returned";
+  const text = `${status} ${stepName} ${description}`;
+  const has = (needles: string[]) => matchesStatusKeyword(text, needles);
+  if (has(["returned", "devuelto", "retorno", "devolucion"])) return "returned";
   // "Entregado a Distribuidor" (handoff a la ultima milla, eventStep 5 /
   // "Transito a destino") NO es entrega al cliente: el paquete sigue en
-  // transito. Se evalua antes que "entregado"/"no entregado" porque el texto
-  // "...a destino Entregado a Distribuidor" contiene el substring "entregado"
-  // (lo clasificaba como delivered e inflaba la tasa de entrega) y ademas
-  // "destino entregado" contiene "no entregado" (lo confundia con un fallo).
-  // Solo "Entregado" / "Proceso finalizado" (eventStep 7) cuenta como delivered.
-  if (text.includes("distribuidor")) return "en_route";
-  if (includesAny(text, ["not delivered", "no entregado", "fallido", "failed", "rechazado"])) {
-    return "not_delivered";
-  }
-  if (includesAny(text, ["delivered", "entregado"])) return "delivered";
-  if (includesAny(text, ["incident", "incidencia", "incorrecto", "problema"])) return "incident";
-  if (includesAny(text, ["cancelled", "cancelado", "cancelada"])) return "cancelled";
-  if (includesAny(text, ["en ruta", "transito", "ultima milla", "cartero", "distribuidor", "llegada", "retirado"])) {
+  // transito. Se evalua antes que "entregado" porque ahi "entregado" si abre
+  // palabra, y sin esta regla el handoff se leia como delivered e inflaba la
+  // tasa de entrega. Solo "Entregado" / "Proceso finalizado" (eventStep 7)
+  // cuenta como entrega real.
+  if (has(["distribuidor"])) return "en_route";
+  if (has(["not delivered", "no entregado", "fallido", "failed", "rechazado"])) return "not_delivered";
+  if (has(["delivered", "entregado"])) return "delivered";
+  if (has(["incident", "incidencia", "incorrecto", "problema"])) return "incident";
+  if (has(["cancelled", "cancelado", "cancelada"])) return "cancelled";
+  if (has(["en ruta", "transito", "ultima milla", "cartero", "distribuidor", "llegada", "retirado"])) {
     return "en_route";
   }
-  if (includesAny(text, ["pending", "pendiente", "creado", "registrado"])) return "pending";
+  if (has(["pending", "pendiente", "creado", "registrado"])) return "pending";
   return "unknown";
 }
 
@@ -120,9 +193,10 @@ export async function fetchWynTracking(guide: string): Promise<WynTrackingResult
   const events = rawEvents.map(toTrackingEvent);
   const latestStatus = asText(data.statusStepName) || asText(data.status) || events[0]?.title || "Sin estado";
   const latestDescription = asText(data.lastEventDescription) || events[0]?.description || "";
-  const latestGroup = normalizeWynStatus(asText(data.status), latestStatus, latestDescription);
-  const incidentEvent = events.find((event) => isIncidentText(`${event.title} ${event.description} ${event.note}`));
-  const hasIncident = latestGroup === "returned" || latestGroup === "not_delivered" || Boolean(incidentEvent);
+  // El grupo del evento mas reciente ya viene del codigo, que es univoco; el
+  // texto de cabecera de WYN solo se usa si ese codigo es desconocido.
+  const latestGroup = deriveWynGroup(events, `${asText(data.status)} ${latestStatus} ${latestDescription}`);
+  const hasIncident = isWynIncidentGroup(latestGroup);
 
   return {
     guideNumber,
@@ -132,7 +206,7 @@ export async function fetchWynTracking(guide: string): Promise<WynTrackingResult
     latestGroup,
     latestAt: events[0]?.date ?? null,
     hasIncident,
-    incidentReason: incidentEvent?.description || (hasIncident ? latestDescription : ""),
+    incidentReason: hasIncident ? events[0]?.description || latestDescription : "",
     deliveryAddress: "",
     receiverName: "",
     events,
@@ -145,9 +219,11 @@ function toTrackingEvent(event: WynApiEvent): CourierTrackingEvent {
   const time = asText(event.time);
   const title = asText(event.status) || "Actualizacion WYN";
   const description = asText(event.description);
+  const code = asText(event.code);
   return {
-    code: asText(event.code),
-    group: normalizeWynStatus(title, title, description),
+    code,
+    // El codigo manda sobre el texto (ver WYN_EVENT_GROUPS).
+    group: wynEventGroup(code, title, description),
     title,
     description,
     date: buildEventDate(date, time),
@@ -166,15 +242,3 @@ function asText(value: unknown): string {
   return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
 }
 
-function normalizeText(value: string): string {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-}
-
-function includesAny(value: string, needles: string[]): boolean {
-  return needles.some((needle) => value.includes(needle));
-}
-
-function isIncidentText(value: string): boolean {
-  const text = normalizeText(value);
-  return includesAny(text, ["incorrect", "incid", "fallid", "rechaz", "devuelt", "retorno", "no entreg"]);
-}

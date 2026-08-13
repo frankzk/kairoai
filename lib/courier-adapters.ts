@@ -68,8 +68,34 @@ export const COURIER_STATUS_ALIASES: Record<CourierNormalizedStatus, string[]> =
   unknown: [],
 };
 
+/**
+ * Busca palabras clave de estado exigiendo que la aguja arranque donde arranca
+ * una palabra.
+ *
+ * Con includes() a secas la busqueda cruza el limite entre palabras: "Transito
+ * a destino Entregado a Distribuidor" —un hito normal de WYN— contiene "no
+ * entregado" dentro de "destiNO ENTREGADO", asi que TODO paquete en transito se
+ * leia como no entregado. Las agujas siguen siendo prefijos ("incid" cubre
+ * "incidencia"), solo se ancla el inicio.
+ *
+ * No se usa \b: los acentos no son \w, asi que \b abriria limites falsos dentro
+ * de "transito" o "recepcion" una vez normalizado el texto.
+ */
+export function matchesStatusKeyword(value: string, needles: string[]): boolean {
+  const text = normalizeText(value);
+  return needles.some((needle) => startsAtWordBoundary(text, normalizeText(needle)));
+}
+
+function startsAtWordBoundary(text: string, needle: string): boolean {
+  if (!needle) return false;
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1)) {
+    if (at === 0 || !/[a-z0-9]/.test(text[at - 1])) return true;
+  }
+  return false;
+}
+
 export function normalizeCourierStatus(rawStatus: string, rawGroup = ""): CourierNormalizedStatus {
-  const text = normalizeText(`${rawGroup} ${rawStatus}`);
+  const text = `${rawGroup} ${rawStatus}`;
   for (const status of [
     "not_delivered",
     "returned",
@@ -79,9 +105,7 @@ export function normalizeCourierStatus(rawStatus: string, rawGroup = ""): Courie
     "en_route",
     "pending",
   ] as const) {
-    if (COURIER_STATUS_ALIASES[status].some((alias) => text.includes(normalizeText(alias)))) {
-      return status;
-    }
+    if (matchesStatusKeyword(text, COURIER_STATUS_ALIASES[status])) return status;
   }
   return "unknown";
 }

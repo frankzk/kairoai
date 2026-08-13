@@ -18,7 +18,8 @@ import type {
   WynTrackingRow,
 } from "@/lib/finance-types";
 import { mergeDispatchIntoTracking } from "@/lib/dispatch";
-import { isWynGuide, normalizeWynGuide } from "@/lib/wyn";
+import { isWynGuide, isWynIncidentCode, normalizeWynGuide } from "@/lib/wyn";
+import { matchesStatusKeyword } from "@/lib/courier-adapters";
 import {
   buildShopifyMatchIndex,
   extractExternalOrderCodesFromText,
@@ -719,7 +720,7 @@ export function buildVisibleOrderRows(
       forza_group: deriveForzaGroup(forzaHit),
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       wyn_group: deriveForzaGroup(wynHit),
-      wyn_incidents: wynHit ? countForzaIncidents(wynHit.events) : undefined,
+      wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
       phone: shopify?.phone || row.customer_phone || null,
@@ -783,7 +784,7 @@ export function buildVisibleOrderRows(
       forza_group: deriveForzaGroup(forzaHit),
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       wyn_group: deriveForzaGroup(wynHit),
-      wyn_incidents: wynHit ? countForzaIncidents(wynHit.events) : undefined,
+      wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
@@ -1056,20 +1057,25 @@ export function moovinGroupToStatus(group: string | undefined): string {
 // en espanol ("Por preparar"), que Moovin puede reescribir.
 export const MOOVIN_PREPARE_CODE = "PREPARE";
 
-/**
- * Marca de tiempo en que el pedido entro a "Por preparar" (ISO, como la guarda
- * Moovin). Devuelve null si la guia no tiene ese evento (p.ej. tracking aun no
- * consultado). Hoy Moovin emite exactamente uno por guia; si algun dia hubiera
- * varios se toma el MAS ANTIGUO, que es el ingreso real al estado.
- */
-export function getMoovinPrepareAt(
-  events: Array<{ code?: string; date?: string | null }> | null | undefined
+// Equivalente de Forza: "CREADO" ("Creado") es el primer evento de su ciclo,
+// cuando la guia se genera y el paquete queda pendiente de recoleccion. Forza
+// guarda una plantilla fija de 5 eventos con date=null para las etapas no
+// alcanzadas, asi que el filtro por date sigue siendo obligatorio.
+export const FORZA_PREPARE_CODE = "CREADO";
+
+type TrackingEvent = { code?: string; date?: string | null };
+
+// Fecha MAS ANTIGUA entre los eventos con ese codigo. Si el courier emitiera
+// mas de uno, el primero es el ingreso real al estado.
+function getEarliestEventAt(
+  events: TrackingEvent[] | null | undefined,
+  code: string
 ): string | null {
   if (!Array.isArray(events)) return null;
   let earliest: string | null = null;
   let earliestMs = Number.POSITIVE_INFINITY;
   for (const event of events) {
-    if (event?.code !== MOOVIN_PREPARE_CODE || !event.date) continue;
+    if (event?.code !== code || !event.date) continue;
     const ms = Date.parse(event.date);
     if (Number.isNaN(ms)) continue;
     if (ms < earliestMs) {
@@ -1078,6 +1084,40 @@ export function getMoovinPrepareAt(
     }
   }
   return earliest;
+}
+
+/**
+ * Marca de tiempo en que el pedido entro a "Por preparar" segun Moovin (ISO,
+ * como la guarda el courier). null si la guia no tiene ese evento (p.ej.
+ * tracking aun no consultado).
+ */
+export function getMoovinPrepareAt(
+  events: TrackingEvent[] | null | undefined
+): string | null {
+  return getEarliestEventAt(events, MOOVIN_PREPARE_CODE);
+}
+
+/** Mismo dato para Forza: su evento "Creado". */
+export function getForzaPrepareAt(
+  events: TrackingEvent[] | null | undefined
+): string | null {
+  return getEarliestEventAt(events, FORZA_PREPARE_CODE);
+}
+
+/**
+ * Ingreso a "Por preparar" sin importar quien movio la guia: Moovin (CR) o
+ * Forza (HN). Una guia solo tiene tracking de un courier, pero si llegaran
+ * ambos se toma el mas antiguo para no inventar un ingreso posterior.
+ */
+export function getPreparedAt(
+  moovinEvents: TrackingEvent[] | null | undefined,
+  forzaEvents?: TrackingEvent[] | null | undefined
+): string | null {
+  const candidates = [getMoovinPrepareAt(moovinEvents), getForzaPrepareAt(forzaEvents)].filter(
+    (value): value is string => Boolean(value)
+  );
+  if (!candidates.length) return null;
+  return candidates.reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
 }
 
 export function forzaGroupToStatus(group: string | undefined): string {
@@ -1141,10 +1181,25 @@ export function countMoovinRouteAttempts(events: MoovinTrackingRow["events"] | u
 
 export function countForzaIncidents(events: ForzaTrackingRow["events"] | undefined): number {
   if (!events?.length) return 0;
-  return events.filter((event) => {
-    const text = `${event.code ?? ""} ${event.title ?? ""} ${event.description ?? ""}`.toLowerCase();
-    return text.includes("fall") || text.includes("incid") || text.includes("no entreg");
-  }).length;
+  return events.filter((event) =>
+    // Con includes() a secas, "no entreg" aparecia dentro de "destiNO ENTREGado"
+    // y convertia un hito de transito en incidencia (ver matchesStatusKeyword).
+    matchesStatusKeyword(`${event.code ?? ""} ${event.title ?? ""} ${event.description ?? ""}`, [
+      "fall",
+      "incid",
+      "no entreg",
+    ])
+  ).length;
+}
+
+/**
+ * Intentos de entrega fallidos de WYN. WYN no se puede medir con el contador de
+ * Forza: sus eventos son texto libre de otra familia y el codigo es lo unico
+ * univoco, asi que se cuenta por la taxonomia (LM-6..LM-10, AV-2).
+ */
+export function countWynIncidents(events: WynTrackingRow["events"] | undefined): number {
+  if (!events?.length) return 0;
+  return events.filter((event) => isWynIncidentCode(String(event.code ?? ""))).length;
 }
 
 // Reclasifica el ultimo estado de Moovin corrigiendo cache viejo: "Cancelado"

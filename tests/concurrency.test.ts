@@ -28,9 +28,14 @@ describe("forEachRateLimited", () => {
       },
       { concurrency: 5, minIntervalMs: INTERVAL }
     );
+    // Se compara contra el ORIGEN del calendario, no contra el arranque
+    // anterior: si el event loop se traba, dos turnos vencidos pueden salir
+    // pegados (el limitador se pone al dia) y la diferencia de a pares da
+    // falsos negativos. Lo que si es invariante es que el turno i nunca sale
+    // antes de origen + i*INTERVAL, o sea que la TASA se respeta.
     for (let i = 1; i < starts.length; i++) {
       // Holgura de 5 ms por la granularidad de los timers.
-      expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(INTERVAL - 5);
+      expect(starts[i] - starts[0]).toBeGreaterThanOrEqual(i * INTERVAL - 5);
     }
   });
 

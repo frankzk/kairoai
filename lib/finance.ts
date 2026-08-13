@@ -2,7 +2,13 @@ import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
 import { normalizeForzaGuide } from "./forza";
 import { normalizeMatchKey } from "./order-matching";
-import { extractWynGuides, isWynGuide } from "./wyn";
+import {
+  deriveWynGroup,
+  extractWynGuides,
+  isWynGuide,
+  isWynIncidentGroup,
+  wynEventGroup,
+} from "./wyn";
 
 export * from "./finance-types";
 import type {
@@ -1447,7 +1453,7 @@ export async function listWynTracking(
   return all;
 }
 
-type CourierShipmentTrackingRow = {
+export type CourierShipmentTrackingRow = {
   store_id: number;
   guide_number: string;
   normalized_status: string;
@@ -1459,19 +1465,31 @@ type CourierShipmentTrackingRow = {
   checked_at: string;
 };
 
-function toWynTrackingRow(row: CourierShipmentTrackingRow): WynTrackingRow {
+// Las columnas normalized_status / has_incident guardan lo que la taxonomia
+// decia el dia del sync, y el codigo del evento no cambia nunca: se reclasifica
+// al leer para que una fila vieja no arrastre una clasificacion vencida. Hace
+// falta de verdad porque listWynSyncCandidates no vuelve a consultar una guia en
+// estado final, asi que un "Robado" guardado como entregado no se corregiria
+// solo. Mismo criterio que deriveMoovinGroup.
+export function toWynTrackingRow(row: CourierShipmentTrackingRow): WynTrackingRow {
   const raw = row.raw_payload && typeof row.raw_payload === "object" ? row.raw_payload : {};
-  const events = Array.isArray(raw.events) ? (raw.events as WynTrackingRow["events"]) : [];
+  const cached = Array.isArray(raw.events) ? (raw.events as WynTrackingRow["events"]) : [];
+  const events = cached.map((event) => ({
+    ...event,
+    group: wynEventGroup(String(event.code ?? ""), String(event.title ?? ""), String(event.description ?? "")),
+  }));
+  const latestGroup = deriveWynGroup(events, row.raw_status);
+  const hasIncident = isWynIncidentGroup(latestGroup);
   return {
     store_id: row.store_id,
     guide_number: row.guide_number,
     tracking_number: typeof raw.tracking_number === "string" ? raw.tracking_number : row.guide_number,
     latest_status: row.raw_status,
     latest_code: typeof raw.latest_code === "string" ? raw.latest_code : "",
-    latest_group: row.normalized_status,
+    latest_group: latestGroup,
     latest_at: row.latest_at,
-    has_incident: row.has_incident,
-    incident_reason: row.incident_reason,
+    has_incident: hasIncident,
+    incident_reason: hasIncident ? row.incident_reason : "",
     delivery_address: typeof raw.delivery_address === "string" ? raw.delivery_address : "",
     receiver_name: typeof raw.receiver_name === "string" ? raw.receiver_name : "",
     events,
