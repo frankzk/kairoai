@@ -1,9 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { MessageSquare, RefreshCw } from "lucide-react";
 import ChatComposer from "@/components/ChatComposer";
 import { Badge } from "@/components/ui/badge";
+import {
+  formatChatDayLabel,
+  formatChatTime,
+  needsDaySeparator,
+} from "@/lib/chat-time";
 import { FINANCE_STORES } from "@/lib/store-config";
 import type { ChatLeadSummary, ConversationMessage } from "@/lib/leads-types";
 
@@ -204,26 +209,49 @@ export default function LeadChatPanel({
         ) : messages.length === 0 ? (
           <p className="py-6 text-center text-xs text-muted-foreground">Sin mensajes.</p>
         ) : (
-          messages.map((message) => (
-            <div
-              key={message.id}
-              className={`max-w-[88%] select-text rounded-lg ${
-                compact ? "px-2.5 py-1.5" : "px-3 py-2"
-              } ${textSize} ${
-                message.direction === "inbound"
-                  ? "bg-muted"
-                  : "ml-auto bg-primary text-primary-foreground"
-              }`}
-            >
-              {message.text && (
-                <p className="whitespace-pre-wrap break-words leading-relaxed">{message.text}</p>
-              )}
-              {message.mediaUrl && (
-                <MediaAttachment message={message} store={store} compact={compact} />
-              )}
-              {message.caption && <p className="mt-0.5 text-[10px] opacity-80">{message.caption}</p>}
-            </div>
-          ))
+          messages.map((message, index) => {
+            const time = formatChatTime(message.timestamp);
+            const separator = needsDaySeparator(messages[index - 1]?.timestamp ?? null, message.timestamp)
+              ? formatChatDayLabel(message.timestamp)
+              : "";
+            return (
+              <Fragment key={message.id}>
+                {separator && (
+                  <p className="py-1 text-center text-[10px] uppercase tracking-wide text-muted-foreground">
+                    {separator}
+                  </p>
+                )}
+                <div
+                  className={`max-w-[88%] select-text rounded-lg ${
+                    compact ? "px-2.5 py-1.5" : "px-3 py-2"
+                  } ${textSize} ${
+                    message.direction === "inbound"
+                      ? "bg-muted"
+                      : "ml-auto bg-primary text-primary-foreground"
+                  }`}
+                >
+                  {message.text && (
+                    <p className="whitespace-pre-wrap break-words leading-relaxed">{message.text}</p>
+                  )}
+                  {message.mediaUrl && (
+                    <MediaAttachment message={message} store={store} compact={compact} />
+                  )}
+                  {message.caption && (
+                    <p className="mt-0.5 text-[10px] opacity-80">{message.caption}</p>
+                  )}
+                  {time && (
+                    <p
+                      className={`mt-0.5 text-[10px] leading-none opacity-60 ${
+                        message.direction === "inbound" ? "" : "text-right"
+                      }`}
+                    >
+                      {time}
+                    </p>
+                  )}
+                </div>
+              </Fragment>
+            );
+          })
         )}
       </div>
 
