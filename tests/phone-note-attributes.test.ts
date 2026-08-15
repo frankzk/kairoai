@@ -1,5 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { phoneFromNoteAttributes } from "../lib/finance-orders";
+import { phoneFromNoteAttributes, phoneFromNote } from "../lib/finance-orders";
+
+describe("phoneFromNote (celular en la nota de texto del pedido)", () => {
+  it("rescata el celular de una nota real de venta por bot", () => {
+    // Nota real del pedido #MCRC19178 (canal icomfly). El campo estandar viene
+    // vacio y no hay note_attributes; el numero solo esta en la nota.
+    expect(phoneFromNote("Pedido #8927 - Venta por bot - WhatsApp +83297165150")).toBe("83297165");
+  });
+
+  it("tolera prefijo 506 y separadores", () => {
+    expect(phoneFromNote("Cliente: +506 8423-5361")).toBe("84235361");
+    expect(phoneFromNote("wsp 506 7016 2233")).toBe("70162233");
+    expect(phoneFromNote("llamar al 88887777")).toBe("88887777");
+  });
+
+  it("no confunde el numero de pedido ni direcciones", () => {
+    // "#8927" (4 digitos) y "150 mts" (3 digitos) no tienen forma de celular CR.
+    expect(phoneFromNote("Pedido #8927 - 150 mts al sur de la iglesia")).toBeNull();
+  });
+
+  it("devuelve null cuando no hay celular", () => {
+    expect(phoneFromNote("")).toBeNull();
+    expect(phoneFromNote(null)).toBeNull();
+    expect(phoneFromNote("entregar en la tarde")).toBeNull();
+  });
+});
 
 describe("phoneFromNoteAttributes", () => {
   it("toma el campo nombrado como telefono (8+ digitos)", () => {

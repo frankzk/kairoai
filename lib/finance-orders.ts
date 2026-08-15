@@ -1339,6 +1339,19 @@ export function phoneFromNoteAttributes(
   return shaped;
 }
 
+// Rescata un celular CR de la NOTA de texto libre del pedido. Las ventas por bot
+// / importadas (canal icomfly) suelen poner el numero en la nota
+// ("Pedido #N - Venta por bot - WhatsApp +8XXXXXXX"), no en un campo estandar ni
+// en note_attributes. Toma el primer numero con forma de celular CR (8 digitos
+// que arrancan en 2/6/7/8), tolerando prefijo 506 y separadores; el "#pedido"
+// (4 digitos) no matchea.
+export function phoneFromNote(note?: string | null): string | null {
+  if (!note) return null;
+  const compact = String(note).replace(/[\s()./+-]/g, "");
+  const m = compact.match(/(?:506)?([2678]\d{7})/);
+  return m ? m[1] : null;
+}
+
 export function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
   // El endpoint ya resuelve lineas y notas; raw_order queda solo como
   // respaldo por si llega una respuesta vieja cacheada.
@@ -1355,13 +1368,14 @@ export function persistedOrderToSummary(order: Record<string, unknown>): Shopify
     (order.note_attributes as ShopifyOrderSummary["note_attributes"]) ??
     (rawOrder.note_attributes as ShopifyOrderSummary["note_attributes"]) ??
     [];
+  const note = String(order.note ?? rawOrder.note ?? "");
   return {
     id: String(order.shopify_order_id ?? order.id ?? ""),
     order_number: Number(order.order_number ?? 0),
     name: String(order.name ?? ""),
     customer_name: String(order.customer_name ?? "Sin nombre"),
     last_name: String(order.last_name ?? ""),
-    phone: (order.phone as string | null) || phoneFromNoteAttributes(noteAttributes),
+    phone: (order.phone as string | null) || phoneFromNoteAttributes(noteAttributes) || phoneFromNote(note),
     products: lineItems.map((item) => `${item.quantity}x ${item.title}`).join(", "),
     total: `${order.total_price ?? 0} ${order.currency ?? "CRC"}`,
     total_price: Number(order.total_price ?? 0),
@@ -1371,7 +1385,7 @@ export function persistedOrderToSummary(order: Record<string, unknown>): Shopify
     cancelled_at: (order.cancelled_at as string | null) ?? null,
     tracking_number: String(order.tracking_number ?? ""),
     tracking_company: String(order.tracking_company ?? ""),
-    note: String(order.note ?? rawOrder.note ?? ""),
+    note,
     note_attributes: noteAttributes,
     created_at: String(order.shopify_created_at ?? ""),
     line_items: lineItems,
