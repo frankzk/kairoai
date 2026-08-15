@@ -8908,6 +8908,17 @@ function phoneFromNoteAttributes(
   return shaped;
 }
 
+// Rescata un celular CR de la NOTA de texto libre del pedido (ventas por bot /
+// icomfly ponen "WhatsApp +8XXXXXXX" en la nota). Copia de lib/finance-orders.ts
+// (mantener en sync): primer numero con forma de celular CR, tolerando 506 y
+// separadores; el "#pedido" (4 digitos) no matchea.
+function phoneFromNote(note?: string | null): string | null {
+  if (!note) return null;
+  const compact = String(note).replace(/[\s()./+-]/g, "");
+  const m = compact.match(/(?:506)?([2678]\d{7})/);
+  return m ? m[1] : null;
+}
+
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
   // El endpoint ya resuelve lineas y notas; raw_order queda solo como
   // respaldo por si llega una respuesta vieja cacheada.
@@ -8924,13 +8935,14 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     (order.note_attributes as ShopifyOrderSummary["note_attributes"]) ??
     (rawOrder.note_attributes as ShopifyOrderSummary["note_attributes"]) ??
     [];
+  const note = String(order.note ?? rawOrder.note ?? "");
   return {
     id: String(order.shopify_order_id ?? order.id ?? ""),
     order_number: Number(order.order_number ?? 0),
     name: String(order.name ?? ""),
     customer_name: String(order.customer_name ?? "Sin nombre"),
     last_name: String(order.last_name ?? ""),
-    phone: (order.phone as string | null) || phoneFromNoteAttributes(noteAttributes),
+    phone: (order.phone as string | null) || phoneFromNoteAttributes(noteAttributes) || phoneFromNote(note),
     products: lineItems.map((item) => `${item.quantity}x ${item.title}`).join(", "),
     total: `${order.total_price ?? 0} ${order.currency ?? "CRC"}`,
     total_price: Number(order.total_price ?? 0),
@@ -8940,7 +8952,7 @@ function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSu
     cancelled_at: (order.cancelled_at as string | null) ?? null,
     tracking_number: String(order.tracking_number ?? ""),
     tracking_company: String(order.tracking_company ?? ""),
-    note: String(order.note ?? rawOrder.note ?? ""),
+    note,
     note_attributes: noteAttributes,
     created_at: String(order.shopify_created_at ?? ""),
     line_items: lineItems,
