@@ -22,6 +22,7 @@ import {
   Search,
   StickyNote,
   Trash2,
+  ShieldAlert,
   Truck,
   Upload,
   X,
@@ -75,8 +76,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import DispatchTab from "@/components/DispatchTab";
+import DispatchAuditTab from "@/components/DispatchAuditTab";
 
-type Tab = "orders" | "dispatch" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
+type Tab = "orders" | "dispatch" | "audit" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 
 // Carril 2 (ultimo tab): TODOS los tabs cargan server-side. Pedidos/KPIs, Productos,
 // Notas, Cierre y ahora Liquidaciones traen sus datos ya calculados desde sus
@@ -1468,6 +1470,9 @@ export default function FinancePage() {
           <TabButton active={tab === "dispatch"} onClick={() => setTab("dispatch")} icon={<Truck />}>
             Despacho
           </TabButton>
+          <TabButton active={tab === "audit"} onClick={() => setTab("audit")} icon={<ShieldAlert />}>
+            Auditoría
+          </TabButton>
           <TabButton active={tab === "products"} onClick={() => setTab("products")} icon={<BarChart3 />}>
             Productos
           </TabButton>
@@ -1520,6 +1525,7 @@ export default function FinancePage() {
               />
             )}
             {tab === "dispatch" && <DispatchTab storeCode={selectedStore.code} />}
+            {tab === "audit" && <DispatchAuditTab storeCode={selectedStore.code} />}
             {tab === "products" && (
               <ProductAnalysisTab
                 storeCode={selectedStore.code}
