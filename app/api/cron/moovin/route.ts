@@ -13,9 +13,15 @@ const PER_REQUEST_DELAY_MS = 400;
 // Tope por corrida para no exceder maxDuration; el resto se cubre en la
 // siguiente ejecucion del cron. Configurable por env para afinar segun el plan
 // (en Vercel Pro se puede subir maxDuration y este tope para cubrir mas guias).
+//
+// El tope por corrida es MENOR que la cantidad de guias vivas (~600), asi que la
+// cobertura sale de la frecuencia, no del tope: con el cron cada hora son
+// 24 x 130 = 3.120 lecturas al dia, o sea una barrida completa cada ~5 horas.
+// Quien entra en cada corrida lo decide listMoovinSyncCandidates, que ordena por
+// antiguedad de lectura para que ninguna guia se quede sin turno.
 const MAX_PER_RUN = Number(process.env.MOOVIN_MAX_PER_RUN ?? 130);
-// No reconsultar guias vistas dentro de esta ventana. Por defecto 20 min para
-// que el cron de 15 min mantenga el tracking fresco sin re-consultar de mas.
+// No reconsultar guias vistas dentro de esta ventana. Con el cron cada hora, 20
+// min solo evita repetir si una corrida manual pisa a la programada.
 const FRESH_WINDOW_MINUTES = Number(process.env.MOOVIN_FRESH_WINDOW_MIN ?? 20);
 
 // Si CRON_SECRET esta configurado, exigirlo (Vercel cron y el workflow de
