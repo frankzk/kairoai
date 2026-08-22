@@ -9676,6 +9676,8 @@ function moovinGroupToStatus(group: string | undefined): string {
       return "delivered";
     case "returned":
       return "not_delivered";
+    case "cancelled":
+      return "annulled";
     case "failed":
       return "incident";
     case "in_progress":
@@ -9759,6 +9761,10 @@ function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
   if (!row) return "";
   const code = String(row.latest_code ?? "").toUpperCase();
   const title = String(row.latest_status ?? "").toLowerCase();
+  // Cancelado ANTES de la recoleccion (code DELETEPACKAGE / "Cancelado previo a
+  // recoleccion"): nunca se movio -> ANULADO, no "no entregado" (no cae en Falta
+  // cuadrar). Distinto del cancelado por superar intentos (ese si es devolucion).
+  if (code === "DELETEPACKAGE" || title.includes("previo a recolec")) return "cancelled";
   if (code.startsWith("CANCEL") || title.includes("cancelado")) return "returned";
   return row.latest_group ?? "";
 }
