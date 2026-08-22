@@ -106,6 +106,9 @@ export interface SettlementRow {
   shopify_total: number;
   shopify_created_at: string | null;
   order_items: SettlementOrderItem[];
+  // true = vínculo con el pedido Shopify fijado a mano (match manual). El
+  // re-emparejar automático y la re-importación lo respetan (no lo revierten).
+  manual_match?: boolean;
   // Guardado al importar; las lecturas lo omiten para no inflar la respuesta.
   raw_row?: Record<string, unknown>;
   created_at: string;

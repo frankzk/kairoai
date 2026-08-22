@@ -1,6 +1,54 @@
 import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
 import { getShopifyCredentials, getStoreConfig, type FinanceStoreConfig } from "./stores";
+import type { SettlementRow } from "./finance-types";
+
+// Campos que una fila de liquidacion toma de su pedido Shopify emparejado (o se
+// limpian si no hay match). Fuente unica compartida por el re-emparejar
+// automatico (rematch) y el match manual, para que ambos escriban IDENTICO.
+export type SettlementMatchFields = Pick<
+  SettlementRow,
+  | "match_status"
+  | "shopify_order_id"
+  | "shopify_order_name"
+  | "shopify_financial_status"
+  | "shopify_fulfillment_status"
+  | "shopify_total"
+  | "shopify_created_at"
+  | "order_items"
+>;
+
+export function settlementShopifyMatchFields(
+  shopify: MatchableShopifyOrder | null | undefined
+): SettlementMatchFields {
+  if (!shopify) {
+    return {
+      match_status: "unmatched",
+      shopify_order_id: "",
+      shopify_order_name: "",
+      shopify_financial_status: "",
+      shopify_fulfillment_status: "",
+      shopify_total: 0,
+      shopify_created_at: null,
+      order_items: [],
+    };
+  }
+  return {
+    match_status: "matched",
+    shopify_order_id: String(shopify.id),
+    shopify_order_name: shopify.name,
+    shopify_financial_status: shopify.financial_status ?? "",
+    shopify_fulfillment_status: shopify.fulfillment_status ?? "",
+    shopify_total: Number(shopify.total_price ?? 0),
+    shopify_created_at: shopify.created_at || null,
+    order_items: (shopify.line_items ?? []).map((item) => ({
+      sku: String(item.sku ?? "").toLowerCase(),
+      title: String(item.title ?? ""),
+      quantity: Number(item.quantity ?? 0),
+      price: Number(item.price ?? 0),
+    })),
+  };
+}
 
 export interface MatchableShopifyOrder {
   id: number;
@@ -19,6 +67,45 @@ export interface MatchableShopifyOrder {
     quantity?: number;
     price?: string | number;
   }>;
+}
+
+// Busca UN pedido persistido de Shopify por referencia (#MCRC16498, 16498 o
+// MCRC16498), para el match manual de liquidaciones. Prioriza order_number
+// (numérico, confiable) y cae al nombre exacto. Devuelve null si no existe.
+export async function getPersistedShopifyOrderForMatch(
+  storeId: number,
+  ref: string
+): Promise<MatchableShopifyOrder | null> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) return null;
+  const digits = raw.replace(/[^0-9]/g, "");
+  const columns =
+    "shopify_order_id, order_number, name, financial_status, fulfillment_status, cancelled_at, total_price, shopify_created_at, line_items";
+  const query = () => getDB().from("shopify_orders").select(columns).eq("store_id", storeId);
+
+  let row: Record<string, unknown> | null = null;
+  if (digits) {
+    const { data, error } = await query().eq("order_number", Number(digits)).limit(1).maybeSingle();
+    if (error) throw new Error(`getPersistedShopifyOrderForMatch: ${error.message}`);
+    row = (data as Record<string, unknown> | null) ?? null;
+  }
+  if (!row) {
+    const name = `#${raw.replace(/^#+/, "")}`;
+    const { data } = await query().eq("name", name).limit(1).maybeSingle();
+    row = (data as Record<string, unknown> | null) ?? null;
+  }
+  if (!row) return null;
+  return {
+    id: Number(row.shopify_order_id),
+    name: String(row.name ?? ""),
+    order_number: Number(row.order_number ?? 0),
+    created_at: (row.shopify_created_at as string) ?? "",
+    financial_status: String(row.financial_status ?? ""),
+    fulfillment_status: (row.fulfillment_status as string) || null,
+    cancelled_at: (row.cancelled_at as string) ?? null,
+    total_price: String(row.total_price ?? 0),
+    line_items: (row.line_items as MatchableShopifyOrder["line_items"]) ?? [],
+  };
 }
 
 const DB_PAGE_SIZE = 1000;

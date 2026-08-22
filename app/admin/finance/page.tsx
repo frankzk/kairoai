@@ -4355,6 +4355,24 @@ function SettlementsTab({
     return () => controller.abort();
   }, [storeCode, imports]);
 
+  // Match manual: vincula una fila "sin match" al pedido Shopify indicado
+  // (#MCRC/numero). Actualiza la fila localmente (optimista) porque la vista
+  // server-side tiene cache corta; el proximo refresco confirma.
+  const handleManualMatch = useCallback(
+    async (row: SettlementRow, orderRef: string) => {
+      const res = await fetch(withStore("/api/finance/settlements", storeCode), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: row.id, order: orderRef }),
+      });
+      const json = await readApiJson(res);
+      if (!res.ok) throw new Error(json.error ?? "No se pudo vincular el pedido");
+      const updated = json.row as SettlementRow;
+      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, ...updated } : r)));
+    },
+    [storeCode]
+  );
+
   const fileByImportId = useMemo(
     () => new Map(imports.map((item) => [item.id, item.file_name])),
     [imports]
@@ -4648,6 +4666,7 @@ function SettlementsTab({
           <SettlementRowsTable
             rows={visibleSettlementRows}
             fileByImportId={fileByImportId}
+            onManualMatch={handleManualMatch}
             emptyLabel={
               selectedImport
                 ? "No hay filas con ese filtro de Shopify."
@@ -4661,13 +4680,69 @@ function SettlementsTab({
   );
 }
 
+function ManualMatchCell({
+  row,
+  onManualMatch,
+}: {
+  row: SettlementRow;
+  onManualMatch: (row: SettlementRow, orderRef: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit() {
+    const ref = value.trim();
+    if (!ref || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onManualMatch(row, ref);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo vincular");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <Badge variant="warning">sin match</Badge>
+      <div className="flex items-center gap-1">
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void submit();
+          }}
+          placeholder="#MCRC…"
+          className="w-24 border border-border bg-background px-1.5 py-0.5 font-mono text-xs"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-6 px-2 text-xs"
+          disabled={saving || !value.trim()}
+          onClick={() => void submit()}
+        >
+          {saving ? "…" : "Vincular"}
+        </Button>
+      </div>
+      {error && <span className="text-[10px] text-red-300">{error}</span>}
+    </div>
+  );
+}
+
 function SettlementRowsTable({
   rows,
   fileByImportId,
+  onManualMatch,
   emptyLabel = "No hay filas para mostrar.",
 }: {
   rows: SettlementRow[];
   fileByImportId: Map<number, string>;
+  onManualMatch?: (row: SettlementRow, orderRef: string) => Promise<void>;
   emptyLabel?: string;
 }) {
   return (
@@ -4697,9 +4772,16 @@ function SettlementRowsTable({
                 <StatusBadge status={row.internal_status} label={row.settlement_status} />
               </td>
               <td className="px-3 py-2">
-                <Badge variant={row.match_status === "matched" ? "success" : "warning"}>
-                  {row.match_status === "matched" ? row.shopify_order_name : "sin match"}
-                </Badge>
+                {row.match_status === "matched" ? (
+                  <Badge variant="success">
+                    {row.shopify_order_name}
+                    {row.manual_match ? " ·manual" : ""}
+                  </Badge>
+                ) : onManualMatch ? (
+                  <ManualMatchCell row={row} onManualMatch={onManualMatch} />
+                ) : (
+                  <Badge variant="warning">sin match</Badge>
+                )}
               </td>
               <td className="px-3 py-2 text-right font-mono text-xs">{currency(row.amount_to_liquidate)}</td>
             </tr>

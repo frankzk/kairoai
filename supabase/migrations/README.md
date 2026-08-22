@@ -32,6 +32,7 @@ Estado actual:
 | `0022_leads.sql` | Modulo de Leads de WhatsApp: `leads`, `lead_calls`, `lead_conversations`, `lead_webhook_events` (idempotencia), `lead_sync_state`. Identidad de vendedoras via `payroll_staff`; sin RLS (aislamiento por tienda en el API) | Si (aplicada en produccion) |
 | `0023_finance_autovacuum_tuning.sql` | Autovacuum agresivo en `finance_dataset_cache`, `moovin_tracking`, `logistics_rows`, `settlement_rows` para evitar el bloat que dejaba `/admin/finance` en 503 (incidente 2026-07-21) | Si (21/07/2026) |
 | `0024_finance_order_index.sql` | Tabla índice por pedido (`finance_order_index`) + pg_trgm para paginación/filtros/búsqueda server-side de `/api/finance/orders` (Fase 1, aditiva; la puebla el cron finance-index) | Si (21/07/2026) |
+| `0025_settlement_manual_match.sql` | Columna `manual_match` en `settlement_rows`: permite vincular a mano una liquidación "sin match" a un pedido #MCRC y que persista (el re-emparejar automático la respeta) | Si (22/07/2026) |
 | `0025_leads_shopify_order_match.sql` | Índice funcional por teléfono normalizado + RPC `match_leads_to_shopify_orders` (cruce lead↔orden 100% en Postgres; lo corre el cron leads-shopify-match) | Si (24/07/2026) |
 | `0026_quick_replies.sql` | Respuestas rápidas del chat de leads (`quick_replies`): plantillas por tienda con contador de uso para los chips del composer | Si (26/07/2026) |
 

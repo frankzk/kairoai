@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildShopifyMatchIndex, findShopifyOrderForRow } from "@/lib/order-matching";
 import {
   loadShopifyOrdersForMatching,
+  settlementShopifyMatchFields,
   type MatchableShopifyOrder,
 } from "@/lib/finance-matching";
 import {
@@ -61,6 +62,11 @@ export async function POST(req: NextRequest) {
 
     const settlementByImport = new Map<number, ImportTally>();
     const updatedSettlements = settlementRows.map((row) => {
+      // Match manual fijado a mano: se respeta (cuenta como matched y no se toca).
+      if (row.manual_match) {
+        tally(settlementByImport, row.import_id, true);
+        return row;
+      }
       const shopify = findShopifyOrderForRow({ order_name: row.order_name }, matchIndex);
       tally(settlementByImport, row.import_id, Boolean(shopify));
       return applySettlementMatch(row, shopify);
@@ -146,35 +152,7 @@ function applyLogisticsMatch(row: LogisticsRow, shopify?: MatchableShopifyOrder)
 }
 
 function applySettlementMatch(row: SettlementRow, shopify?: MatchableShopifyOrder): SettlementRow {
-  if (!shopify) {
-    return {
-      ...row,
-      match_status: "unmatched",
-      shopify_order_id: "",
-      shopify_order_name: "",
-      shopify_financial_status: "",
-      shopify_fulfillment_status: "",
-      shopify_total: 0,
-      shopify_created_at: null,
-      order_items: [],
-    };
-  }
-  return {
-    ...row,
-    match_status: "matched",
-    shopify_order_id: String(shopify.id),
-    shopify_order_name: shopify.name,
-    shopify_financial_status: shopify.financial_status ?? "",
-    shopify_fulfillment_status: shopify.fulfillment_status ?? "",
-    shopify_total: Number(shopify.total_price ?? 0),
-    shopify_created_at: shopify.created_at || null,
-    order_items: (shopify.line_items ?? []).map((item) => ({
-      sku: String(item.sku ?? "").toLowerCase(),
-      title: String(item.title ?? ""),
-      quantity: Number(item.quantity ?? 0),
-      price: Number(item.price ?? 0),
-    })),
-  };
+  return { ...row, ...settlementShopifyMatchFields(shopify ?? null) };
 }
 
 async function upsertInBatches<T>(rows: T[], upsert: (batch: T[]) => Promise<void>): Promise<void> {

@@ -251,6 +251,24 @@ export async function upsertSettlementRows(rows: SettlementRow[]): Promise<void>
   if (error) throw new Error(`upsertSettlementRows: ${error.message}`);
 }
 
+// Actualiza campos puntuales de una fila de liquidacion (match manual) y
+// devuelve la fila resultante. Acotado por store_id (aislamiento).
+export async function updateSettlementRowFields(
+  storeId: number,
+  rowId: number,
+  fields: Partial<SettlementRow>
+): Promise<SettlementRow | null> {
+  const { data, error } = await getDB()
+    .from("settlement_rows")
+    .update(fields)
+    .eq("id", rowId)
+    .eq("store_id", storeId)
+    .select(SETTLEMENT_ROW_COLUMNS_BASE)
+    .maybeSingle();
+  if (error) throw new Error(`updateSettlementRowFields: ${error.message}`);
+  return (data as SettlementRow | null) ?? null;
+}
+
 export async function updateSettlementImportMatchCounts(
   id: number,
   storeId: number,
@@ -266,7 +284,7 @@ export async function updateSettlementImportMatchCounts(
 }
 
 const SETTLEMENT_ROW_COLUMNS_BASE =
-  "id, store_id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, service_type, cod_amount, cod_commission, card_commission, delivery_cost, pick_pack_cost, packaging_cost, amount_to_liquidate, settlement_status, internal_status, match_status, shopify_order_id, shopify_order_name, shopify_financial_status, shopify_fulfillment_status, shopify_total, shopify_created_at, order_items, created_at";
+  "id, store_id, import_id, guide_number, order_name, store_order_number, customer_name, customer_phone, created_on, courier, service_type, cod_amount, cod_commission, card_commission, delivery_cost, pick_pack_cost, packaging_cost, amount_to_liquidate, settlement_status, internal_status, match_status, shopify_order_id, shopify_order_name, shopify_financial_status, shopify_fulfillment_status, shopify_total, shopify_created_at, order_items, manual_match, created_at";
 // first_name/last_name requieren la migracion 0005; si falta, se reintenta
 // sin ellas.
 let settlementNameColumnsMissing = false;

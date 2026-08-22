@@ -3,7 +3,9 @@ import * as XLSX from "xlsx";
 import { readWorkbook, sheetToJson } from "@/lib/xlsx";
 import { buildShopifyMatchIndex, findShopifyOrderForRow } from "@/lib/order-matching";
 import {
+  getPersistedShopifyOrderForMatch,
   loadShopifyOrdersForMatching,
+  settlementShopifyMatchFields,
   type MatchableShopifyOrder as ShopifySettlementOrder,
 } from "@/lib/finance-matching";
 import {
@@ -12,6 +14,8 @@ import {
   insertSettlementRows,
   listSettlementImports,
   listSettlementRows,
+  updateSettlementImportMatchCounts,
+  updateSettlementRowFields,
   upsertBoxfulFileControl,
   type InternalOrderStatus,
   type SettlementOrderItem,
@@ -199,6 +203,63 @@ export async function DELETE(req: NextRequest) {
     const message = toFriendlyErrorMessage(err, "Error al eliminar liquidacion");
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+// Match manual de una fila de liquidacion "sin match":
+//   body { id, order }  -> vincula la fila al pedido Shopify (#MCRC / numero).
+//   body { id, unmatch:true } -> deshace el vinculo manual (vuelve a sin match).
+// Fija manual_match para que el re-emparejar automatico no lo revierta.
+export async function PATCH(req: NextRequest) {
+  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
+  if (!store) return missingStoreResponse();
+  const body = await req.json().catch(() => null);
+  const id = Number(body?.id);
+  if (!id) return NextResponse.json({ error: "id de fila requerido" }, { status: 400 });
+
+  try {
+    if (body?.unmatch) {
+      const row = await updateSettlementRowFields(store.id, id, {
+        ...settlementShopifyMatchFields(null),
+        manual_match: false,
+      });
+      if (!row) return NextResponse.json({ error: "Fila de liquidacion no encontrada" }, { status: 404 });
+      await recomputeSettlementImportCounts(row.import_id, store.id);
+      await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+        console.warn("[finance/settlements PATCH cache]", cacheErr)
+      );
+      return NextResponse.json({ ok: true, row });
+    }
+
+    const ref = String(body?.order ?? "").trim();
+    if (!ref) return NextResponse.json({ error: "Indica el pedido (ej. #MCRC16498)" }, { status: 400 });
+    const shopify = await getPersistedShopifyOrderForMatch(store.id, ref);
+    if (!shopify) {
+      return NextResponse.json(
+        { error: `No encontramos el pedido "${ref}" en Shopify (${store.code}).` },
+        { status: 404 }
+      );
+    }
+    const row = await updateSettlementRowFields(store.id, id, {
+      ...settlementShopifyMatchFields(shopify),
+      manual_match: true,
+    });
+    if (!row) return NextResponse.json({ error: "Fila de liquidacion no encontrada" }, { status: 404 });
+    await recomputeSettlementImportCounts(row.import_id, store.id);
+    await refreshFinanceDatasetCache(store).catch((cacheErr) =>
+      console.warn("[finance/settlements PATCH cache]", cacheErr)
+    );
+    return NextResponse.json({ ok: true, row });
+  } catch (err) {
+    const message = toFriendlyErrorMessage(err, "Error al vincular el pedido");
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+// Recalcula los contadores match/sin-match del import tras un cambio manual.
+async function recomputeSettlementImportCounts(importId: number, storeId: number): Promise<void> {
+  const rows = await listSettlementRows(importId, storeId);
+  const matched = rows.filter((row) => row.match_status === "matched").length;
+  await updateSettlementImportMatchCounts(importId, storeId, matched, rows.length - matched);
 }
 
 function missingStoreResponse() {
