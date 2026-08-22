@@ -9530,6 +9530,21 @@ function getEffectiveTrackingStatus(
   row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "wyn_group" | "wyn_incidents" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
+  // Una liquidacion cerrada es un hecho TERMINAL: si hay una traza con estado
+  // final (entregado / no entregado) le gana a un estado de courier NO terminal,
+  // que suele quedar CONGELADO en cache. Evita que un pedido ya liquidado siga
+  // contando como "pendiente" / "en transito".
+  const settledFinalStatus = traces.find((trace) =>
+    isFinalTrackingStatus(trace.internal_status)
+  )?.internal_status;
+  const rawCourierStatus =
+    wynGroupToStatus(row.wyn_group) ||
+    moovinGroupToStatus(row.moovin_group) ||
+    forzaGroupToStatus(row.forza_group);
+  if (settledFinalStatus && rawCourierStatus && !isFinalTrackingStatus(rawCourierStatus)) {
+    return settledFinalStatus;
+  }
+
   // Las guias MLCR pertenecen a WYN. Su estado manda antes de cualquier
   // etiqueta historica de courier que haya quedado guardada en Shopify.
   const wynStatus = wynGroupToStatus(row.wyn_group);

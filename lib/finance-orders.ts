@@ -919,6 +919,22 @@ export function getEffectiveTrackingStatus(
   row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "wyn_group" | "wyn_incidents" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
+  // Una liquidacion cerrada es un hecho TERMINAL: si hay una traza de liquidacion
+  // con estado final (entregado / no entregado) le gana a un estado de courier NO
+  // terminal, que suele quedar CONGELADO en cache (p.ej. Moovin en "Precoordinacion
+  // enviada" de hace meses aunque el paquete ya se devolvio y se cobro). Evita que
+  // un pedido ya liquidado siga contando como "pendiente" / "en transito".
+  const settledFinalStatus = traces.find((trace) =>
+    isFinalTrackingStatus(trace.internal_status)
+  )?.internal_status;
+  const rawCourierStatus =
+    wynGroupToStatus(row.wyn_group) ||
+    moovinGroupToStatus(row.moovin_group) ||
+    forzaGroupToStatus(row.forza_group);
+  if (settledFinalStatus && rawCourierStatus && !isFinalTrackingStatus(rawCourierStatus)) {
+    return settledFinalStatus;
+  }
+
   // WYN se identifica por el prefijo MLCR y manda sobre etiquetas antiguas de
   // fulfillment. Un retorno final de WYN es un pedido no entregado.
   const wynStatus = wynGroupToStatus(row.wyn_group);
