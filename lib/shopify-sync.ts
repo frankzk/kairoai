@@ -88,6 +88,22 @@ export function buildInitialUrl(
   return `https://${shop}/admin/api/2024-01/orders.json?${params.toString()}`;
 }
 
+// Re-consulta un lote de pedidos por id exacto, sin ventana de tiempo.
+// status=any incluye anulados/cerrados: es la unica forma de descongelar
+// un pedido que quedo "Pendiente" en Kairo pero ya fue anulado en Shopify
+// hace mas de la ventana incremental (updated_at_min nunca lo vuelve a traer).
+export function buildByIdsUrl(ids: string[], store: FinanceStoreConfig): string {
+  const shop = resolveShopifyShop(store);
+
+  const params = new URLSearchParams({
+    status: "any",
+    limit: "250",
+    ids: ids.join(","),
+    fields: SHOPIFY_ORDER_FIELDS,
+  });
+  return `https://${shop}/admin/api/2024-01/orders.json?${params.toString()}`;
+}
+
 export function buildUpdatedUrl(updatedAtMin: string, store: FinanceStoreConfig): string {
   const shop = resolveShopifyShop(store);
 

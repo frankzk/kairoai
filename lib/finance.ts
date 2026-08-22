@@ -703,6 +703,58 @@ export async function getPersistedShopifyCoverage(
   };
 }
 
+export interface StuckShopifyOrderRef {
+  id: number;
+  shopify_order_id: string;
+  name: string;
+}
+
+// Pedidos "en limbo": siguen como Pendiente en Kairo (financial_status=pending,
+// sin anular, sin fulfillment ni guia). Si en Shopify ya se anularon, el refresh
+// incremental por updated_at nunca los vuelve a traer una vez pasada la ventana,
+// asi que quedan congelados en "no anulado". Este listado alimenta un re-chequeo
+// puntual por id contra Shopify (status=any) para traer la verdad actual.
+export async function listStuckShopifyOrderIds(
+  storeId = DEFAULT_FINANCE_STORE_ID,
+  opts: { limit?: number; minAgeDays?: number } = {}
+): Promise<StuckShopifyOrderRef[]> {
+  const cap = Math.max(1, Math.min(Math.floor(opts.limit ?? 5000), 20000));
+  const minAgeDays = Math.max(0, opts.minAgeDays ?? 0);
+  const createdBefore =
+    minAgeDays > 0
+      ? new Date(Date.now() - minAgeDays * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+  const pageSize = 1000;
+  const refs: StuckShopifyOrderRef[] = [];
+  let lastId: number | null = null;
+  while (refs.length < cap) {
+    const batchSize = Math.min(pageSize, cap - refs.length);
+    let query = getDB()
+      .from("shopify_orders")
+      .select("id, shopify_order_id, name")
+      .eq("store_id", storeId)
+      .eq("financial_status", "pending")
+      .is("cancelled_at", null)
+      // Sin fulfillment y sin guia de tracking (vacio o null en ambos).
+      .or("fulfillment_status.is.null,fulfillment_status.eq.")
+      .or("tracking_number.is.null,tracking_number.eq.")
+      .order("id", { ascending: false })
+      .limit(batchSize);
+    if (lastId !== null) query = query.lt("id", lastId);
+    if (createdBefore) query = query.lt("shopify_created_at", createdBefore);
+    const { data, error } = await query;
+    if (error) throw new Error(`listStuckShopifyOrderIds: ${error.message}`);
+    const page = (data ?? []) as StuckShopifyOrderRef[];
+    if (!page.length) break;
+    for (const row of page) {
+      if (row.shopify_order_id) refs.push(row);
+    }
+    lastId = Number(page[page.length - 1].id);
+    if (page.length < batchSize) break;
+  }
+  return refs;
+}
+
 export async function upsertPersistedShopifyOrders(
   orders: Omit<PersistedShopifyOrder, "id" | "synced_at" | "store_id">[],
   storeId = DEFAULT_FINANCE_STORE_ID
