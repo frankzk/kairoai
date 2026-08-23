@@ -1680,6 +1680,11 @@ export interface MonthlyCloseRow {
   boxful_cod_commission: number;
   boxful_card_commission: number;
   boxful_delivery_cost: number;
+  // El flete se paga igual si el paquete vuelve, asi que la linea se abre en
+  // dos: lo que costo mover lo que SI llego, y lo que costo mover lo que no.
+  // Suman boxful_delivery_cost.
+  boxful_delivery_cost_delivered: number;
+  boxful_delivery_cost_failed: number;
   boxful_pick_pack_cost: number;
   boxful_packaging_cost: number;
   cash_received: number;
@@ -2372,6 +2377,8 @@ export function buildMonthlyCloseRows(
       boxful_cod_commission: 0,
       boxful_card_commission: 0,
       boxful_delivery_cost: 0,
+      boxful_delivery_cost_delivered: 0,
+      boxful_delivery_cost_failed: 0,
       boxful_pick_pack_cost: 0,
       boxful_packaging_cost: 0,
       cash_received: 0,
@@ -2419,6 +2426,14 @@ export function buildMonthlyCloseRows(
     row.boxful_cod_commission += order.settlement_cod_commission;
     row.boxful_card_commission += order.settlement_card_commission;
     row.boxful_delivery_cost += order.settlement_delivery_cost;
+    // Todo lo que no se entrego cuenta como flete perdido: devoluciones,
+    // anulados que igual se despacharon y lo que sigue en la calle pero ya
+    // trae cobro del courier. El producto vuelve al inventario; el flete no.
+    if (order.tracking_status === "delivered") {
+      row.boxful_delivery_cost_delivered += order.settlement_delivery_cost;
+    } else {
+      row.boxful_delivery_cost_failed += order.settlement_delivery_cost;
+    }
     row.boxful_pick_pack_cost += order.settlement_pick_pack_cost;
     row.boxful_packaging_cost += order.settlement_packaging_cost;
     row.product_costs += order.product_cost;
@@ -2449,6 +2464,8 @@ export function buildMonthlyCloseRows(
       boxful_cod_commission: roundMoney(row.boxful_cod_commission),
       boxful_card_commission: roundMoney(row.boxful_card_commission),
       boxful_delivery_cost: roundMoney(row.boxful_delivery_cost),
+      boxful_delivery_cost_delivered: roundMoney(row.boxful_delivery_cost_delivered),
+      boxful_delivery_cost_failed: roundMoney(row.boxful_delivery_cost_failed),
       boxful_pick_pack_cost: roundMoney(row.boxful_pick_pack_cost),
       boxful_packaging_cost: roundMoney(row.boxful_packaging_cost),
       product_costs: roundMoney(row.product_costs),

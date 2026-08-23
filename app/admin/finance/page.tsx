@@ -6979,7 +6979,8 @@ function MonthCloseDetail({
   }, [monthOrders]);
   const costSegments = [
     { label: "Comision COD", value: close.boxful_cod_commission, className: "bg-sky-400" },
-    { label: "Costo entrega", value: close.boxful_delivery_cost, className: "bg-cyan-400" },
+    { label: "Entrega (entregados)", value: close.boxful_delivery_cost_delivered, className: "bg-cyan-400" },
+    { label: "Entrega (NO entregados)", value: close.boxful_delivery_cost_failed, className: "bg-orange-400" },
     { label: "Pick&Pack", value: close.boxful_pick_pack_cost, className: "bg-indigo-400" },
     { label: "Empaque Boxful", value: close.boxful_packaging_cost, className: "bg-blue-400" },
     { label: "Comision tarjeta", value: close.boxful_card_commission, className: "bg-teal-400" },
@@ -7060,6 +7061,33 @@ function MonthCloseDetail({
                   sign="minus"
                   pct={pctOf(close.boxful_delivery_cost, grossCodIncome)}
                   delta={pctChange(close.boxful_delivery_cost, previous?.boxful_delivery_cost)}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
+                {/* El flete se paga aunque el paquete vuelva. Se abre en dos para
+                    que el costo de la no-entrega deje de estar escondido. */}
+                <StatementRow
+                  label="de entregados"
+                  value={currency(close.boxful_delivery_cost_delivered)}
+                  sub
+                  pct={pctOf(close.boxful_delivery_cost_delivered, grossCodIncome)}
+                  delta={pctChange(
+                    close.boxful_delivery_cost_delivered,
+                    previous?.boxful_delivery_cost_delivered
+                  )}
+                  deltaInverted
+                  showDeltaCol={Boolean(previous)}
+                />
+                <StatementRow
+                  label="de NO entregados"
+                  value={currency(close.boxful_delivery_cost_failed)}
+                  sub
+                  tone="warning"
+                  pct={pctOf(close.boxful_delivery_cost_failed, grossCodIncome)}
+                  delta={pctChange(
+                    close.boxful_delivery_cost_failed,
+                    previous?.boxful_delivery_cost_failed
+                  )}
                   deltaInverted
                   showDeltaCol={Boolean(previous)}
                 />
@@ -7534,6 +7562,7 @@ function StatementRow({
   value,
   sign,
   emphasis,
+  sub,
   tone,
   pct,
   delta,
@@ -7544,6 +7573,8 @@ function StatementRow({
   value: string;
   sign?: "minus";
   emphasis?: boolean;
+  /** Desglose de la linea de arriba: va indentado y NO se resta aparte. */
+  sub?: boolean;
   tone?: "positive" | "negative" | "warning";
   pct?: number | null;
   delta?: number | null;
@@ -7562,12 +7593,26 @@ function StatementRow({
             : "";
 
   return (
-    <div className={`flex items-center justify-between gap-2 ${emphasis ? "mt-1.5 border-t border-border pt-1.5" : ""}`}>
-      <span className={emphasis ? "text-xs font-semibold" : "text-xs text-muted-foreground"}>
-        {label}
+    <div
+      className={`flex items-center justify-between gap-2 ${emphasis ? "mt-1.5 border-t border-border pt-1.5" : ""} ${
+        sub ? "pl-3" : ""
+      }`}
+    >
+      <span
+        className={
+          emphasis
+            ? "text-xs font-semibold"
+            : sub
+              ? "text-[11px] text-muted-foreground/70"
+              : "text-xs text-muted-foreground"
+        }
+      >
+        {sub ? `└ ${label}` : label}
       </span>
       <span className="flex items-baseline gap-2">
-        <span className={`font-mono text-xs ${emphasis ? "font-semibold" : ""} ${valueClass}`}>
+        <span
+          className={`font-mono ${sub ? "text-[11px]" : "text-xs"} ${emphasis ? "font-semibold" : ""} ${valueClass}`}
+        >
           {sign === "minus" ? `(${value})` : value}
         </span>
         {pct !== undefined && (
