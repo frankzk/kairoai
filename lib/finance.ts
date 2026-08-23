@@ -1427,38 +1427,58 @@ export async function listMoovinSyncCandidates(
     }
   }
 
-  // 2) Excluir terminales en cache (entregado/devuelto) y los frescos.
+  // 2) Excluir terminales en cache (entregado/devuelto) y los frescos. La misma
+  // pasada anota CUANDO se leyo por ultima vez cada guia viva: es lo que ordena
+  // la cola mas abajo.
   const terminal = new Set<string>();
+  const lastCheckedAt = new Map<string, number>();
   for (let from = 0; from < 50000; from += pageSize) {
     const { data, error } = await getDB()
       .from("moovin_tracking")
       .select("id_package, latest_group, checked_at")
-      .in("latest_group", ["delivered", "returned"])
       .range(from, from + pageSize - 1);
     if (error) break;
-    const page = (data ?? []) as Array<{ id_package: string }>;
-    for (const row of page) terminal.add(row.id_package);
+    const page = (data ?? []) as Array<{
+      id_package: string;
+      latest_group: string | null;
+      checked_at: string | null;
+    }>;
+    for (const row of page) {
+      if (row.latest_group === "delivered" || row.latest_group === "returned") {
+        terminal.add(row.id_package);
+        continue;
+      }
+      const at = Date.parse(String(row.checked_at ?? ""));
+      lastCheckedAt.set(row.id_package, Number.isNaN(at) ? 0 : at);
+    }
     if (page.length < pageSize) break;
   }
   const fresh = await getRecentlyCheckedMoovinPackages(freshWindowMinutes);
 
-  // Prioridad: primero las guias "solo-Shopify" (puntos ciegos, recientes primero),
-  // que llevan potencialmente dias sin re-consultarse; luego el resto (Boxful), que
-  // ya se venia sincronizando. Asi el presupuesto por corrida (limit) cubre primero
-  // las que la operacion no estaba viendo.
-  const candidates: Array<{ idPackage: string; lastName: string; fullName: string }> = [];
+  // La cola va por ANTIGUEDAD DE LECTURA: primero lo que lleva mas tiempo sin
+  // consultarse, y antes que todo lo que nunca se leyo (ahi caen las guias
+  // "solo-Shopify" recien despachadas, que eran el punto ciego original).
+  //
+  // Antes el orden era fijo: las solo-Shopify mas nuevas y despues las de
+  // Boxful. Como el tope por corrida es menor que la cantidad de guias vivas,
+  // las mismas de siempre se llevaban el presupuesto y la cola de atras no se
+  // leia en dias: un paquete ya entregado seguia saliendo como "Recolectado" en
+  // el tablero (guia 2620536, entregada el 18/08 y leida hasta el 19/08).
+  const pending: Array<{ guide: string; checkedAt: number }> = [];
   const seen = new Set<string>();
-  const pushCandidate = (guide: string) => {
-    if (candidates.length >= limit || seen.has(guide)) return;
-    if (terminal.has(guide) || fresh.has(guide)) return;
-    const names = byGuide.get(guide);
-    if (!names) return;
+  for (const guide of [...shopifyOnlyGuides, ...Array.from(byGuide.keys())]) {
+    if (seen.has(guide)) continue;
+    if (terminal.has(guide) || fresh.has(guide)) continue;
+    if (!byGuide.has(guide)) continue;
     seen.add(guide);
-    candidates.push({ idPackage: guide, lastName: names.lastName, fullName: names.fullName });
-  };
-  for (const guide of shopifyOnlyGuides) pushCandidate(guide);
-  for (const guide of Array.from(byGuide.keys())) pushCandidate(guide);
-  return candidates;
+    pending.push({ guide, checkedAt: lastCheckedAt.get(guide) ?? 0 });
+  }
+  pending.sort((a, b) => a.checkedAt - b.checkedAt);
+
+  return pending.slice(0, limit).map(({ guide }) => {
+    const names = byGuide.get(guide) as { lastName: string; fullName: string };
+    return { idPackage: guide, lastName: names.lastName, fullName: names.fullName };
+  });
 }
 
 export async function listForzaTracking(
