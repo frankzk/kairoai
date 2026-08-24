@@ -561,6 +561,35 @@ export interface LeadHistoryRow {
   occurred_at: string;
 }
 
+interface ZadarmaCallHistoryRow {
+  id: number;
+  direction: string | null;
+  status: string | null;
+  duration_seconds: number | null;
+  started_at: string | null;
+  vendedora: number | null;
+}
+
+const ZADARMA_STATUS_LABEL: Record<string, string> = {
+  answered: "contestada",
+  busy: "ocupado",
+  cancel: "cancelada",
+  "no answer": "sin respuesta",
+  failed: "no se pudo",
+  calling: "marcando",
+  ringing: "timbrando",
+};
+
+/** "Saliente · contestada · 1m 20s" para el timeline. */
+function describeCall(row: ZadarmaCallHistoryRow): string {
+  const direction = row.direction === "incoming" ? "Entrante" : "Saliente";
+  const status = ZADARMA_STATUS_LABEL[String(row.status ?? "").toLowerCase()] ?? row.status ?? "";
+  const seconds = row.duration_seconds ?? 0;
+  const duration =
+    seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
+  return [direction, status, seconds > 0 ? duration : null].filter(Boolean).join(" · ");
+}
+
 export async function getLeadHistory(storeId: number, leadId: number): Promise<LeadHistoryRow[]> {
   const { data, error } = await getDB()
     .from("lead_calls")
@@ -579,14 +608,36 @@ export async function getLeadHistory(storeId: number, leadId: number): Promise<L
     occurred_at: string;
   }>;
 
-  const ids = Array.from(new Set(rows.map((r) => r.vendedora).filter((v): v is number => v != null)));
+  // Llamadas de la centralita (Zadarma). Es un timeline distinto al de las
+  // gestiones: aqui va lo que paso en la linea, no lo que la asesora concluyo.
+  // Si la migracion 0028 aun no esta aplicada, el historial de gestiones debe
+  // seguir funcionando igual, por eso el error se traga.
+  const { data: callData, error: callError } = await getDB()
+    .from("zadarma_calls")
+    .select("id,direction,status,duration_seconds,started_at,vendedora")
+    .eq("store_id", storeId)
+    .eq("lead_id", leadId)
+    .order("started_at", { ascending: false, nullsFirst: false })
+    .limit(50);
+  if (callError) {
+    console.warn(`[leads] historial sin llamadas Zadarma: ${callError.message}`);
+  }
+  const calls = ((callData ?? []) as ZadarmaCallHistoryRow[]).filter((r) => r.started_at);
+
+  const ids = Array.from(
+    new Set(
+      [...rows, ...calls]
+        .map((r) => r.vendedora)
+        .filter((v): v is number => v != null)
+    )
+  );
   const names = new Map<number, string>();
   if (ids.length) {
     const { data: staff } = await getDB().from("payroll_staff").select("id,name").in("id", ids);
     for (const s of (staff ?? []) as Array<{ id: number; name: string }>) names.set(s.id, s.name);
   }
 
-  return rows.map((r) => ({
+  const gestiones: LeadHistoryRow[] = rows.map((r) => ({
     id: r.id,
     kind: r.kind,
     new_status: r.new_status,
@@ -594,6 +645,21 @@ export async function getLeadHistory(storeId: number, leadId: number): Promise<L
     vendedora_name: r.vendedora != null ? names.get(r.vendedora) ?? null : null,
     occurred_at: r.occurred_at,
   }));
+
+  const telefonia: LeadHistoryRow[] = calls.map((r) => ({
+    id: r.id,
+    kind: "phone",
+    new_status: null,
+    note: describeCall(r),
+    vendedora_name: r.vendedora != null ? names.get(r.vendedora) ?? null : null,
+    occurred_at: r.started_at as string,
+  }));
+
+  // Orden por instante, no por texto: las dos tablas pueden devolver la fecha
+  // con formatos distintos y una comparacion de strings las mezclaria mal.
+  return [...gestiones, ...telefonia].sort(
+    (a, b) => Date.parse(b.occurred_at) - Date.parse(a.occurred_at)
+  );
 }
 
 // ─── Cursores de sincronizacion ──────────────────────────────────────────────
