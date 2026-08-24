@@ -995,14 +995,19 @@ si tapa algo importante se mueve desde Zadarma, sin deploy.
 
 ### "No me timbra": cómo se diagnostica
 
-El catálogo de personal muestra un punto de estado por asesora: verde = hay un
-teléfono **registrado** en su extensión. Es la distinción que más cuesta ver,
-porque el widget puede estar abierto y verse perfecto sin haber registrado la
-extensión — y en ese caso la centralita responde `failed` sin explicar nada.
+La tarjeta de telefonía de `/admin/settings` lista **cada extensión con su
+dueña y si tiene un teléfono registrado** (`/v1/pbx/internal/<SIP>/status/`).
+Es la distinción que más cuesta ver, porque el widget puede estar abierto y
+verse perfecto sin haber registrado la extensión — y en ese caso la centralita
+responde `failed` sin explicar nada.
 
-Sale de `/v1/pbx/internal/<SIP>/status/`. Si el punto está rojo con el widget
-abierto, la extensión no se registró: revisar permiso de micrófono del
+"Sin registrar" con el widget abierto: revisar permiso de micrófono del
 navegador y la contraseña / restricción por IP de esa extensión en Zadarma.
+
+El mismo estado aparece junto al selector del catálogo de personal, para verlo
+al asignar. En ambos sitios va **con texto y no como un punto de color**: un
+punto sin etiqueta no se encuentra ni se entiende, y este dato solo sirve si
+se lee de un vistazo.
 
 En `zadarma_calls` las dos patas de la llamada se distinguen así: si `phone`
 son tres dígitos, es la centralita **timbrando a la extensión**; si es un
