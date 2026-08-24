@@ -260,6 +260,22 @@ export function isValidSipLogin(sip: string): boolean {
 }
 
 /**
+ * Extension corta a partir del login completo: '499499-100' -> '100'.
+ *
+ * Zadarma NO usa el mismo formato en todos los metodos y no perdona la
+ * diferencia: el widget WebRTC y `/v1/webrtc/get_key/` quieren el login
+ * completo, pero el parametro `sip` de `/v1/request/callback/` solo acepta la
+ * extension corta y responde "Field sip could be only SIP or PBX number".
+ * Guardamos el login completo (es lo que muestra el area personal) y
+ * convertimos aqui, en el unico lugar que lo necesita.
+ */
+export function toShortExtension(sip: string): string {
+  const value = sip.trim();
+  const dash = value.lastIndexOf("-");
+  return dash >= 0 ? value.slice(dash + 1) : value;
+}
+
+/**
  * Devuelve la llave del widget WebRTC para una extension. Cachea en memoria
  * del proceso; `force` la renueva (util si Zadarma la invalida).
  */
@@ -319,9 +335,14 @@ export async function requestCallback(input: {
     throw new ZadarmaError(`Telefono invalido: ${input.to}`, "/v1/request/callback/");
   }
 
+  // `sip` va en corto (100), no como login completo (499499-100). De el
+  // dependen el CallerID, la grabacion y a que extension se le atribuye la
+  // llamada en la estadistica, asi que se manda igual: no se omite.
+  const sip = toShortExtension(input.sip?.trim() || from);
+
   const body = await zadarmaRequest<{ status?: string; message?: string }>(
     "/v1/request/callback/",
-    { from, to, sip: input.sip?.trim() || from },
+    { from, to, sip },
     "GET"
   );
   return { status: String(body.status ?? "success"), message: body.message };

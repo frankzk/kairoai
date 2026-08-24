@@ -10,6 +10,7 @@ import {
   parseUtcOffset,
   signatureStringForEvent,
   toPbxExtensions,
+  toShortExtension,
   verifyNotifySignature,
 } from "@/lib/zadarma";
 
@@ -79,6 +80,30 @@ describe("listado de extensiones (/v1/pbx/internal/)", () => {
   it("produce logins que el resto del modulo acepta", () => {
     for (const extension of toPbxExtensions(499499, [100, 101, 102, 103, 104])) {
       expect(isValidSipLogin(extension.sip)).toBe(true);
+    }
+  });
+});
+
+describe("formato de extension segun el metodo", () => {
+  // Zadarma no usa el mismo formato en todos lados y no perdona la
+  // diferencia: `/v1/request/callback/` responde
+  // "Field sip could be only SIP or PBX number" ante el login completo.
+  it("recorta el login completo a la extension corta", () => {
+    expect(toShortExtension("499499-100")).toBe("100");
+    expect(toShortExtension("499499-104")).toBe("104");
+  });
+
+  it("deja intacta una extension que ya viene corta", () => {
+    expect(toShortExtension("100")).toBe("100");
+  });
+
+  it("tolera espacios alrededor", () => {
+    expect(toShortExtension("  499499-101  ")).toBe("101");
+  });
+
+  it("lo que produce el listado de extensiones se recorta bien", () => {
+    for (const extension of toPbxExtensions(499499, [100, 101, 102, 103, 104])) {
+      expect(toShortExtension(extension.sip)).toBe(extension.number);
     }
   });
 });
