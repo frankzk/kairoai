@@ -1015,6 +1015,23 @@ responde `failed` sin explicar nada.
 "Sin registrar" con el widget abierto: revisar permiso de micrófono del
 navegador y la contraseña / restricción por IP de esa extensión en Zadarma.
 
+**Ojo: el estado es una foto del momento en que se carga la página.** Si esa
+asesora no tiene Kairo abierto, "sin registrar" es lo esperado y no significa
+nada. Confirmar siempre con ella dentro de `/admin/leads`.
+
+#### Separar "es su máquina" de "es la extensión"
+
+Cuando a una asesora no le timbra, **reasignarle una extensión libre** resuelve
+la duda en 30 segundos: si con la nueva le timbra, el problema es la
+configuración de la extensión anterior en Zadarma; si tampoco, es su navegador.
+
+Pasó con la extensión 103 (agosto 2026): podía **marcar** sin problema
+—conversaciones reales de varios minutos— pero la centralita nunca pudo
+**entregarle** una llamada: 11 intentos, 11 `failed`, mientras la 100 y la 104
+timbraban bien. La misma persona en la 102 funcionó al primer intento. Una
+extensión puede estar sana para salir y rota para entrar, y desde Kairo se ve
+igual.
+
 El mismo estado aparece junto al selector del catálogo de personal, para verlo
 al asignar. En ambos sitios va **con texto y no como un punto de color**: un
 punto sin etiqueta no se encuentra ni se entiende, y este dato solo sirve si
