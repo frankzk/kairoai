@@ -59,6 +59,53 @@ function whenPageLoaded(): Promise<void> {
   });
 }
 
+// Por encima de los drawers de Kairo (z-50). El telefono tiene que estar
+// SIEMPRE arriba: es lo que timbra, y si queda tapado la asesora tiene que
+// cerrar el pedido —perdiendo lo que estaba leyendo— para poder contestar.
+const WIDGET_Z_INDEX = "2147483000";
+
+/**
+ * Sube el widget por encima de todo lo nuestro.
+ *
+ * El script de Zadarma inyecta su markup en <body> con su propio z-index y no
+ * expone forma de configurarlo, asi que en vez de adivinar sus clases (que
+ * pueden cambiar con cada version del widget) se observa que agrega al montar
+ * y se le fija el z-index a eso. Solo mira lo que aparece en la ventana de
+ * carga del widget; despues deja de observar para no tocar nada de la app.
+ */
+function raiseWidgetAboveDrawers(): () => void {
+  if (typeof document === "undefined") return () => {};
+
+  const known = new Set<Node>(Array.from(document.body.children));
+  const bump = (node: Node) => {
+    if (!(node instanceof HTMLElement) || known.has(node)) return;
+    node.style.setProperty("z-index", WIDGET_Z_INDEX, "important");
+  };
+
+  const observer = new MutationObserver((records) => {
+    for (const record of records) record.addedNodes.forEach(bump);
+  });
+  observer.observe(document.body, { childList: true });
+
+  // Red de seguridad por si el widget se monta sin pasar por el observer
+  // (p.ej. si el script ya estaba cargado de una visita anterior).
+  const sweeps = [500, 2000, 6000].map((delay) =>
+    window.setTimeout(() => {
+      for (const child of Array.from(document.body.children)) bump(child);
+    }, delay)
+  );
+
+  const stop = () => {
+    observer.disconnect();
+    sweeps.forEach((id) => window.clearTimeout(id));
+  };
+  const stopTimer = window.setTimeout(stop, 20_000);
+  return () => {
+    stop();
+    window.clearTimeout(stopTimer);
+  };
+}
+
 function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
@@ -86,6 +133,9 @@ export default function ZadarmaWebphone() {
   // Extension ya registrada: el widget no se puede reinicializar dos veces con
   // la misma, y hacerlo deja dos telefonos compitiendo por la linea.
   const mountedSip = useRef<string | null>(null);
+  const stopRaising = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => stopRaising.current?.(), []);
 
   useEffect(() => {
     setVendedora(getVendedoraId());
@@ -123,6 +173,11 @@ export default function ZadarmaWebphone() {
           setError("El widget de Zadarma no cargó.");
           return;
         }
+        // Se empieza a observar ANTES de montar: lo que el script agregue a
+        // partir de aqui es el widget, y hay que subirlo sobre los drawers.
+        stopRaising.current?.();
+        stopRaising.current = raiseWidgetAboveDrawers();
+
         // Forma y esquina salen de los ajustes del area personal, no del
         // codigo: cambiar la apariencia debe ser un click en Zadarma.
         window.zadarmaWidgetFn(
