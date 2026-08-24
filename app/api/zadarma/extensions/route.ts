@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getDB } from "@/lib/db";
-import { getPbxExtensions, isZadarmaConfigured, ZadarmaError } from "@/lib/zadarma";
+import {
+  getPbxExtensions,
+  isExtensionOnline,
+  isZadarmaConfigured,
+  ZadarmaError,
+} from "@/lib/zadarma";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -24,11 +29,16 @@ export async function GET() {
       listAssignments(),
     ]);
 
+    // El estado de registro es lo que distingue "el widget se ve" de "el
+    // telefono existe": sin registro la centralita no puede timbrar.
+    const online = await Promise.all(extensions.map((e) => isExtensionOnline(e.sip)));
+
     return NextResponse.json({
       pbx_id: pbxId,
-      extensions: extensions.map((extension) => ({
+      extensions: extensions.map((extension, index) => ({
         ...extension,
         assigned_to: assigned.get(extension.sip) ?? null,
+        online: online[index],
       })),
     });
   } catch (err) {

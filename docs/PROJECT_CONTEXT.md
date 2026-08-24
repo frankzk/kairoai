@@ -993,6 +993,23 @@ versión del widget y el fallo volvería sin que nadie lo note.
 La esquina donde aparece sale del área personal (`GET /v1/webrtc/`), así que
 si tapa algo importante se mueve desde Zadarma, sin deploy.
 
+### "No me timbra": cómo se diagnostica
+
+El catálogo de personal muestra un punto de estado por asesora: verde = hay un
+teléfono **registrado** en su extensión. Es la distinción que más cuesta ver,
+porque el widget puede estar abierto y verse perfecto sin haber registrado la
+extensión — y en ese caso la centralita responde `failed` sin explicar nada.
+
+Sale de `/v1/pbx/internal/<SIP>/status/`. Si el punto está rojo con el widget
+abierto, la extensión no se registró: revisar permiso de micrófono del
+navegador y la contraseña / restricción por IP de esa extensión en Zadarma.
+
+En `zadarma_calls` las dos patas de la llamada se distinguen así: si `phone`
+son tres dígitos, es la centralita **timbrando a la extensión**; si es un
+número largo, es la extensión **marcando al cliente**. Que la segunda funcione
+y la primera no significa exactamente esto: el teléfono puede llamar, pero
+nadie puede llamarlo.
+
 ### Dónde se puede llamar
 
 El botón vive en dos pantallas, y cada una **necesita también el widget

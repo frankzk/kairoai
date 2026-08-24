@@ -184,6 +184,28 @@ export function toPbxExtensions(
 }
 
 /**
+ * ¿Hay un telefono registrado en esa extension ahora mismo?
+ *
+ * Es la respuesta a "no me timbra": el widget puede estar abierto y verse
+ * perfecto sin haber registrado la extension, y en ese caso la centralita
+ * reporta la llamada como `failed` sin decir por que. Aqui se ve antes de
+ * llamar.
+ */
+export async function isExtensionOnline(sip: string): Promise<boolean | null> {
+  const login = sip.trim();
+  if (!isValidSipLogin(login)) return null;
+  try {
+    const body = await zadarmaRequest<{ is_online?: boolean | string }>(
+      `/v1/pbx/internal/${encodeURIComponent(login)}/status/`
+    );
+    return body.is_online === true || body.is_online === "true";
+  } catch {
+    // El estado es informativo: si falla, el listado de extensiones igual sirve.
+    return null;
+  }
+}
+
+/**
  * Extensiones existentes en la centralita. Es el paso que Zadarma llama
  * "vincular a los usuarios de la centralita con los de tu sistema": en vez de
  * escribir la extension a mano en la base, se elige de la lista real.

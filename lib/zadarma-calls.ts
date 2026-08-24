@@ -5,7 +5,7 @@
 import { getDB } from "@/lib/db";
 import { normalizePhone, phoneConfigForStore } from "@/lib/phone-cr";
 import { FINANCE_STORES } from "@/lib/store-config";
-import { parseZadarmaTime } from "@/lib/zadarma";
+import { isValidSipLogin, parseZadarmaTime } from "@/lib/zadarma";
 
 export interface ZadarmaAgent {
   id: number;
@@ -13,16 +13,29 @@ export interface ZadarmaAgent {
   sip: string;
 }
 
-/** Asesora + su extension. Devuelve null si no tiene telefono asignado. */
+/**
+ * Asesora dueña de una extension.
+ *
+ * Guardamos el login completo ('499499-103') pero los webhooks reportan
+ * `internal` en corto ('103'), asi que hay que aceptar las dos formas: con
+ * solo la exacta, TODAS las llamadas quedaban sin asesora en el CDR y la
+ * atribucion por persona no servia para nada.
+ */
 export async function getAgentBySip(sip: string): Promise<ZadarmaAgent | null> {
+  const value = sip.trim();
+  // Se valida antes de interpolar en el filtro `or` de PostgREST.
+  if (!isValidSipLogin(value)) return null;
+
   const { data, error } = await getDB()
     .from("payroll_staff")
     .select("id, name, zadarma_sip")
-    .eq("zadarma_sip", sip)
-    .maybeSingle();
+    .or(`zadarma_sip.eq.${value},zadarma_sip.like.*-${value}`)
+    .limit(1);
   if (error) throw new Error(`getAgentBySip: ${error.message}`);
-  if (!data?.zadarma_sip) return null;
-  return { id: data.id as number, name: String(data.name), sip: String(data.zadarma_sip) };
+
+  const row = data?.[0] as { id: number; name: string; zadarma_sip: string | null } | undefined;
+  if (!row?.zadarma_sip) return null;
+  return { id: row.id, name: String(row.name), sip: String(row.zadarma_sip) };
 }
 
 export async function getAgentById(staffId: number): Promise<ZadarmaAgent | null> {

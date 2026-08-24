@@ -6083,7 +6083,9 @@ function PayrollStaffModal({
   // Extensiones reales de la centralita Zadarma. Si la telefonia no esta
   // configurada la lista llega vacia y el selector no se muestra: el catalogo
   // de personal sigue sirviendo para la planilla igual que antes.
-  const [extensions, setExtensions] = useState<Array<{ sip: string; number: string }>>([]);
+  const [extensions, setExtensions] = useState<
+    Array<{ sip: string; number: string; online?: boolean | null }>
+  >([]);
 
   useEffect(() => {
     fetch("/api/zadarma/extensions", { cache: "no-store" })
@@ -6202,6 +6204,14 @@ function PayrollStaffModal({
                   <p className="truncate text-xs text-muted-foreground">{member.role || "Sin funcion"}</p>
                 </div>
                 {extensions.length > 0 && (
+                  <ExtensionStatusDot
+                    online={
+                      extensions.find((e) => e.sip === member.zadarma_sip)?.online ?? null
+                    }
+                    assigned={Boolean(member.zadarma_sip)}
+                  />
+                )}
+                {extensions.length > 0 && (
                   <select
                     className="h-8 w-36 shrink-0 rounded-md border border-input bg-background px-2 text-xs"
                     aria-label={`Extension de ${member.name}`}
@@ -6238,6 +6248,35 @@ function PayrollStaffModal({
     </ModalOverlay>
   );
 }
+}
+
+/**
+ * Estado de registro de la extension. Es la diferencia entre "el widget se ve"
+ * y "hay un telefono donde timbrar": sin registro la centralita responde
+ * `failed` sin explicar nada, que fue exactamente lo que nos costo entender.
+ */
+function ExtensionStatusDot({
+  online,
+  assigned,
+}: {
+  online: boolean | null;
+  assigned: boolean;
+}) {
+  if (!assigned) return null;
+  const title =
+    online === null
+      ? "No se pudo consultar el estado de la extension"
+      : online
+        ? "Telefono registrado: la centralita puede timbrarla"
+        : "Sin telefono registrado: no va a timbrar. Que abra /admin/leads y acepte el microfono.";
+  const tone = online === null ? "bg-muted-foreground" : online ? "bg-emerald-400" : "bg-red-400";
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      className={`h-2 w-2 shrink-0 rounded-full ${tone}`}
+    />
+  );
 }
 
 function LabeledField({
