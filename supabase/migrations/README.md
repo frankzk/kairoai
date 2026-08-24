@@ -35,6 +35,7 @@ Estado actual:
 | `0025_settlement_manual_match.sql` | Columna `manual_match` en `settlement_rows`: permite vincular a mano una liquidación "sin match" a un pedido #MCRC y que persista (el re-emparejar automático la respeta) | Si (22/07/2026) |
 | `0025_leads_shopify_order_match.sql` | Índice funcional por teléfono normalizado + RPC `match_leads_to_shopify_orders` (cruce lead↔orden 100% en Postgres; lo corre el cron leads-shopify-match) | Si (24/07/2026) |
 | `0026_quick_replies.sql` | Respuestas rápidas del chat de leads (`quick_replies`): plantillas por tienda con contador de uso para los chips del composer | Si (26/07/2026) |
+| `0028_order_events.sql` | Bitácora de gestión por pedido (`order_events`): intentos de contacto, notas y decisiones previas al despacho, para el drawer de Gestión de pedidos | Si (23/08/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de
