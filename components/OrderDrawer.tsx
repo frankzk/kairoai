@@ -15,12 +15,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import LeadChatPanel from "@/components/LeadChatPanel";
+import CallButton from "@/components/CallButton";
+import { getVendedoraId, setVendedoraId as persistVendedoraId } from "@/lib/vendedora";
 import type { ChatLeadSummary } from "@/lib/leads-types";
 import type { CustomerOrder, CustomerSummary } from "@/lib/customer-history";
 import type { OrderAlert } from "@/lib/order-risk";
 import { ORDER_EVENT_OUTCOME_LABEL, type OrderEvent } from "@/lib/order-events";
-
-const VENDEDORA_KEY = "kairo:leads-vendedora";
 
 export interface OrderDrawerTarget {
   order_name: string;
@@ -168,7 +168,7 @@ export default function OrderDrawer({
         const data = await res.json();
         const list: Staff[] = (data.staff ?? []).filter((s: Staff) => s.active !== false);
         setStaff(list);
-        const saved = Number(window.localStorage.getItem(VENDEDORA_KEY));
+        const saved = getVendedoraId();
         if (saved && list.some((s) => s.id === saved)) setVendedoraId(saved);
       } catch {
         /* la bitacora funciona sin vendedora */
@@ -178,11 +178,9 @@ export default function OrderDrawer({
 
   const selectVendedora = (id: number) => {
     setVendedoraId(id);
-    try {
-      window.localStorage.setItem(VENDEDORA_KEY, String(id));
-    } catch {
-      /* ignore */
-    }
+    // persistVendedoraId ademas avisa al telefono web, que necesita saber en
+    // el acto con que extension registrarse.
+    persistVendedoraId(id);
   };
 
   async function registrar(kind: "contacto" | "nota" | "decision", outcome: string, message = "") {
@@ -245,9 +243,13 @@ export default function OrderDrawer({
               <Badge variant="warning">Sin despachar</Badge>
             )}
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* El numero sale del pedido en la base, no de esta pantalla. */}
+            <CallButton orderName={target.order_name} store={storeCode} />
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         {error && (

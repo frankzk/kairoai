@@ -964,6 +964,37 @@ El teléfono del cliente **no se toma del cuerpo del request** cuando hay
 `lead_id`: se lee del lead en Supabase, para que el navegador no pueda pedir
 llamadas a números arbitrarios contra el saldo de la cuenta.
 
+### Dos formatos de extensión (no son intercambiables)
+
+Zadarma no usa el mismo formato en todos sus métodos y el castigo por
+equivocarse no siempre es un error:
+
+| Dónde | Formato | Si te equivocas |
+| --- | --- | --- |
+| Widget WebRTC y `/v1/webrtc/get_key/` | login completo (`499499-100`) | el widget no carga |
+| `sip` de `/v1/request/callback/` | extensión corta (`100`) | `Field "sip" could be only SIP or PBX number` |
+| `from` de `/v1/request/callback/` | extensión corta (`100`) | **responde `success` y no timbra nada** |
+
+El caso de `from` es el peligroso: la petición se acepta, la asesora ve el
+mensaje de confirmación y no suena ningún teléfono. Se guarda el login
+completo (es lo que muestra el área personal) y `toShortExtension` convierte
+en el único lugar que lo necesita.
+
+### Dónde se puede llamar
+
+El botón vive en dos pantallas, y cada una **necesita también el widget
+montado** (`ZadarmaWebphone`): sin él la centralita timbra una extensión que
+ningún navegador tiene registrada.
+
+- `/admin/leads` → drawer del lead: llama con `lead_id`.
+- `/admin/finance` → drawer de Gestión de pedidos: llama con `order_name`.
+
+En ambos casos el teléfono se lee de la base (del lead o de `shopify_orders`),
+nunca de lo que manda el navegador. El resultado de la llamada lo sigue
+registrando la asesora a mano con los botones que ya existían
+(Contestó / No contesta / Buzón…): la centralita reporta `answered` también
+cuando contesta un buzón, así que no se pre-selecciona nada.
+
 ### Asignar extensiones
 
 `/api/zadarma/extensions` lee las extensiones reales de la centralita con

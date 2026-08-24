@@ -335,14 +335,21 @@ export async function requestCallback(input: {
     throw new ZadarmaError(`Telefono invalido: ${input.to}`, "/v1/request/callback/");
   }
 
-  // `sip` va en corto (100), no como login completo (499499-100). De el
-  // dependen el CallerID, la grabacion y a que extension se le atribuye la
-  // llamada en la estadistica, asi que se manda igual: no se omite.
+  // Ambos parametros van con la extension corta (100), no con el login
+  // completo (499499-100). Con el login, Zadarma acepta la peticion y
+  // responde "success" pero NO timbra la extension: no la reconoce como tal y
+  // el fallo es silencioso, que es peor que un error. De `sip` dependen ademas
+  // el CallerID, la grabacion y a que extension se le atribuye la llamada en
+  // la estadistica, asi que se manda igual: no se omite.
+  //
+  // `toShortExtension` deja intacto lo que no es un login de extension (un
+  // numero de telefono no tiene guion), asi que un `from` externo sigue
+  // funcionando.
   const sip = toShortExtension(input.sip?.trim() || from);
 
   const body = await zadarmaRequest<{ status?: string; message?: string }>(
     "/v1/request/callback/",
-    { from, to, sip },
+    { from: toShortExtension(from), to, sip },
     "GET"
   );
   return { status: String(body.status ?? "success"), message: body.message };

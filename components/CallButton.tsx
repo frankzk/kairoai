@@ -12,10 +12,14 @@ import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
 
 export default function CallButton({
   leadId,
+  orderName,
   store,
   size = "sm",
 }: {
-  leadId: number;
+  /** Lead del tablero de WhatsApp. */
+  leadId?: number;
+  /** Pedido de Shopify (#MCRC20388), para el drawer de Gestion de pedidos. */
+  orderName?: string;
   store: string;
   size?: "sm" | "default";
 }) {
@@ -39,11 +43,23 @@ export default function CallButton({
       const res = await fetch("/api/zadarma/call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ store, vendedora_id: vendedoraId, lead_id: leadId }),
+        body: JSON.stringify({
+          store,
+          vendedora_id: vendedoraId,
+          lead_id: leadId,
+          order_name: orderName,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "No se pudo iniciar la llamada");
-      setFeedback({ kind: "ok", text: "Contesta tu teléfono web: te estamos timbrando." });
+      // La centralita acepto la peticion; que timbre depende de que el
+      // telefono web este abierto. Decirlo asi y no "te estamos timbrando":
+      // prometer el timbre y que no suene deja a la asesora esperando sin
+      // saber que mirar.
+      setFeedback({
+        kind: "ok",
+        text: "Llamada pedida. Debe timbrar tu teléfono web en unos segundos.",
+      });
     } catch (err) {
       setFeedback({
         kind: "error",

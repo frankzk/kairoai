@@ -101,6 +101,13 @@ describe("formato de extension segun el metodo", () => {
     expect(toShortExtension("  499499-101  ")).toBe("101");
   });
 
+  it("no toca un numero de telefono (from puede ser externo)", () => {
+    // `from` acepta tambien un telefono; ese no lleva guion y debe pasar
+    // intacto o estariamos marcando a otro numero.
+    expect(toShortExtension("50688887777")).toBe("50688887777");
+    expect(toShortExtension("+50688887777")).toBe("+50688887777");
+  });
+
   it("lo que produce el listado de extensiones se recorta bien", () => {
     for (const extension of toPbxExtensions(499499, [100, 101, 102, 103, 104])) {
       expect(toShortExtension(extension.sip)).toBe(extension.number);
