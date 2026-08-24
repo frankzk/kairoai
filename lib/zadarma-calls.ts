@@ -144,6 +144,31 @@ export async function resolveCallContext(opts: {
   };
 }
 
+/**
+ * Telefono de un pedido de Shopify, leido de la base por nombre (#MCRC20388)
+ * dentro de la tienda. El drawer de Gestion de pedidos llama desde aqui, y el
+ * numero tiene que salir del pedido guardado, no de lo que mande el navegador.
+ */
+export async function getOrderPhone(
+  storeId: number,
+  orderName: string
+): Promise<{ phone: string; customerName: string } | null> {
+  const name = orderName.trim();
+  if (!name) return null;
+
+  const { data, error } = await getDB()
+    .from("shopify_orders")
+    .select("name, phone, customer_name")
+    .eq("store_id", storeId)
+    .eq("name", name)
+    .limit(1);
+  if (error) throw new Error(`getOrderPhone: ${error.message}`);
+
+  const row = data?.[0] as { phone: string | null; customer_name: string | null } | undefined;
+  if (!row?.phone) return null;
+  return { phone: String(row.phone), customerName: String(row.customer_name ?? "") };
+}
+
 /** Normaliza los campos de tiempo de un evento a ISO. */
 export function eventTimes(body: Record<string, string | undefined>): {
   startedAt: string | null;
