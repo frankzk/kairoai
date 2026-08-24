@@ -7,6 +7,7 @@ import {
   parseZadarmaTime,
   signRequest,
   describeZadarmaCall,
+  extensionStatusPath,
   parseUtcOffset,
   signatureStringForEvent,
   toPbxExtensions,
@@ -99,6 +100,13 @@ describe("formato de extension segun el metodo", () => {
 
   it("tolera espacios alrededor", () => {
     expect(toShortExtension("  499499-101  ")).toBe("101");
+  });
+
+  it("el estado de la extension se consulta en corto", () => {
+    // Con el login completo la API falla y el estado quedaba en "sin dato",
+    // indistinguible de una extension sin registrar.
+    expect(extensionStatusPath("499499-103")).toBe("/v1/pbx/internal/103/status/");
+    expect(extensionStatusPath("103")).toBe("/v1/pbx/internal/103/status/");
   });
 
   it("no toca un numero de telefono (from puede ser externo)", () => {

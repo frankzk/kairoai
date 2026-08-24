@@ -184,6 +184,15 @@ export function toPbxExtensions(
 }
 
 /**
+ * Ruta del estado de una extension. La extension va en corto tambien aqui, en
+ * el segmento de la URL: con el login completo la API falla y el estado
+ * quedaba siempre en "sin dato".
+ */
+export function extensionStatusPath(sip: string): string {
+  return `/v1/pbx/internal/${encodeURIComponent(toShortExtension(sip.trim()))}/status/`;
+}
+
+/**
  * ¿Hay un telefono registrado en esa extension ahora mismo?
  *
  * Es la respuesta a "no me timbra": el widget puede estar abierto y verse
@@ -194,13 +203,17 @@ export function toPbxExtensions(
 export async function isExtensionOnline(sip: string): Promise<boolean | null> {
   const login = sip.trim();
   if (!isValidSipLogin(login)) return null;
+  const extension = toShortExtension(login);
   try {
     const body = await zadarmaRequest<{ is_online?: boolean | string }>(
-      `/v1/pbx/internal/${encodeURIComponent(login)}/status/`
+      extensionStatusPath(login)
     );
     return body.is_online === true || body.is_online === "true";
-  } catch {
-    // El estado es informativo: si falla, el listado de extensiones igual sirve.
+  } catch (err) {
+    // El estado es informativo: si falla, el listado de extensiones igual
+    // sirve. Pero se registra: un "sin dato" silencioso es indistinguible de
+    // un problema real, y asi fue como este mismo bug paso desapercibido.
+    console.warn(`[zadarma] estado de la extension ${extension}: ${String(err)}`);
     return null;
   }
 }

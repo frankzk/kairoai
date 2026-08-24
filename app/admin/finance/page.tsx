@@ -6204,7 +6204,7 @@ function PayrollStaffModal({
                   <p className="truncate text-xs text-muted-foreground">{member.role || "Sin funcion"}</p>
                 </div>
                 {extensions.length > 0 && (
-                  <ExtensionStatusDot
+                  <ExtensionStatus
                     online={
                       extensions.find((e) => e.sip === member.zadarma_sip)?.online ?? null
                     }
@@ -6254,28 +6254,25 @@ function PayrollStaffModal({
  * Estado de registro de la extension. Es la diferencia entre "el widget se ve"
  * y "hay un telefono donde timbrar": sin registro la centralita responde
  * `failed` sin explicar nada, que fue exactamente lo que nos costo entender.
+ *
+ * Va con texto y no como un punto de color: un punto sin etiqueta no se
+ * encuentra ni se entiende, y este dato solo sirve si se lee de un vistazo.
  */
-function ExtensionStatusDot({
-  online,
-  assigned,
-}: {
-  online: boolean | null;
-  assigned: boolean;
-}) {
-  if (!assigned) return null;
-  const title =
-    online === null
-      ? "No se pudo consultar el estado de la extension"
-      : online
-        ? "Telefono registrado: la centralita puede timbrarla"
-        : "Sin telefono registrado: no va a timbrar. Que abra /admin/leads y acepte el microfono.";
-  const tone = online === null ? "bg-muted-foreground" : online ? "bg-emerald-400" : "bg-red-400";
+function ExtensionStatus({ online, assigned }: { online: boolean | null; assigned: boolean }) {
+  if (!assigned || online === null) return null;
   return (
     <span
-      title={title}
-      aria-label={title}
-      className={`h-2 w-2 shrink-0 rounded-full ${tone}`}
-    />
+      title={
+        online
+          ? "La centralita puede timbrar esta extension"
+          : "El navegador no registro la extension: no va a timbrar. Que abra Leads y acepte el microfono."
+      }
+      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+        online ? "bg-emerald-500/15 text-emerald-400" : "bg-destructive/15 text-destructive"
+      }`}
+    >
+      {online ? "registrada" : "no timbra"}
+    </span>
   );
 }
 

@@ -974,9 +974,12 @@ equivocarse no siempre es un error:
 | Widget WebRTC y `/v1/webrtc/get_key/` | login completo (`499499-100`) | el widget no carga |
 | `sip` de `/v1/request/callback/` | extensión corta (`100`) | `Field "sip" could be only SIP or PBX number` |
 | `from` de `/v1/request/callback/` | extensión corta (`100`) | **responde `success` y no timbra nada** |
+| URL de `/v1/pbx/internal/<ext>/status/` | extensión corta (`100`) | el estado queda siempre en "sin dato" |
+| `internal` que llega en los webhooks | extensión corta (`100`) | el CDR no atribuye la llamada a nadie |
 
-El caso de `from` es el peligroso: la petición se acepta, la asesora ve el
-mensaje de confirmación y no suena ningún teléfono. Se guarda el login
+Los tres últimos son los peligrosos porque **no dan error**: la petición se
+acepta, o el dato simplemente llega vacío. Esta integración falló cuatro veces
+por lo mismo antes de que quedara centralizado. Se guarda el login
 completo (es lo que muestra el área personal) y `toShortExtension` convierte
 en el único lugar que lo necesita.
 
@@ -995,14 +998,19 @@ si tapa algo importante se mueve desde Zadarma, sin deploy.
 
 ### "No me timbra": cómo se diagnostica
 
-El catálogo de personal muestra un punto de estado por asesora: verde = hay un
-teléfono **registrado** en su extensión. Es la distinción que más cuesta ver,
-porque el widget puede estar abierto y verse perfecto sin haber registrado la
-extensión — y en ese caso la centralita responde `failed` sin explicar nada.
+La tarjeta de telefonía de `/admin/settings` lista **cada extensión con su
+dueña y si tiene un teléfono registrado** (`/v1/pbx/internal/<SIP>/status/`).
+Es la distinción que más cuesta ver, porque el widget puede estar abierto y
+verse perfecto sin haber registrado la extensión — y en ese caso la centralita
+responde `failed` sin explicar nada.
 
-Sale de `/v1/pbx/internal/<SIP>/status/`. Si el punto está rojo con el widget
-abierto, la extensión no se registró: revisar permiso de micrófono del
+"Sin registrar" con el widget abierto: revisar permiso de micrófono del
 navegador y la contraseña / restricción por IP de esa extensión en Zadarma.
+
+El mismo estado aparece junto al selector del catálogo de personal, para verlo
+al asignar. En ambos sitios va **con texto y no como un punto de color**: un
+punto sin etiqueta no se encuentra ni se entiende, y este dato solo sirve si
+se lee de un vistazo.
 
 En `zadarma_calls` las dos patas de la llamada se distinguen así: si `phone`
 son tres dígitos, es la centralita **timbrando a la extensión**; si es un

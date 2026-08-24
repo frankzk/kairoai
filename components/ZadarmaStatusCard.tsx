@@ -34,7 +34,13 @@ interface Status {
         missing_notifications: string[];
       }
     | { error: string };
-  extensions?: { total: number; assigned: number | null } | { error: string };
+  extensions?:
+    | {
+        total: number;
+        assigned: number | null;
+        rows: Array<{ sip: string; assigned_to: string | null; online: boolean | null }>;
+      }
+    | { error: string };
 }
 
 function hasError<T extends object>(value: T | { error: string } | undefined): value is { error: string } {
@@ -186,11 +192,40 @@ export default function ZadarmaStatusCard() {
               <Row ok={false} label="Extensiones" detail={status.extensions.error} />
             ) : (
               status.extensions && (
-                <Row
-                  ok={(status.extensions.assigned ?? 0) > 0}
-                  label="Extensiones asignadas"
-                  detail={`${status.extensions.assigned ?? 0} de ${status.extensions.total} asignadas a asesoras (se asignan en Gestión → personal de planilla)`}
-                />
+                <div className="space-y-1.5">
+                  <Row
+                    ok={(status.extensions.assigned ?? 0) > 0}
+                    label="Extensiones"
+                    detail={`${status.extensions.assigned ?? 0} de ${status.extensions.total} asignadas (se asignan en Gestión → Gastos → Planilla → Personal)`}
+                  />
+                  {/* Una fila por extension: es lo que contesta "a ella no le
+                      timbra". "Sin registrar" con el widget abierto significa
+                      que el navegador no llego a registrarse, y ahi la
+                      centralita responde `failed` sin explicar nada. */}
+                  <ul className="ml-5 space-y-1">
+                    {status.extensions.rows.map((row) => (
+                      <li key={row.sip} className="flex items-center gap-2 text-[11px]">
+                        <span className="font-mono text-muted-foreground">{row.sip}</span>
+                        <span className="truncate">{row.assigned_to ?? "sin asignar"}</span>
+                        <span
+                          className={`ml-auto shrink-0 rounded-full px-1.5 py-0.5 font-medium ${
+                            row.online === null
+                              ? "bg-muted text-muted-foreground"
+                              : row.online
+                                ? "bg-emerald-500/15 text-emerald-400"
+                                : "bg-destructive/15 text-destructive"
+                          }`}
+                        >
+                          {row.online === null
+                            ? "sin dato"
+                            : row.online
+                              ? "teléfono registrado"
+                              : "sin registrar · no timbra"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )
             )}
           </div>
