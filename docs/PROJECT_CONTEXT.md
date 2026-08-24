@@ -964,6 +964,27 @@ El teléfono del cliente **no se toma del cuerpo del request** cuando hay
 `lead_id`: se lee del lead en Supabase, para que el navegador no pueda pedir
 llamadas a números arbitrarios contra el saldo de la cuenta.
 
+### Asignar extensiones
+
+`/api/zadarma/extensions` lee las extensiones reales de la centralita con
+`/v1/pbx/internal/` (devuelve `pbx_id` + números cortos; el login del widget es
+la unión: `499499` + `100` → `499499-100`) y marca cuál ya tiene dueño. El
+catálogo de personal en `/admin/finance` muestra un selector por persona, así
+que asignar una extensión no requiere SQL. Un índice único parcial impide que
+dos personas compartan extensión: dos navegadores registrados en la misma línea
+se roban las llamadas entre sí.
+
+Si la telefonía no está configurada, la lista llega vacía y el selector no
+aparece: el catálogo sigue sirviendo para la planilla igual que antes.
+
+### Seguridad del widget
+
+Zadarma advierte explícitamente que el widget **no debe quedar en una página
+pública**: quien la abra puede llamar a cuenta tuya. En Kairo vive solo en
+`/admin/leads`, detrás del login del middleware. Mientras el acceso sea una
+contraseña de admin compartida, quien la tenga tiene teléfono — otra razón para
+mover esto a Supabase Auth.
+
 ### Identidad de la asesora
 
 Kairo todavía entra con una sola contraseña de admin, así que "quién soy" sigue
@@ -980,13 +1001,18 @@ línea); el aviso lo dice explícitamente.
 ### Archivos
 
 - `lib/zadarma.ts`: cliente firmado (`Authorization: key:base64(hex(hmac_sha1(
-  metodo + params + md5(params))))`), widget key, callback, enlace de
-  grabación, verificación de firma de webhooks.
+  metodo + params + md5(params))))`), extensiones, widget key, callback, enlace
+  de grabación, verificación de firma de webhooks.
 - `lib/zadarma-calls.ts`: extensión por asesora, CDR y cruce teléfono → lead.
 - `lib/vendedora.ts`: asesora activa en el navegador.
 - `components/ZadarmaWebphone.tsx`, `components/CallButton.tsx`.
-- `app/api/zadarma/{webphone,call,webhook}/route.ts`.
+- `app/api/zadarma/{webphone,call,extensions,webhook}/route.ts`.
+- `PATCH /api/finance/payroll-staff`: asigna/libera la extensión.
 - `supabase/migrations/0028_zadarma_calls.sql`.
+
+La versión de los scripts del widget (`loader-phone-lib.js?v=23`) la publica
+Zadarma en el área personal (`my.zadarma.com/api/#apitab-webrtc`); si la suben,
+se cambia en `ZadarmaWebphone.tsx`.
 
 ### Reglas
 

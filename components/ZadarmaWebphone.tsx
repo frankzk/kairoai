@@ -10,9 +10,16 @@ import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
 //
 // La llave es temporal y por extension, y el dominio de Kairo debe estar
 // autorizado en Zadarma (Ajustes -> Integraciones y API -> widget WebRTC).
+//
+// Zadarma advierte que el widget NO debe quedar en una pagina publica: quien
+// la abra puede llamar a cuenta tuya. Por eso vive solo en /admin/leads, que
+// esta detras del login (ver middleware.ts).
+//
+// La version de los scripts la publica Zadarma en el area personal
+// (my.zadarma.com/api/#apitab-webrtc); si la suben, se cambia aqui.
 
-const LIB_SRC = "https://my.zadarma.com/webphoneWebRTCWidget/v8/js/loader-phone-lib.js?v=17";
-const FN_SRC = "https://my.zadarma.com/webphoneWebRTCWidget/v8/js/loader-phone-fn.js?v=17";
+const LIB_SRC = "https://my.zadarma.com/webphoneWebRTCWidget/v8/js/loader-phone-lib.js?v=23";
+const FN_SRC = "https://my.zadarma.com/webphoneWebRTCWidget/v8/js/loader-phone-fn.js?v=23";
 
 declare global {
   interface Window {
@@ -25,6 +32,21 @@ declare global {
       position: string
     ) => void;
   }
+}
+
+/**
+ * El ejemplo oficial inicializa el widget en el evento `load`. Al montarse en
+ * un efecto de React la pagina suele estar lista, pero no siempre: si todavia
+ * hay recursos cargando se espera, porque inicializarlo antes deja el widget
+ * mudo.
+ */
+function whenPageLoaded(): Promise<void> {
+  if (typeof document === "undefined" || document.readyState === "complete") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    window.addEventListener("load", () => resolve(), { once: true });
+  });
 }
 
 function loadScript(src: string): Promise<void> {
@@ -85,6 +107,7 @@ export default function ZadarmaWebphone() {
 
         await loadScript(LIB_SRC);
         await loadScript(FN_SRC);
+        await whenPageLoaded();
         if (cancelled) return;
         if (typeof window.zadarmaWidgetFn !== "function") {
           setError("El widget de Zadarma no cargó.");

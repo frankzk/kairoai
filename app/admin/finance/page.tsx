@@ -6035,6 +6035,33 @@ function PayrollStaffModal({
   const [role, setRole] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  // Extensiones reales de la centralita Zadarma. Si la telefonia no esta
+  // configurada la lista llega vacia y el selector no se muestra: el catalogo
+  // de personal sigue sirviendo para la planilla igual que antes.
+  const [extensions, setExtensions] = useState<Array<{ sip: string; number: string }>>([]);
+
+  useEffect(() => {
+    fetch("/api/zadarma/extensions", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((json) => setExtensions(json.extensions ?? []))
+      .catch(() => setExtensions([]));
+  }, []);
+
+  async function handleAssign(member: PayrollStaff, sip: string) {
+    setMessage("");
+    try {
+      const res = await fetch("/api/finance/payroll-staff", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: member.id, zadarma_sip: sip || null }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "No se pudo asignar la extension");
+      onChange(staff.map((person) => (person.id === member.id ? (json.member as PayrollStaff) : person)));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "No se pudo asignar la extension");
+    }
+  }
 
   async function handleAdd() {
     if (!name.trim()) {
@@ -6129,6 +6156,22 @@ function PayrollStaffModal({
                   <p className="truncate text-sm font-medium">{member.name}</p>
                   <p className="truncate text-xs text-muted-foreground">{member.role || "Sin funcion"}</p>
                 </div>
+                {extensions.length > 0 && (
+                  <select
+                    className="h-8 w-36 shrink-0 rounded-md border border-input bg-background px-2 text-xs"
+                    aria-label={`Extension de ${member.name}`}
+                    title="Extension de la centralita para llamar desde el navegador"
+                    value={member.zadarma_sip ?? ""}
+                    onChange={(event) => handleAssign(member, event.target.value)}
+                  >
+                    <option value="">Sin extension</option>
+                    {extensions.map((extension) => (
+                      <option key={extension.sip} value={extension.sip}>
+                        {extension.sip}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <button
                   type="button"
                   title="Eliminar"

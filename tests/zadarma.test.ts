@@ -7,6 +7,7 @@ import {
   parseZadarmaTime,
   signRequest,
   signatureStringForEvent,
+  toPbxExtensions,
   verifyNotifySignature,
 } from "@/lib/zadarma";
 
@@ -53,6 +54,30 @@ describe("firma de la API de Zadarma", () => {
     const { paramsString, signature } = signRequest("/v1/info/balance/", {}, SECRET);
     expect(paramsString).toBe("");
     expect(signature).toBe("NjlkOTQzYjZhNzRhMmZjZjQ1YTY5MjYxYzE1YTM1YTEwMWE3ZWMxOA==");
+  });
+});
+
+describe("listado de extensiones (/v1/pbx/internal/)", () => {
+  it("une el id de la centralita con el numero corto", () => {
+    // La API devuelve numbers como enteros; el login del widget es el string.
+    expect(toPbxExtensions(499499, [100, 101])).toEqual([
+      { number: "100", sip: "499499-100" },
+      { number: "101", sip: "499499-101" },
+    ]);
+  });
+
+  it("deja el numero solo si la cuenta no reporta pbx_id", () => {
+    expect(toPbxExtensions(undefined, ["100"])).toEqual([{ number: "100", sip: "100" }]);
+  });
+
+  it("devuelve lista vacia sin extensiones", () => {
+    expect(toPbxExtensions(499499, undefined)).toEqual([]);
+  });
+
+  it("produce logins que el resto del modulo acepta", () => {
+    for (const extension of toPbxExtensions(499499, [100, 101, 102, 103, 104])) {
+      expect(isValidSipLogin(extension.sip)).toBe(true);
+    }
   });
 });
 

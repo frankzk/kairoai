@@ -158,6 +158,49 @@ export async function zadarmaRequest<T extends ZadarmaResponse>(
   return body;
 }
 
+// ─── Extensiones de la centralita ────────────────────────────────────────────
+
+export interface PbxExtension {
+  /** Numero corto, p.ej. '100'. */
+  number: string;
+  /** Login completo que usan el widget y el callback, p.ej. '499499-100'. */
+  sip: string;
+}
+
+/**
+ * La API devuelve el id de la centralita y los numeros cortos por separado;
+ * el login que usan el widget y el callback es la union de ambos
+ * (`499499` + `100` -> `499499-100`).
+ */
+export function toPbxExtensions(
+  pbxId: string | number | undefined,
+  numbers: Array<string | number> | undefined
+): PbxExtension[] {
+  const prefix = String(pbxId ?? "").trim();
+  return (numbers ?? []).map((value) => {
+    const number = String(value).trim();
+    return { number, sip: prefix ? `${prefix}-${number}` : number };
+  });
+}
+
+/**
+ * Extensiones existentes en la centralita. Es el paso que Zadarma llama
+ * "vincular a los usuarios de la centralita con los de tu sistema": en vez de
+ * escribir la extension a mano en la base, se elige de la lista real.
+ */
+export async function getPbxExtensions(): Promise<{ pbxId: string; extensions: PbxExtension[] }> {
+  const body = await zadarmaRequest<{
+    status?: string;
+    pbx_id?: string | number;
+    numbers?: Array<string | number>;
+  }>("/v1/pbx/internal/");
+
+  return {
+    pbxId: String(body.pbx_id ?? ""),
+    extensions: toPbxExtensions(body.pbx_id, body.numbers),
+  };
+}
+
 // ─── Widget WebRTC (el telefono dentro del navegador) ────────────────────────
 
 export interface WebrtcKey {

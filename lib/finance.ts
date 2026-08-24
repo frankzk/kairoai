@@ -1178,6 +1178,31 @@ export async function deletePayrollStaff(id: number): Promise<void> {
   if (error) throw new Error(`deletePayrollStaff: ${error.message}`);
 }
 
+/**
+ * Asigna (o libera, con null) la extension de la centralita de una persona.
+ * El indice unico parcial de la migracion 0028 impide que dos personas
+ * compartan extension: dos navegadores registrados en la misma linea se roban
+ * las llamadas entre si.
+ */
+export async function updatePayrollStaffZadarma(
+  id: number,
+  sip: string | null
+): Promise<PayrollStaff> {
+  const { data, error } = await getDB()
+    .from("payroll_staff")
+    .update({ zadarma_sip: sip, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) {
+    if (/duplicate key|23505/.test(error.message)) {
+      throw new Error("Esa extension ya esta asignada a otra persona.");
+    }
+    throw new Error(`updatePayrollStaffZadarma: ${error.message}`);
+  }
+  return data as PayrollStaff;
+}
+
 // Enriquecer el enlace de una persona de la planilla con su identidad de iComfly.
 export async function updatePayrollStaffIcomfly(
   id: number,

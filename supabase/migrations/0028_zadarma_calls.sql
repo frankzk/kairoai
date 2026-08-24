@@ -23,8 +23,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS payroll_staff_zadarma_sip_idx
   ON payroll_staff (zadarma_sip)
   WHERE zadarma_sip IS NOT NULL;
 
--- Asignacion (ejecutar una vez por asesora, con los logins reales):
---   UPDATE payroll_staff SET zadarma_sip = '499499-100' WHERE name = 'Nombre';
+-- La asignacion se hace desde la app: /admin/finance -> catalogo de personal
+-- ofrece las extensiones reales de la centralita (/v1/pbx/internal/). El indice
+-- unico de arriba impide que dos personas compartan extension: dos navegadores
+-- registrados en la misma linea se roban las llamadas entre si.
 
 -- ─── zadarma_calls: CDR de la centralita ────────────────────────────────────
 CREATE TABLE IF NOT EXISTS zadarma_calls (
