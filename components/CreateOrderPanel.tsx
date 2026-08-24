@@ -8,8 +8,7 @@ import { ProductPicker } from "@/components/ProductPicker";
 import { Badge } from "@/components/ui/badge";
 import type { ShopifyProductOption } from "@/app/api/shopify/products/route";
 import { getCurrencySymbol, getStoreRegions } from "@/lib/store-config";
-
-const VENDEDORA_KEY = "kairo:leads-vendedora";
+import { getVendedoraId, setVendedoraId as persistVendedoraId } from "@/lib/vendedora";
 
 const norm = (s: string) =>
   s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
@@ -88,7 +87,7 @@ export default function CreateOrderPanel({
         const data = await res.json();
         const list: Staff[] = (data.staff ?? []).filter((s: Staff) => s.active !== false);
         setStaff(list);
-        const saved = Number(window.localStorage.getItem(VENDEDORA_KEY));
+        const saved = getVendedoraId();
         if (saved && list.some((s) => s.id === saved)) setVendedoraId(saved);
       } catch {
         /* ignore */
@@ -136,11 +135,7 @@ export default function CreateOrderPanel({
 
   const selectVendedora = (id: number) => {
     setVendedoraId(id);
-    try {
-      window.localStorage.setItem(VENDEDORA_KEY, String(id));
-    } catch {
-      /* ignore */
-    }
+    persistVendedoraId(id);
   };
 
   const updateLine = useCallback((key: number, patch: Partial<OrderLine>) => {

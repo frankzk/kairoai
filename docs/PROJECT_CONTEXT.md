@@ -31,6 +31,7 @@ This document is the onboarding source for future devs and dev agents. Keep it u
   - ElevenLabs
   - Google Gemini
   - Supabase
+  - Zadarma (centralita virtual: las asesoras llaman desde el navegador)
 
 ## Multi-store Platform Architecture
 
@@ -928,6 +929,144 @@ Supervisa el despacho de pedidos COD en dos momentos atribuibles a personas:
 - “Sin llamar” se deriva de `status_source = 'auto'`; no se hace una consulta
   extra a `lead_calls`, Supabase o Icomfly para pintar el gráfico.
 
+## Telefonía Zadarma (llamadas desde la laptop de la asesora)
+
+### Decisión: Zadarma directo, no Teamsale
+
+Teamsale es el CRM propio de Zadarma. Su API (`/v1/zcrm/...`: clientes, leads,
+acuerdos, tareas) sirve para leer/escribir datos **dentro de Teamsale**, no para
+marcar un teléfono. Adoptarlo significaría un segundo CRM en paralelo a Kairo,
+con los leads y pedidos duplicados y las asesoras trabajando en dos pantallas.
+
+Kairo ya es el CRM: tiene el lead, la conversación, el historial y el pedido.
+Lo único que falta es el teléfono, y eso lo da la **centralita de Zadarma**
+directamente (API `/v1/...` + widget WebRTC). Teamsale solo tendría sentido si
+en algún momento se decide que el equipo viva dentro de Teamsale, y entonces la
+integración sería la inversa: Teamsale como fuente y Kairo consumiendo
+`/v1/zcrm/customers`.
+
+### Cómo llama la asesora
+
+1. Cada asesora tiene una extensión de la centralita (`499499-100`, `-101`, …)
+   guardada en `payroll_staff.zadarma_sip`.
+2. Al abrir `/admin/leads`, `ZadarmaWebphone` pide a
+   `/api/zadarma/webphone` la llave temporal del widget WebRTC
+   (`/v1/webrtc/get_key/`, vive 72 h, se cachea 12 h en memoria del proceso) y
+   monta el widget: **el navegador queda registrado como su teléfono**.
+3. `CallButton` (encabezado del drawer del lead) llama a `/api/zadarma/call`,
+   que ejecuta `/v1/request/callback/` con `from` = su extensión y `to` = el
+   teléfono del lead. Zadarma timbra la extensión (suena el navegador, la
+   asesora contesta con su diadema) y enseguida marca al cliente.
+4. La centralita reporta el ciclo de vida a `/api/zadarma/webhook`, que escribe
+   el CDR en `zadarma_calls`.
+
+El teléfono del cliente **no se toma del cuerpo del request** cuando hay
+`lead_id`: se lee del lead en Supabase, para que el navegador no pueda pedir
+llamadas a números arbitrarios contra el saldo de la cuenta.
+
+### Asignar extensiones
+
+`/api/zadarma/extensions` lee las extensiones reales de la centralita con
+`/v1/pbx/internal/` (devuelve `pbx_id` + números cortos; el login del widget es
+la unión: `499499` + `100` → `499499-100`) y marca cuál ya tiene dueño. El
+catálogo de personal en `/admin/finance` muestra un selector por persona, así
+que asignar una extensión no requiere SQL. Un índice único parcial impide que
+dos personas compartan extensión: dos navegadores registrados en la misma línea
+se roban las llamadas entre sí.
+
+Si la telefonía no está configurada, la lista llega vacía y el selector no
+aparece: el catálogo sigue sirviendo para la planilla igual que antes.
+
+### Seguridad del widget
+
+Zadarma advierte explícitamente que el widget **no debe quedar en una página
+pública**: quien la abra puede llamar a cuenta tuya. En Kairo vive solo en
+`/admin/leads`, detrás del login del middleware. Mientras el acceso sea una
+contraseña de admin compartida, quien la tenga tiene teléfono — otra razón para
+mover esto a Supabase Auth.
+
+### Identidad de la asesora
+
+Kairo todavía entra con una sola contraseña de admin, así que "quién soy" sigue
+siendo el selector de asesora (`payroll_staff`) que ya usaban el composer, la
+barra de gestión y crear pedido. Esa clave vivía duplicada en tres componentes
+y ahora está en `lib/vendedora.ts`, que además emite un evento: el teléfono web
+necesita enterarse en el acto de que cambió la asesora para registrarse con SU
+extensión. Cuando llegue Supabase Auth, esto se reemplaza por el usuario real.
+
+Cambiar de asesora con el widget ya montado exige recargar la página (el widget
+de Zadarma no se reinicializa dos veces sin dejar dos teléfonos peleando por la
+línea); el aviso lo dice explícitamente.
+
+### Archivos
+
+- `lib/zadarma.ts`: cliente firmado (`Authorization: key:base64(hex(hmac_sha1(
+  metodo + params + md5(params))))`), extensiones, widget key, callback, enlace
+  de grabación, verificación de firma de webhooks.
+- `lib/zadarma-calls.ts`: extensión por asesora, CDR y cruce teléfono → lead.
+- `lib/vendedora.ts`: asesora activa en el navegador.
+- `components/ZadarmaWebphone.tsx`, `components/CallButton.tsx`.
+- `app/api/zadarma/{webphone,call,extensions,webhook}/route.ts`.
+- `PATCH /api/finance/payroll-staff`: asigna/libera la extensión.
+- `supabase/migrations/0029_zadarma_calls.sql`.
+
+Los scripts del widget (`webphoneWebRTCWidget/v9/...?sub_v=1`) y la firma de
+`zadarmaWidgetFn` salen del código que Zadarma publica en el área personal
+(`my.zadarma.com/marketplace/#tab-webRtc` → "Código del widget"); si suben la
+versión, se cambia en `ZadarmaWebphone.tsx`. Ojo con el sexto argumento: ahí se
+pasa un **objeto** `{right:'10px',bottom:'5px'}`, no una cadena.
+
+La forma y la esquina no se fijan en el código: se leen de `GET /v1/webrtc/`,
+que devuelve los ajustes del área personal. Cambiar la apariencia es un click
+en Zadarma, no un deploy.
+
+### Diagnóstico
+
+`/admin/settings` muestra una tarjeta de telefonía que responde "por qué no
+timbra" sin entrar a Zadarma: saldo (sin saldo la centralita responde
+`disposition: "no money"` y la asesora solo ve que no entra la llamada),
+dominio autorizado para el widget, URL y eventos de notificación, huso horario
+frente a `ZADARMA_TIMEZONE_OFFSET`, y cuántas extensiones están asignadas.
+
+El botón **Configurar notificaciones** apunta la centralita a
+`/api/zadarma/webhook` y enciende los seis eventos del ciclo de vida vía
+`POST /v1/pbx/callinfo/url/` y `/v1/pbx/callinfo/notifications/`, en vez de
+hacerlo a mano en el panel. Zadarma valida la URL con `zd_echo`, así que solo
+funciona contra un deploy ya publicado.
+
+### Límites de la API
+
+100 solicitudes por minuto en general y 3 por minuto en los métodos de
+estadística. Por eso la llave del widget se cachea 12 h en memoria del proceso
+y el CDR se arma con los webhooks en vez de sondear `/v1/statistics/pbx/`.
+
+### Reglas
+
+- `zadarma_calls` es el CDR técnico (quién marcó, a quién, duración,
+  grabación). **No reemplaza a `lead_calls`**, que sigue siendo la gestión
+  comercial que registra la asesora ("no contestó", "casi cierra"). El timeline
+  del drawer (`getLeadHistory`) mezcla ambos: las llamadas aparecen con
+  `kind: "phone"` y las gestiones con su `kind` de siempre. Si la migración
+  0028 no está aplicada, el timeline sigue mostrando solo las gestiones.
+- El webhook se autentica con la firma HMAC del propio evento, no con la cookie
+  de sesión, por eso está en `PUBLIC_PATHS` del middleware. La IP de origen
+  (185.45.152.40/30) se registra como señal, pero no es la única defensa porque
+  depende de la cadena de proxies.
+- El webhook responde 200 aunque falle la escritura: reintentar no arregla un
+  error de base y Zadarma deja de mandar el resto del ciclo si recibe un error.
+- Los eventos llegan en varias partes y pueden desordenarse; el upsert solo
+  escribe los campos presentes para que un evento tardío no borre lo ya sabido.
+- Sin `ZADARMA_API_KEY`/`ZADARMA_API_SECRET`, o sin extensión asignada, el
+  tablero funciona igual: solo desaparece el teléfono.
+
+### Pendiente
+
+- Reproducir la grabación desde el timeline (`zadarma_calls.record_url` ya se
+  guarda; falta el reproductor y decidir quién puede oírla).
+- Marcar llamadas perdidas entrantes como leads que requieren atención.
+- Productividad por asesora con datos de la centralita (hoy solo cuenta
+  gestiones manuales).
+
 ### Pending Supabase migrations (run in SQL Editor, idempotent)
 At the time of writing these were not yet confirmed applied in production — check
 `supabase/migrations/README.md` for current state:
@@ -938,6 +1077,9 @@ At the time of writing these were not yet confirmed applied in production — ch
   on-demand but nothing is cached and reconciliation stays empty.
 - `0010_icomfly_dispatch.sql` — Estado de Despacho (icomfly_orders / icomfly_agents
   + columnas en payroll_staff). Hasta aplicarla, el tab “Despacho” queda vacío.
+- `0029_zadarma_calls.sql` — Telefonía Zadarma (`payroll_staff.zadarma_sip` +
+  `zadarma_calls`). Hasta aplicarla, el botón “Llamar” y el teléfono web quedan
+  deshabilitados; el resto del tablero de leads no se ve afectado.
 
 ## Open Questions
 

@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { DISPOSITION_OPTIONS, DISPOSITION_QUICK } from "@/lib/leads-classify";
-
-const VENDEDORA_KEY = "kairo:leads-vendedora";
+import { getVendedoraId, setVendedoraId as persistVendedoraId } from "@/lib/vendedora";
 
 interface Staff {
   id: number;
@@ -42,7 +41,7 @@ export default function GestionBar({
         const data = await res.json();
         const list: Staff[] = (data.staff ?? []).filter((s: Staff) => s.active !== false);
         setStaff(list);
-        const saved = Number(window.localStorage.getItem(VENDEDORA_KEY));
+        const saved = getVendedoraId();
         if (saved && list.some((s) => s.id === saved)) setVendedoraId(saved);
       } catch {
         /* ignore */
@@ -52,11 +51,7 @@ export default function GestionBar({
 
   const selectVendedora = (id: number) => {
     setVendedoraId(id);
-    try {
-      window.localStorage.setItem(VENDEDORA_KEY, String(id));
-    } catch {
-      /* ignore */
-    }
+    persistVendedoraId(id);
   };
 
   async function register(status: string) {

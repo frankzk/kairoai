@@ -19,6 +19,8 @@ import CreateOrderPanel from "@/components/CreateOrderPanel";
 import ProductivityPanel from "@/components/ProductivityPanel";
 import CustomerPanel from "@/components/CustomerPanel";
 import LeadChatPanel from "@/components/LeadChatPanel";
+import CallButton from "@/components/CallButton";
+import ZadarmaWebphone from "@/components/ZadarmaWebphone";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -353,6 +355,9 @@ export default function LeadsBoard() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
+      {/* Telefono web: registra el navegador como la extension de la asesora
+          para que "Llamar" suene aqui y no en un telefono aparte. */}
+      <ZadarmaWebphone />
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-4">
           <Link href="/" className="text-muted-foreground hover:text-foreground">
@@ -881,6 +886,7 @@ function LeadDrawer({
               <PhoneWithCopy phone={lead.phone} />
             </div>
           </div>
+          <CallButton leadId={lead.id} store={leadStore} />
           <Button size="sm" variant={showOrder ? "outline" : "default"} onClick={() => setShowOrder((v) => !v)}>
             <ShoppingCart className="mr-2 h-4 w-4" />
             {showOrder ? "Ocultar pedido" : "Crear pedido"}

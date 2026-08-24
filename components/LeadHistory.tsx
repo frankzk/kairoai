@@ -17,6 +17,8 @@ const KIND_LABEL: Record<string, string> = {
   sale: "Pedido creado",
   state_change: "Cambio de estado",
   call: "Llamada",
+  // Gestion que registra la asesora vs. la llamada real de la centralita.
+  phone: "Teléfono",
   note: "Nota",
   system: "Sistema",
 };
@@ -94,7 +96,9 @@ export default function LeadHistory({
           {rows.map((r) => {
             const statusLabel = r.new_status ? getStatusDef(r.new_status)?.label ?? r.new_status : null;
             return (
-              <div key={r.id} className="border-l-2 border-border pl-2 text-xs">
+              // El id se repite entre gestiones y llamadas de la centralita
+              // (tablas distintas), por eso la clave lleva el tipo.
+              <div key={`${r.kind}-${r.id}`} className="border-l-2 border-border pl-2 text-xs">
                 <div className="flex items-center justify-between gap-2 text-muted-foreground">
                   <span>{KIND_LABEL[r.kind] ?? r.kind}</span>
                   <span>{fmt(r.occurred_at)}</span>

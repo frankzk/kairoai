@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Send, Zap } from "lucide-react";
 import QuickReplyManager from "@/components/QuickReplyManager";
 import { renderQuickReply, type QuickReply } from "@/lib/quick-replies-format";
+import { getVendedoraId } from "@/lib/vendedora";
 
-const VENDEDORA_KEY = "kairo:leads-vendedora";
 const CHIP_COUNT = 4; // las mas usadas van visibles; el resto por "/" o el popup
 
 // Composer del drawer: escribir y enviar WhatsApp sin salir de Kairo, con
@@ -72,10 +72,6 @@ export default function ChatComposer({
       : replies;
     return list.slice(0, 6);
   }, [replies, slashQuery]);
-
-  function getVendedoraId(): number {
-    return Number(window.localStorage.getItem(VENDEDORA_KEY) || 0);
-  }
 
   // Envio real. `quickReplyId` solo alimenta el contador de uso.
   async function postMessage(message: string, quickReplyId?: number) {

@@ -10,6 +10,9 @@ const PUBLIC_PATHS = [
   "/api/shopify/webhook",
   "/api/retell/llm",
   "/api/retell/webhook",
+  // Notificaciones de la centralita Zadarma: se autentican con la firma HMAC
+  // del propio evento, no con la cookie de sesion.
+  "/api/zadarma/webhook",
   "/api/cron/retries",
   "/api/cron/moovin",
   "/api/cron/wyn",

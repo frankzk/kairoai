@@ -258,6 +258,9 @@ export interface PayrollStaff {
   // de la planilla puede no tener todavia su match con iComfly.
   email?: string | null;
   icomfly_user_id?: number | null;
+  // Extension de la centralita Zadarma (migracion 0028), p.ej. '499499-100'.
+  // Nullable: quien no llama por telefono no necesita extension.
+  zadarma_sip?: string | null;
   created_at: string;
   updated_at: string;
 }
