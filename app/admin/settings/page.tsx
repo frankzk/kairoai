@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import ZadarmaStatusCard from "@/components/ZadarmaStatusCard";
 import type { AgentSettings } from "@/lib/db";
 
 const DEFAULTS: AgentSettings = {
@@ -241,6 +242,9 @@ export default function SettingsPage() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* ── Telefonía: por qué no timbra ───────────────────── */}
+            <ZadarmaStatusCard />
 
             {error && <p className="text-xs text-red-400 px-1">{error}</p>}
 

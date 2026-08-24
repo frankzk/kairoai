@@ -210,6 +210,45 @@ export interface WebrtcKey {
   cachedUntil: number;
 }
 
+export type WidgetShape = "square" | "rounded";
+export type WidgetPosition = "top_left" | "top_right" | "bottom_right" | "bottom_left";
+
+export interface WebrtcIntegration {
+  isExists: boolean;
+  /** Dominios autorizados a montar el widget (incluye subdominios). */
+  domains: string[];
+  shape: WidgetShape;
+  position: WidgetPosition;
+}
+
+/**
+ * Ajustes de la integración del widget tal como están en el área personal
+ * (forma y esquina). Se leen en vez de fijarlos en el código para que cambiar
+ * la apariencia sea un click en Zadarma, no un deploy.
+ */
+export async function getWebrtcIntegration(): Promise<WebrtcIntegration> {
+  const body = await zadarmaRequest<{
+    status?: string;
+    is_exists?: boolean;
+    domains?: string[];
+    settings?: { shape?: string; position?: string };
+  }>("/v1/webrtc/");
+
+  const shape = body.settings?.shape === "rounded" ? "rounded" : "square";
+  const position = (
+    ["top_left", "top_right", "bottom_right", "bottom_left"] as const
+  ).includes(body.settings?.position as WidgetPosition)
+    ? (body.settings?.position as WidgetPosition)
+    : "bottom_right";
+
+  return {
+    isExists: Boolean(body.is_exists),
+    domains: body.domains ?? [],
+    shape,
+    position,
+  };
+}
+
 // La llave vive 72h del lado de Zadarma; se cachea 12h para no pedir una nueva
 // en cada carga de /admin/leads y para que un reinicio de Vercel no importe.
 const WEBRTC_KEY_TTL_MS = 12 * 60 * 60 * 1000;
@@ -306,6 +345,92 @@ export async function getRecordLink(callIdWithRec: string): Promise<string | nul
     { call_id: callId, lifetime: RECORD_LINK_LIFETIME_SECONDS }
   );
   return body.link ?? body.links?.[0] ?? null;
+}
+
+// ─── Cuenta ──────────────────────────────────────────────────────────────────
+
+/**
+ * Saldo de la cuenta. Las llamadas por callback se cobran: sin saldo la
+ * centralita responde `disposition: "no money"` y la asesora solo ve que
+ * "no entra la llamada".
+ */
+export async function getBalance(): Promise<{ balance: number; currency: string }> {
+  const body = await zadarmaRequest<{ balance?: number; currency?: string }>("/v1/info/balance/");
+  return { balance: Number(body.balance ?? 0), currency: String(body.currency ?? "") };
+}
+
+/**
+ * Convierte el huso que reporta Zadarma ("UTC+0", "UTC-6", "UTC+5:30") al
+ * formato que espera ZADARMA_TIMEZONE_OFFSET ("+00:00", "-06:00", "+05:30").
+ */
+export function parseUtcOffset(timezone: string | undefined | null): string | null {
+  const match = /^UTC([+-])(\d{1,2})(?::(\d{2}))?$/.exec(String(timezone ?? "").trim());
+  if (!match) return null;
+  return `${match[1]}${match[2].padStart(2, "0")}:${match[3] ?? "00"}`;
+}
+
+/**
+ * Zona horaria de la centralita. Es la que usa `call_start` en los webhooks,
+ * y de ella sale el valor correcto de ZADARMA_TIMEZONE_OFFSET.
+ */
+export async function getPbxTimezone(): Promise<{ timezone: string; offset: string | null }> {
+  const body = await zadarmaRequest<{ timezone?: string; datetime?: string; unixtime?: number }>(
+    "/v1/info/timezone/"
+  );
+  const timezone = String(body.timezone ?? "");
+  return { timezone, offset: parseUtcOffset(timezone) };
+}
+
+// ─── Configuración de notificaciones (PBX call info) ─────────────────────────
+
+export interface CallInfoSettings {
+  url: string;
+  notifications: Record<string, boolean>;
+}
+
+/** Eventos que Kairo necesita para armar el CDR. */
+export const REQUIRED_NOTIFICATIONS = [
+  "notify_start",
+  "notify_internal",
+  "notify_answer",
+  "notify_end",
+  "notify_out_start",
+  "notify_out_end",
+] as const;
+
+function parseNotifications(raw: Record<string, unknown> | undefined): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(raw ?? {})) {
+    out[key] = value === true || value === "true" || value === 1 || value === "1";
+  }
+  return out;
+}
+
+export async function getCallInfoSettings(): Promise<CallInfoSettings> {
+  const body = await zadarmaRequest<{
+    url?: string;
+    notifications?: Record<string, unknown>;
+  }>("/v1/pbx/callinfo/");
+  return { url: String(body.url ?? ""), notifications: parseNotifications(body.notifications) };
+}
+
+/**
+ * Apunta las notificaciones de la centralita al webhook de Kairo y enciende
+ * los eventos del ciclo de vida. Zadarma valida la URL con `zd_echo` antes de
+ * aceptarla, así que esto solo funciona con el deploy ya publicado.
+ */
+export async function configureCallInfo(url: string): Promise<CallInfoSettings> {
+  await zadarmaRequest("/v1/pbx/callinfo/url/", { url }, "POST");
+
+  const params: Record<string, string> = {};
+  for (const event of REQUIRED_NOTIFICATIONS) params[event] = "true";
+  const body = await zadarmaRequest<{ notifications?: Record<string, unknown> }>(
+    "/v1/pbx/callinfo/notifications/",
+    params,
+    "POST"
+  );
+
+  return { url, notifications: parseNotifications(body.notifications) };
 }
 
 // ─── Webhooks (notificaciones de la centralita) ──────────────────────────────
@@ -405,4 +530,40 @@ export function parseZadarmaTime(value: string | undefined | null): string | nul
 /** Estados de Zadarma que cuentan como conversacion real. */
 export function isAnsweredDisposition(disposition: string | undefined | null): boolean {
   return String(disposition ?? "").toLowerCase() === "answered";
+}
+
+// ─── Presentacion de una llamada ─────────────────────────────────────────────
+
+// Estados que reporta la centralita. Los de saldo/limite importan tanto como
+// los de la conversacion: sin ellos la asesora solo ve "no entro la llamada"
+// y nadie se entera de que el problema es la cuenta, no el cliente.
+const DISPOSITION_LABEL: Record<string, string> = {
+  answered: "contestada",
+  busy: "ocupado",
+  cancel: "cancelada",
+  "no answer": "sin respuesta",
+  failed: "no se pudo",
+  "call failed": "no se pudo",
+  "no money": "SIN SALDO en Zadarma",
+  "no money, no limit": "SIN SALDO / límite superado",
+  "no limit": "límite de la cuenta superado",
+  "no day limit": "límite diario superado",
+  "line limit": "sin líneas libres",
+  "unallocated number": "el número no existe",
+  calling: "marcando",
+  ringing: "timbrando",
+};
+
+/** "Saliente · contestada · 1m 20s" para el timeline del lead. */
+export function describeZadarmaCall(row: {
+  direction?: string | null;
+  status?: string | null;
+  duration_seconds?: number | null;
+}): string {
+  const direction = row.direction === "incoming" ? "Entrante" : "Saliente";
+  const raw = String(row.status ?? "");
+  const status = DISPOSITION_LABEL[raw.toLowerCase()] ?? raw;
+  const seconds = row.duration_seconds ?? 0;
+  const duration = seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
+  return [direction, status, seconds > 0 ? duration : null].filter(Boolean).join(" · ");
 }

@@ -1010,9 +1010,35 @@ línea); el aviso lo dice explícitamente.
 - `PATCH /api/finance/payroll-staff`: asigna/libera la extensión.
 - `supabase/migrations/0028_zadarma_calls.sql`.
 
-La versión de los scripts del widget (`loader-phone-lib.js?v=23`) la publica
-Zadarma en el área personal (`my.zadarma.com/api/#apitab-webrtc`); si la suben,
-se cambia en `ZadarmaWebphone.tsx`.
+Los scripts del widget (`webphoneWebRTCWidget/v9/...?sub_v=1`) y la firma de
+`zadarmaWidgetFn` salen del código que Zadarma publica en el área personal
+(`my.zadarma.com/marketplace/#tab-webRtc` → "Código del widget"); si suben la
+versión, se cambia en `ZadarmaWebphone.tsx`. Ojo con el sexto argumento: ahí se
+pasa un **objeto** `{right:'10px',bottom:'5px'}`, no una cadena.
+
+La forma y la esquina no se fijan en el código: se leen de `GET /v1/webrtc/`,
+que devuelve los ajustes del área personal. Cambiar la apariencia es un click
+en Zadarma, no un deploy.
+
+### Diagnóstico
+
+`/admin/settings` muestra una tarjeta de telefonía que responde "por qué no
+timbra" sin entrar a Zadarma: saldo (sin saldo la centralita responde
+`disposition: "no money"` y la asesora solo ve que no entra la llamada),
+dominio autorizado para el widget, URL y eventos de notificación, huso horario
+frente a `ZADARMA_TIMEZONE_OFFSET`, y cuántas extensiones están asignadas.
+
+El botón **Configurar notificaciones** apunta la centralita a
+`/api/zadarma/webhook` y enciende los seis eventos del ciclo de vida vía
+`POST /v1/pbx/callinfo/url/` y `/v1/pbx/callinfo/notifications/`, en vez de
+hacerlo a mano en el panel. Zadarma valida la URL con `zd_echo`, así que solo
+funciona contra un deploy ya publicado.
+
+### Límites de la API
+
+100 solicitudes por minuto en general y 3 por minuto en los métodos de
+estadística. Por eso la llave del widget se cachea 12 h en memoria del proceso
+y el CDR se arma con los webhooks en vez de sondear `/v1/statistics/pbx/`.
 
 ### Reglas
 

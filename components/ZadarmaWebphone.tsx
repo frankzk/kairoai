@@ -15,11 +15,20 @@ import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
 // la abra puede llamar a cuenta tuya. Por eso vive solo en /admin/leads, que
 // esta detras del login (ver middleware.ts).
 //
-// La version de los scripts la publica Zadarma en el area personal
-// (my.zadarma.com/api/#apitab-webrtc); si la suben, se cambia aqui.
+// Los scripts y la firma exacta salen del codigo que Zadarma publica en el
+// area personal (my.zadarma.com/marketplace/#tab-webRtc -> "Codigo del
+// widget"). Si Zadarma sube la version, se cambia aqui.
 
-const LIB_SRC = "https://my.zadarma.com/webphoneWebRTCWidget/v8/js/loader-phone-lib.js?v=23";
-const FN_SRC = "https://my.zadarma.com/webphoneWebRTCWidget/v8/js/loader-phone-fn.js?v=23";
+const LIB_SRC = "https://my.zadarma.com/webphoneWebRTCWidget/v9/js/loader-phone-lib.js?sub_v=1";
+const FN_SRC = "https://my.zadarma.com/webphoneWebRTCWidget/v9/js/loader-phone-fn.js?sub_v=1";
+
+/** Offsets de cada esquina, como los escribe el codigo oficial. */
+const POSITION_OFFSETS: Record<string, Record<string, string>> = {
+  bottom_right: { right: "10px", bottom: "5px" },
+  bottom_left: { left: "10px", bottom: "5px" },
+  top_right: { right: "10px", top: "5px" },
+  top_left: { left: "10px", top: "5px" },
+};
 
 declare global {
   interface Window {
@@ -29,7 +38,8 @@ declare global {
       shape: "square" | "rounded",
       language: string,
       autoStart: boolean,
-      position: string
+      // El codigo del area personal lo pasa como objeto, no como cadena.
+      position: Record<string, string>
     ) => void;
   }
 }
@@ -113,13 +123,15 @@ export default function ZadarmaWebphone() {
           setError("El widget de Zadarma no cargó.");
           return;
         }
+        // Forma y esquina salen de los ajustes del area personal, no del
+        // codigo: cambiar la apariencia debe ser un click en Zadarma.
         window.zadarmaWidgetFn(
           data.key,
           data.sip,
-          "rounded",
+          data.shape === "rounded" ? "rounded" : "square",
           data.language || "es",
           true,
-          "{right:'12px',bottom:'12px'}"
+          POSITION_OFFSETS[data.position] ?? POSITION_OFFSETS.bottom_right
         );
         mountedSip.current = data.sip;
         setError(null);

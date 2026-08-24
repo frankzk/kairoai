@@ -6,6 +6,8 @@ import {
   isZadarmaNotifyIp,
   parseZadarmaTime,
   signRequest,
+  describeZadarmaCall,
+  parseUtcOffset,
   signatureStringForEvent,
   toPbxExtensions,
   verifyNotifySignature,
@@ -162,6 +164,49 @@ describe("IP de origen de las notificaciones", () => {
     expect(isZadarmaNotifyIp("185.45.152.44")).toBe(false);
     expect(isZadarmaNotifyIp("1.2.3.4")).toBe(false);
     expect(isZadarmaNotifyIp(null)).toBe(false);
+  });
+});
+
+describe("estados de llamada en el timeline", () => {
+  it("traduce los estados de conversacion", () => {
+    expect(describeZadarmaCall({ direction: "outgoing", status: "answered", duration_seconds: 80 }))
+      .toBe("Saliente · contestada · 1m 20s");
+    expect(describeZadarmaCall({ direction: "incoming", status: "no answer", duration_seconds: 0 }))
+      .toBe("Entrante · sin respuesta");
+  });
+
+  it("nombra los fallos de cuenta en vez de dejarlos crudos", () => {
+    // Sin esto la asesora solo ve que "no entro la llamada" y nadie se entera
+    // de que el problema es el saldo, no el cliente.
+    expect(describeZadarmaCall({ direction: "outgoing", status: "no money", duration_seconds: 0 }))
+      .toBe("Saliente · SIN SALDO en Zadarma");
+    expect(describeZadarmaCall({ direction: "outgoing", status: "line limit", duration_seconds: 0 }))
+      .toBe("Saliente · sin líneas libres");
+  });
+
+  it("no inventa etiqueta para un estado desconocido", () => {
+    expect(describeZadarmaCall({ direction: "outgoing", status: "brand_new", duration_seconds: 0 }))
+      .toBe("Saliente · brand_new");
+  });
+});
+
+describe("huso horario reportado por la centralita", () => {
+  it("convierte el formato de Zadarma al de la variable de entorno", () => {
+    expect(parseUtcOffset("UTC+0")).toBe("+00:00");
+    expect(parseUtcOffset("UTC-6")).toBe("-06:00");
+    expect(parseUtcOffset("UTC+5:30")).toBe("+05:30");
+  });
+
+  it("devuelve null si el formato no es el esperado", () => {
+    expect(parseUtcOffset("America/Costa_Rica")).toBeNull();
+    expect(parseUtcOffset(undefined)).toBeNull();
+  });
+
+  it("produce un offset que parseZadarmaTime acepta", () => {
+    const offset = parseUtcOffset("UTC-6");
+    process.env.ZADARMA_TIMEZONE_OFFSET = offset ?? "";
+    expect(parseZadarmaTime("2026-08-24 10:15:00")).toBe("2026-08-24T16:15:00.000Z");
+    delete process.env.ZADARMA_TIMEZONE_OFFSET;
   });
 });
 

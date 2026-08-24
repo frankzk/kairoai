@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAgentById } from "@/lib/zadarma-calls";
-import { getWebrtcKey, isZadarmaConfigured, ZadarmaError } from "@/lib/zadarma";
+import {
+  getWebrtcIntegration,
+  getWebrtcKey,
+  isZadarmaConfigured,
+  ZadarmaError,
+} from "@/lib/zadarma";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -36,12 +41,20 @@ export async function GET(req: NextRequest) {
     }
 
     const force = req.nextUrl.searchParams.get("force") === "1";
-    const { key } = await getWebrtcKey(agent.sip, force);
+    // La apariencia sale de los ajustes de la integracion; si esa lectura
+    // falla no se cae la llamada, solo se usa el valor por defecto.
+    const [{ key }, integration] = await Promise.all([
+      getWebrtcKey(agent.sip, force),
+      getWebrtcIntegration().catch(() => null),
+    ]);
+
     return NextResponse.json({
       sip: agent.sip,
       key,
       name: agent.name,
       language: process.env.ZADARMA_WIDGET_LANGUAGE || "es",
+      shape: integration?.shape ?? "square",
+      position: integration?.position ?? "bottom_right",
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al preparar el teléfono";

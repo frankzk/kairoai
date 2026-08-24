@@ -6,6 +6,7 @@ import { getDB } from "./db";
 import { statusBoardStage, statusCategory, type BoardStage } from "./leads-classify";
 import type { ChatLeadSummary, LeadCategory, LeadStateSnapshot, StatusSource } from "./leads-types";
 import { normalizePhone, phoneConfigForStore } from "./phone-cr";
+import { describeZadarmaCall } from "./zadarma";
 
 export interface LeadRecord {
   id: number;
@@ -570,25 +571,6 @@ interface ZadarmaCallHistoryRow {
   vendedora: number | null;
 }
 
-const ZADARMA_STATUS_LABEL: Record<string, string> = {
-  answered: "contestada",
-  busy: "ocupado",
-  cancel: "cancelada",
-  "no answer": "sin respuesta",
-  failed: "no se pudo",
-  calling: "marcando",
-  ringing: "timbrando",
-};
-
-/** "Saliente · contestada · 1m 20s" para el timeline. */
-function describeCall(row: ZadarmaCallHistoryRow): string {
-  const direction = row.direction === "incoming" ? "Entrante" : "Saliente";
-  const status = ZADARMA_STATUS_LABEL[String(row.status ?? "").toLowerCase()] ?? row.status ?? "";
-  const seconds = row.duration_seconds ?? 0;
-  const duration =
-    seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
-  return [direction, status, seconds > 0 ? duration : null].filter(Boolean).join(" · ");
-}
 
 export async function getLeadHistory(storeId: number, leadId: number): Promise<LeadHistoryRow[]> {
   const { data, error } = await getDB()
@@ -650,7 +632,7 @@ export async function getLeadHistory(storeId: number, leadId: number): Promise<L
     id: r.id,
     kind: "phone",
     new_status: null,
-    note: describeCall(r),
+    note: describeZadarmaCall(r),
     vendedora_name: r.vendedora != null ? names.get(r.vendedora) ?? null : null,
     occurred_at: r.started_at as string,
   }));
