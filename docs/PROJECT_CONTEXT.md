@@ -980,6 +980,19 @@ mensaje de confirmación y no suena ningún teléfono. Se guarda el login
 completo (es lo que muestra el área personal) y `toShortExtension` convierte
 en el único lugar que lo necesita.
 
+### El widget va por encima de los drawers
+
+El script de Zadarma inyecta el widget en `<body>` con su propio `z-index` y
+no expone forma de configurarlo, así que los drawers de Kairo (`z-50`) lo
+tapaban: para contestar había que cerrar el pedido y se perdía lo que se
+estaba leyendo. `ZadarmaWebphone` observa lo que el script agrega al montar y
+le fija un `z-index` por encima de todo lo nuestro. Se observa por markup
+añadido y no por clases/ids de Zadarma a propósito: esas cambian con cada
+versión del widget y el fallo volvería sin que nadie lo note.
+
+La esquina donde aparece sale del área personal (`GET /v1/webrtc/`), así que
+si tapa algo importante se mueve desde Zadarma, sin deploy.
+
 ### Dónde se puede llamar
 
 El botón vive en dos pantallas, y cada una **necesita también el widget
