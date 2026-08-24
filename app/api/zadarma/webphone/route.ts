@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
     const message = err instanceof Error ? err.message : "Error al preparar el teléfono";
     const status = err instanceof ZadarmaError ? 502 : 500;
     const friendly = /zadarma_sip|column/.test(message)
-      ? "Falta la columna payroll_staff.zadarma_sip: ejecuta supabase/migrations/0028_zadarma_calls.sql."
+      ? "Falta la columna payroll_staff.zadarma_sip: ejecuta supabase/migrations/0029_zadarma_calls.sql."
       : message;
     return NextResponse.json({ error: friendly }, { status });
   }

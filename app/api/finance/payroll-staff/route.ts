@@ -56,7 +56,7 @@ export async function PATCH(req: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al asignar la extensión";
     const friendly = /zadarma_sip|column/.test(message)
-      ? "Falta la columna payroll_staff.zadarma_sip: ejecuta supabase/migrations/0028_zadarma_calls.sql en Supabase."
+      ? "Falta la columna payroll_staff.zadarma_sip: ejecuta supabase/migrations/0029_zadarma_calls.sql en Supabase."
       : message;
     return NextResponse.json({ error: friendly }, { status: 500 });
   }

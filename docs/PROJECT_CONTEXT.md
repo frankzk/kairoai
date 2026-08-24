@@ -1008,7 +1008,7 @@ línea); el aviso lo dice explícitamente.
 - `components/ZadarmaWebphone.tsx`, `components/CallButton.tsx`.
 - `app/api/zadarma/{webphone,call,extensions,webhook}/route.ts`.
 - `PATCH /api/finance/payroll-staff`: asigna/libera la extensión.
-- `supabase/migrations/0028_zadarma_calls.sql`.
+- `supabase/migrations/0029_zadarma_calls.sql`.
 
 Los scripts del widget (`webphoneWebRTCWidget/v9/...?sub_v=1`) y la firma de
 `zadarmaWidgetFn` salen del código que Zadarma publica en el área personal
@@ -1077,7 +1077,7 @@ At the time of writing these were not yet confirmed applied in production — ch
   on-demand but nothing is cached and reconciliation stays empty.
 - `0010_icomfly_dispatch.sql` — Estado de Despacho (icomfly_orders / icomfly_agents
   + columnas en payroll_staff). Hasta aplicarla, el tab “Despacho” queda vacío.
-- `0028_zadarma_calls.sql` — Telefonía Zadarma (`payroll_staff.zadarma_sip` +
+- `0029_zadarma_calls.sql` — Telefonía Zadarma (`payroll_staff.zadarma_sip` +
   `zadarma_calls`). Hasta aplicarla, el botón “Llamar” y el teléfono web quedan
   deshabilitados; el resto del tablero de leads no se ve afectado.
 

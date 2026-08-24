@@ -65,10 +65,12 @@ import {
 } from "@/lib/wyn";
 import {
   FINANCE_STORES,
+  getCurrencySymbol,
   getFinanceStore,
   type FinanceStoreCode,
   type FinanceStorePublic,
 } from "@/lib/store-config";
+import OrderDrawer, { type OrderDrawerTarget } from "@/components/OrderDrawer";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import { sanitizeExternalError } from "@/lib/api-errors";
 import { Badge } from "@/components/ui/badge";
@@ -2482,8 +2484,31 @@ function OrdersTable({
   loading?: boolean;
   emptyLabel?: string;
 }) {
+  // Pedido abierto en el drawer de gestion. Se abre con lo que la fila ya
+  // tiene; el detalle pesado lo carga el propio drawer.
+  const [openOrder, setOpenOrder] = useState<OrderDrawerTarget | null>(null);
+  const openDrawer = (row: OrderRowWithTraces) =>
+    setOpenOrder({
+      order_name: row.order_name || row.shopify_order_name || "",
+      guide_number: row.guide_number || "",
+      customer_name: row.customer_name || "",
+      phone: row.phone || "",
+      cod_amount: Number(row.cod_amount || 0),
+      created_at: row.shopify_created_at ?? null,
+      items_summary: (row.package_items ?? []).map((item) => item.title).join(", "),
+    });
+
   return (
     <>
+      {openOrder && (
+        <OrderDrawer
+          target={openOrder}
+          storeCode={selectedStore.code}
+          currencySymbol={getCurrencySymbol(selectedStore.code)}
+          onClose={() => setOpenOrder(null)}
+        />
+      )}
+
       {/* Mobile: una tarjeta por pedido (la tabla de 13 columnas no entra en el cel). */}
       <div className="space-y-2 md:hidden">
         {rows.map((row) => {
@@ -2496,7 +2521,13 @@ function OrdersTable({
             <div key={row.row_key} className="rounded-lg border border-border bg-card p-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="font-mono text-sm font-semibold">{row.order_name || row.shopify_order_name}</p>
+                  <button
+                    type="button"
+                    onClick={() => openDrawer(row)}
+                    className="font-mono text-sm font-semibold underline-offset-2 hover:underline"
+                  >
+                    {row.order_name || row.shopify_order_name}
+                  </button>
                   <p className="truncate text-xs text-muted-foreground">
                     {row.customer_name || "Sin nombre"}
                     {row.shopify_created_at ? ` · ${formatDate(row.shopify_created_at)}` : ""}
@@ -2598,7 +2629,16 @@ function OrdersTable({
             const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
             return (
               <tr key={row.row_key} className="border-b border-border/50">
-                <td className="px-2 py-1.5 font-mono text-xs">{row.order_name}</td>
+                <td className="px-2 py-1.5 font-mono text-xs">
+                  <button
+                    type="button"
+                    onClick={() => openDrawer(row)}
+                    className="underline-offset-2 hover:underline"
+                    title="Abrir gestión del pedido"
+                  >
+                    {row.order_name}
+                  </button>
+                </td>
                 <td className="px-2 py-1.5">
                   <Badge variant={row.source === "boxful" ? "success" : row.source === "liquidacion" ? "warning" : "muted"}>
                     {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
