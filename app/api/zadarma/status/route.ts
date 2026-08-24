@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDB } from "@/lib/db";
+import { listExtensionAssignments } from "@/lib/zadarma-calls";
 import {
   configureCallInfo,
   getBalance,
@@ -8,6 +8,7 @@ import {
   getPbxTimezone,
   getWebrtcIntegration,
   isZadarmaConfigured,
+  isExtensionOnline,
   REQUIRED_NOTIFICATIONS,
   ZadarmaError,
 } from "@/lib/zadarma";
@@ -38,8 +39,22 @@ export async function GET(req: NextRequest) {
     getWebrtcIntegration().catch(errorOf),
     getCallInfoSettings().catch(errorOf),
     getPbxExtensions().catch(errorOf),
-    countAssignedExtensions().catch(() => null),
+    listExtensionAssignments().catch(() => new Map<string, string>()),
   ]);
+
+  // Estado real de cada extension: quien la tiene y si hay un telefono
+  // registrado. Es la fila que contesta "por que no me timbra", asi que va
+  // aqui y no enterrada en el catalogo de personal.
+  const extensionRows =
+    extensions && !("error" in extensions)
+      ? await Promise.all(
+          extensions.extensions.map(async (extension) => ({
+            sip: extension.sip,
+            assigned_to: assigned.get(extension.sip) ?? null,
+            online: await isExtensionOnline(extension.sip),
+          }))
+        )
+      : [];
 
   const missingNotifications =
     callInfo && !("error" in callInfo)
@@ -81,7 +96,11 @@ export async function GET(req: NextRequest) {
         : callInfo,
     extensions:
       extensions && !("error" in extensions)
-        ? { total: extensions.extensions.length, assigned }
+        ? {
+            total: extensions.extensions.length,
+            assigned: extensionRows.filter((row) => row.assigned_to).length,
+            rows: extensionRows,
+          }
         : extensions,
   });
 }
@@ -139,11 +158,3 @@ function errorOf(err: unknown): { error: string } {
   return { error: err instanceof Error ? err.message : String(err) };
 }
 
-async function countAssignedExtensions(): Promise<number | null> {
-  const { count, error } = await getDB()
-    .from("payroll_staff")
-    .select("id", { count: "exact", head: true })
-    .not("zadarma_sip", "is", null);
-  if (error) return null;
-  return count ?? 0;
-}

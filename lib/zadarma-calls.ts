@@ -38,6 +38,28 @@ export async function getAgentBySip(sip: string): Promise<ZadarmaAgent | null> {
   return { id: row.id, name: String(row.name), sip: String(row.zadarma_sip) };
 }
 
+/**
+ * Extension -> nombre de quien la tiene. Alimenta tanto el selector del
+ * catalogo de personal como el diagnostico de telefonia.
+ */
+export async function listExtensionAssignments(): Promise<Map<string, string>> {
+  const { data, error } = await getDB()
+    .from("payroll_staff")
+    .select("name, zadarma_sip")
+    .not("zadarma_sip", "is", null);
+  if (error) {
+    // Sin la migracion 0029 no hay asignaciones todavia; el listado de la
+    // centralita sigue siendo util.
+    console.warn(`[zadarma] sin asignaciones: ${error.message}`);
+    return new Map();
+  }
+  const map = new Map<string, string>();
+  for (const row of (data ?? []) as Array<{ name: string; zadarma_sip: string | null }>) {
+    if (row.zadarma_sip) map.set(row.zadarma_sip, row.name);
+  }
+  return map;
+}
+
 export async function getAgentById(staffId: number): Promise<ZadarmaAgent | null> {
   const { data, error } = await getDB()
     .from("payroll_staff")

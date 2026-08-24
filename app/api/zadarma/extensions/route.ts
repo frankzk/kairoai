@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDB } from "@/lib/db";
+import { listExtensionAssignments } from "@/lib/zadarma-calls";
 import {
   getPbxExtensions,
   isExtensionOnline,
@@ -26,7 +26,7 @@ export async function GET() {
   try {
     const [{ pbxId, extensions }, assigned] = await Promise.all([
       getPbxExtensions(),
-      listAssignments(),
+      listExtensionAssignments(),
     ]);
 
     // El estado de registro es lo que distingue "el widget se ve" de "el
@@ -48,21 +48,3 @@ export async function GET() {
   }
 }
 
-/** sip -> nombre de la persona que ya lo tiene. */
-async function listAssignments(): Promise<Map<string, string>> {
-  const { data, error } = await getDB()
-    .from("payroll_staff")
-    .select("name, zadarma_sip")
-    .not("zadarma_sip", "is", null);
-  if (error) {
-    // Sin la migracion 0028 no hay asignaciones todavia; la lista de la
-    // centralita sigue siendo util.
-    console.warn(`[zadarma/extensions] sin asignaciones: ${error.message}`);
-    return new Map();
-  }
-  const map = new Map<string, string>();
-  for (const row of (data ?? []) as Array<{ name: string; zadarma_sip: string | null }>) {
-    if (row.zadarma_sip) map.set(row.zadarma_sip, row.name);
-  }
-  return map;
-}
