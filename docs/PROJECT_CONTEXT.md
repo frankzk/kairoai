@@ -974,9 +974,12 @@ equivocarse no siempre es un error:
 | Widget WebRTC y `/v1/webrtc/get_key/` | login completo (`499499-100`) | el widget no carga |
 | `sip` de `/v1/request/callback/` | extensión corta (`100`) | `Field "sip" could be only SIP or PBX number` |
 | `from` de `/v1/request/callback/` | extensión corta (`100`) | **responde `success` y no timbra nada** |
+| URL de `/v1/pbx/internal/<ext>/status/` | extensión corta (`100`) | el estado queda siempre en "sin dato" |
+| `internal` que llega en los webhooks | extensión corta (`100`) | el CDR no atribuye la llamada a nadie |
 
-El caso de `from` es el peligroso: la petición se acepta, la asesora ve el
-mensaje de confirmación y no suena ningún teléfono. Se guarda el login
+Los tres últimos son los peligrosos porque **no dan error**: la petición se
+acepta, o el dato simplemente llega vacío. Esta integración falló cuatro veces
+por lo mismo antes de que quedara centralizado. Se guarda el login
 completo (es lo que muestra el área personal) y `toShortExtension` convierte
 en el único lugar que lo necesita.
 
