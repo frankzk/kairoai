@@ -62,24 +62,36 @@ function whenPageLoaded(): Promise<void> {
 // Por encima de los drawers de Kairo (z-50). El telefono tiene que estar
 // SIEMPRE arriba: es lo que timbra, y si queda tapado la asesora tiene que
 // cerrar el pedido —perdiendo lo que estaba leyendo— para poder contestar.
-const WIDGET_Z_INDEX = "2147483000";
+// Se SUMA al z-index que ya trae cada nodo, no lo reemplaza. Fijar el mismo
+// valor a todos aplana el orden interno del widget: sus capas quedan
+// empatadas, decide el orden del DOM, y algo que deberia ir detras termina
+// delante comiendose los clicks (asi se rompio el boton de colgar).
+const Z_OFFSET = 2_000_000_000;
+const Z_MAX = 2_147_483_647;
 
 /**
- * Sube el widget por encima de todo lo nuestro.
+ * Sube el widget por encima de todo lo nuestro, respetando su apilado interno.
  *
  * El script de Zadarma inyecta su markup en <body> con su propio z-index y no
  * expone forma de configurarlo, asi que en vez de adivinar sus clases (que
  * pueden cambiar con cada version del widget) se observa que agrega al montar
- * y se le fija el z-index a eso. Solo mira lo que aparece en la ventana de
+ * y se desplaza lo que ya tenia. Solo mira lo que aparece en la ventana de
  * carga del widget; despues deja de observar para no tocar nada de la app.
  */
 function raiseWidgetAboveDrawers(): () => void {
   if (typeof document === "undefined") return () => {};
 
   const known = new Set<Node>(Array.from(document.body.children));
+  // Cada nodo se desplaza UNA vez: los barridos de seguridad vuelven a pasar
+  // por los mismos elementos y sumar dos veces los desordenaria igual.
+  const raised = new WeakSet<HTMLElement>();
+
   const bump = (node: Node) => {
-    if (!(node instanceof HTMLElement) || known.has(node)) return;
-    node.style.setProperty("z-index", WIDGET_Z_INDEX, "important");
+    if (!(node instanceof HTMLElement) || known.has(node) || raised.has(node)) return;
+    const current = Number.parseInt(window.getComputedStyle(node).zIndex, 10);
+    const next = Number.isFinite(current) ? current + Z_OFFSET : Z_OFFSET;
+    node.style.setProperty("z-index", String(Math.min(next, Z_MAX)), "important");
+    raised.add(node);
   };
 
   const observer = new MutationObserver((records) => {

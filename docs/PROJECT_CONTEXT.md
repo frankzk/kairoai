@@ -987,7 +987,15 @@ en el único lugar que lo necesita.
 
 El script de Zadarma inyecta el widget en `<body>` con su propio `z-index` y
 no expone forma de configurarlo, así que los drawers de Kairo (`z-50`) lo
-tapaban: para contestar había que cerrar el pedido y se perdía lo que se
+tapaban.
+
+El desplazamiento **suma** al `z-index` que cada nodo ya traía, no lo
+reemplaza. Fijar el mismo valor a todos aplana el apilado interno del widget:
+sus capas quedan empatadas, decide el orden del DOM, y una capa que debía ir
+detrás termina delante comiéndose los clicks — así se rompió el botón de
+colgar la primera vez.
+
+Antes de este arreglo, los drawers lo tapaban: para contestar había que cerrar el pedido y se perdía lo que se
 estaba leyendo. `ZadarmaWebphone` observa lo que el script agrega al montar y
 le fija un `z-index` por encima de todo lo nuestro. Se observa por markup
 añadido y no por clases/ids de Zadarma a propósito: esas cambian con cada
