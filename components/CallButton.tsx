@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Loader2, PhoneCall } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
+import { showWebphone } from "@/lib/webphone";
 
 // Boton "Llamar" del lead. No marca desde el navegador: le pide a la centralita
 // que timbre la extension de la asesora (su propio navegador, por el widget
@@ -39,6 +40,9 @@ export default function CallButton({
     }
     setCalling(true);
     setFeedback(null);
+    // El telefono web vive oculto; se abre aqui para que este a la vista
+    // cuando la centralita timbre en unos segundos.
+    showWebphone();
     try {
       const res = await fetch("/api/zadarma/call", {
         method: "POST",

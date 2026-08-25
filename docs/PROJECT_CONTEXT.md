@@ -983,6 +983,26 @@ por lo mismo antes de que quedara centralizado. Se guarda el login
 completo (es lo que muestra el área personal) y `toShortExtension` convierte
 en el único lugar que lo necesita.
 
+### El teléfono se monta oculto
+
+El widget tiene que estar **montado** siempre: es lo que registra la extensión
+en la centralita, y sin registro no hay dónde timbrar. Pero no tiene que estar
+**visible** siempre — flotando sobre el tablero todo el día solo estorba.
+
+Se monta oculto (`display:none`, que no corta el registro SIP ni el audio: eso
+es red, no pintado) y aparece cuando:
+
+- la asesora pulsa **Llamar** — `CallButton` emite `kairo:webphone-show`, y por
+  eso el teléfono ya está a la vista cuando la centralita timbra unos segundos
+  después;
+- ella lo abre con el botón redondo de teléfono de la esquina.
+
+**Las llamadas entrantes se escuchan pero hay que abrir el teléfono para
+contestar**: el audio suena aunque esté oculto, pero el widget no avisa por
+ninguna API que se pueda escuchar, así que no hay forma de mostrarlo solo sin
+adivinar su markup — y adivinarlo ya nos rompió el botón de colgar una vez. El
+botón redondo existe justamente para eso.
+
 ### El widget va por encima de los drawers
 
 El script de Zadarma inyecta el widget en `<body>` con su propio `z-index` y
