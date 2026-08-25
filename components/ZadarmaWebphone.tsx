@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Phone } from "lucide-react";
 import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
+import { onShowWebphone } from "@/lib/webphone";
 
 // Widget WebRTC de Zadarma: convierte el navegador de la asesora en su
 // telefono. Se monta una vez por sesion en el tablero de leads; a partir de
@@ -78,7 +80,7 @@ const Z_MAX = 2_147_483_647;
  * y se desplaza lo que ya tenia. Solo mira lo que aparece en la ventana de
  * carga del widget; despues deja de observar para no tocar nada de la app.
  */
-function raiseWidgetAboveDrawers(): () => void {
+function raiseWidgetAboveDrawers(onNode: (node: HTMLElement) => void): () => void {
   if (typeof document === "undefined") return () => {};
 
   const known = new Set<Node>(Array.from(document.body.children));
@@ -92,6 +94,7 @@ function raiseWidgetAboveDrawers(): () => void {
     const next = Number.isFinite(current) ? current + Z_OFFSET : Z_OFFSET;
     node.style.setProperty("z-index", String(Math.min(next, Z_MAX)), "important");
     raised.add(node);
+    onNode(node);
   };
 
   const observer = new MutationObserver((records) => {
@@ -146,8 +149,31 @@ export default function ZadarmaWebphone() {
   // la misma, y hacerlo deja dos telefonos compitiendo por la linea.
   const mountedSip = useRef<string | null>(null);
   const stopRaising = useRef<(() => void) | null>(null);
+  // Nodos que el script de Zadarma inyecto: los mismos que subimos de
+  // z-index son los que hay que ocultar y mostrar. No se vuelven a adivinar.
+  const widgetNodes = useRef<HTMLElement[]>([]);
+  const [mounted, setMounted] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const visibleRef = useRef(false);
 
   useEffect(() => () => stopRaising.current?.(), []);
+
+  // Aplica la visibilidad a los nodos del widget. `display:none` no corta el
+  // registro SIP ni el audio —eso es red, no pintado—, asi que la extension
+  // sigue registrada y el timbre se escucha aunque el telefono este oculto.
+  const applyVisibility = (node: HTMLElement, show: boolean) => {
+    if (show) node.style.removeProperty("display");
+    else node.style.setProperty("display", "none", "important");
+  };
+
+  useEffect(() => {
+    visibleRef.current = visible;
+    for (const node of widgetNodes.current) applyVisibility(node, visible);
+  }, [visible]);
+
+  // El boton "Llamar" pide que aparezca justo antes de que la centralita
+  // timbre, para que la asesora no tenga que buscarlo.
+  useEffect(() => onShowWebphone(() => setVisible(true)), []);
 
   useEffect(() => {
     setVendedora(getVendedoraId());
@@ -188,7 +214,10 @@ export default function ZadarmaWebphone() {
         // Se empieza a observar ANTES de montar: lo que el script agregue a
         // partir de aqui es el widget, y hay que subirlo sobre los drawers.
         stopRaising.current?.();
-        stopRaising.current = raiseWidgetAboveDrawers();
+        stopRaising.current = raiseWidgetAboveDrawers((node) => {
+          widgetNodes.current.push(node);
+          applyVisibility(node, visibleRef.current);
+        });
 
         // Forma y esquina salen de los ajustes del area personal, no del
         // codigo: cambiar la apariencia debe ser un click en Zadarma.
@@ -201,6 +230,7 @@ export default function ZadarmaWebphone() {
           POSITION_OFFSETS[data.position] ?? POSITION_OFFSETS.bottom_right
         );
         mountedSip.current = data.sip;
+        setMounted(true);
         setError(null);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Teléfono no disponible");
@@ -212,12 +242,37 @@ export default function ZadarmaWebphone() {
     };
   }, [vendedoraId]);
 
-  if (!vendedoraId || !error) return null;
+  if (!vendedoraId) return null;
 
-  // Aviso discreto: nunca debe tapar el tablero ni bloquear el trabajo.
+  if (error) {
+    // Aviso discreto: nunca debe tapar el tablero ni bloquear el trabajo.
+    return (
+      <p className="pointer-events-none fixed bottom-2 left-2 z-40 max-w-xs rounded-md bg-muted/90 px-2 py-1 text-[10px] text-muted-foreground">
+        Teléfono web: {error}
+      </p>
+    );
+  }
+
+  if (!mounted) return null;
+
+  // Lanzador: el widget esta montado y registrado, pero oculto. Este boton es
+  // la unica pista de que el telefono existe, y hace falta para las llamadas
+  // ENTRANTES: se escuchan (el audio suena aunque este oculto) pero hay que
+  // abrirlo para contestar.
   return (
-    <p className="pointer-events-none fixed bottom-2 left-2 z-40 max-w-xs rounded-md bg-muted/90 px-2 py-1 text-[10px] text-muted-foreground">
-      Teléfono web: {error}
-    </p>
+    <button
+      type="button"
+      onClick={() => setVisible((open) => !open)}
+      title={visible ? "Ocultar el teléfono web" : "Abrir el teléfono web"}
+      aria-label={visible ? "Ocultar el teléfono web" : "Abrir el teléfono web"}
+      aria-pressed={visible}
+      className={`fixed bottom-3 right-3 z-40 flex h-10 w-10 items-center justify-center rounded-full border shadow-lg transition-colors ${
+        visible
+          ? "border-primary bg-primary text-primary-foreground"
+          : "border-border bg-card text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      <Phone className="h-4 w-4" />
+    </button>
   );
 }
