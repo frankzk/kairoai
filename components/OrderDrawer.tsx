@@ -1,26 +1,50 @@
 "use client";
 
-// Drawer de gestion del pedido: dos columnas, la de la izquierda para decidir
-// (alertas, historial del cliente, bitacora) y la de la derecha para el chat
-// real de WhatsApp. Mismo patron que Leads y Novedades.
+// Drawer de gestion del pedido: tres columnas con la MISMA estructura visual
+// que el modal de Novedades, para que la asesora no tenga que reaprender la
+// pantalla al cambiar de modulo.
+//
+//   1. Datos y contexto  -> quien es el cliente, que pidio, que alertas trae.
+//   2. Gestion           -> llamada, decision, nota y bitacora.
+//   3. Chat de WhatsApp  -> el mismo panel operativo de Leads.
 //
 // Se abre AL INSTANTE con los datos que la lista ya tiene y carga el detalle
 // pesado (historial + chat + bitacora) en segundo plano: la gestion funciona
 // aunque el detalle tarde o falle.
 
-import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Info, Loader2, MessageSquare, RefreshCw, X } from "lucide-react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  AlertTriangle,
+  Ban,
+  CalendarClock,
+  CheckCircle2,
+  History,
+  Info,
+  Loader2,
+  MessageSquare,
+  PackageCheck,
+  PauseCircle,
+  Phone,
+  PhoneOff,
+  Plus,
+  RefreshCw,
+  Voicemail,
+  X,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
 import { getVendedoraId, setVendedoraId as persistVendedoraId } from "@/lib/vendedora";
 import type { ChatLeadSummary } from "@/lib/leads-types";
 import type { CustomerOrder, CustomerSummary } from "@/lib/customer-history";
 import type { OrderAlert } from "@/lib/order-risk";
-import { ORDER_EVENT_OUTCOME_LABEL, type OrderEvent } from "@/lib/order-events";
+import {
+  ORDER_EVENT_OUTCOME_LABEL,
+  type OrderEvent,
+  type OrderEventKind,
+} from "@/lib/order-events";
 
 export interface OrderDrawerTarget {
   order_name: string;
@@ -47,20 +71,57 @@ interface Staff {
   active?: boolean;
 }
 
-const CONTACT_BUTTONS: Array<{ outcome: string; label: string }> = [
-  { outcome: "contesto", label: "Contestó" },
-  { outcome: "no_contesta", label: "No contesta" },
-  { outcome: "buzon", label: "Buzón" },
-  { outcome: "numero_malo", label: "Número malo" },
-  { outcome: "confirmado", label: "Confirmó el pedido" },
-  { outcome: "reagendar", label: "Reagendar" },
+type ActionButton = {
+  outcome: string;
+  label: string;
+  icon: typeof Phone;
+  /** Color del icono; el boton se mantiene neutro como en Novedades. */
+  iconTone?: string;
+  /** Solo para las decisiones, que si van coloreadas enteras. */
+  tone?: string;
+};
+
+// Resultado de la llamada: lo que paso al marcar.
+const CALL_BUTTONS: ActionButton[] = [
+  { outcome: "contesto", label: "Contestó", icon: Phone, iconTone: "text-emerald-500" },
+  { outcome: "no_contesta", label: "No contesta", icon: PhoneOff, iconTone: "text-rose-500" },
+  { outcome: "buzon", label: "Buzón", icon: Voicemail, iconTone: "text-muted-foreground" },
+  { outcome: "numero_malo", label: "Número malo", icon: Ban, iconTone: "text-muted-foreground" },
 ];
 
-const DECISION_BUTTONS: Array<{ outcome: string; label: string; tone: string }> = [
-  { outcome: "autorizar_despacho", label: "Autorizar despacho", tone: "border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10" },
-  { outcome: "retener", label: "Retener", tone: "border-amber-500/50 text-amber-400 hover:bg-amber-500/10" },
-  { outcome: "anular", label: "Anular pedido", tone: "border-destructive/50 text-destructive hover:bg-destructive/10" },
+// Resultado del contacto: a que se comprometio el cliente.
+const RESULT_BUTTONS: ActionButton[] = [
+  { outcome: "confirmado", label: "Confirmó el pedido", icon: CheckCircle2, iconTone: "text-emerald-500" },
+  { outcome: "reagendar", label: "Reagendar", icon: CalendarClock, iconTone: "text-muted-foreground" },
 ];
+
+// Decision sobre el despacho: cierra la gestion.
+const DECISION_BUTTONS: ActionButton[] = [
+  {
+    outcome: "autorizar_despacho",
+    label: "Autorizar despacho",
+    icon: PackageCheck,
+    tone: "border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10",
+  },
+  {
+    outcome: "retener",
+    label: "Retener",
+    icon: PauseCircle,
+    tone: "border-amber-500/50 text-amber-400 hover:bg-amber-500/10",
+  },
+  {
+    outcome: "anular",
+    label: "Anular pedido",
+    icon: Ban,
+    tone: "border-destructive/50 text-destructive hover:bg-destructive/10",
+  },
+];
+
+const KIND_LABEL: Record<OrderEventKind, string> = {
+  contacto: "Contacto",
+  nota: "Nota",
+  decision: "Decisión",
+};
 
 function money(value: number, symbol: string): string {
   return `${symbol}${Math.round(Number(value) || 0).toLocaleString("es-CR")}`;
@@ -78,6 +139,27 @@ function whenCR(iso: string | null | undefined): string {
     minute: "2-digit",
     hour12: false,
   }).format(new Date(t));
+}
+
+// Fila etiquetada de acciones: la etiqueta a la izquierda alinea los botones
+// entre si, igual que "Llamada / Reprogramar / Cierre" en Novedades. Los
+// botones van en su propio contenedor para que, al no caber, la segunda linea
+// quede debajo de la primera y no debajo de la etiqueta.
+function ActionRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="w-20 shrink-0 pt-2 text-xs font-medium text-muted-foreground">{label}</span>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <span className="text-muted-foreground">{label}:</span> {children}
+    </div>
+  );
 }
 
 function AlertRow({ alert }: { alert: OrderAlert }) {
@@ -176,14 +258,14 @@ export default function OrderDrawer({
     })();
   }, []);
 
-  const selectVendedora = (id: number) => {
+  const selectVendedora = (id: number | null) => {
     setVendedoraId(id);
     // persistVendedoraId ademas avisa al telefono web, que necesita saber en
     // el acto con que extension registrarse.
-    persistVendedoraId(id);
+    if (id !== null) persistVendedoraId(id);
   };
 
-  async function registrar(kind: "contacto" | "nota" | "decision", outcome: string, message = "") {
+  async function registrar(kind: OrderEventKind, outcome: string, message = "") {
     setSaving(outcome || kind);
     setError("");
     try {
@@ -223,6 +305,28 @@ export default function OrderDrawer({
     (o) => o.name.trim().toUpperCase() !== target.order_name.trim().toUpperCase()
   );
 
+  // Un boton de accion: icono + etiqueta, spinner mientras se guarda.
+  const renderAction = (b: ActionButton, kind: OrderEventKind) => {
+    const Icon = b.icon;
+    return (
+      <Button
+        key={b.outcome}
+        variant="outline"
+        size="sm"
+        className={`gap-2 ${b.tone ?? ""}`}
+        disabled={saving !== null}
+        onClick={() => registrar(kind, b.outcome)}
+      >
+        {saving === b.outcome ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Icon className={`h-3.5 w-3.5 ${b.iconTone ?? ""}`} />
+        )}
+        {b.label}
+      </Button>
+    );
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-2 sm:p-4"
@@ -230,18 +334,17 @@ export default function OrderDrawer({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <Card className="my-1 flex h-[calc(100vh-1rem)] w-full max-w-[84rem] flex-col overflow-hidden sm:my-0 sm:h-[calc(100vh-2rem)]">
+      <Card className="my-1 flex h-[calc(100vh-1rem)] w-full max-w-[96rem] flex-col overflow-hidden sm:my-0 sm:h-[calc(100vh-2rem)]">
+        {/* Cabecera minima: estado + pedido. El resto de los datos vive en la
+            primera columna, como en Novedades. */}
         <div className="flex items-center justify-between border-b border-border p-4">
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="font-mono text-sm font-semibold">{target.order_name}</span>
-            <span className="text-sm text-muted-foreground">{target.customer_name || "Sin nombre"}</span>
-            <span className="font-mono text-xs text-muted-foreground">{target.phone || "sin teléfono"}</span>
-            <span className="text-sm font-medium">{money(target.cod_amount, currencySymbol)}</span>
+          <div className="flex items-center gap-2">
             {target.guide_number ? (
               <Badge variant="muted">Guía {target.guide_number}</Badge>
             ) : (
               <Badge variant="warning">Sin despachar</Badge>
             )}
+            <span className="font-semibold">{target.order_name || "Pedido"}</span>
           </div>
           <div className="flex items-center gap-2">
             {/* El numero sale del pedido en la base, no de esta pantalla. */}
@@ -258,23 +361,48 @@ export default function OrderDrawer({
           </div>
         )}
 
-        <CardContent className="min-h-0 flex-1 overflow-y-auto p-0 lg:overflow-hidden">
-          <div className="grid min-h-full lg:h-full lg:grid-cols-[minmax(0,1fr)_minmax(22rem,0.85fr)]">
+        <CardContent className="min-h-0 flex-1 overflow-y-auto p-0 xl:overflow-hidden">
+          <div className="grid min-h-full xl:h-full xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1fr)_minmax(20rem,1.08fr)]">
 
-            {/* Columna izquierda: la decisión */}
-            <div className="space-y-4 p-4 lg:overflow-y-auto">
+            {/* Columna 1: datos y contexto del pedido */}
+            <div className="space-y-3 p-4 xl:overflow-y-auto">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+                <Field label="Cliente">{target.customer_name || "—"}</Field>
+                <Field label="Telefono">
+                  <span className="font-mono text-xs">{target.phone || "—"}</span>
+                </Field>
+                <Field label="Guia">
+                  <span className="font-mono text-xs">{target.guide_number || "—"}</span>
+                </Field>
+                <Field label="Fecha">{whenCR(target.created_at)}</Field>
+                <Field label="COD">
+                  <span className="font-medium">{money(target.cod_amount, currencySymbol)}</span>
+                </Field>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-muted-foreground">Pedidos del cliente:</span>
+                  <span className="text-base font-bold tabular-nums">
+                    {summary ? summary.orders : loading ? "…" : "—"}
+                  </span>
+                </div>
+              </div>
 
-              <section className="space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Antes de despachar
-                </h3>
+              {target.items_summary && (
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Producto:</span> {target.items_summary}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                  <AlertTriangle className="h-3.5 w-3.5" /> Antes de despachar
+                </p>
                 {loading ? (
-                  <p className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Revisando el historial...
+                  <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <RefreshCw className="h-3 w-3 animate-spin" /> Revisando el historial…
                   </p>
                 ) : alerts.length === 0 ? (
                   <div className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-2 text-sm">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
                     Sin alertas: pedido reciente y cliente sin historial de devoluciones.
                   </div>
                 ) : (
@@ -284,171 +412,164 @@ export default function OrderDrawer({
                     ))}
                   </div>
                 )}
-              </section>
+              </div>
 
-              <section className="space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Historial del cliente
-                </h3>
-                {summary ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    <Badge variant="muted">{summary.orders} pedidos</Badge>
-                    <Badge variant="muted">{money(summary.total_spent, currencySymbol)}</Badge>
-                    {summary.delivered > 0 && <Badge variant="success">{summary.delivered} entregados</Badge>}
-                    {summary.returned > 0 && <Badge variant="destructive">{summary.returned} devueltos</Badge>}
-                    {summary.in_transit > 0 && <Badge variant="warning">{summary.in_transit} en camino</Badge>}
-                    {summary.cancelled > 0 && <Badge variant="muted">{summary.cancelled} anulados</Badge>}
-                  </div>
-                ) : (
-                  !loading && <p className="text-xs text-muted-foreground">Sin historial para este teléfono.</p>
-                )}
+              {summary && (
+                <div className="flex flex-wrap gap-1.5">
+                  <Badge variant="muted">{money(summary.total_spent, currencySymbol)} gastados</Badge>
+                  {summary.delivered > 0 && <Badge variant="success">{summary.delivered} entregados</Badge>}
+                  {summary.returned > 0 && <Badge variant="destructive">{summary.returned} devueltos</Badge>}
+                  {summary.in_transit > 0 && <Badge variant="warning">{summary.in_transit} en camino</Badge>}
+                  {summary.cancelled > 0 && <Badge variant="muted">{summary.cancelled} anulados</Badge>}
+                </div>
+              )}
+              {!summary && !loading && (
+                <p className="text-xs text-muted-foreground">Sin historial para este teléfono.</p>
+              )}
 
-                {otherOrders.length > 0 && (
-                  <div className="overflow-x-auto rounded-md border border-border">
-                    <table className="w-full text-xs">
-                      <tbody>
-                        {otherOrders.slice(0, 8).map((o) => (
-                          <tr key={o.name} className="border-b border-border/50 last:border-0">
-                            <td className="px-2 py-1.5 font-mono">{o.name}</td>
-                            <td className="px-2 py-1.5 text-muted-foreground">{whenCR(o.created_at)}</td>
-                            <td className="px-2 py-1.5">
-                              <Badge
-                                variant={
-                                  o.state === "delivered"
-                                    ? "success"
-                                    : o.state === "returned"
-                                      ? "destructive"
-                                      : o.state === "in_transit"
-                                        ? "warning"
-                                        : "muted"
-                                }
-                              >
-                                {o.state_label}
-                              </Badge>
-                            </td>
-                            <td className="px-2 py-1.5 text-right font-medium">
-                              {money(o.total, currencySymbol)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
-
-              <section className="space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Registrar gestión
-                </h3>
-
-                {staff.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {staff.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => selectVendedora(s.id)}
-                        className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
-                          vendedoraId === s.id
-                            ? "border-primary bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:bg-accent"
-                        }`}
-                      >
-                        {s.name}
-                      </button>
+              {/* Plegable, igual que el historial del courier en Novedades. */}
+              {otherOrders.length > 0 && (
+                <details className="rounded-md border border-border">
+                  <summary className="flex cursor-pointer select-none list-none items-center gap-2 px-3 py-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                    <History className="h-4 w-4 text-muted-foreground" />
+                    Otros pedidos del cliente
+                    <Badge variant="muted" className="ml-auto">{otherOrders.length}</Badge>
+                  </summary>
+                  <ol className="max-h-64 divide-y divide-border overflow-y-auto border-t border-border">
+                    {otherOrders.slice(0, 12).map((o) => (
+                      <li key={o.name} className="space-y-0.5 px-3 py-2 text-xs">
+                        <div className="flex items-start justify-between gap-3">
+                          <span className="font-mono font-medium">{o.name}</span>
+                          <span className="whitespace-nowrap text-muted-foreground">
+                            {whenCR(o.created_at)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <Badge
+                            variant={
+                              o.state === "delivered"
+                                ? "success"
+                                : o.state === "returned"
+                                  ? "destructive"
+                                  : o.state === "in_transit"
+                                    ? "warning"
+                                    : "muted"
+                            }
+                          >
+                            {o.state_label}
+                          </Badge>
+                          <span className="font-medium">{money(o.total, currencySymbol)}</span>
+                        </div>
+                      </li>
                     ))}
-                  </div>
+                  </ol>
+                </details>
+              )}
+            </div>
+
+            {/* Columna 2: gestion, nota y bitacora */}
+            <div className="space-y-3 border-t border-border p-4 xl:overflow-y-auto xl:border-l xl:border-t-0">
+
+              <ActionRow label="Vendedora">
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  value={vendedoraId ?? ""}
+                  onChange={(e) => selectVendedora(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">Sin asignar</option>
+                  {staff.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </ActionRow>
+
+              <div className="space-y-2">
+                <ActionRow label="Llamada">
+                  {CALL_BUTTONS.map((b) => renderAction(b, "contacto"))}
+                </ActionRow>
+                <ActionRow label="Resultado">
+                  {RESULT_BUTTONS.map((b) => renderAction(b, "contacto"))}
+                </ActionRow>
+                <ActionRow label="Decisión">
+                  {DECISION_BUTTONS.map((b) => renderAction(b, "decision"))}
+                </ActionRow>
+                {vendedoraId === null && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Elegí tu nombre para que la gestión quede registrada a tu nombre.
+                  </p>
                 )}
+              </div>
 
-                <div className="flex flex-wrap gap-1.5">
-                  {CONTACT_BUTTONS.map((b) => (
-                    <Button
-                      key={b.outcome}
-                      variant="outline"
-                      size="sm"
-                      disabled={saving !== null}
-                      onClick={() => registrar("contacto", b.outcome)}
-                    >
-                      {saving === b.outcome ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : b.label}
-                    </Button>
-                  ))}
-                </div>
-
-                <div className="flex flex-wrap gap-1.5">
-                  {DECISION_BUTTONS.map((b) => (
-                    <Button
-                      key={b.outcome}
-                      variant="outline"
-                      size="sm"
-                      className={b.tone}
-                      disabled={saving !== null}
-                      onClick={() => registrar("decision", b.outcome)}
-                    >
-                      {saving === b.outcome ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : b.label}
-                    </Button>
-                  ))}
-                </div>
-
-                <div className="flex gap-1.5">
-                  <Input
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder="Nota para la bitácora"
-                    className="h-8 text-xs"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && note.trim() && saving === null) {
-                        registrar("nota", "", note);
-                      }
-                    }}
-                  />
+              {/* Notas: se registran como eventos de la bitacora */}
+              <div>
+                <p className="mb-1 text-xs font-medium text-muted-foreground">Agregar nota</p>
+                <textarea
+                  className="min-h-[52px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Escribe una nota… (queda en la bitácora)"
+                />
+                <div className="mt-1 flex justify-end">
                   <Button
+                    variant="outline"
                     size="sm"
+                    className="gap-2"
                     disabled={!note.trim() || saving !== null}
                     onClick={() => registrar("nota", "", note)}
                   >
-                    {saving === "nota" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Guardar"}
+                    {saving === "nota" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Plus className="h-3.5 w-3.5" />
+                    )}
+                    Agregar nota
                   </Button>
                 </div>
-              </section>
+              </div>
 
-              <section className="space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Bitácora {events.length > 0 && `(${events.length})`}
-                </h3>
-                {events.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    Sin gestión registrada. Lo que anotes acá queda como respaldo de lo que se hizo.
-                  </p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {events.map((e) => (
-                      <li key={e.id} className="rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs">
-                        <div className="flex flex-wrap items-baseline gap-x-2">
-                          <span className="font-mono text-[10px] text-muted-foreground">
-                            {whenCR(e.created_at)}
-                          </span>
-                          {e.staff_name && <span className="font-medium">{e.staff_name}</span>}
-                          {e.outcome && (
-                            <span className="text-foreground">
-                              {ORDER_EVENT_OUTCOME_LABEL[e.outcome] ?? e.outcome}
-                            </span>
-                          )}
-                        </div>
-                        {e.message && <div className="mt-0.5 text-muted-foreground">{e.message}</div>}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
+              {/* Bitacora */}
+              <div>
+                <p className="mb-1 flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                  <History className="h-3.5 w-3.5" /> Bitácora
+                  {events.length > 0 && <span>({events.length})</span>}
+                </p>
+                <div className="max-h-72 space-y-1 overflow-y-auto">
+                  {loading && events.length === 0 ? (
+                    <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <RefreshCw className="h-3 w-3 animate-spin" /> Cargando bitácora…
+                    </p>
+                  ) : events.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Sin gestión registrada. Lo que anotes acá queda como respaldo de lo que se hizo.
+                    </p>
+                  ) : (
+                    events.map((e) => (
+                      <div key={e.id} className="flex gap-2 border-b border-border/30 py-1 text-xs">
+                        <span className="whitespace-nowrap text-muted-foreground">
+                          {whenCR(e.created_at)}
+                        </span>
+                        <span className="font-medium">{KIND_LABEL[e.kind] ?? e.kind}</span>
+                        <span className="flex-1 text-muted-foreground">
+                          {e.message || (e.outcome ? ORDER_EVENT_OUTCOME_LABEL[e.outcome] ?? e.outcome : "")}
+                        </span>
+                        {e.staff_name && (
+                          <span className="whitespace-nowrap text-muted-foreground">{e.staff_name}</span>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
 
-            {/* Columna derecha: el chat real */}
-            <div className="flex min-h-[24rem] flex-col border-t border-border lg:border-l lg:border-t-0">
+            {/* Columna 3: el mismo chat operativo del modulo de Leads. */}
+            <div className="flex min-h-[34rem] flex-col border-t border-border xl:min-h-0 xl:border-l xl:border-t-0">
               {loading ? (
-                <div className="flex flex-1 items-center justify-center">
+                <div className="flex flex-1 items-center justify-center p-6 text-center">
                   <p className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Buscando la conversación...
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Buscando conversación de WhatsApp...
                   </p>
                 </div>
               ) : detail?.chat_lead ? (
