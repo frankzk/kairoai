@@ -5,6 +5,7 @@ import {
   detectSinpeText,
   detectOrderInTranscript,
   nextLeadState,
+  isProtectedFromPurchase,
   statusCategory,
   statusBoardStage,
   isValidDisposition,
@@ -215,6 +216,42 @@ describe("nextLeadState — las 4 leyes", () => {
     const res = nextLeadState(manualSnap, incoming);
     expect(res).not.toBeNull();
     expect(res?.category).toBe("won");
+  });
+
+  // Los estados PROTEGIDOS son decisiones de una persona sobre el trato con ese
+  // cliente, no una lectura del embudo. Que compre no las deshace: sacarlo de
+  // lista negra por un pedido borraria el motivo por el que lo pusieron ahi.
+  it.each(["lista_negra", "cancelado_cliente", "cancelado"])(
+    "LEY 2: ni una compra real saca a un lead de %s",
+    (status) => {
+      const protegido: LeadStateSnapshot = {
+        category: "lost",
+        status,
+        statusSource: "manual",
+        hasOrder: false,
+        hasCartSignal: false,
+      };
+      const incoming = classifyConversation(makeConv(), { hasShopifyOrder: true });
+      expect(nextLeadState(protegido, incoming)).toBeNull();
+    }
+  );
+
+  it("LEY 2: el resto de los estados manuales SI los gana la compra", () => {
+    // Un 'no responde' o un 'volver a llamar' que despues compra es una venta,
+    // y hasta ahora se quedaba atascado en el tablero.
+    for (const status of ["contactado_dejo_wsp", "volver_a_llamar", "buzon", "sin_stock"]) {
+      const snap: LeadStateSnapshot = { ...manualSnap, status };
+      const incoming = classifyConversation(makeConv(), { hasShopifyOrder: true });
+      expect(nextLeadState(snap, incoming)?.category).toBe("won");
+    }
+  });
+
+  it("isProtectedFromPurchase distingue protegidos de manuales comunes", () => {
+    expect(isProtectedFromPurchase("lista_negra")).toBe(true);
+    expect(isProtectedFromPurchase("cancelado_cliente")).toBe(true);
+    expect(isProtectedFromPurchase("cancelado")).toBe(true);
+    expect(isProtectedFromPurchase("contactado_dejo_wsp")).toBe(false);
+    expect(isProtectedFromPurchase("")).toBe(false);
   });
 
   it("LEY 3: won con orden es pegajoso, no se degrada solo", () => {

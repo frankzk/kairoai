@@ -37,6 +37,7 @@ Estado actual:
 | `0026_quick_replies.sql` | Respuestas rápidas del chat de leads (`quick_replies`): plantillas por tienda con contador de uso para los chips del composer | Si (26/07/2026) |
 | `0028_order_events.sql` | Bitácora de gestión por pedido (`order_events`): intentos de contacto, notas y decisiones previas al despacho, para el drawer de Gestión de pedidos | Si (23/08/2026) |
 | `0029_zadarma_calls.sql` | Telefonía Zadarma: columna `payroll_staff.zadarma_sip` (extensión por asesora) + `zadarma_calls` (CDR que escribe el webhook). Sin ella el botón "Llamar" y el teléfono web quedan deshabilitados; el resto del tablero no se ve afectado | Si (24/08/2026) |
+| `0030_leads_purchase_beats_manual.sql` | El cruce lead↔orden ya no ignora los estados manuales (una compra real gana, como dice la ley 2 del clasificador), salvo `lista_negra`/`cancelado_cliente`/`cancelado`; además guarda `shopify_order_name`. Sacó 389 leads ya comprados del tablero | Si (25/08/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de

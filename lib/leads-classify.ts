@@ -280,10 +280,31 @@ function isStale(lastAt: string | null, now: number = Date.now(), hours = 48): b
 // Devuelve el nuevo status a aplicar, o null si NO se debe tocar el lead.
 //
 //  Ley 1: deriveAutoState -> la clasificacion propone un estado auto.
-//  Ley 2: un estado MANUAL nunca lo pisa la ingesta (salvo compra real nueva).
+//  Ley 2: un estado MANUAL nunca lo pisa la ingesta (salvo compra real nueva,
+//         y nunca si el estado esta PROTEGIDO).
 //  Ley 3: won es pegajoso; no se degrada solo mientras haya orden activa.
 //  Ley 4: reapertura -> un evento nuevo del cliente con carrito puede reabrir
 //         un lost/won viejo (se maneja con el flag reopen).
+/**
+ * Estados que una compra real NO revierte, aunque el cliente termine comprando.
+ * Son decisiones explicitas de una persona sobre el trato con ese cliente, no
+ * una lectura del embudo: sacar a alguien de lista negra porque hizo un pedido
+ * borraria justo el motivo por el que lo pusieron ahi.
+ *
+ * El resto de los estados manuales SI los gana la compra: alguien marcado
+ * "no responde" o "volver a llamar" que despues compra es, sencillamente, una
+ * venta.
+ *
+ * Esta lista la comparten el clasificador (aca) y el cruce por telefono contra
+ * Shopify (RPC match_leads_to_shopify_orders, migracion 0030). Si cambia una,
+ * tiene que cambiar la otra.
+ */
+export const PURCHASE_PROOF_STATUSES = ["lista_negra", "cancelado_cliente", "cancelado"] as const;
+
+export function isProtectedFromPurchase(status: string): boolean {
+  return (PURCHASE_PROOF_STATUSES as readonly string[]).includes(String(status ?? ""));
+}
+
 export function nextLeadState(
   current: LeadStateSnapshot | null,
   incoming: Classification,
@@ -296,9 +317,11 @@ export function nextLeadState(
 
   const incomingIsPurchase = incoming.category === "won";
 
-  // Ley 2: estado manual intocable, EXCEPTO una compra real nueva.
+  // Ley 2: estado manual intocable, EXCEPTO una compra real nueva -- y salvo
+  // los estados PROTEGIDOS, que son una decision de la persona que ni una
+  // compra debe deshacer (ver PURCHASE_PROOF_STATUSES).
   if (current.statusSource === "manual") {
-    if (incomingIsPurchase && !current.hasOrder) {
+    if (incomingIsPurchase && !current.hasOrder && !isProtectedFromPurchase(current.status)) {
       return { status: incoming.status, category: incoming.category, reason: `compra real gana sobre estado manual: ${incoming.autoReason}` };
     }
     return null;
