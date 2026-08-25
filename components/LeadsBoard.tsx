@@ -20,6 +20,7 @@ import ProductivityPanel from "@/components/ProductivityPanel";
 import CustomerPanel from "@/components/CustomerPanel";
 import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
+import { hideWebphone } from "@/lib/webphone";
 import ZadarmaWebphone from "@/components/ZadarmaWebphone";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -859,6 +860,10 @@ function LeadDrawer({
 }) {
   const [showOrder, setShowOrder] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
+
+  // Al cerrar la ficha se lleva el telefono. Va en el desmontaje y no en el
+  // boton de cerrar para cubrir todas las salidas: la X y el clic en el fondo.
+  useEffect(() => () => hideWebphone(), []);
 
   // El drawer opera SIEMPRE con la tienda del propio lead, no con la del
   // selector del tablero. Si al cambiar de tienda el tablero alcanza a mostrar
