@@ -142,6 +142,47 @@ function loadScript(src: string): Promise<void> {
   });
 }
 
+/**
+ * Avisa cuando hay o deja de haber una llamada en curso.
+ *
+ * El widget no expone ninguna API para esto, pero toda llamada WebRTC pasa
+ * por `RTCPeerConnection`, que es estandar del navegador. Se envuelve el
+ * constructor ANTES de cargar el script del widget y se escucha su cambio de
+ * estado. Esto NO es adivinar el markup de Zadarma —eso ya nos rompio el boton
+ * de colgar—: es una interfaz del W3C que el widget tiene que usar si o si.
+ *
+ * La subclase es transparente: no cambia comportamiento, solo observa. Al
+ * desmontar se restaura el constructor original.
+ */
+function watchWebrtcCalls(onActiveChange: (active: boolean) => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const Original = window.RTCPeerConnection;
+  if (typeof Original !== "function") return () => {};
+
+  const live = new Set<RTCPeerConnection>();
+  const sync = () => onActiveChange(live.size > 0);
+
+  class Observed extends Original {
+    constructor(...args: ConstructorParameters<typeof RTCPeerConnection>) {
+      super(...args);
+      this.addEventListener("connectionstatechange", () => {
+        const state = this.connectionState;
+        if (state === "connecting" || state === "connected") live.add(this);
+        else if (state === "closed" || state === "failed" || state === "disconnected") {
+          live.delete(this);
+        }
+        sync();
+      });
+    }
+  }
+
+  window.RTCPeerConnection = Observed as unknown as typeof RTCPeerConnection;
+  return () => {
+    window.RTCPeerConnection = Original;
+    live.clear();
+  };
+}
+
 export default function ZadarmaWebphone() {
   const [vendedoraId, setVendedora] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -153,8 +194,18 @@ export default function ZadarmaWebphone() {
   // z-index son los que hay que ocultar y mostrar. No se vuelven a adivinar.
   const widgetNodes = useRef<HTMLElement[]>([]);
   const [mounted, setMounted] = useState(false);
-  const [visible, setVisible] = useState(false);
+  // Tres razones para estar a la vista, y hace falta distinguirlas: si no,
+  // el telefono se queda pegado despues de colgar (que fue justo el reporte)
+  // o desaparece en mitad de una llamada.
+  //   pinned    -> la asesora lo abrio con el boton; manda sobre todo lo demas
+  //   callActive-> hay una llamada en curso; mientras dure no se oculta
+  //   awaiting  -> pulso "Llamar" y la centralita todavia no timbra
+  const [pinned, setPinned] = useState(false);
+  const [callActive, setCallActive] = useState(false);
+  const [awaiting, setAwaiting] = useState(false);
+  const visible = pinned || callActive || awaiting;
   const visibleRef = useRef(false);
+  const awaitingTimer = useRef<number | null>(null);
 
   useEffect(() => () => stopRaising.current?.(), []);
 
@@ -172,8 +223,34 @@ export default function ZadarmaWebphone() {
   }, [visible]);
 
   // El boton "Llamar" pide que aparezca justo antes de que la centralita
-  // timbre, para que la asesora no tenga que buscarlo.
-  useEffect(() => onShowWebphone(() => setVisible(true)), []);
+  // timbre, para que la asesora no tenga que buscarlo. La espera caduca: si
+  // la llamada nunca entra, el telefono no se queda abierto para siempre.
+  useEffect(
+    () =>
+      onShowWebphone(() => {
+        setAwaiting(true);
+        if (awaitingTimer.current) window.clearTimeout(awaitingTimer.current);
+        awaitingTimer.current = window.setTimeout(() => setAwaiting(false), 60_000);
+      }),
+    []
+  );
+
+  // Se empieza a observar antes de que el widget cargue, para no perderse la
+  // primera llamada. Al conectar se cancela la espera; al colgar, si la
+  // asesora no lo dejo abierto a proposito, el telefono se oculta solo.
+  useEffect(() => {
+    const stop = watchWebrtcCalls((active) => {
+      setCallActive(active);
+      if (active) {
+        setAwaiting(false);
+        if (awaitingTimer.current) window.clearTimeout(awaitingTimer.current);
+      }
+    });
+    return () => {
+      stop();
+      if (awaitingTimer.current) window.clearTimeout(awaitingTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     setVendedora(getVendedoraId());
@@ -262,7 +339,10 @@ export default function ZadarmaWebphone() {
   return (
     <button
       type="button"
-      onClick={() => setVisible((open) => !open)}
+      onClick={() => {
+        setPinned((open) => !open);
+        setAwaiting(false);
+      }}
       title={visible ? "Ocultar el teléfono web" : "Abrir el teléfono web"}
       aria-label={visible ? "Ocultar el teléfono web" : "Abrir el teléfono web"}
       aria-pressed={visible}
