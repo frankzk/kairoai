@@ -997,26 +997,22 @@ es red, no pintado) y aparece cuando:
   después;
 - ella lo abre con el botón redondo de teléfono de la esquina.
 
-Y se oculta solo cuando la llamada termina. Hay tres razones distintas para
-estar a la vista y **hay que distinguirlas**, o el teléfono se queda pegado
-después de colgar o desaparece en mitad de una llamada:
+**No se oculta solo al colgar.** Se intentó, envolviendo `RTCPeerConnection`
+para saber cuándo terminaba la llamada, y se revirtió: el widget dejó de
+inicializarse (`WebrtcPhoneInterface is not defined`) y sin teléfono no hay
+nada que ocultar. La lección: el widget depende de globales del navegador y es
+frágil a que se los toquen, aunque el envoltorio sea transparente. Poder
+llamar vale más que la comodidad de que se cierre solo.
 
-| Razón | Se apaga cuando |
-| --- | --- |
-| la asesora lo abrió con el botón | lo vuelve a pulsar |
-| hay una llamada en curso | cuelga |
-| pulsó "Llamar" y aún no timbra | conecta la llamada, o pasan 60 s |
+Si en el futuro alguien quiere que se cierre solo: el problema es saber cuándo
+terminó la llamada, y el widget no lo dice. **No lo busques en
+`RTCPeerConnection`** — ya se probó envolverlo y rompió la carga del widget.
+Cualquier intento nuevo tiene que probarse contra una llamada real antes de
+llegar a producción, porque el fallo no aparece en tests ni en el build.
 
-Saber si hay llamada en curso no viene del widget —no expone nada— sino de
-envolver `RTCPeerConnection`, que es estándar del W3C y toda llamada WebRTC
-tiene que usar. Se envuelve antes de cargar el script del widget y la subclase
-solo observa. **Esto no es adivinar el markup de Zadarma**: esa vía ya rompió
-el botón de colgar una vez y no se repite.
-
-**Las llamadas entrantes se escuchan pero puede hacer falta abrir el teléfono
-para contestar**: el audio suena aunque esté oculto, pero según cuándo cree el
-widget su `RTCPeerConnection` el teléfono puede aparecer recién al contestar.
-El botón redondo existe también para eso.
+**Las llamadas entrantes se escuchan pero hay que abrir el teléfono para
+contestar**: el audio suena aunque esté oculto. El botón redondo existe también
+para eso.
 
 ### El widget va por encima de los drawers
 
