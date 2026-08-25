@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Phone } from "lucide-react";
 import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
-import { onShowWebphone } from "@/lib/webphone";
+import { onHideWebphone, onShowWebphone } from "@/lib/webphone";
 
 // Widget WebRTC de Zadarma: convierte el navegador de la asesora en su
 // telefono. Se monta una vez por sesion en el tablero de leads; a partir de
@@ -153,14 +153,17 @@ export default function ZadarmaWebphone() {
   // z-index son los que hay que ocultar y mostrar. No se vuelven a adivinar.
   const widgetNodes = useRef<HTMLElement[]>([]);
   const [mounted, setMounted] = useState(false);
-  // Se muestra al pulsar "Llamar" y se oculta con el boton de la esquina.
+  // Se muestra al pulsar "Llamar" y se va solo al cerrar la ficha o al colgar
+  // (ver los efectos de abajo). Tambien se puede ocultar a mano con el boton
+  // de la esquina.
   //
-  // Hubo un intento de ocultarlo solo al colgar, envolviendo
-  // `RTCPeerConnection` para saber cuando terminaba la llamada. Se revirtio:
-  // el widget dejo de inicializarse ("WebrtcPhoneInterface is not defined") y
-  // sin telefono no hay nada que ocultar. Que el widget dependa de globales
-  // del navegador lo hace fragil a que se los toquen, aunque sea de forma
-  // transparente. Poder llamar vale mas que la comodidad de que se cierre solo.
+  // Las dos señales que lo ocultan son NUESTRAS: el evento que emiten los
+  // drawers y nuestra tabla de llamadas. Nunca se le pregunta al widget. Un
+  // intento anterior envolvia `RTCPeerConnection` para detectar el fin de la
+  // llamada y dejo al widget sin inicializar en produccion
+  // ("WebrtcPhoneInterface is not defined"): el telefono no llamaba. Poder
+  // llamar vale mas que la comodidad de que se cierre solo, asi que si una
+  // señal falta, el telefono se queda visible y no pasa nada.
   const [visible, setVisible] = useState(false);
   const visibleRef = useRef(false);
 
@@ -182,6 +185,52 @@ export default function ZadarmaWebphone() {
   // El boton "Llamar" pide que aparezca justo antes de que la centralita
   // timbre, para que la asesora no tenga que buscarlo.
   useEffect(() => onShowWebphone(() => setVisible(true)), []);
+
+  // Y se va cuando la asesora cierra la ficha desde la que estaba llamando.
+  useEffect(() => onHideWebphone(() => setVisible(false)), []);
+
+  // Se oculta solo al colgar, preguntandole a NUESTRA tabla de llamadas (la
+  // que llena el webhook de Zadarma), nunca al widget: leer el widget ya rompio
+  // produccion dos veces (ver lib/webphone.ts).
+  //
+  // Al hacerse visible se toma la ultima llamada terminada como referencia;
+  // cuando aparece una MAS nueva, esa es la que acaba de colgar y el telefono
+  // se va. Solo se consulta mientras esta a la vista, asi que no hay trafico
+  // de fondo con el telefono cerrado.
+  //
+  // Si el webhook se atrasa o no llega, no pasa nada malo: el telefono se
+  // queda visible como hasta ahora y la asesora lo cierra con el boton.
+  useEffect(() => {
+    if (!visible || !vendedoraId) return;
+    let cancelled = false;
+    let baseline: number | null | undefined;
+
+    const check = async () => {
+      try {
+        const res = await fetch(`/api/zadarma/last-call?vendedora_id=${vendedoraId}`, {
+          cache: "no-store",
+        });
+        const data = (await res.json()) as { last_call_id: number | null };
+        if (cancelled) return;
+        if (baseline === undefined) {
+          baseline = data.last_call_id;
+          return;
+        }
+        if (data.last_call_id !== null && data.last_call_id !== baseline) {
+          setVisible(false);
+        }
+      } catch {
+        /* sin señal, el telefono se queda como esta */
+      }
+    };
+
+    void check();
+    const timer = window.setInterval(check, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [visible, vendedoraId]);
 
 
   useEffect(() => {
