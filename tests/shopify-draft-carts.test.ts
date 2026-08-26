@@ -208,12 +208,41 @@ describe("Shopify draft cart lead transitions", () => {
 });
 
 describe("leadBoardStage", () => {
-  it("muestra un Borrador abierto en Carritos sin cambiar el status manual", () => {
+  it("muestra en Carritos un Borrador abierto que nadie trabajo todavia", () => {
     expect(
-      leadBoardStage({ status: "no_responde", shopify_cart_open: true })
+      leadBoardStage({ status: "conversando", status_source: "auto", shopify_cart_open: true })
     ).toBe("carrito");
     expect(
-      leadBoardStage({ status: "no_responde", shopify_cart_open: false })
+      leadBoardStage({ status: "conversando", status_source: "auto", shopify_cart_open: false })
+    ).toBe("tibios");
+  });
+
+  // CAMBIO DE CRITERIO (antes el carrito ganaba siempre): un lead ya
+  // trabajado se quedaba en Carrito aunque lo marcaran "Contactado", asi que
+  // se veia sin gestionar y se volvia a llamar. La gestion de la asesora
+  // manda, igual que en la ley 2 del clasificador.
+  it("la gestion de la asesora saca el lead de Carritos", () => {
+    expect(
+      leadBoardStage({
+        status: "contactado_dejo_wsp",
+        status_source: "manual",
+        shopify_cart_open: true,
+      })
     ).toBe("seguimiento");
+  });
+
+  it("un lead ganado o descartado no vuelve a Carritos por un borrador viejo", () => {
+    expect(
+      leadBoardStage({ status: "pedido_generado", status_source: "auto", shopify_cart_open: true })
+    ).toBe("ganado");
+    expect(
+      leadBoardStage({ status: "duplicado", status_source: "auto", shopify_cart_open: true })
+    ).toBe("descartado");
+  });
+
+  it("sin gestion y sin borrador, manda el status", () => {
+    expect(
+      leadBoardStage({ status: "frio", status_source: "auto", shopify_cart_open: false })
+    ).toBe("frio");
   });
 });
