@@ -17,6 +17,7 @@ const PUBLIC_PATHS = [
   "/api/cron/moovin",
   "/api/cron/wyn",
   "/api/cron/shopify-refresh",
+  "/api/cron/shopify-recent",
   "/api/cron/shopify-recheck-stale",
   "/api/cron/finance-index",
   "/api/cron/incidencias",
