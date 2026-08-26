@@ -246,6 +246,22 @@ describe("nextLeadState — las 4 leyes", () => {
     }
   });
 
+  it("'Ya tiene pedido' es una gestion valida y cierra el lead como GANADO", () => {
+    // La marca la asesora cuando al llamar descubre que el cliente ya tiene
+    // pedido en curso. Es la unica salida ganada que se pone a mano.
+    expect(isValidDisposition("ya_tiene_pedido")).toBe(true);
+    expect(statusCategory("ya_tiene_pedido")).toBe("won");
+    expect(statusBoardStage("ya_tiene_pedido")).toBe("ganado");
+    expect(DISPOSITION_OPTIONS.some((o) => o.code === "ya_tiene_pedido")).toBe(true);
+  });
+
+  it("'Ya tiene pedido' NO agenda recontacto: sale de la Agenda", () => {
+    // Viene justo de ahi: si dejara fecha agendada, el lead volveria a la cola
+    // aunque ya no haya nada que trabajar.
+    expect(schedulesFollowup("ya_tiene_pedido")).toBe(false);
+    expect(defaultFollowupForStatus("ya_tiene_pedido", new Date("2026-08-25T10:00:00Z"))).toBeNull();
+  });
+
   it("isProtectedFromPurchase distingue protegidos de manuales comunes", () => {
     expect(isProtectedFromPurchase("lista_negra")).toBe(true);
     expect(isProtectedFromPurchase("cancelado_cliente")).toBe(true);

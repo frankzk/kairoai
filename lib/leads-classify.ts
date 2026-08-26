@@ -39,7 +39,11 @@ export const LEAD_STATUSES: StatusDef[] = [
   // won (oculto, sin gestion)
   { code: "pedido_generado", label: "Pedido generado", category: "won", source: "auto", callable: false, board: "ganado" },
   { code: "pedido_en_curso", label: "Pedido en curso", category: "won", source: "auto", callable: false, board: "ganado" },
-  { code: "ya_tiene_pedido", label: "Ya tiene pedido", category: "won", source: "auto", callable: false, board: "ganado" },
+  // Lo pone la asesora cuando al llamar descubre que el cliente ya tiene un
+  // pedido en curso (tipico en Agenda: se agendo el recontacto y para cuando
+  // llega la llamada, el pedido ya existe). Es la unica salida GANADA que se
+  // marca a mano; el resto de los won los pone la ingesta.
+  { code: "ya_tiene_pedido", label: "Ya tiene pedido", category: "won", source: "manual", callable: false, board: "ganado" },
   { code: "venta_por_bot", label: "Venta por bot", category: "won", source: "auto", callable: false, board: "ganado" },
   { code: "carrito_recuperado", label: "Carrito recuperado", category: "won", source: "auto", callable: false, board: "ganado" },
   // hot (accionable, prioridad alta)
@@ -411,6 +415,9 @@ export const DISPOSITION_OPTIONS: DispositionOption[] = [
   { code: "cuelga", label: "Cuelga" },
   { code: "otros_productos", label: "Consulto otros productos" },
   { code: "repetido", label: "Repetido" },
+  // Cierre GANADO: va antes del bloque de descartes para que no se pierda
+  // entre ellos, que es donde la asesora busca "ya no hay que trabajarlo".
+  { code: "ya_tiene_pedido", label: "Ya tiene pedido" },
   { code: "cancelado_cliente", label: "Cancelado por cliente" },
   { code: "cancelado", label: "Cancelado" },
   { code: "ya_compro_otro_lado", label: "Ya compro en otro lado" },
