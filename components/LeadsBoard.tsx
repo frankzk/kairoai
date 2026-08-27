@@ -40,6 +40,11 @@ import {
 
 const UNCALLED_CHART_DAYS = 14;
 
+// Tarjetas por tanda. La asesora trabaja de arriba hacia abajo (la Cola ya
+// viene en orden de atencion), asi que lo que importa es que la primera pantalla
+// aparezca al instante; el resto se pide con "Mostrar mas".
+const LEADS_PER_PAGE = 50;
+
 // Fecha/hora del ultimo mensaje en hora CR (dd/mm hh:mm).
 function fmtDateTime(iso: string | null): string {
   if (!iso) return "—";
@@ -283,6 +288,18 @@ export default function LeadsBoard() {
     () => (archive && archive.length ? [...leads, ...archive] : leads),
     [leads, archive]
   );
+
+  // Cuantas tarjetas se dibujan. Antes se dibujaban TODAS: con los contadores
+  // arreglados la Cola pasa de unos cientos a 2.251 leads en Costa Rica y
+  // Cerrados a 3.424, asi que el navegador se quedaba varios segundos armando
+  // tarjetas que nadie iba a mirar y la lista no terminaba nunca de bajar.
+  const [shownCount, setShownCount] = useState(LEADS_PER_PAGE);
+
+  // Cada vez que cambia LO QUE se esta mirando, se vuelve a empezar por arriba:
+  // si no, al saltar de una etapa larga a una corta quedaba abierta de mas.
+  useEffect(() => {
+    setShownCount(LEADS_PER_PAGE);
+  }, [activeStage, q, store, interactionFrom, interactionTo, selectedUncalledBucket, sortDir]);
 
   const matchesInteractionRange = useCallback(
     (lead: LeadRow) =>
@@ -763,7 +780,7 @@ export default function LeadsBoard() {
               </p>
             )}
             <div className="space-y-2">
-              {visibleLeads.map((lead, index) => (
+              {visibleLeads.slice(0, shownCount).map((lead, index) => (
                 <LeadCard
                   key={lead.id}
                   lead={lead}
@@ -772,6 +789,20 @@ export default function LeadsBoard() {
                 />
               ))}
             </div>
+            {visibleLeads.length > shownCount && (
+              <div className="mt-3 flex flex-col items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShownCount((n) => n + LEADS_PER_PAGE)}
+                >
+                  Mostrar {Math.min(LEADS_PER_PAGE, visibleLeads.length - shownCount)} más
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Mostrando {shownCount} de {visibleLeads.length}
+                </p>
+              </div>
+            )}
           </>
         )}
       </main>
