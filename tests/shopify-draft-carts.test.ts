@@ -10,6 +10,7 @@ import {
   type ShopifyDraftCart,
 } from "../lib/shopify-draft-orders";
 import { leadBoardStage } from "../lib/leads";
+import { LEAD_STATUSES, statusesForBoard } from "../lib/leads-classify";
 
 function draft(partial: Partial<ShopifyDraftCart> = {}): ShopifyDraftCart {
   return {
@@ -208,13 +209,20 @@ describe("Shopify draft cart lead transitions", () => {
 });
 
 describe("leadBoardStage", () => {
+  const board = (lead: {
+    status: string;
+    status_source: "auto" | "manual";
+    shopify_cart_open: boolean;
+    has_order?: boolean;
+  }) => leadBoardStage({ has_order: false, ...lead });
+
   it("muestra en Carritos un Borrador abierto que nadie trabajo todavia", () => {
-    expect(
-      leadBoardStage({ status: "conversando", status_source: "auto", shopify_cart_open: true })
-    ).toBe("carrito");
-    expect(
-      leadBoardStage({ status: "conversando", status_source: "auto", shopify_cart_open: false })
-    ).toBe("tibios");
+    expect(board({ status: "conversando", status_source: "auto", shopify_cart_open: true })).toBe(
+      "carrito"
+    );
+    expect(board({ status: "conversando", status_source: "auto", shopify_cart_open: false })).toBe(
+      "tibios"
+    );
   });
 
   // CAMBIO DE CRITERIO (antes el carrito ganaba siempre): un lead ya
@@ -223,26 +231,92 @@ describe("leadBoardStage", () => {
   // manda, igual que en la ley 2 del clasificador.
   it("la gestion de la asesora saca el lead de Carritos", () => {
     expect(
-      leadBoardStage({
-        status: "contactado_dejo_wsp",
-        status_source: "manual",
-        shopify_cart_open: true,
-      })
+      board({ status: "contactado_dejo_wsp", status_source: "manual", shopify_cart_open: true })
     ).toBe("seguimiento");
   });
 
-  it("un lead ganado o descartado no vuelve a Carritos por un borrador viejo", () => {
+  it("un lead cerrado o descartado no vuelve a Carritos por un borrador viejo", () => {
     expect(
-      leadBoardStage({ status: "pedido_generado", status_source: "auto", shopify_cart_open: true })
-    ).toBe("ganado");
-    expect(
-      leadBoardStage({ status: "duplicado", status_source: "auto", shopify_cart_open: true })
-    ).toBe("descartado");
+      board({ status: "pedido_generado", status_source: "auto", shopify_cart_open: true })
+    ).toBe("cerrado");
+    expect(board({ status: "duplicado", status_source: "auto", shopify_cart_open: true })).toBe(
+      "descartado"
+    );
   });
 
   it("sin gestion y sin borrador, manda el status", () => {
+    expect(board({ status: "frio", status_source: "auto", shopify_cart_open: false })).toBe("frio");
+  });
+
+  // has_order es pegajoso (nunca baja a false) pero el status si se recalcula:
+  // un lead con pedido al que el bot le abre un carrito nuevo se reabria a
+  // "carrito_abandonado" y volvia a la cola de Carrito. La Cola ya lo excluia
+  // por has_order; el tablero no lo miraba.
+  it("tener pedido saca al lead de las colas de venta, sea cual sea su status", () => {
     expect(
-      leadBoardStage({ status: "frio", status_source: "auto", shopify_cart_open: false })
-    ).toBe("frio");
+      board({
+        status: "carrito_abandonado",
+        status_source: "auto",
+        shopify_cart_open: true,
+        has_order: true,
+      })
+    ).toBe("cerrado");
+    expect(
+      board({ status: "por_cerrar", status_source: "auto", shopify_cart_open: false, has_order: true })
+    ).toBe("cerrado");
+    expect(
+      board({
+        status: "contactado_dejo_wsp",
+        status_source: "manual",
+        shopify_cart_open: false,
+        has_order: true,
+      })
+    ).toBe("cerrado");
+  });
+
+  // Lista negra y cancelados son una decision sobre el cliente, no una lectura
+  // del embudo: un pedido posterior no los saca de Descartados (mismo criterio
+  // que PURCHASE_PROOF_STATUSES).
+  it("un descarte terminal le gana al pedido", () => {
+    expect(
+      board({ status: "lista_negra", status_source: "manual", shopify_cart_open: true, has_order: true })
+    ).toBe("descartado");
+    expect(
+      board({ status: "duplicado", status_source: "auto", shopify_cart_open: false, has_order: true })
+    ).toBe("descartado");
+  });
+});
+
+// El tablero pide los leads en dos mitades y el servidor las separa por
+// status/has_order (lib/leads.ts), pero el bucket lo calcula leadBoardStage.
+// Si las dos definiciones se separan, la pantalla pierde leads en silencio:
+// quedarian fuera de la consulta de trabajo y tampoco entrarian en la de
+// archivo. Esta prueba las ata sobre TODAS las combinaciones posibles.
+describe("el corte trabajo/archivo del servidor", () => {
+  it("coincide exactamente con el bucket que calcula el tablero", () => {
+    const archiveStatuses = new Set([
+      ...statusesForBoard("cerrado"),
+      ...statusesForBoard("descartado"),
+    ]);
+    for (const def of LEAD_STATUSES) {
+      for (const has_order of [false, true]) {
+        for (const status_source of ["auto", "manual"] as const) {
+          for (const shopify_cart_open of [false, true]) {
+            const esArchivoParaElServidor = archiveStatuses.has(def.code) || has_order;
+            const bucket = leadBoardStage({
+              status: def.code,
+              status_source,
+              shopify_cart_open,
+              has_order,
+            });
+            const esArchivoParaElTablero = bucket === "cerrado" || bucket === "descartado";
+            expect(
+              esArchivoParaElServidor,
+              `${def.code} has_order=${has_order} source=${status_source} carrito=${shopify_cart_open} -> ${bucket}`
+            ).toBe(esArchivoParaElTablero);
+          }
+        }
+      }
+    }
   });
 });

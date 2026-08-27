@@ -143,7 +143,7 @@ describe("classifyConversation priority", () => {
     );
     expect(c.status).toBe("pedido_en_curso");
     expect(c.category).toBe("won");
-    expect(statusBoardStage(c.status)).toBe("ganado");
+    expect(statusBoardStage(c.status)).toBe("cerrado");
   });
   it("sale_state order_id presente sin stage explicito -> ganado", () => {
     const c = classifyConversation(makeConv({ saleOrderId: "999" }));
@@ -251,7 +251,7 @@ describe("nextLeadState — las 4 leyes", () => {
     // pedido en curso. Es la unica salida ganada que se pone a mano.
     expect(isValidDisposition("ya_tiene_pedido")).toBe(true);
     expect(statusCategory("ya_tiene_pedido")).toBe("won");
-    expect(statusBoardStage("ya_tiene_pedido")).toBe("ganado");
+    expect(statusBoardStage("ya_tiene_pedido")).toBe("cerrado");
     expect(DISPOSITION_OPTIONS.some((o) => o.code === "ya_tiene_pedido")).toBe(true);
   });
 

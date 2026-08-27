@@ -35,11 +35,11 @@ describe("buildWorkQueue", () => {
     expect(ids(queue)).toEqual(["pago", "cerrar", "tib", "seg"]);
   });
 
-  it("excluye frio, ganado, descartado y carrito de la cola", () => {
+  it("excluye frio, cerrado, descartado y carrito de la cola", () => {
     const queue = buildWorkQueue(
       [
         lead("frio", "frio", "2026-07-25T17:00:00Z"),
-        lead("ganado", "ganado", "2026-07-25T17:00:00Z"),
+        lead("cerrado", "cerrado", "2026-07-25T17:00:00Z"),
         lead("desc", "descartado", "2026-07-25T17:00:00Z"),
         lead("carr", "carrito", "2026-07-25T17:00:00Z"),
         lead("cerrar", "por_cerrar", "2026-07-25T17:00:00Z"),

@@ -3,7 +3,7 @@
 // que el resto de APIs del repo; no hay RLS todavia.
 
 import { getDB } from "./db";
-import { statusBoardStage, statusCategory, type BoardStage } from "./leads-classify";
+import { statusBoardStage, statusCategory, statusesForBoard, type BoardStage } from "./leads-classify";
 import type { ChatLeadSummary, LeadCategory, LeadStateSnapshot, StatusSource } from "./leads-types";
 import { normalizePhone, phoneConfigForStore } from "./phone-cr";
 import { describeZadarmaCall } from "./zadarma";
@@ -57,25 +57,35 @@ export interface LeadRecord {
  * mientras nadie lo haya trabajado, el lead se ve en Carrito para que alguien
  * lo recupere.
  *
- * Pero el carrito NO le gana a la gestion ni a un cierre:
+ * El orden de precedencia es este, y cada escalon existe por un motivo:
  *
- *   - Estado manual: la asesora ya lo trabajo, su estado decide el bucket.
- *     Antes el carrito ganaba siempre y el lead se quedaba en Carrito aunque
- *     lo marcaran "Contactado", asi que se veia sin trabajar y se volvia a
- *     llamar. Es la misma idea que la ley 2 del clasificador: lo que decidio
- *     una persona manda sobre la señal automatica.
- *   - Ganado o descartado: si ya compro o ya se descarto, no vuelve a Carrito
- *     por tener un borrador viejo abierto.
+ *   1. Descartado: es una decision sobre el cliente (lista negra, cancelado).
+ *      Ni un pedido posterior ni un borrador viejo la deshacen; el mismo
+ *      criterio que PURCHASE_PROOF_STATUSES en el clasificador.
+ *   2. Ya tiene pedido -> CERRADOS. Vale tanto por estado (los won) como por
+ *      el flag has_order, porque son dos caminos al mismo hecho: el flag lo
+ *      pone el cruce con Shopify y NUNCA baja a false (lib/leads-sync.ts),
+ *      pero el status si se recalcula, asi que un lead con pedido al que el
+ *      bot le abre un carrito nuevo se reabria a "carrito_abandonado" y volvia
+ *      a la cola de Carrito con su pedido intacto (medido: ~1 de cada 4
+ *      carritos de CR y HN). La Cola ya descartaba esos leads por has_order
+ *      (buildWorkQueue); el tablero no los miraba, y esa era la unica
+ *      diferencia entre las dos vistas del mismo lead.
+ *   3. Estado manual: la asesora ya lo trabajo, su estado decide el bucket.
+ *      Lo que decidio una persona manda sobre la señal automatica (ley 2 del
+ *      clasificador).
+ *   4. Borrador abierto sin nada de lo anterior -> Carrito.
  *
  * Al cerrarse el borrador, un lead sin gestion vuelve solo al bucket de su
  * status.
  */
 export function leadBoardStage(
-  lead: Pick<LeadRecord, "status" | "status_source" | "shopify_cart_open">
+  lead: Pick<LeadRecord, "status" | "status_source" | "shopify_cart_open" | "has_order">
 ): BoardStage {
   const stage = statusBoardStage(lead.status);
+  if (stage === "descartado") return stage;
+  if (stage === "cerrado" || lead.has_order) return "cerrado";
   if (lead.status_source === "manual") return stage;
-  if (stage === "ganado" || stage === "descartado") return stage;
   return lead.shopify_cart_open ? "carrito" : stage;
 }
 
@@ -183,41 +193,158 @@ export async function loadStoreOrderPhones(
   return set;
 }
 
+/**
+ * Que mitad del tablero se pide.
+ *
+ *   trabajo -> lo que hay que gestionar (todos los buckets menos los dos de
+ *              abajo). Es lo que se carga al abrir el tablero.
+ *   archivo -> Cerrados y Descartados: ya tienen pedido o ya se cerraron, no
+ *              se trabajan. Se cargan aparte, solo cuando alguien los pide.
+ *
+ * El corte es EXACTO respecto de leadBoardStage: archivo son los leads cuyo
+ * status cae en cerrado/descartado mas los que tienen has_order; trabajo es su
+ * complemento. Separarlos importa porque el archivo pesa mas que el trabajo
+ * (medido en Costa Rica: 3.781 de 6.459 leads de la ventana) y antes se comia
+ * el cupo de la consulta, dejando fuera de la pantalla a los que si hay que
+ * llamar.
+ */
+export type LeadScope = "trabajo" | "archivo";
+
+const ARCHIVE_STATUSES = [
+  ...statusesForBoard("cerrado"),
+  ...statusesForBoard("descartado"),
+];
+
 export interface ListLeadsOptions {
   storeId: number;
   stage?: BoardStage;
   limit?: number;
   /** Solo leads con interaccion desde este ISO (oculta los muy antiguos). */
   sinceIso?: string;
+  /** Mitad del tablero a traer; por defecto, todo. */
+  scope?: LeadScope;
+}
+
+/** La ventana de antiguedad, igual para la lista y para los conteos. */
+function sinceFilter(sinceIso: string): string {
+  // Oculta los muy antiguos, PERO conserva los que tienen seguimiento
+  // programado o estan marcados para atencion (no se pueden perder).
+  return `last_interaction_at.gte.${sinceIso},next_followup_at.not.is.null,needs_attention.is.true`;
+}
+
+/**
+ * Filtro extra de una pasada. Se describe como dato (y no como callback sobre
+ * el query builder) para que cada consulta quede escrita con las mismas
+ * llamadas simples que el resto del archivo.
+ */
+type LeadNarrow =
+  | { kind: "sin_archivo" }
+  | { kind: "status_in"; statuses: string[] }
+  | { kind: "has_order"; value: boolean };
+
+/** Una pasada paginada sobre `leads`. */
+async function fetchLeadPages<T>(opts: {
+  storeId: number;
+  select: string;
+  limit: number;
+  sinceIso?: string;
+  narrow?: LeadNarrow;
+}): Promise<T[]> {
+  const pageSize = 1000;
+  const all: T[] = [];
+  for (let from = 0; from < opts.limit; from += pageSize) {
+    let query = getDB()
+      .from("leads")
+      .select(opts.select)
+      .eq("store_id", opts.storeId)
+      .order("last_interaction_at", { ascending: false, nullsFirst: false })
+      .range(from, Math.min(from + pageSize, opts.limit) - 1);
+    if (opts.sinceIso) query = query.or(sinceFilter(opts.sinceIso));
+    if (opts.narrow?.kind === "sin_archivo") {
+      query = query
+        .not("status", "in", `(${ARCHIVE_STATUSES.join(",")})`)
+        .eq("has_order", false);
+    } else if (opts.narrow?.kind === "status_in") {
+      query = query.in("status", opts.narrow.statuses);
+    } else if (opts.narrow?.kind === "has_order") {
+      query = query.eq("has_order", opts.narrow.value);
+    }
+    const { data, error } = await query;
+    if (error) throw new Error(`fetchLeadPages: ${error.message}`);
+    const page = (data ?? []) as T[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
 }
 
 export async function listLeads(opts: ListLeadsOptions): Promise<LeadRecord[]> {
   const limit = Math.min(Math.max(opts.limit ?? 2000, 1), 20000);
-  const pageSize = 1000;
-  const all: LeadRecord[] = [];
-  for (let from = 0; from < limit; from += pageSize) {
-    let query = getDB()
-      .from("leads")
-      .select("*")
-      .eq("store_id", opts.storeId)
-      .order("last_interaction_at", { ascending: false, nullsFirst: false })
-      .range(from, Math.min(from + pageSize, limit) - 1);
-    // Oculta los muy antiguos, PERO conserva los que tienen seguimiento
-    // programado o estan marcados para atencion (no se pueden perder).
-    if (opts.sinceIso) {
-      query = query.or(
-        `last_interaction_at.gte.${opts.sinceIso},next_followup_at.not.is.null,needs_attention.is.true`
-      );
-    }
-    const { data, error } = await query;
-    if (error) throw new Error(`listLeads: ${error.message}`);
-    const page = (data ?? []) as LeadRecord[];
-    all.push(...page);
-    if (page.length < pageSize) break;
+  const base = { storeId: opts.storeId, select: "*", limit, sinceIso: opts.sinceIso };
+  let all: LeadRecord[];
+
+  if (opts.scope === "trabajo") {
+    // Complemento exacto del archivo: ni estado de cierre, ni pedido.
+    all = await fetchLeadPages<LeadRecord>({
+      ...base,
+      narrow: { kind: "sin_archivo" },
+    });
+  } else if (opts.scope === "archivo") {
+    // Son dos condiciones sobre columnas distintas unidas por O. Se piden en
+    // dos pasadas y se unen por id en vez de armar un filtro compuesto: cada
+    // consulta queda con la misma forma simple que el resto del archivo.
+    const [byStatus, byOrder] = await Promise.all([
+      fetchLeadPages<LeadRecord>({
+        ...base,
+        narrow: { kind: "status_in", statuses: ARCHIVE_STATUSES },
+      }),
+      fetchLeadPages<LeadRecord>({
+        ...base,
+        narrow: { kind: "has_order", value: true },
+      }),
+    ]);
+    const byId = new Map<number, LeadRecord>();
+    for (const lead of [...byStatus, ...byOrder]) byId.set(lead.id, lead);
+    all = Array.from(byId.values()).sort(
+      (a, b) => (b.last_interaction_at ?? "").localeCompare(a.last_interaction_at ?? "")
+    );
+  } else {
+    all = await fetchLeadPages<LeadRecord>(base);
   }
+
   // El bucket del tablero se deriva del status; filtrar en memoria si se pidio.
   if (opts.stage) return all.filter((lead) => leadBoardStage(lead) === opts.stage);
   return all;
+}
+
+/**
+ * Conteo por bucket sobre TODOS los leads elegibles, no sobre los que quepan
+ * en una pantalla.
+ *
+ * Antes los contadores salian de contar la lista ya truncada, asi que decian
+ * "Carrito 77" cuando en la base habia 246, y bajaban solos al entrar leads
+ * nuevos que empujaban a los viejos fuera del cupo. Aca se traen unicamente
+ * las cuatro columnas que deciden el bucket, que es barato incluso sobre la
+ * tabla entera.
+ */
+export async function countLeadStages(
+  storeId: number,
+  sinceIso?: string
+): Promise<LeadBoardCounts> {
+  const rows = await fetchLeadPages<Record<string, unknown>>({
+    storeId,
+    select: "status,status_source,shopify_cart_open,has_order",
+    limit: 100000,
+    sinceIso,
+  });
+  return countByStage(
+    rows.map((row) => ({
+      status: String(row.status),
+      status_source: row.status_source as StatusSource,
+      shopify_cart_open: Boolean(row.shopify_cart_open),
+      has_order: Boolean(row.has_order),
+    }))
+  );
 }
 
 // ─── Productividad de la asesora (contactos + pedidos por periodo) ───────────
@@ -282,7 +409,11 @@ export interface LeadBoardCounts {
   byStage: Record<BoardStage, number>;
 }
 
-export function countByStage(leads: LeadRecord[]): LeadBoardCounts {
+/** Cuenta por bucket. Toma solo lo que decide el bucket, para poder contar
+ *  sin traerse la fila entera (ver countLeadStages). */
+export function countByStage(
+  leads: Array<Pick<LeadRecord, "status" | "status_source" | "shopify_cart_open" | "has_order">>
+): LeadBoardCounts {
   const byStage: Record<BoardStage, number> = {
     por_cerrar: 0,
     pago_verificar: 0,
@@ -290,7 +421,7 @@ export function countByStage(leads: LeadRecord[]): LeadBoardCounts {
     tibios: 0,
     seguimiento: 0,
     frio: 0,
-    ganado: 0,
+    cerrado: 0,
     descartado: 0,
   };
   for (const lead of leads) byStage[leadBoardStage(lead)] += 1;

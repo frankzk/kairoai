@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody, getRequiredStoreFromSearchParams } from "@/lib/stores";
-import { countByStage, leadBoardStage, listLeads } from "@/lib/leads";
+import { countLeadStages, leadBoardStage, listLeads, type LeadScope } from "@/lib/leads";
 import { runLeadsSync, reclassifyStage } from "@/lib/leads-sync";
 import { BOARD_VIEWS } from "@/lib/leads-classify";
 import { daysAgoIso } from "@/lib/leads-metrics";
@@ -22,15 +22,26 @@ export async function GET(req: NextRequest) {
     // los incluye.
     const includeAll = req.nextUrl.searchParams.get("all") === "1";
     const sinceIso = includeAll ? undefined : daysAgoIso(new Date(), 30);
-    const leads = await listLeads({ storeId: store.id, sinceIso });
-    const counts = countByStage(leads);
+    // El tablero pide primero lo que hay que trabajar; Cerrados y Descartados
+    // se piden aparte (?scope=archivo) solo cuando alguien los abre o busca.
+    // Antes venia todo junto con un tope de 2.000 filas y el archivo -- que es
+    // mas de la mitad de la tabla -- dejaba fuera de la pantalla a los leads
+    // que si hay que llamar.
+    const scope: LeadScope =
+      req.nextUrl.searchParams.get("scope") === "archivo" ? "archivo" : "trabajo";
+    const leads = await listLeads({ storeId: store.id, sinceIso, scope, limit: 20000 });
     const withStage = leads.map((lead) => ({
       ...lead,
       board_stage: leadBoardStage(lead),
     }));
+    // Los contadores se cuentan SIEMPRE contra toda la poblacion elegible, no
+    // contra la mitad que se acaba de traer: son el numero que el equipo usa
+    // para decidir a que etapa entrarle.
+    const counts = scope === "trabajo" ? await countLeadStages(store.id, sinceIso) : null;
     return NextResponse.json({
       store: store.code,
       views: BOARD_VIEWS,
+      scope,
       counts,
       leads: withStage,
     });
