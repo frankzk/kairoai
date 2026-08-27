@@ -32,20 +32,20 @@ export type BoardStage =
   | "tibios" // escribieron pero nadie los ha trabajado aun
   | "seguimiento" // ya trabajados por la asesora, en seguimiento
   | "frio" // frio, minimo contacto
-  | "ganado" // ya compro -> oculto, sin gestion
+  | "cerrado" // ya tiene pedido -> fuera de las colas de venta
   | "descartado"; // terminal, sin gestion
 
 export const LEAD_STATUSES: StatusDef[] = [
-  // won (oculto, sin gestion)
-  { code: "pedido_generado", label: "Pedido generado", category: "won", source: "auto", callable: false, board: "ganado" },
-  { code: "pedido_en_curso", label: "Pedido en curso", category: "won", source: "auto", callable: false, board: "ganado" },
+  // won -> bucket Cerrados: ya hay un pedido, no hay nada que venderle.
+  { code: "pedido_generado", label: "Pedido generado", category: "won", source: "auto", callable: false, board: "cerrado" },
+  { code: "pedido_en_curso", label: "Pedido en curso", category: "won", source: "auto", callable: false, board: "cerrado" },
   // Lo pone la asesora cuando al llamar descubre que el cliente ya tiene un
   // pedido en curso (tipico en Agenda: se agendo el recontacto y para cuando
   // llega la llamada, el pedido ya existe). Es la unica salida GANADA que se
   // marca a mano; el resto de los won los pone la ingesta.
-  { code: "ya_tiene_pedido", label: "Ya tiene pedido", category: "won", source: "manual", callable: false, board: "ganado" },
-  { code: "venta_por_bot", label: "Venta por bot", category: "won", source: "auto", callable: false, board: "ganado" },
-  { code: "carrito_recuperado", label: "Carrito recuperado", category: "won", source: "auto", callable: false, board: "ganado" },
+  { code: "ya_tiene_pedido", label: "Ya tiene pedido", category: "won", source: "manual", callable: false, board: "cerrado" },
+  { code: "venta_por_bot", label: "Venta por bot", category: "won", source: "auto", callable: false, board: "cerrado" },
+  { code: "carrito_recuperado", label: "Carrito recuperado", category: "won", source: "auto", callable: false, board: "cerrado" },
   // hot (accionable, prioridad alta)
   { code: "sinpe_por_verificar", label: "SINPE por verificar", category: "hot", source: "auto", callable: true, board: "pago_verificar" },
   { code: "por_cerrar", label: "Por cerrar", category: "hot", source: "auto", callable: true, board: "por_cerrar" },
@@ -381,7 +381,7 @@ export const BOARD_STAGE_PRIORITY: BoardStage[] = [
   "tibios",
   "seguimiento",
   "frio",
-  "ganado",
+  "cerrado",
   "descartado",
 ];
 
@@ -393,7 +393,9 @@ export const BOARD_VIEWS: BoardView[] = [
   { key: "tibios", label: "Tibios" },
   { key: "seguimiento", label: "Seguimiento" },
   { key: "frio", label: "Fríos" },
-  { key: "ganado", label: "Ganados", hiddenByDefault: true },
+  // Cerrados va VISIBLE: la asesora necesita ver adonde se fue lo que ya tiene
+  // pedido, no que desaparezca. Descartados sigue detras del toggle.
+  { key: "cerrado", label: "Cerrados" },
   { key: "descartado", label: "Descartados", hiddenByDefault: true },
 ];
 

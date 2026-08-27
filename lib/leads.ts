@@ -57,25 +57,35 @@ export interface LeadRecord {
  * mientras nadie lo haya trabajado, el lead se ve en Carrito para que alguien
  * lo recupere.
  *
- * Pero el carrito NO le gana a la gestion ni a un cierre:
+ * El orden de precedencia es este, y cada escalon existe por un motivo:
  *
- *   - Estado manual: la asesora ya lo trabajo, su estado decide el bucket.
- *     Antes el carrito ganaba siempre y el lead se quedaba en Carrito aunque
- *     lo marcaran "Contactado", asi que se veia sin trabajar y se volvia a
- *     llamar. Es la misma idea que la ley 2 del clasificador: lo que decidio
- *     una persona manda sobre la señal automatica.
- *   - Ganado o descartado: si ya compro o ya se descarto, no vuelve a Carrito
- *     por tener un borrador viejo abierto.
+ *   1. Descartado: es una decision sobre el cliente (lista negra, cancelado).
+ *      Ni un pedido posterior ni un borrador viejo la deshacen; el mismo
+ *      criterio que PURCHASE_PROOF_STATUSES en el clasificador.
+ *   2. Ya tiene pedido -> CERRADOS. Vale tanto por estado (los won) como por
+ *      el flag has_order, porque son dos caminos al mismo hecho: el flag lo
+ *      pone el cruce con Shopify y NUNCA baja a false (lib/leads-sync.ts),
+ *      pero el status si se recalcula, asi que un lead con pedido al que el
+ *      bot le abre un carrito nuevo se reabria a "carrito_abandonado" y volvia
+ *      a la cola de Carrito con su pedido intacto (medido: ~1 de cada 4
+ *      carritos de CR y HN). La Cola ya descartaba esos leads por has_order
+ *      (buildWorkQueue); el tablero no los miraba, y esa era la unica
+ *      diferencia entre las dos vistas del mismo lead.
+ *   3. Estado manual: la asesora ya lo trabajo, su estado decide el bucket.
+ *      Lo que decidio una persona manda sobre la señal automatica (ley 2 del
+ *      clasificador).
+ *   4. Borrador abierto sin nada de lo anterior -> Carrito.
  *
  * Al cerrarse el borrador, un lead sin gestion vuelve solo al bucket de su
  * status.
  */
 export function leadBoardStage(
-  lead: Pick<LeadRecord, "status" | "status_source" | "shopify_cart_open">
+  lead: Pick<LeadRecord, "status" | "status_source" | "shopify_cart_open" | "has_order">
 ): BoardStage {
   const stage = statusBoardStage(lead.status);
+  if (stage === "descartado") return stage;
+  if (stage === "cerrado" || lead.has_order) return "cerrado";
   if (lead.status_source === "manual") return stage;
-  if (stage === "ganado" || stage === "descartado") return stage;
   return lead.shopify_cart_open ? "carrito" : stage;
 }
 
@@ -290,7 +300,7 @@ export function countByStage(leads: LeadRecord[]): LeadBoardCounts {
     tibios: 0,
     seguimiento: 0,
     frio: 0,
-    ganado: 0,
+    cerrado: 0,
     descartado: 0,
   };
   for (const lead of leads) byStage[leadBoardStage(lead)] += 1;

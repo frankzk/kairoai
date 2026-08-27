@@ -84,7 +84,7 @@ export async function runLeadsSync(opts: {
       tibios: 0,
       seguimiento: 0,
       frio: 0,
-      ganado: 0,
+      cerrado: 0,
       descartado: 0,
     },
   };

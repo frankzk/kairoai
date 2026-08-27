@@ -119,7 +119,7 @@ const STAGE_META: Record<BoardStage, { label: string; variant: BadgeVariant; emo
   tibios: { label: "Tibios", variant: "warning", emoji: "🌡️" },
   seguimiento: { label: "Seguimiento", variant: "secondary", emoji: "💬" },
   frio: { label: "Frio", variant: "muted", emoji: "❄️" },
-  ganado: { label: "Ganado", variant: "success", emoji: "✅" },
+  cerrado: { label: "Cerrado", variant: "success", emoji: "✅" },
   descartado: { label: "Descartado", variant: "outline", emoji: "🚫" },
 };
 
@@ -659,7 +659,7 @@ export default function LeadsBoard() {
             onClick={() => setShowHidden((s) => !s)}
             className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:underline"
           >
-            {showHidden ? "Ocultar ganados/descartados" : "Ver ganados/descartados"}
+            {showHidden ? "Ocultar descartados" : "Ver descartados"}
           </button>
           <button
             onClick={() => setIncludeOld((v) => !v)}
