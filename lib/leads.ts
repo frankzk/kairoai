@@ -53,14 +53,30 @@ export interface LeadRecord {
 }
 
 /**
- * Un Borrador abierto es una cola operativa aunque el cliente conserve un
- * estado manual interno. Al cerrarse, vuelve a verse en el bucket de su status
- * sin haber perdido la gestion de la asesora.
+ * Bucket del tablero. Un Borrador abierto en Shopify es una cola operativa:
+ * mientras nadie lo haya trabajado, el lead se ve en Carrito para que alguien
+ * lo recupere.
+ *
+ * Pero el carrito NO le gana a la gestion ni a un cierre:
+ *
+ *   - Estado manual: la asesora ya lo trabajo, su estado decide el bucket.
+ *     Antes el carrito ganaba siempre y el lead se quedaba en Carrito aunque
+ *     lo marcaran "Contactado", asi que se veia sin trabajar y se volvia a
+ *     llamar. Es la misma idea que la ley 2 del clasificador: lo que decidio
+ *     una persona manda sobre la señal automatica.
+ *   - Ganado o descartado: si ya compro o ya se descarto, no vuelve a Carrito
+ *     por tener un borrador viejo abierto.
+ *
+ * Al cerrarse el borrador, un lead sin gestion vuelve solo al bucket de su
+ * status.
  */
 export function leadBoardStage(
-  lead: Pick<LeadRecord, "status" | "shopify_cart_open">
+  lead: Pick<LeadRecord, "status" | "status_source" | "shopify_cart_open">
 ): BoardStage {
-  return lead.shopify_cart_open ? "carrito" : statusBoardStage(lead.status);
+  const stage = statusBoardStage(lead.status);
+  if (lead.status_source === "manual") return stage;
+  if (stage === "ganado" || stage === "descartado") return stage;
+  return lead.shopify_cart_open ? "carrito" : stage;
 }
 
 /** Columnas que la ingesta escribe (uniforme para el upsert por lotes). */
