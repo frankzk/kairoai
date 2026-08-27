@@ -29,7 +29,13 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { FINANCE_STORES, getFinanceStoreById, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
-import { BOARD_VIEWS, BOARD_STAGE_PRIORITY, type BoardStage } from "@/lib/leads-classify";
+import {
+  BOARD_VIEWS,
+  BOARD_STAGE_PRIORITY,
+  isNoAnswerStatus,
+  schedulesFollowup,
+  type BoardStage,
+} from "@/lib/leads-classify";
 import { buildWorkQueue, QUEUE_STAGES } from "@/lib/leads-queue";
 import {
   buildUncalledLeadBuckets,
@@ -404,11 +410,24 @@ export default function LeadsBoard() {
   );
 
   // Vencidos globales (sin filtros): alimenta el banner rojo de recontactos.
-  const overdueFollowups = useMemo(() => {
+  //
+  // Son DOS trabajos distintos y el banner los contaba como uno solo, con el
+  // nombre del que menos pesa: en Costa Rica, de 174 vencidos solo 15 eran
+  // clientes que pidieron la llamada; los otros 159 eran "no contesto" a los
+  // que el sistema les agendo el reintento de 24h. Decirle a la asesora que
+  // 174 clientes le pidieron que los llamara era, sencillamente, falso.
+  const overdue = useMemo(() => {
     const now = Date.now();
-    return leads.filter(
+    const vencidos = leads.filter(
       (l) => l.next_followup_at != null && new Date(l.next_followup_at).getTime() <= now
-    ).length;
+    );
+    return {
+      total: vencidos.length,
+      // Prometio el cliente ("llamame el jueves"): es una cita, no un reintento.
+      prometidos: vencidos.filter((l) => schedulesFollowup(l.status)).length,
+      // Los agendo el sistema al marcar buzon / no responde / cuelga.
+      reintentos: vencidos.filter((l) => isNoAnswerStatus(l.status)).length,
+    };
   }, [leads]);
 
   const views = showHidden ? BOARD_VIEWS : BOARD_VIEWS.filter((v) => !v.hiddenByDefault);
@@ -634,7 +653,7 @@ export default function LeadsBoard() {
 
         {/* Recontactos vencidos: la promesa al cliente ("llamame el 1 de
             agosto") no puede depender de que alguien recuerde abrir Agenda. */}
-        {overdueFollowups > 0 && activeStage !== "agenda" && (
+        {overdue.total > 0 && activeStage !== "agenda" && (
           <button
             type="button"
             onClick={() => setActiveStage("agenda")}
@@ -642,7 +661,21 @@ export default function LeadsBoard() {
           >
             <CalendarClock className="h-4 w-4 shrink-0" />
             <span>
-              <strong>{overdueFollowups}</strong> recontacto{overdueFollowups === 1 ? "" : "s"} vencido{overdueFollowups === 1 ? "" : "s"} — clientes que pidieron que los llamáramos. Abrir Agenda.
+              <strong>{overdue.total}</strong> recontacto{overdue.total === 1 ? "" : "s"} vencido
+              {overdue.total === 1 ? "" : "s"}
+              {overdue.prometidos > 0 && (
+                <>
+                  {" — "}
+                  <strong>{overdue.prometidos}</strong> pidieron que los llamáramos
+                </>
+              )}
+              {overdue.reintentos > 0 && (
+                <>
+                  {overdue.prometidos > 0 ? " y " : " — "}
+                  <strong>{overdue.reintentos}</strong> no contestaron y toca reintentar
+                </>
+              )}
+              . Abrir Agenda.
             </span>
           </button>
         )}
