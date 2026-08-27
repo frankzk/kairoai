@@ -72,7 +72,11 @@ describe("buildWorkQueue", () => {
     expect(ids(queue)).toEqual(["esperando", "reciente"]);
   });
 
-  it("seguimiento: vencidos de agenda primero (mas vencido arriba), luego recientes", () => {
+  // CAMBIO DE CRITERIO: antes subia primero el MAS vencido. Al arreglar el
+  // cupo de la consulta aparecieron 174 recontactos con 30 dias de atraso
+  // promedio y coparon las primeras posiciones de la Cola con lo mas frio que
+  // habia. Ahora manda el mas reciente, igual que en el resto de la cola.
+  it("seguimiento: vencidos de agenda primero (mas RECIENTE arriba), luego el resto", () => {
     const queue = buildWorkQueue(
       [
         lead("sin-agenda-nuevo", "seguimiento", "2026-07-25T17:00:00Z"),
@@ -84,8 +88,8 @@ describe("buildWorkQueue", () => {
       NOW
     );
     expect(ids(queue)).toEqual([
-      "muy-vencido",
       "vencido-hoy",
+      "muy-vencido",
       "sin-agenda-nuevo",
       "futuro",
       "sin-agenda-viejo",
@@ -103,8 +107,8 @@ describe("buildWorkQueue", () => {
       ],
       NOW
     );
-    // pago primero; luego los vencidos (mas vencido arriba); luego por_cerrar.
-    expect(ids(queue)).toEqual(["pago", "tibio-vencido", "reintento", "cerrar-nuevo"]);
+    // pago primero; luego los vencidos (mas reciente arriba); luego por_cerrar.
+    expect(ids(queue)).toEqual(["pago", "reintento", "tibio-vencido", "cerrar-nuevo"]);
   });
 
   it("una agenda a futuro NO promueve: espera su hora en su etapa", () => {
@@ -142,5 +146,43 @@ describe("buildWorkQueue", () => {
       NOW
     );
     expect(ids(queue)).toEqual(["con-fecha", "sin-fecha", "tibio"]);
+  });
+
+  // Un vencido viejo no deja de existir: baja a su etapa y se trabaja cuando
+  // toque, pero no le roba el tope de la Cola a un lead fresco.
+  it("un recontacto vencido hace mucho deja de subir al tope", () => {
+    const queue = buildWorkQueue(
+      [
+        // Vencido hace 20 dias: pasado el limite, vale por su etapa.
+        lead("rancio", "seguimiento", "2026-07-05T10:00:00Z", "2026-07-05T15:00:00Z"),
+        lead("cerrar-nuevo", "por_cerrar", "2026-07-25T17:55:00Z"),
+        // Vencido ayer: sigue siendo un reintento que vale la pena.
+        lead("fresco", "seguimiento", "2026-07-24T15:00:00Z", "2026-07-24T15:00:00Z"),
+      ],
+      NOW
+    );
+    expect(ids(queue)).toEqual(["fresco", "cerrar-nuevo", "rancio"]);
+  });
+
+  it("el limite se cuenta en dias, no en 'hoy'", () => {
+    // Justo en el borde (7 dias) sigue contando como reintento vigente.
+    const enElBorde = buildWorkQueue(
+      [
+        lead("borde", "seguimiento", "2026-07-18T18:00:00Z", "2026-07-18T18:00:00Z"),
+        lead("cerrar", "por_cerrar", "2026-07-25T17:55:00Z"),
+      ],
+      NOW
+    );
+    expect(ids(enElBorde)).toEqual(["borde", "cerrar"]);
+
+    // Una hora mas alla, ya no.
+    const pasado = buildWorkQueue(
+      [
+        lead("pasado", "seguimiento", "2026-07-18T17:00:00Z", "2026-07-18T17:00:00Z"),
+        lead("cerrar", "por_cerrar", "2026-07-25T17:55:00Z"),
+      ],
+      NOW
+    );
+    expect(ids(pasado)).toEqual(["cerrar", "pasado"]);
   });
 });

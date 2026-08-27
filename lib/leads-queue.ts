@@ -4,7 +4,11 @@
 // luego "por cerrar" con el lead MAS RECIENTE primero (regla de los 5 minutos
 // de Shopify: el que acaba de caer es el que mas convierte), luego tibios
 // (mas reciente primero) y al final el resto de seguimientos.
-// Etapas frio/ganado/descartado no entran a la cola.
+// Etapas frio/cerrado/descartado no entran a la cola.
+//
+// Dentro de los reintentos manda la misma logica del resto de la cola: primero
+// el mas reciente, y pasados STALE_FOLLOWUP_DAYS el vencido deja de subir al
+// tope (ver ahi por que).
 
 import type { BoardStage } from "./leads-classify";
 
@@ -45,9 +49,31 @@ export function isFollowupDue(lead: QueueLead, nowMs: number): boolean {
   return t != null && t <= nowMs;
 }
 
+/**
+ * A partir de aca un recontacto vencido deja de subir al tope: sigue en su
+ * etapa, pero ya no le gana a un lead fresco.
+ *
+ * Medido en Costa Rica cuando estos leads por fin se pudieron ver: 174
+ * recontactos vencidos, 30 dias de atraso promedio, y de los 159 que eran "no
+ * contesto" NINGUNO llego a tener un segundo intento. Se habian vuelto
+ * invisibles por el cupo de la consulta (quedaban en el puesto 5.928 de una
+ * lista que cortaba en 2.000), asi que la promesa de "el vencido vuelve solo a
+ * la Cola" nunca se cumplio. Al arreglar el cupo aparecieron todos juntos y,
+ * con el orden viejo, coparon las primeras 174 posiciones de la Cola con lo
+ * mas muerto que hay.
+ */
+export const STALE_FOLLOWUP_DAYS = 7;
+
+/** Vencido y todavia vigente: es un reintento que vale la pena hacer hoy. */
+export function isFollowupActionable(lead: QueueLead, nowMs: number): boolean {
+  const t = followupMs(lead);
+  if (t == null || t > nowMs) return false;
+  return nowMs - t <= STALE_FOLLOWUP_DAYS * 86_400_000;
+}
+
 function queueRank(lead: QueueLead, nowMs: number): number {
   if (lead.board_stage === "pago_verificar") return RANK_PAGO;
-  if (isFollowupDue(lead, nowMs)) return RANK_DUE;
+  if (isFollowupActionable(lead, nowMs)) return RANK_DUE;
   const i = QUEUE_STAGES.indexOf(lead.board_stage);
   return i < 0 ? 99 : RANK_STAGE_BASE + (i - 1);
 }
@@ -74,8 +100,10 @@ export function buildWorkQueue<T extends QueueLead>(leads: T[], now: Date): T[] 
       }
 
       if (rankA === RANK_DUE) {
-        // Reintentos: el mas vencido arriba.
-        return (followupMs(a) as number) - (followupMs(b) as number);
+        // Reintentos: el MAS RECIENTE arriba. Antes subia primero el mas
+        // vencido, que es justo el que menos convierte: un "no contesto" de
+        // ayer sigue caliente, uno de hace tres semanas ya es otra cosa.
+        return (followupMs(b) as number) - (followupMs(a) as number);
       }
 
       // por_cerrar, tibios y seguimiento: el mas reciente primero (regla de
