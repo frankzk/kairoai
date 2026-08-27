@@ -10,6 +10,7 @@ import {
   type ShopifyDraftCart,
 } from "../lib/shopify-draft-orders";
 import { leadBoardStage } from "../lib/leads";
+import { LEAD_STATUSES, statusesForBoard } from "../lib/leads-classify";
 
 function draft(partial: Partial<ShopifyDraftCart> = {}): ShopifyDraftCart {
   return {
@@ -283,5 +284,39 @@ describe("leadBoardStage", () => {
     expect(
       board({ status: "duplicado", status_source: "auto", shopify_cart_open: false, has_order: true })
     ).toBe("descartado");
+  });
+});
+
+// El tablero pide los leads en dos mitades y el servidor las separa por
+// status/has_order (lib/leads.ts), pero el bucket lo calcula leadBoardStage.
+// Si las dos definiciones se separan, la pantalla pierde leads en silencio:
+// quedarian fuera de la consulta de trabajo y tampoco entrarian en la de
+// archivo. Esta prueba las ata sobre TODAS las combinaciones posibles.
+describe("el corte trabajo/archivo del servidor", () => {
+  it("coincide exactamente con el bucket que calcula el tablero", () => {
+    const archiveStatuses = new Set([
+      ...statusesForBoard("cerrado"),
+      ...statusesForBoard("descartado"),
+    ]);
+    for (const def of LEAD_STATUSES) {
+      for (const has_order of [false, true]) {
+        for (const status_source of ["auto", "manual"] as const) {
+          for (const shopify_cart_open of [false, true]) {
+            const esArchivoParaElServidor = archiveStatuses.has(def.code) || has_order;
+            const bucket = leadBoardStage({
+              status: def.code,
+              status_source,
+              shopify_cart_open,
+              has_order,
+            });
+            const esArchivoParaElTablero = bucket === "cerrado" || bucket === "descartado";
+            expect(
+              esArchivoParaElServidor,
+              `${def.code} has_order=${has_order} source=${status_source} carrito=${shopify_cart_open} -> ${bucket}`
+            ).toBe(esArchivoParaElTablero);
+          }
+        }
+      }
+    }
   });
 });

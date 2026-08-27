@@ -93,6 +93,15 @@ export function statusBoardStage(code: string): BoardStage {
   return STATUS_BY_CODE.get(code)?.board ?? "seguimiento";
 }
 
+/**
+ * Codigos de estado que caen en este bucket por su status. Lo usa la capa de
+ * datos para filtrar EN EL SERVIDOR (Postgres) en vez de traerse la tabla
+ * entera y descartar en memoria.
+ */
+export function statusesForBoard(stage: BoardStage): string[] {
+  return LEAD_STATUSES.filter((s) => s.board === stage).map((s) => s.code);
+}
+
 export function isManualStatus(code: string): boolean {
   return STATUS_BY_CODE.get(code)?.source === "manual";
 }

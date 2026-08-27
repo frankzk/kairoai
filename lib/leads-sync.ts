@@ -258,7 +258,10 @@ export async function reclassifyStage(opts: {
   const cursorKey = `reclassify:${storeId}`;
   const scope = new Set<BoardStage>(opts.stage ? [opts.stage] : ACTIVE_STAGES);
 
-  const leads = await listLeads({ storeId });
+  // Solo los de trabajo: el afinado nunca mira leads cerrados ni descartados
+  // (los filtra dos lineas mas abajo), asi que traerlos solo servia para
+  // gastar el cupo de la consulta y dejar candidatos reales sin revisar.
+  const leads = await listLeads({ storeId, scope: "trabajo", limit: 20000 });
   const candidates = leads
     .filter(
       (l) =>

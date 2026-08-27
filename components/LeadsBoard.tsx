@@ -175,6 +175,11 @@ export default function LeadsBoard() {
   const [cartSyncMessage, setCartSyncMessage] = useState<string | null>(null);
   const [drawerLead, setDrawerLead] = useState<LeadRow | null>(null);
   const [selectedUncalledBucket, setSelectedUncalledBucket] = useState<string | null>(null);
+  // Cerrados y Descartados se cargan aparte: son mas de la mitad de la tabla y
+  // nadie los trabaja, asi que traerlos de entrada solo desplazaba de la
+  // pantalla a los leads que si hay que llamar. null = todavia no se pidieron.
+  const [archive, setArchive] = useState<LeadRow[] | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -185,10 +190,12 @@ export default function LeadsBoard() {
       if (!res.ok) throw new Error(data.error || "Error al cargar leads");
       setLeads(data.leads ?? []);
       setCounts(data.counts ?? null);
+      setArchive(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar leads");
       setLeads([]);
       setCounts(null);
+      setArchive(null);
     } finally {
       setLoading(false);
     }
@@ -242,6 +249,41 @@ export default function LeadsBoard() {
   const searching = q.length > 0;
   const hasInteractionRange = interactionFrom.length > 0 || interactionTo.length > 0;
 
+  // El archivo se trae la primera vez que hace falta de verdad: al abrir
+  // Cerrados o Descartados, o al buscar (el buscador promete "en todas las
+  // etapas", y sin esto solo miraba lo cargado).
+  const needsArchive =
+    searching || activeStage === "cerrado" || activeStage === "descartado";
+
+  useEffect(() => {
+    if (!needsArchive || archive !== null || archiveLoading) return;
+    let cancelled = false;
+    setArchiveLoading(true);
+    fetch(`/api/leads?store=${store}&scope=archivo${includeOld ? "&all=1" : ""}`)
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Error al cargar cerrados");
+        if (!cancelled) setArchive(data.leads ?? []);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Error al cargar cerrados");
+          setArchive([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setArchiveLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [needsArchive, archive, archiveLoading, store, includeOld]);
+
+  const allLeads = useMemo(
+    () => (archive && archive.length ? [...leads, ...archive] : leads),
+    [leads, archive]
+  );
+
   const matchesInteractionRange = useCallback(
     (lead: LeadRow) =>
       matchesLocalDateRange(lead.last_interaction_at, interactionFrom, interactionTo),
@@ -249,8 +291,8 @@ export default function LeadsBoard() {
   );
 
   const rangeFilteredLeads = useMemo(
-    () => (hasInteractionRange ? leads.filter(matchesInteractionRange) : leads),
-    [hasInteractionRange, leads, matchesInteractionRange]
+    () => (hasInteractionRange ? allLeads.filter(matchesInteractionRange) : allLeads),
+    [hasInteractionRange, allLeads, matchesInteractionRange]
   );
 
   // Al buscar, los resultados son de TODAS las etapas (busqueda global).
@@ -690,7 +732,7 @@ export default function LeadsBoard() {
           </div>
         )}
 
-        {loading ? (
+        {loading || (archiveLoading && archive === null) ? (
           <p className="py-12 text-center text-muted-foreground">Cargando...</p>
         ) : visibleLeads.length === 0 ? (
           <p className="py-12 text-center text-muted-foreground">
