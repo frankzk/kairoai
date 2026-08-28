@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   BarChart3,
@@ -192,7 +192,19 @@ export default function LeadsBoard() {
   const [archive, setArchive] = useState<LeadRow[] | null>(null);
   const [archiveLoading, setArchiveLoading] = useState(false);
 
+  // El "ya lo pedi" vive en una ref, NO en el estado. Cuando dependia de
+  // archiveLoading, ponerlo en true re-ejecutaba este efecto, su limpieza
+  // cancelaba la peticion que acababa de salir, y la respuesta se descartaba
+  // siempre: el archivo no llegaba nunca y la busqueda quedaba colgada.
+  // `id` distingue la carga actual, para ignorar la respuesta de una peticion
+  // vieja si mientras tanto se cambio de tienda o se refresco.
+  const archivePedido = useRef({ id: 0, pedido: false });
+
   const load = useCallback(async () => {
+    // Invalida el archivo de la carga anterior ANTES de pedir nada: lo que
+    // venga en camino de la tienda vieja se descarta al llegar.
+    archivePedido.current = { id: archivePedido.current.id + 1, pedido: false };
+    setArchiveLoading(false);
     setLoading(true);
     setError(null);
     try {
@@ -266,29 +278,31 @@ export default function LeadsBoard() {
   const needsArchive =
     searching || activeStage === "cerrado" || activeStage === "descartado";
 
+  /** El archivo hace falta y todavia no llego. La lista NO se bloquea por esto. */
+  const esperandoArchivo = needsArchive && archive === null;
+
   useEffect(() => {
-    if (!needsArchive || archive !== null || archiveLoading) return;
-    let cancelled = false;
+    if (!needsArchive || archivePedido.current.pedido) return;
+    const { id } = archivePedido.current;
+    archivePedido.current = { id, pedido: true };
+    const vigente = () => archivePedido.current.id === id;
     setArchiveLoading(true);
     fetch(`/api/leads?store=${store}&scope=archivo${includeOld ? "&all=1" : ""}`)
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Error al cargar cerrados");
-        if (!cancelled) setArchive(data.leads ?? []);
+        if (vigente()) setArchive(data.leads ?? []);
       })
       .catch((err) => {
-        if (!cancelled) {
+        if (vigente()) {
           setError(err instanceof Error ? err.message : "Error al cargar cerrados");
           setArchive([]);
         }
       })
       .finally(() => {
-        if (!cancelled) setArchiveLoading(false);
+        if (vigente()) setArchiveLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [needsArchive, archive, archiveLoading, store, includeOld]);
+  }, [needsArchive, store, includeOld]);
 
   const allLeads = useMemo(
     () => (archive && archive.length ? [...leads, ...archive] : leads),
@@ -782,20 +796,35 @@ export default function LeadsBoard() {
           </div>
         )}
 
-        {loading || (archiveLoading && archive === null) ? (
+        {/* El archivo (Cerrados + Descartados) pesa varios miles de leads y se
+            trae aparte. Al buscar NO se espera: se muestra al instante lo que
+            ya esta cargado y los cerrados se suman cuando llegan. Bloquear la
+            lista mientras tanto dejaba el buscador "colgado" en cada busqueda,
+            aunque el lead buscado ya estuviera a la vista. */}
+        {loading ? (
           <p className="py-12 text-center text-muted-foreground">Cargando...</p>
         ) : visibleLeads.length === 0 ? (
           <p className="py-12 text-center text-muted-foreground">
             {searching
-              ? "Sin resultados para la búsqueda."
-              : selectedUncalledBucket
-                ? "No hay leads sin llamar para la barra seleccionada en este filtro."
-                : hasInteractionRange
-                  ? "No hay leads con última interacción en este rango y etapa."
-                  : "No hay leads en esta etapa."}
+              ? esperandoArchivo
+                ? "Buscando también en Cerrados y Descartados..."
+                : "Sin resultados para la búsqueda."
+              : esperandoArchivo
+                ? "Cargando..."
+                : selectedUncalledBucket
+                  ? "No hay leads sin llamar para la barra seleccionada en este filtro."
+                  : hasInteractionRange
+                    ? "No hay leads con última interacción en este rango y etapa."
+                    : "No hay leads en esta etapa."}
           </p>
         ) : (
           <>
+            {esperandoArchivo && (
+              <p className="mb-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <RefreshCw className="h-3 w-3 animate-spin" />
+                Sumando Cerrados y Descartados...
+              </p>
+            )}
             {!searching && activeStage !== "agenda" && activeStage !== "cola" && (
               <div className="mb-2 flex justify-end">
                 <button
