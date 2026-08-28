@@ -153,6 +153,10 @@ export interface IncidentTrendPoint {
   resueltas: number;                    // resoluciones ese dia
   reprogramadas: number;                // reprogramaciones ese dia
   primera_gestion_horas: number | null; // promedio creacion -> 1er llamado (creadas ese dia)
+  // De las creadas ESE dia, cuantas ya estan resueltas hoy. Es la unica de las
+  // tres que se puede dividir por `generadas`: mide la misma poblacion. Las
+  // otras dos cuentan eventos sobre todo el acumulado, no sobre las de ese dia.
+  resueltas_de_las_nuevas: number;
 }
 
 // Una celda de la matriz de desempeño (un periodo).
@@ -183,6 +187,8 @@ export interface IncidentPeriodTotal {
   resueltas: number;
   reprogramadas: number;
   primera_gestion_horas: number | null;
+  /** De las `nuevas` del periodo, cuantas ya estan resueltas hoy. */
+  resueltas_de_las_nuevas: number;
 }
 
 export interface IncidentExecutiveStats {

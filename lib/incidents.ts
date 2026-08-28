@@ -342,7 +342,19 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
 
   // ----- Tendencia diaria (generadas / resueltas / reprogramadas / 1a gestion) + totales.
   const genByDay = new Map<string, number>();
-  for (const r of created) { const k = caDayKey(Date.parse(r.created_at)); genByDay.set(k, (genByDay.get(k) ?? 0) + 1); }
+  // Cohorte: de las creadas ESE dia, cuantas ya estan resueltas hoy. Es la
+  // unica cifra que se puede dividir por `generadas` para sacar un porcentaje,
+  // porque mide la misma poblacion. `resByDay` de abajo cuenta EVENTOS de
+  // resolucion ocurridos ese dia sobre incidencias de cualquier fecha: dividir
+  // eso por las nuevas del dia daba cosas como 775%.
+  const resDeLasNuevasByDay = new Map<string, number>();
+  for (const r of created) {
+    const k = caDayKey(Date.parse(r.created_at));
+    genByDay.set(k, (genByDay.get(k) ?? 0) + 1);
+    if (r.status === "resuelta") {
+      resDeLasNuevasByDay.set(k, (resDeLasNuevasByDay.get(k) ?? 0) + 1);
+    }
+  }
   const resByDay = new Map<string, number>();
   for (const r of resolved) { const k = caDayKey(Date.parse(r.created_at)); resByDay.set(k, (resByDay.get(k) ?? 0) + 1); }
   const reprogByDay = new Map<string, number>();
@@ -372,6 +384,7 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
       resueltas: rr,
       reprogramadas: reprogByDay.get(k) ?? 0,
       primera_gestion_horas: pg && pg.n ? pg.sum / pg.n / 3_600_000 : null,
+      resueltas_de_las_nuevas: resDeLasNuevasByDay.get(k) ?? 0,
     });
   }
 
@@ -387,6 +400,12 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
     resueltas: countIn(resolved, from, to),
     reprogramadas: countIn(reprog, from, to),
     primera_gestion_horas: avgPrimeraGestion(from, to),
+    // Misma cohorte que `nuevas`, no eventos del periodo (ver arriba).
+    resueltas_de_las_nuevas: countIn(
+      created.filter((r) => r.status === "resuelta"),
+      from,
+      to
+    ),
   });
 
   return {
