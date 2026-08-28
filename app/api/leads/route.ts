@@ -9,6 +9,7 @@ import {
 } from "@/lib/leads";
 import { runLeadsSync, reclassifyStage } from "@/lib/leads-sync";
 import { BOARD_VIEWS } from "@/lib/leads-classify";
+import { isInCallQueue, leadSegment, leadWorkState } from "@/lib/leads-segment";
 import { daysAgoIso } from "@/lib/leads-metrics";
 
 export const runtime = "nodejs";
@@ -35,7 +36,15 @@ export async function GET(req: NextRequest) {
         views: BOARD_VIEWS,
         scope: "busqueda",
         counts: null,
-        leads: encontrados.map((lead) => ({ ...lead, board_stage: leadBoardStage(lead) })),
+        // Los resultados de busqueda tambien llevan los dos ejes: el filtro por
+        // segmento sigue funcionando dentro de una busqueda.
+        leads: encontrados.map((lead) => ({
+          ...lead,
+          board_stage: leadBoardStage(lead),
+          work_state: leadWorkState(lead),
+          segment: leadSegment(lead),
+          in_call_queue: isInCallQueue(lead),
+        })),
       });
     }
 
@@ -51,9 +60,15 @@ export async function GET(req: NextRequest) {
     const scope: LeadScope =
       req.nextUrl.searchParams.get("scope") === "archivo" ? "archivo" : "trabajo";
     const leads = await listLeads({ storeId: store.id, sinceIso, scope, limit: 20000 });
+    // Los dos ejes viajan por separado: board_stage sigue alimentando el orden
+    // y las etiquetas de estado, mientras work_state/segment son las facetas
+    // independientes del tablero (ver lib/leads-segment.ts).
     const withStage = leads.map((lead) => ({
       ...lead,
       board_stage: leadBoardStage(lead),
+      work_state: leadWorkState(lead),
+      segment: leadSegment(lead),
+      in_call_queue: isInCallQueue(lead),
     }));
     // Los contadores se cuentan SIEMPRE contra toda la poblacion elegible, no
     // contra la mitad que se acaba de traer: son el numero que el equipo usa

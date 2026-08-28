@@ -36,6 +36,14 @@ import {
   schedulesFollowup,
   type BoardStage,
 } from "@/lib/leads-classify";
+import {
+  boardFacets,
+  SEGMENT_META,
+  SEGMENT_ORDER,
+  WORK_STATE_META,
+  type LeadSegment,
+  type LeadWorkState,
+} from "@/lib/leads-segment";
 import { buildWorkQueue, QUEUE_STAGES } from "@/lib/leads-queue";
 import {
   buildUncalledLeadBuckets,
@@ -134,6 +142,25 @@ const STAGE_META: Record<BoardStage, { label: string; variant: BadgeVariant; emo
   descartado: { label: "Descartado", variant: "outline", emoji: "🚫" },
 };
 
+// Los dos tabs del eje 1. Se nombran distinto del BoardStage "seguimiento"
+// para que no se confundan: el stage lo decide el status del lead, el tab lo
+// decide quien lo trabajo (status_source). Ver lib/leads-segment.ts.
+type WorkTab = "sin_llamar" | "en_seguimiento";
+const WORK_TAB_STATE: Record<WorkTab, LeadWorkState> = {
+  sin_llamar: "sin_llamar",
+  en_seguimiento: "seguimiento",
+};
+const WORK_TABS: WorkTab[] = ["sin_llamar", "en_seguimiento"];
+
+// Carrito, Tibios y Fríos salieron de esta fila: describen INTENCION, no
+// gestion, asi que ahora viven en la fila de segmentos y filtran dentro de
+// cualquier tab. Aca quedan solo los que son otro trabajo aparte.
+//
+// Cerrados se queda VISIBLE (decision del PR #208): la asesora necesita ver
+// adonde se fue lo que ya tiene pedido, no que desaparezca. Descartados sigue
+// detras del toggle, que lo resuelve el filtro de `views`.
+const STAGE_TABS: BoardStage[] = ["pago_verificar", "por_cerrar", "cerrado"];
+
 interface LeadRow {
   id: number;
   store_id: number;
@@ -144,6 +171,9 @@ interface LeadRow {
   status_source: "auto" | "manual";
   auto_reason: string | null;
   board_stage: BoardStage;
+  work_state: LeadWorkState;
+  segment: LeadSegment;
+  in_call_queue: boolean;
   labels: string[];
   last_message_text: string | null;
   last_message_sender: string | null;
@@ -172,7 +202,12 @@ export default function LeadsBoard() {
   const [store, setStore] = useSelectedStore();
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [counts, setCounts] = useState<BoardCounts | null>(null);
-  const [activeStage, setActiveStage] = useState<BoardStage | "agenda" | "cola">("cola");
+  // Eje 1 (que trabajo estoy mirando). "sin_llamar"/"en_seguimiento" son los
+  // dos tabs de gestion; el resto son atajos (Cola, Agenda) o estados con
+  // trabajo propio (pagos, por cerrar, ganados, descartados).
+  const [activeStage, setActiveStage] = useState<BoardStage | "agenda" | "cola" | WorkTab>("cola");
+  // Eje 2 (cuanta intencion). null = "Todos": filtra DENTRO del tab activo.
+  const [activeSegment, setActiveSegment] = useState<LeadSegment | null>(null);
   const [search, setSearch] = useState("");
   const [interactionFrom, setInteractionFrom] = useState("");
   const [interactionTo, setInteractionTo] = useState("");
@@ -404,39 +439,103 @@ export default function LeadsBoard() {
     return i < 0 ? 99 : i;
   };
 
+  const activeWorkState: LeadWorkState | null =
+    activeStage === "sin_llamar" || activeStage === "en_seguimiento"
+      ? WORK_TAB_STATE[activeStage]
+      : null;
+
+  const activeTabLabel =
+    activeStage === "cola"
+      ? "la Cola"
+      : activeStage === "agenda"
+        ? "Agenda"
+        : activeWorkState !== null
+          ? WORK_STATE_META[activeWorkState].label
+          : STAGE_META[activeStage as BoardStage].label;
+
+  // Eje 2: el segmento filtra DENTRO del tab activo, nunca lo reemplaza.
+  const matchesSegment = useCallback(
+    (lead: LeadRow) => activeSegment === null || lead.segment === activeSegment,
+    [activeSegment]
+  );
+
+  // Eje 1: que leads pertenecen al tab activo.
+  const matchesWorkTab = useCallback(
+    (lead: LeadRow) => lead.in_call_queue && lead.work_state === activeWorkState,
+    [activeWorkState]
+  );
+
   const visibleLeads = useMemo(() => {
     if (searching) {
       return searchMatches
         .filter(matchesSelectedBucket)
+        .filter(matchesSegment)
         .sort((a, b) => stagePriority(a.board_stage) - stagePriority(b.board_stage));
     }
     if (activeStage === "cola") {
       // Orden de atencion acordado: pago_verificar -> por_cerrar (mas nuevo
       // primero) -> tibios -> seguimiento (vencidos primero).
-      return buildWorkQueue(rangeFilteredLeads.filter(matchesSelectedBucket), chartNow);
+      return buildWorkQueue(
+        rangeFilteredLeads.filter(matchesSelectedBucket).filter(matchesSegment),
+        chartNow
+      );
     }
     if (activeStage === "agenda") {
       return rangeFilteredLeads
         .filter((l) => l.next_followup_at != null)
         .filter(matchesSelectedBucket)
+        .filter(matchesSegment)
         .sort((a, b) => (a.next_followup_at ?? "").localeCompare(b.next_followup_at ?? ""));
     }
     const byInteraction = (a: LeadRow, b: LeadRow) => {
       const cmp = (a.last_interaction_at ?? "").localeCompare(b.last_interaction_at ?? "");
       return sortDir === "desc" ? -cmp : cmp;
     };
+    const inTab =
+      activeWorkState !== null
+        ? matchesWorkTab
+        : (l: LeadRow) => l.board_stage === activeStage;
     return rangeFilteredLeads
-      .filter((l) => l.board_stage === activeStage)
+      .filter(inTab)
       .filter(matchesSelectedBucket)
+      .filter(matchesSegment)
       .sort(byInteraction);
-  }, [rangeFilteredLeads, activeStage, searching, searchMatches, sortDir, matchesSelectedBucket, chartNow]);
+  }, [
+    rangeFilteredLeads,
+    activeStage,
+    activeWorkState,
+    matchesWorkTab,
+    searching,
+    searchMatches,
+    sortDir,
+    matchesSelectedBucket,
+    matchesSegment,
+    chartNow,
+  ]);
 
   const chartContextLeads = useMemo(() => {
-    if (searching) return searchMatches;
-    if (activeStage === "cola") return buildWorkQueue(rangeFilteredLeads, chartNow);
-    if (activeStage === "agenda") return rangeFilteredLeads.filter((l) => l.next_followup_at != null);
-    return rangeFilteredLeads.filter((l) => l.board_stage === activeStage);
-  }, [activeStage, rangeFilteredLeads, searchMatches, searching, chartNow]);
+    if (searching) return searchMatches.filter(matchesSegment);
+    if (activeStage === "cola") {
+      return buildWorkQueue(rangeFilteredLeads.filter(matchesSegment), chartNow);
+    }
+    if (activeStage === "agenda") {
+      return rangeFilteredLeads.filter((l) => l.next_followup_at != null).filter(matchesSegment);
+    }
+    const inTab =
+      activeWorkState !== null
+        ? matchesWorkTab
+        : (l: LeadRow) => l.board_stage === activeStage;
+    return rangeFilteredLeads.filter(inTab).filter(matchesSegment);
+  }, [
+    activeStage,
+    activeWorkState,
+    matchesWorkTab,
+    matchesSegment,
+    rangeFilteredLeads,
+    searchMatches,
+    searching,
+    chartNow,
+  ]);
 
   const uncalledBuckets = useMemo(() => {
     return buildUncalledLeadBuckets(chartContextLeads, chartNow, UNCALLED_CHART_DAYS);
@@ -452,10 +551,22 @@ export default function LeadsBoard() {
   }, [matchesSelectedBucket, rangeFilteredLeads, searchMatches, searching, selectedUncalledBucket]);
 
   // Conteo por etapa: refleja los resultados de busqueda cuando hay query.
+  // Salta la faceta de segmento a proposito (regla de abajo).
   const stageCount = (stage: BoardStage) =>
     searching || selectedUncalledBucket || hasInteractionRange
       ? facetedLeads.filter((l) => l.board_stage === stage).length
       : counts?.byStage[stage] ?? 0;
+
+  // Contadores de los dos ejes. Cada faceta se cuenta sobre el conjunto
+  // filtrado por todo MENOS por ella misma:
+  //
+  //   - Los segmentos aplican el tab activo -> suman su total exacto.
+  //   - Los tabs del eje 1 ignoran el segmento -> no se encogen al filtrar,
+  //     asi no se pierde la referencia de donde uno esta parado.
+  const facets = useMemo(
+    () => boardFacets(facetedLeads, activeWorkState),
+    [facetedLeads, activeWorkState]
+  );
 
   // Agenda: seguimientos programados y cuantos ya vencieron.
   const agenda = useMemo(() => {
@@ -491,7 +602,11 @@ export default function LeadsBoard() {
     };
   }, [leads]);
 
-  const views = showHidden ? BOARD_VIEWS : BOARD_VIEWS.filter((v) => !v.hiddenByDefault);
+  // Solo los estados que son trabajo aparte. Carrito/Tibios/Fríos se fueron a
+  // la fila de segmentos: describen intencion, no gestion.
+  const views = BOARD_VIEWS.filter(
+    (v) => STAGE_TABS.includes(v.key) || (showHidden && v.hiddenByDefault)
+  );
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -558,7 +673,8 @@ export default function LeadsBoard() {
                   <h2 className="font-medium">Leads sin llamar</h2>
                   <p className="text-xs text-muted-foreground">
                     Por antigüedad: acumulado anterior y detalle de los últimos {UNCALLED_CHART_DAYS} días
-                    {searching ? " en esta busqueda" : activeStage === "agenda" ? " en Agenda" : activeStage === "cola" ? " en la Cola" : ` en ${STAGE_META[activeStage].label}`}.
+                    {searching ? " en esta busqueda" : ` en ${activeTabLabel}`}
+                    {activeSegment !== null && ` · ${SEGMENT_META[activeSegment].label}`}.
                   </p>
                 </div>
               </div>
@@ -786,6 +902,34 @@ export default function LeadsBoard() {
               {agenda.total}
             </span>
           </button>
+          {/* Eje 1: quien lo trabajo. Los conteos NO aplican el segmento. */}
+          {WORK_TABS.map((tab) => {
+            const meta = WORK_STATE_META[WORK_TAB_STATE[tab]];
+            const count = facets.byWorkState[WORK_TAB_STATE[tab]];
+            const active = activeStage === tab && !searching;
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveStage(tab)}
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                  active
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-card hover:bg-accent"
+                }`}
+                title={
+                  tab === "sin_llamar"
+                    ? "Nadie los ha trabajado todavia"
+                    : "La asesora ya registro una gestion"
+                }
+              >
+                <span>{meta.emoji}</span>
+                <span>{meta.label}</span>
+                <span className={`rounded-full px-1.5 text-xs ${active ? "bg-primary-foreground/20" : "bg-muted"}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
           {views.map((v) => {
             const meta = STAGE_META[v.key];
             const count = stageCount(v.key);
@@ -823,7 +967,64 @@ export default function LeadsBoard() {
           </button>
         </div>
 
-        {!searching && activeStage === "carrito" && (
+        {/* Eje 2: intencion de compra. Filtra DENTRO del tab activo, no lo
+            reemplaza — por eso los conteos suman el total del tab. Un lead con
+            carrito abierto y ya contactado aparece en "En seguimiento" Y en
+            "Carrito" a la vez, que era justo lo que el tablero viejo no podia
+            representar. */}
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+            Intención
+          </span>
+          <button
+            onClick={() => setActiveSegment(null)}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${
+              activeSegment === null
+                ? "border-primary bg-primary/15 text-foreground"
+                : "border-border bg-card text-muted-foreground hover:bg-accent"
+            }`}
+          >
+            Todos
+            <span className="rounded-full bg-muted px-1.5 tabular-nums">
+              {SEGMENT_ORDER.reduce((sum, s) => sum + facets.bySegment[s], 0)}
+            </span>
+          </button>
+          {SEGMENT_ORDER.map((seg) => {
+            const meta = SEGMENT_META[seg];
+            const count = facets.bySegment[seg];
+            const active = activeSegment === seg;
+            // Distrito y Conversó siguen vacíos hasta que se pueble district e
+            // inbound_count; no se muestran para no ofrecer un filtro que no
+            // puede hacer nada.
+            if (count === 0 && !active) return null;
+            return (
+              <button
+                key={seg}
+                onClick={() => setActiveSegment(active ? null : seg)}
+                title={meta.hint}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                  active
+                    ? "border-primary bg-primary/15 text-foreground"
+                    : "border-border bg-card text-muted-foreground hover:bg-accent"
+                }`}
+              >
+                <span>{meta.emoji}</span>
+                <span>{meta.label}</span>
+                <span className="rounded-full bg-muted px-1.5 tabular-nums">{count}</span>
+              </button>
+            );
+          })}
+          {activeSegment !== null && (
+            <button
+              onClick={() => setActiveSegment(null)}
+              className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+            >
+              Quitar filtro
+            </button>
+          )}
+        </div>
+
+        {!searching && activeSegment === "carrito" && (
           <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
             {cartSyncMessage && (
               <span className="text-xs text-muted-foreground">{cartSyncMessage}</span>
