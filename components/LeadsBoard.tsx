@@ -155,7 +155,11 @@ const WORK_TABS: WorkTab[] = ["sin_llamar", "en_seguimiento"];
 // Carrito, Tibios y Fríos salieron de esta fila: describen INTENCION, no
 // gestion, asi que ahora viven en la fila de segmentos y filtran dentro de
 // cualquier tab. Aca quedan solo los que son otro trabajo aparte.
-const STAGE_TABS: BoardStage[] = ["pago_verificar", "por_cerrar"];
+//
+// Cerrados se queda VISIBLE (decision del PR #208): la asesora necesita ver
+// adonde se fue lo que ya tiene pedido, no que desaparezca. Descartados sigue
+// detras del toggle, que lo resuelve el filtro de `views`.
+const STAGE_TABS: BoardStage[] = ["pago_verificar", "por_cerrar", "cerrado"];
 
 interface LeadRow {
   id: number;
