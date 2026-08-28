@@ -191,6 +191,9 @@ export default function LeadsBoard() {
   // pantalla a los leads que si hay que llamar. null = todavia no se pidieron.
   const [archive, setArchive] = useState<LeadRow[] | null>(null);
   const [archiveLoading, setArchiveLoading] = useState(false);
+  // Lo que devolvio el servidor para la busqueda actual. null = no se busco.
+  const [searchResults, setSearchResults] = useState<LeadRow[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   // El "ya lo pedi" vive en una ref, NO en el estado. Cuando dependia de
   // archiveLoading, ponerlo en true re-ejecutaba este efecto, su limpieza
@@ -275,11 +278,49 @@ export default function LeadsBoard() {
   // El archivo se trae la primera vez que hace falta de verdad: al abrir
   // Cerrados o Descartados, o al buscar (el buscador promete "en todas las
   // etapas", y sin esto solo miraba lo cargado).
-  const needsArchive =
-    searching || activeStage === "cerrado" || activeStage === "descartado";
+  // El archivo ya NO se pide para buscar: la busqueda la resuelve Postgres
+  // (ver el efecto de abajo). Solo hace falta para mirar esas dos pestañas.
+  const needsArchive = activeStage === "cerrado" || activeStage === "descartado";
 
   /** El archivo hace falta y todavia no llego. La lista NO se bloquea por esto. */
   const esperandoArchivo = needsArchive && archive === null;
+
+  // Busqueda contra toda la tabla de la tienda. El filtro en memoria sigue
+  // existiendo y da resultados al instante sobre lo ya cargado; esto agrega lo
+  // que no esta en pantalla: cerrados, descartados y cualquier cosa fuera de la
+  // ventana de 30 dias. Antes eso exigia bajarse el archivo entero.
+  useEffect(() => {
+    if (!searching) {
+      setSearchResults(null);
+      setSearchLoading(false);
+      return;
+    }
+    const busqueda = q;
+    let cancelado = false;
+    setSearchLoading(true);
+    // Espera a que la asesora termine de escribir el telefono.
+    const t = setTimeout(() => {
+      fetch(`/api/leads?store=${store}&q=${encodeURIComponent(busqueda)}`)
+        .then(async (res) => {
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Error al buscar");
+          if (!cancelado) setSearchResults(data.leads ?? []);
+        })
+        .catch((err) => {
+          if (!cancelado) {
+            setError(err instanceof Error ? err.message : "Error al buscar");
+            setSearchResults([]);
+          }
+        })
+        .finally(() => {
+          if (!cancelado) setSearchLoading(false);
+        });
+    }, 300);
+    return () => {
+      cancelado = true;
+      clearTimeout(t);
+    };
+  }, [searching, q, store]);
 
   useEffect(() => {
     if (!needsArchive || archivePedido.current.pedido) return;
@@ -304,10 +345,16 @@ export default function LeadsBoard() {
       });
   }, [needsArchive, store, includeOld]);
 
-  const allLeads = useMemo(
-    () => (archive && archive.length ? [...leads, ...archive] : leads),
-    [leads, archive]
-  );
+  // Lo cargado + lo que sumen el archivo y la busqueda, sin repetir: un mismo
+  // lead puede venir por dos caminos (esta en pantalla Y lo devolvio el
+  // servidor), y se veria dos veces en la lista.
+  const allLeads = useMemo(() => {
+    const extra = [...(archive ?? []), ...(searchResults ?? [])];
+    if (!extra.length) return leads;
+    const porId = new Map(leads.map((l) => [l.id, l]));
+    for (const lead of extra) if (!porId.has(lead.id)) porId.set(lead.id, lead);
+    return Array.from(porId.values());
+  }, [leads, archive, searchResults]);
 
   // Cuantas tarjetas se dibujan. Antes se dibujaban TODAS: con los contadores
   // arreglados la Cola pasa de unos cientos a 2.251 leads en Costa Rica y
@@ -806,8 +853,8 @@ export default function LeadsBoard() {
         ) : visibleLeads.length === 0 ? (
           <p className="py-12 text-center text-muted-foreground">
             {searching
-              ? esperandoArchivo
-                ? "Buscando también en Cerrados y Descartados..."
+              ? searchLoading
+                ? "Buscando en toda la base..."
                 : "Sin resultados para la búsqueda."
               : esperandoArchivo
                 ? "Cargando..."
@@ -819,10 +866,10 @@ export default function LeadsBoard() {
           </p>
         ) : (
           <>
-            {esperandoArchivo && (
+            {(esperandoArchivo || searchLoading) && (
               <p className="mb-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <RefreshCw className="h-3 w-3 animate-spin" />
-                Sumando Cerrados y Descartados...
+                {searchLoading ? "Buscando en toda la base..." : "Cargando Cerrados y Descartados..."}
               </p>
             )}
             {!searching && activeStage !== "agenda" && activeStage !== "cola" && (

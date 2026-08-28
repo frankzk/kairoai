@@ -318,6 +318,61 @@ export async function listLeads(opts: ListLeadsOptions): Promise<LeadRecord[]> {
 }
 
 /**
+ * Texto listo para meter en un filtro de PostgREST.
+ *
+ * Los caracteres que se quitan son los que tienen significado dentro de un
+ * `or=(...)`: una coma partiria la condicion en dos y un parentesis la
+ * cerraria antes de tiempo. Nadie busca un cliente por comas ni por asteriscos,
+ * asi que se cambian por espacio en vez de intentar escaparlos.
+ */
+export function sanitizeSearch(q: string): string {
+  return q.replace(/[,()"'\\*%]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+}
+
+/** Un texto sirve para buscar si tiene letras suficientes o digitos de telefono. */
+export function isSearchable(q: string): boolean {
+  return sanitizeSearch(q).length >= 2 || q.replace(/\D/g, "").length >= 3;
+}
+
+/**
+ * Busca en TODA la tabla de la tienda: nombre, telefono y ultimo mensaje.
+ *
+ * Antes el buscador filtraba en memoria lo que el tablero ya tenia cargado, asi
+ * que prometia "en todas las etapas" y en realidad no veia ni los cerrados ni
+ * nada fuera de la ventana de 30 dias. Buscar el telefono de un cliente viejo
+ * simplemente no daba resultados. Aca no se aplica ventana ni scope a
+ * proposito: si la asesora escribe un telefono, quiere ese cliente, este donde
+ * este.
+ *
+ * El telefono se compara por digitos porque en la tabla esta normalizado
+ * (50661234567): asi "8428-8896" y "+506 8428 8896" encuentran lo mismo.
+ */
+export async function searchLeads(
+  storeId: number,
+  q: string,
+  limit = 200
+): Promise<LeadRecord[]> {
+  if (!isSearchable(q)) return [];
+  const texto = sanitizeSearch(q);
+  const digitos = q.replace(/\D/g, "");
+  const condiciones: string[] = [];
+  if (texto.length >= 2) {
+    condiciones.push(`name.ilike.%${texto}%`, `last_message_text.ilike.%${texto}%`);
+  }
+  if (digitos.length >= 3) condiciones.push(`phone.ilike.%${digitos}%`);
+
+  const { data, error } = await getDB()
+    .from("leads")
+    .select("*")
+    .eq("store_id", storeId)
+    .or(condiciones.join(","))
+    .order("last_interaction_at", { ascending: false, nullsFirst: false })
+    .limit(Math.min(Math.max(limit, 1), 500));
+  if (error) throw new Error(`searchLeads: ${error.message}`);
+  return (data ?? []) as LeadRecord[];
+}
+
+/**
  * Conteo por bucket sobre TODOS los leads elegibles, no sobre los que quepan
  * en una pantalla.
  *

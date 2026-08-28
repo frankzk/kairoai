@@ -107,3 +107,44 @@ describe("countLeadStages", () => {
     expect(query()).toContain("last_interaction_at.gte.2026-08-01T00:00:00.000Z");
   });
 });
+
+describe("searchLeads", () => {
+  it("busca por nombre, ultimo mensaje y telefono, sin ventana ni scope", async () => {
+    await leads.searchLeads(1, "Maria");
+
+    expect(requests).toHaveLength(1);
+    const q = query();
+    expect(q).toContain("name.ilike.%Maria%");
+    expect(q).toContain("last_message_text.ilike.%Maria%");
+    // La busqueda ve TODA la tabla: es lo que la hace util para encontrar a un
+    // cliente viejo o ya cerrado.
+    expect(q).not.toContain("last_interaction_at.gte");
+    expect(q).not.toContain("status=not.in.(");
+    expect(q).not.toContain("has_order=eq.");
+    expect(q).toContain("limit=200");
+  });
+
+  it("el telefono se busca por digitos: da igual como lo escriban", async () => {
+    await leads.searchLeads(1, "+506 8428-8896");
+
+    expect(query()).toContain("phone.ilike.%50684288896%");
+  });
+
+  // Una coma partiria el or=(...) en dos condiciones y un parentesis lo
+  // cerraria antes de tiempo: la consulta saldria mal formada o, peor,
+  // filtrando por otra cosa.
+  it("no deja que el texto rompa el filtro", async () => {
+    await leads.searchLeads(1, "Ana, (test) *");
+
+    // Se mira el or= entero: lo que importa es que siga siendo UNA condicion
+    // por campo, sin parentesis ni comas de mas metidas por el texto.
+    // El espacio viaja codificado como "+" en la query string.
+    const or = new URL(requests[0]).searchParams.get("or");
+    expect(or).toBe("(name.ilike.%Ana test%,last_message_text.ilike.%Ana test%)");
+  });
+
+  it("no sale a la base por una sola letra", async () => {
+    expect(await leads.searchLeads(1, "a")).toEqual([]);
+    expect(requests).toHaveLength(0);
+  });
+});
