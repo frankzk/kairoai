@@ -375,6 +375,34 @@ export async function searchLeads(
 }
 
 /**
+ * Telefonos parecidos, para cuando la busqueda exacta no encontro nada.
+ *
+ * Los celulares de CR/HN son de 8 digitos y la busqueda exacta pide la
+ * secuencia completa: un digito de mas o de menos da cero resultados y ninguna
+ * pista, asi que se da por perdido un lead que si existe. Caso real: se busco
+ * 5068428896 y el lead estaba como 50684288896 — faltaba un 8.
+ *
+ * Solo se usa como PLAN B (ver `searchLeads` en la ruta): si la busqueda exacta
+ * trajo algo, esto no corre.
+ */
+export async function searchLeadsByPhoneSimilar(
+  storeId: number,
+  q: string,
+  limit = 8
+): Promise<LeadRecord[]> {
+  const digitos = q.replace(/\D/g, "");
+  // Con menos de 6 digitos cualquier cosa se "parece" y la lista es ruido.
+  if (digitos.length < 6) return [];
+  const { data, error } = await getDB().rpc("leads_phone_similar", {
+    p_store_id: storeId,
+    p_phone: digitos,
+    p_limit: limit,
+  });
+  if (error) throw new Error(`searchLeadsByPhoneSimilar: ${error.message}`);
+  return (data ?? []) as LeadRecord[];
+}
+
+/**
  * Conteo por bucket sobre TODOS los leads elegibles, no sobre los que quepan
  * en una pantalla.
  *

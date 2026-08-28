@@ -5,6 +5,7 @@ import {
   leadBoardStage,
   listLeads,
   searchLeads,
+  searchLeadsByPhoneSimilar,
   type LeadScope,
 } from "@/lib/leads";
 import { runLeadsSync, reclassifyStage } from "@/lib/leads-sync";
@@ -30,11 +31,25 @@ export async function GET(req: NextRequest) {
     // leads en Costa Rica) solo para filtrarlo en memoria.
     const q = req.nextUrl.searchParams.get("q") ?? "";
     if (q.trim()) {
-      const encontrados = await searchLeads(store.id, q);
+      let encontrados = await searchLeads(store.id, q);
+      // Plan B para telefonos: la busqueda exacta pide la secuencia completa,
+      // asi que un digito mal tecleado da cero resultados y ninguna pista. Si
+      // no hubo nada, se ofrecen los parecidos en vez de un "sin resultados"
+      // que hace dar por perdido un lead que si existe.
+      let aproximado = false;
+      if (encontrados.length === 0) {
+        const parecidos = await searchLeadsByPhoneSimilar(store.id, q).catch(() => []);
+        if (parecidos.length > 0) {
+          encontrados = parecidos;
+          aproximado = true;
+        }
+      }
       return NextResponse.json({
         store: store.code,
         views: BOARD_VIEWS,
         scope: "busqueda",
+        // El tablero lo usa para avisar que no son coincidencias exactas.
+        aproximado,
         counts: null,
         // Los resultados de busqueda tambien llevan los dos ejes: el filtro por
         // segmento sigue funcionando dentro de una busqueda.
