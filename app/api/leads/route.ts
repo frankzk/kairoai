@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody, getRequiredStoreFromSearchParams } from "@/lib/stores";
-import { countLeadStages, leadBoardStage, listLeads, type LeadScope } from "@/lib/leads";
+import {
+  countLeadStages,
+  leadBoardStage,
+  listLeads,
+  searchLeads,
+  type LeadScope,
+} from "@/lib/leads";
 import { runLeadsSync, reclassifyStage } from "@/lib/leads-sync";
 import { BOARD_VIEWS } from "@/lib/leads-classify";
 import { daysAgoIso } from "@/lib/leads-metrics";
@@ -18,6 +24,21 @@ export async function GET(req: NextRequest) {
     );
   }
   try {
+    // Busqueda: se resuelve en Postgres sobre toda la tabla de la tienda, sin
+    // ventana ni scope. El tablero antes se bajaba el archivo entero (~3.800
+    // leads en Costa Rica) solo para filtrarlo en memoria.
+    const q = req.nextUrl.searchParams.get("q") ?? "";
+    if (q.trim()) {
+      const encontrados = await searchLeads(store.id, q);
+      return NextResponse.json({
+        store: store.code,
+        views: BOARD_VIEWS,
+        scope: "busqueda",
+        counts: null,
+        leads: encontrados.map((lead) => ({ ...lead, board_stage: leadBoardStage(lead) })),
+      });
+    }
+
     // Por defecto ocultamos leads con mas de 30 dias sin interaccion; ?all=1
     // los incluye.
     const includeAll = req.nextUrl.searchParams.get("all") === "1";
