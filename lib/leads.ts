@@ -47,6 +47,8 @@ export interface LeadRecord {
   shopify_draft_cart_count: number;
   shopify_draft_updated_at: string | null;
   inbound_count: number;
+  first_inbound_text: string | null;
+  inbound_synced_at: string | null;
   labels: string[];
   created_at: string;
   updated_at: string;

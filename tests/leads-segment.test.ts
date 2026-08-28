@@ -19,6 +19,7 @@ function lead(partial: Partial<SegmentInput> = {}): SegmentInput & { needs_atten
     has_cart_signal: false,
     district: null,
     inbound_count: 0,
+    first_inbound_text: null,
     ...partial,
   };
 }

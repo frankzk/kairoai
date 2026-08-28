@@ -17,6 +17,7 @@
 // contradiccion.
 
 import { statusBoardStage } from "./leads-classify";
+import { hasProductLink } from "./leads-inbound";
 
 /** Eje 1: quien lo trabajo. */
 export type LeadWorkState = "sin_llamar" | "seguimiento";
@@ -35,6 +36,7 @@ export interface SegmentInput {
   has_cart_signal: boolean;
   district: string | null;
   inbound_count: number;
+  first_inbound_text: string | null;
 }
 
 /**
@@ -55,13 +57,12 @@ export function leadWorkState(lead: Pick<SegmentInput, "status_source">): LeadWo
  * Un lead cae en UN solo balde. Si se permitieran etiquetas acumulables los
  * contadores dejarian de sumar el total y la pantalla se contradiria sola.
  *
- * OJO — dos segmentos estan vacios hoy: `district` e `inbound_count` existen
- * como columnas pero ningun codigo las escribe (0 de 20.140 leads), porque el
- * transcript se lee en vivo de Icomfly y no se persiste. La cascada los deja
- * implementados para que al poblarlos el tablero funcione solo. Falta tambien
- * la regla del link de producto (un unico mensaje que ya trae la URL de la
- * ficha cuenta como "converso"): necesita first_inbound_text, que todavia no
- * existe en la tabla.
+ * OJO — `district` sigue vacio: la columna existe pero ningun codigo la
+ * escribe, porque hoy no se pide el distrito en el chat. La cascada lo deja
+ * implementado para que al poblarlo el tablero funcione solo.
+ *
+ * `inbound_count` y `first_inbound_text` los llena el cron
+ * /api/cron/leads-inbound leyendo el transcript de Icomfly.
  */
 export function leadSegment(lead: SegmentInput): LeadSegment {
   if (
@@ -73,7 +74,10 @@ export function leadSegment(lead: SegmentInput): LeadSegment {
     return "carrito";
   }
   if ((lead.district ?? "").trim() !== "") return "distrito";
+  // Dos o mas mensajes suyos — o uno solo que ya trae el link de la ficha de
+  // producto, que dice exactamente que quiere (ver lib/leads-inbound.ts).
   if ((lead.inbound_count ?? 0) >= 2) return "converso";
+  if ((lead.inbound_count ?? 0) >= 1 && hasProductLink(lead.first_inbound_text)) return "converso";
   return "frio";
 }
 

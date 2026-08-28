@@ -24,6 +24,7 @@ const PUBLIC_PATHS = [
   "/api/cron/icomfly",
   "/api/cron/leads",
   "/api/cron/leads-reclassify",
+  "/api/cron/leads-inbound",
   "/api/cron/leads-shopify-match",
 ];
 
