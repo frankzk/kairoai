@@ -1068,11 +1068,37 @@ al asignar. En ambos sitios va **con texto y no como un punto de color**: un
 punto sin etiqueta no se encuentra ni se entiende, y este dato solo sirve si
 se lee de un vistazo.
 
-En `zadarma_calls` las dos patas de la llamada se distinguen así: si `phone`
-son tres dígitos, es la centralita **timbrando a la extensión**; si es un
-número largo, es la extensión **marcando al cliente**. Que la segunda funcione
-y la primera no significa exactamente esto: el teléfono puede llamar, pero
-nadie puede llamarlo.
+### Las dos patas del click-to-call
+
+`/v1/request/callback/` **no marca al cliente de una**: primero timbra la
+extensión de la asesora y solo cuando ella descuelga marca al cliente. Para la
+centralita son dos llamadas distintas, cada una con su `pbx_call_id`, y las dos
+llegan como `NOTIFY_OUT_*`.
+
+En la pata de timbrado Zadarma **invierte los papeles**: `destination` es la
+extensión y `internal` trae el número del **cliente**, porque ese es el
+identificador que se le muestra a la asesora para que sepa a quién va a llamar.
+`readOutgoingLegRoles()` lo endereza: si el destino es una extensión (100–999)
+y el origen no, están cambiados.
+
+Sin eso, la pata de timbrado quedaba en el CDR como una llamada “al número
+100”: sin lead (ningún cliente tiene ese teléfono) y sin asesora (el campo de
+la extensión traía un celular). Y es justo el caso que hay que poder ver —
+**la asesora no contesta su propio teléfono y el cliente nunca suena**. Pasó en
+agosto 2026: dos llamadas aparecían como `cancel · 0s` y se leían como “el
+cliente colgó”, cuando el cliente jamás fue marcado.
+
+Los estados `agent_ringing` / `agent_answered` / `agent_no_answer` los pone
+Kairo, no Zadarma, y se cuentan **desde la asesora**: el timeline dice “tu
+teléfono web no contestó: el cliente nunca sonó” en vez de “Saliente ·
+cancelada”, que echaba al cliente la culpa de algo que pasó de este lado. La
+pata que sí contestó se guarda pero no se muestra: la llamada real al cliente
+viene enseguida como su propia fila y se vería cada llamada dos veces.
+
+Como efecto secundario esto también separa dos fallas que se veían iguales: la
+extensión que **marca** bien pero a la que **nadie puede llamar** (caso 103,
+arriba) ahora se distingue en el CDR sin tener que mirar si `phone` son tres
+dígitos.
 
 ### Dónde se puede llamar
 

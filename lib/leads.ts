@@ -6,7 +6,7 @@ import { getDB } from "./db";
 import { statusBoardStage, statusCategory, type BoardStage } from "./leads-classify";
 import type { ChatLeadSummary, LeadCategory, LeadStateSnapshot, StatusSource } from "./leads-types";
 import { normalizePhone, phoneConfigForStore } from "./phone-cr";
-import { describeZadarmaCall } from "./zadarma";
+import { AGENT_LEG_ANSWERED, describeZadarmaCall } from "./zadarma";
 
 export interface LeadRecord {
   id: number;
@@ -604,7 +604,14 @@ export async function getLeadHistory(storeId: number, leadId: number): Promise<L
   if (callError) {
     console.warn(`[leads] historial sin llamadas Zadarma: ${callError.message}`);
   }
-  const calls = ((callData ?? []) as ZadarmaCallHistoryRow[]).filter((r) => r.started_at);
+  // La pata de timbrado que SI contesto no aporta nada: la llamada al cliente
+  // viene enseguida como su propia fila y contarlas las dos duplicaria cada
+  // llamada en el historial. La que NO contesto si se muestra: es la unica
+  // forma de ver que se intento llamar y el telefono de la asesora nunca
+  // descolgo, o sea que el cliente jamas sono.
+  const calls = ((callData ?? []) as ZadarmaCallHistoryRow[]).filter(
+    (r) => r.started_at && r.status !== AGENT_LEG_ANSWERED
+  );
 
   const ids = Array.from(
     new Set(
