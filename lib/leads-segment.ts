@@ -3,7 +3,7 @@
 // El tablero cruza DOS preguntas independientes sobre el mismo lead:
 //
 //   Eje 1 — ¿alguien ya lo llamo?   -> leadWorkState()  (Sin llamar / En seguimiento)
-//   Eje 2 — ¿cuanta intencion tiene? -> leadSegment()   (Carrito / Distrito / Converso / Frio)
+//   Eje 2 — ¿cuanta intencion tiene? -> leadSegment()   (Carrito / Enganchado / Converso / Frio)
 //
 // Se combinan con Y: el segmento filtra DENTRO del estado activo, no lo
 // reemplaza. Por eso los segmentos suman exactamente el total del eje 1 activo.
@@ -17,13 +17,19 @@
 // contradiccion.
 
 import { statusBoardStage } from "./leads-classify";
-import { hasProductLink } from "./leads-inbound";
+
+/**
+ * Corte del segmento "enganchado". Sale de la medicion: la tasa salta de 7,5%
+ * (4-9 mensajes) a 38,8% (10 o mas). Es el unico corte del rango de mensajes
+ * que separa de verdad.
+ */
+export const ENGANCHADO_MIN_MENSAJES = 10;
 
 /** Eje 1: quien lo trabajo. */
 export type LeadWorkState = "sin_llamar" | "seguimiento";
 
 /** Eje 2: cuanta intencion de compra muestra. Cascada, gana el primero. */
-export type LeadSegment = "carrito" | "distrito" | "converso" | "frio";
+export type LeadSegment = "carrito" | "enganchado" | "converso" | "frio";
 
 /** Campos que necesita la clasificacion. Nada mas: es una funcion pura. */
 export interface SegmentInput {
@@ -34,9 +40,7 @@ export interface SegmentInput {
   shopify_cart_open: boolean;
   shopify_draft_cart_count: number;
   has_cart_signal: boolean;
-  district: string | null;
   inbound_count: number;
-  first_inbound_text: string | null;
 }
 
 /**
@@ -52,17 +56,33 @@ export function leadWorkState(lead: Pick<SegmentInput, "status_source">): LeadWo
 
 /**
  * Eje 2, en cascada: gana la primera que coincida. El orden es el orden de
- * llamada, de mas a menos intencion.
+ * llamada, y NO se copio de ningun lado: se midio en esta base.
  *
- * Un lead cae en UN solo balde. Si se permitieran etiquetas acumulables los
- * contadores dejarian de sumar el total y la pantalla se contradiria sola.
+ * Sobre 2.875 leads con el chat ya leido, cuantos llegaron a "por cerrar" o a
+ * tener pedido:
  *
- * OJO — `district` sigue vacio: la columna existe pero ningun codigo la
- * escribe, porque hoy no se pide el distrito en el chat. La cascada lo deja
- * implementado para que al poblarlo el tablero funcione solo.
+ *   carrito ................ 41,4%  (326 leads)
+ *   enganchado (10+ msgs) .. 15,8%  (165)
+ *   converso (2-9 msgs) ..... 1,5%  (1.484)
+ *   frio (0-1 msg) .......... 1,0%  (900)
  *
- * `inbound_count` y `first_inbound_text` los llena el cron
- * /api/cron/leads-inbound leyendo el transcript de Icomfly.
+ * La separacion real esta entre los dos primeros y el resto: un carrito vale
+ * 27 veces mas que un converso. Por eso "converso" junta 2-9 mensajes — dentro
+ * de ese rango la diferencia (2,0% vs 0,9%) no alcanza para partirlo en dos
+ * chips mas.
+ *
+ * OJO CON LA CAUSALIDAD: un lead que estuvo por comprar intercambia mas
+ * mensajes POR estar negociando, asi que parte del 15,8% es efecto y no causa.
+ * Sirve para ordenar a quien llamar primero, no para prometer que llamar a un
+ * "enganchado" produce ese cierre.
+ *
+ * SE MIDIO Y SE DESCARTO: la regla del link de producto (un unico mensaje que
+ * ya trae la URL de la ficha, que en el CRM de origen cuenta como "converso").
+ * Aca esos 708 leads llegan lejos en el 0,1% de los casos — el peor segmento
+ * de todos, por debajo de los frios. Se dejan en frio.
+ *
+ * `district` se saco de la cascada: la columna nunca se poblo y no hay con que
+ * ubicarla en este orden.
  */
 export function leadSegment(lead: SegmentInput): LeadSegment {
   if (
@@ -73,11 +93,8 @@ export function leadSegment(lead: SegmentInput): LeadSegment {
   ) {
     return "carrito";
   }
-  if ((lead.district ?? "").trim() !== "") return "distrito";
-  // Dos o mas mensajes suyos — o uno solo que ya trae el link de la ficha de
-  // producto, que dice exactamente que quiere (ver lib/leads-inbound.ts).
+  if ((lead.inbound_count ?? 0) >= ENGANCHADO_MIN_MENSAJES) return "enganchado";
   if ((lead.inbound_count ?? 0) >= 2) return "converso";
-  if ((lead.inbound_count ?? 0) >= 1 && hasProductLink(lead.first_inbound_text)) return "converso";
   return "frio";
 }
 
@@ -94,14 +111,15 @@ export function isInCallQueue(lead: SegmentInput): boolean {
   return stage !== "pago_verificar" && stage !== "cerrado" && stage !== "descartado";
 }
 
-export const SEGMENT_ORDER: LeadSegment[] = ["carrito", "distrito", "converso", "frio"];
+/** Orden de llamada, de mas a menos probable. Ver `leadSegment`. */
+export const SEGMENT_ORDER: LeadSegment[] = ["carrito", "enganchado", "converso", "frio"];
 export const WORK_STATE_ORDER: LeadWorkState[] = ["sin_llamar", "seguimiento"];
 
 export const SEGMENT_META: Record<LeadSegment, { label: string; emoji: string; hint: string }> = {
-  carrito: { label: "Carrito", emoji: "🛒", hint: "Armo un carrito real" },
-  distrito: { label: "Dio distrito", emoji: "📍", hint: "Dio su distrito de envio" },
-  converso: { label: "Conversó", emoji: "💬", hint: "Dos o mas mensajes suyos" },
-  frio: { label: "Frío", emoji: "❄️", hint: "Solo saludo, o ni respondio" },
+  carrito: { label: "Carrito", emoji: "🛒", hint: "Armó un carrito real · 41% llega a cerrar" },
+  enganchado: { label: "Enganchado", emoji: "🔥", hint: "10+ mensajes suyos · 16% llega a cerrar" },
+  converso: { label: "Conversó", emoji: "💬", hint: "2 a 9 mensajes suyos · 1,5%" },
+  frio: { label: "Frío", emoji: "❄️", hint: "Un mensaje o ninguno · 1%" },
 };
 
 export const WORK_STATE_META: Record<LeadWorkState, { label: string; emoji: string }> = {
@@ -154,7 +172,7 @@ export function boardFacets<T extends ClassifiedLead>(
   const byWorkState: Record<LeadWorkState, number> = { sin_llamar: 0, seguimiento: 0 };
   const bySegment: Record<LeadSegment, number> = {
     carrito: 0,
-    distrito: 0,
+    enganchado: 0,
     converso: 0,
     frio: 0,
   };

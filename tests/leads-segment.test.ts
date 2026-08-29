@@ -17,9 +17,7 @@ function lead(partial: Partial<SegmentInput> = {}): SegmentInput & { needs_atten
     shopify_cart_open: false,
     shopify_draft_cart_count: 0,
     has_cart_signal: false,
-    district: null,
     inbound_count: 0,
-    first_inbound_text: null,
     ...partial,
   };
 }
@@ -43,9 +41,7 @@ describe("leadWorkState (eje 1: quien lo trabajo)", () => {
 
 describe("leadSegment (eje 2: cuanta intencion)", () => {
   it("carrito gana sobre todo lo demas", () => {
-    expect(leadSegment(lead({ cart_item_count: 2, district: "Escazu", inbound_count: 9 }))).toBe(
-      "carrito"
-    );
+    expect(leadSegment(lead({ cart_item_count: 2, inbound_count: 40 }))).toBe("carrito");
   });
 
   it("reconoce el carrito por cualquiera de sus señales", () => {
@@ -55,12 +51,14 @@ describe("leadSegment (eje 2: cuanta intencion)", () => {
     expect(leadSegment(lead({ has_cart_signal: true }))).toBe("carrito");
   });
 
-  it("sin carrito, el distrito gana sobre la conversacion", () => {
-    expect(leadSegment(lead({ district: "Desamparados", inbound_count: 5 }))).toBe("distrito");
-    expect(leadSegment(lead({ district: "   " }))).not.toBe("distrito");
+  // El corte de 10 sale de la medicion: 4-9 mensajes llegan lejos en el 7,5%
+  // de los casos y 10+ en el 38,8%. Es el unico corte que separa de verdad.
+  it("enganchado son 10 mensajes o mas del cliente", () => {
+    expect(leadSegment(lead({ inbound_count: 10 }))).toBe("enganchado");
+    expect(leadSegment(lead({ inbound_count: 9 }))).toBe("converso");
   });
 
-  it("converso necesita dos mensajes del cliente", () => {
+  it("converso son 2 a 9 mensajes", () => {
     expect(leadSegment(lead({ inbound_count: 2 }))).toBe("converso");
     expect(leadSegment(lead({ inbound_count: 1 }))).toBe("frio");
   });
@@ -94,7 +92,7 @@ describe("boardFacets (los contadores)", () => {
     // sin llamar
     lead({ shopify_cart_open: true }),
     lead({ shopify_cart_open: true }),
-    lead({ district: "Escazu" }),
+    lead({ inbound_count: 12 }),
     lead({ inbound_count: 3 }),
     lead(),
     lead(),

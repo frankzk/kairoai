@@ -44,7 +44,7 @@ import {
   type LeadSegment,
   type LeadWorkState,
 } from "@/lib/leads-segment";
-import { buildWorkQueue, QUEUE_STAGES } from "@/lib/leads-queue";
+import { buildWorkQueue, isTrabajoDeHoy, QUEUE_STAGES } from "@/lib/leads-queue";
 import {
   buildUncalledLeadBuckets,
   isUncalledLeadOnDate,
@@ -142,24 +142,35 @@ const STAGE_META: Record<BoardStage, { label: string; variant: BadgeVariant; emo
   descartado: { label: "Descartado", variant: "outline", emoji: "🚫" },
 };
 
-// Los dos tabs del eje 1. Se nombran distinto del BoardStage "seguimiento"
-// para que no se confundan: el stage lo decide el status del lead, el tab lo
-// decide quien lo trabajo (status_source). Ver lib/leads-segment.ts.
-type WorkTab = "sin_llamar" | "en_seguimiento";
-const WORK_TAB_STATE: Record<WorkTab, LeadWorkState> = {
-  sin_llamar: "sin_llamar",
-  en_seguimiento: "seguimiento",
-};
-const WORK_TABS: WorkTab[] = ["sin_llamar", "en_seguimiento"];
-
-// Carrito, Tibios y Fríos salieron de esta fila: describen INTENCION, no
-// gestion, asi que ahora viven en la fila de segmentos y filtran dentro de
-// cualquier tab. Aca quedan solo los que son otro trabajo aparte.
+// La fila de tabs responde UNA sola pregunta: que estoy mirando.
 //
-// Cerrados se queda VISIBLE (decision del PR #208): la asesora necesita ver
-// adonde se fue lo que ya tiene pedido, no que desaparezca. Descartados sigue
-// detras del toggle, que lo resuelve el filtro de `views`.
-const STAGE_TABS: BoardStage[] = ["pago_verificar", "por_cerrar", "cerrado"];
+//   Hoy          lo que hay que llamar, ya ordenado (lib/leads-queue.ts)
+//   Seguimiento  lo ya trabajado que no vence hoy: se busca y se filtra
+//   Cerrado      adonde se fue lo que ya compro
+//   Descartados  detras del toggle
+//
+// Antes habia SIETE tabs y varios se solapaban: Cola, Agenda y Por cerrar
+// viven DENTRO de Sin llamar + En seguimiento, asi que ninguno de los numeros
+// en pantalla contestaba "esto es lo que llamo hoy". Agenda y Por cerrar
+// pasaron a ser los dos primeros grupos dentro de Hoy, que es donde se actuan.
+type BoardTab = "hoy" | "seguimiento" | "cerrado" | "descartado";
+
+const TAB_META: Record<BoardTab, { label: string; emoji: string; hint: string }> = {
+  hoy: {
+    label: "Hoy",
+    emoji: "🎯",
+    hint: "Pagos → recontactos vencidos → por cerrar → sin llamar (carrito primero)",
+  },
+  seguimiento: {
+    label: "Seguimiento",
+    emoji: "💬",
+    hint: "Ya trabajados, sin recontacto pendiente para hoy",
+  },
+  cerrado: { label: "Cerrado", emoji: "✅", hint: "Ya tienen pedido" },
+  descartado: { label: "Descartados", emoji: "🚫", hint: "Terminales" },
+};
+
+const TABS_VISIBLES: BoardTab[] = ["hoy", "seguimiento", "cerrado"];
 
 interface LeadRow {
   id: number;
@@ -202,10 +213,7 @@ export default function LeadsBoard() {
   const [store, setStore] = useSelectedStore();
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [counts, setCounts] = useState<BoardCounts | null>(null);
-  // Eje 1 (que trabajo estoy mirando). "sin_llamar"/"en_seguimiento" son los
-  // dos tabs de gestion; el resto son atajos (Cola, Agenda) o estados con
-  // trabajo propio (pagos, por cerrar, ganados, descartados).
-  const [activeStage, setActiveStage] = useState<BoardStage | "agenda" | "cola" | WorkTab>("cola");
+  const [activeStage, setActiveStage] = useState<BoardTab>("hoy");
   // Eje 2 (cuanta intencion). null = "Todos": filtra DENTRO del tab activo.
   const [activeSegment, setActiveSegment] = useState<LeadSegment | null>(null);
   const [search, setSearch] = useState("");
@@ -447,19 +455,8 @@ export default function LeadsBoard() {
     return i < 0 ? 99 : i;
   };
 
-  const activeWorkState: LeadWorkState | null =
-    activeStage === "sin_llamar" || activeStage === "en_seguimiento"
-      ? WORK_TAB_STATE[activeStage]
-      : null;
-
-  const activeTabLabel =
-    activeStage === "cola"
-      ? "la Cola"
-      : activeStage === "agenda"
-        ? "Agenda"
-        : activeWorkState !== null
-          ? WORK_STATE_META[activeWorkState].label
-          : STAGE_META[activeStage as BoardStage].label;
+  const enHoy = activeStage === "hoy";
+  const activeTabLabel = TAB_META[activeStage].label;
 
   // Eje 2: el segmento filtra DENTRO del tab activo, nunca lo reemplaza.
   const matchesSegment = useCallback(
@@ -467,10 +464,16 @@ export default function LeadsBoard() {
     [activeSegment]
   );
 
-  // Eje 1: que leads pertenecen al tab activo.
-  const matchesWorkTab = useCallback(
-    (lead: LeadRow) => lead.in_call_queue && lead.work_state === activeWorkState,
-    [activeWorkState]
+  // Que leads pertenecen al tab activo. "Hoy" no pasa por aca: lo arma
+  // buildWorkQueue, que ademas los devuelve ya ordenados.
+  const matchesTab = useCallback(
+    (lead: LeadRow) =>
+      activeStage === "seguimiento"
+        ? lead.in_call_queue &&
+          lead.work_state === "seguimiento" &&
+          !isTrabajoDeHoy(lead, chartNow.getTime())
+        : lead.board_stage === activeStage,
+    [activeStage, chartNow]
   );
 
   const visibleLeads = useMemo(() => {
@@ -480,39 +483,27 @@ export default function LeadsBoard() {
         .filter(matchesSegment)
         .sort((a, b) => stagePriority(a.board_stage) - stagePriority(b.board_stage));
     }
-    if (activeStage === "cola") {
-      // Orden de atencion acordado: pago_verificar -> por_cerrar (mas nuevo
-      // primero) -> tibios -> seguimiento (vencidos primero).
+    if (enHoy) {
+      // Ya viene en orden de atencion: pagos -> recontactos vencidos -> por
+      // cerrar -> sin llamar por segmento (carrito primero). Ver leads-queue.
       return buildWorkQueue(
         rangeFilteredLeads.filter(matchesSelectedBucket).filter(matchesSegment),
         chartNow
       );
     }
-    if (activeStage === "agenda") {
-      return rangeFilteredLeads
-        .filter((l) => l.next_followup_at != null)
-        .filter(matchesSelectedBucket)
-        .filter(matchesSegment)
-        .sort((a, b) => (a.next_followup_at ?? "").localeCompare(b.next_followup_at ?? ""));
-    }
     const byInteraction = (a: LeadRow, b: LeadRow) => {
       const cmp = (a.last_interaction_at ?? "").localeCompare(b.last_interaction_at ?? "");
       return sortDir === "desc" ? -cmp : cmp;
     };
-    const inTab =
-      activeWorkState !== null
-        ? matchesWorkTab
-        : (l: LeadRow) => l.board_stage === activeStage;
     return rangeFilteredLeads
-      .filter(inTab)
+      .filter(matchesTab)
       .filter(matchesSelectedBucket)
       .filter(matchesSegment)
       .sort(byInteraction);
   }, [
     rangeFilteredLeads,
-    activeStage,
-    activeWorkState,
-    matchesWorkTab,
+    enHoy,
+    matchesTab,
     searching,
     searchMatches,
     sortDir,
@@ -523,21 +514,11 @@ export default function LeadsBoard() {
 
   const chartContextLeads = useMemo(() => {
     if (searching) return searchMatches.filter(matchesSegment);
-    if (activeStage === "cola") {
-      return buildWorkQueue(rangeFilteredLeads.filter(matchesSegment), chartNow);
-    }
-    if (activeStage === "agenda") {
-      return rangeFilteredLeads.filter((l) => l.next_followup_at != null).filter(matchesSegment);
-    }
-    const inTab =
-      activeWorkState !== null
-        ? matchesWorkTab
-        : (l: LeadRow) => l.board_stage === activeStage;
-    return rangeFilteredLeads.filter(inTab).filter(matchesSegment);
+    if (enHoy) return buildWorkQueue(rangeFilteredLeads.filter(matchesSegment), chartNow);
+    return rangeFilteredLeads.filter(matchesTab).filter(matchesSegment);
   }, [
-    activeStage,
-    activeWorkState,
-    matchesWorkTab,
+    enHoy,
+    matchesTab,
     matchesSegment,
     rangeFilteredLeads,
     searchMatches,
@@ -572,8 +553,8 @@ export default function LeadsBoard() {
   //   - Los tabs del eje 1 ignoran el segmento -> no se encogen al filtrar,
   //     asi no se pierde la referencia de donde uno esta parado.
   const facets = useMemo(
-    () => boardFacets(facetedLeads, activeWorkState),
-    [facetedLeads, activeWorkState]
+    () => boardFacets(facetedLeads, activeStage === "seguimiento" ? "seguimiento" : null),
+    [facetedLeads, activeStage]
   );
 
   // Agenda: seguimientos programados y cuantos ya vencieron.
@@ -610,11 +591,26 @@ export default function LeadsBoard() {
     };
   }, [leads]);
 
-  // Solo los estados que son trabajo aparte. Carrito/Tibios/Fríos se fueron a
-  // la fila de segmentos: describen intencion, no gestion.
-  const views = BOARD_VIEWS.filter(
-    (v) => STAGE_TABS.includes(v.key) || (showHidden && v.hiddenByDefault)
-  );
+  // Descartados solo aparece con el toggle; el resto son fijos.
+  const tabs: BoardTab[] = showHidden ? [...TABS_VISIBLES, "descartado"] : TABS_VISIBLES;
+
+  // Conteo de cada tab. "Hoy" y "Seguimiento" salen de la misma poblacion (la
+  // cola de llamadas) partida por si es trabajo de hoy o no, asi que juntos
+  // suman el total de la cola sin repetir a nadie.
+  const tabCount = (tab: BoardTab): number => {
+    if (tab === "hoy") return buildWorkQueue(facetedLeads, chartNow).length;
+    if (tab === "seguimiento") {
+      return facetedLeads.filter(
+        (l) =>
+          l.in_call_queue &&
+          l.work_state === "seguimiento" &&
+          !isTrabajoDeHoy(l, chartNow.getTime())
+      ).length;
+    }
+    return searching || selectedUncalledBucket || hasInteractionRange
+      ? facetedLeads.filter((l) => l.board_stage === tab).length
+      : counts?.byStage[tab] ?? 0;
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -691,7 +687,7 @@ export default function LeadsBoard() {
                 <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">sin llamar</p>
                 {uncalledTotal !== chartContextLeads.length && (
                   <p className="mt-0.5 text-[10px] text-muted-foreground/70">
-                    de {chartContextLeads.length} {searching ? "en la búsqueda" : activeStage === "agenda" ? "en Agenda" : activeStage === "cola" ? "en la cola" : "en la etapa"}
+                    de {chartContextLeads.length} {searching ? "en la búsqueda" : `en ${activeTabLabel}`}
                   </p>
                 )}
               </div>
@@ -837,115 +833,34 @@ export default function LeadsBoard() {
         </div>
 
         {/* Recontactos vencidos: la promesa al cliente ("llamame el 1 de
-            agosto") no puede depender de que alguien recuerde abrir Agenda. */}
-        {overdue.total > 0 && activeStage !== "agenda" && (
+            agosto") no puede depender de que alguien la recuerde. Ahora ya
+            estan arriba de todo en Hoy, asi que el banner solo dice cuantos
+            son y lleva ahi. */}
+        {overdue.total > 0 && !enHoy && (
           <button
             type="button"
-            onClick={() => setActiveStage("agenda")}
+            onClick={() => setActiveStage("hoy")}
             className="mb-4 flex w-full items-center gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/20"
           >
             <CalendarClock className="h-4 w-4 shrink-0" />
             <span>
               <strong>{overdue.total}</strong> recontacto{overdue.total === 1 ? "" : "s"} vencido
-              {overdue.total === 1 ? "" : "s"}
-              {overdue.prometidos > 0 && (
-                <>
-                  {" — "}
-                  <strong>{overdue.prometidos}</strong> pidieron que los llamáramos
-                </>
-              )}
-              {overdue.reintentos > 0 && (
-                <>
-                  {overdue.prometidos > 0 ? " y " : " — "}
-                  <strong>{overdue.reintentos}</strong> no contestaron y toca reintentar
-                </>
-              )}
-              . Abrir Agenda.
+              {overdue.total === 1 ? "" : "s"} — están primero en Hoy.
             </span>
           </button>
         )}
 
-        {/* Pestañas por bucket */}
+        {/* Fila de tabs: que estoy mirando. Ver BoardTab. */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => setActiveStage("cola")}
-            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
-              activeStage === "cola"
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-card hover:bg-accent"
-            }`}
-            title="Orden de atencion: pagos por verificar, reintentos vencidos, por cerrar (mas nuevo primero), tibios y seguimientos"
-          >
-            <span>🎯</span>
-            <span>Cola</span>
-            <span
-              className={`rounded-full px-1.5 text-xs ${
-                activeStage === "cola" ? "bg-primary-foreground/20" : "bg-muted"
-              }`}
-            >
-              {queueTotal}
-            </span>
-          </button>
-          <button
-            onClick={() => setActiveStage("agenda")}
-            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
-              activeStage === "agenda"
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-card hover:bg-accent"
-            }`}
-            title="Seguimientos programados (volver a llamar)"
-          >
-            <CalendarClock className="h-4 w-4" />
-            <span>Agenda</span>
-            {agenda.due > 0 && (
-              <span className="rounded-full bg-destructive px-1.5 text-xs text-destructive-foreground">
-                {agenda.due} hoy
-              </span>
-            )}
-            <span
-              className={`rounded-full px-1.5 text-xs ${
-                activeStage === "agenda" ? "bg-primary-foreground/20" : "bg-muted"
-              }`}
-            >
-              {agenda.total}
-            </span>
-          </button>
-          {/* Eje 1: quien lo trabajo. Los conteos NO aplican el segmento. */}
-          {WORK_TABS.map((tab) => {
-            const meta = WORK_STATE_META[WORK_TAB_STATE[tab]];
-            const count = facets.byWorkState[WORK_TAB_STATE[tab]];
+          {tabs.map((tab) => {
+            const meta = TAB_META[tab];
             const active = activeStage === tab && !searching;
+            const count = tabCount(tab);
             return (
               <button
                 key={tab}
                 onClick={() => setActiveStage(tab)}
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
-                  active
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-card hover:bg-accent"
-                }`}
-                title={
-                  tab === "sin_llamar"
-                    ? "Nadie los ha trabajado todavia"
-                    : "La asesora ya registro una gestion"
-                }
-              >
-                <span>{meta.emoji}</span>
-                <span>{meta.label}</span>
-                <span className={`rounded-full px-1.5 text-xs ${active ? "bg-primary-foreground/20" : "bg-muted"}`}>
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-          {views.map((v) => {
-            const meta = STAGE_META[v.key];
-            const count = stageCount(v.key);
-            const active = activeStage === v.key && !searching;
-            return (
-              <button
-                key={v.key}
-                onClick={() => setActiveStage(v.key)}
+                title={meta.hint}
                 className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
                   active
                     ? "border-primary bg-primary text-primary-foreground"
@@ -954,7 +869,14 @@ export default function LeadsBoard() {
               >
                 <span>{meta.emoji}</span>
                 <span>{meta.label}</span>
-                <span className={`rounded-full px-1.5 text-xs ${active ? "bg-primary-foreground/20" : "bg-muted"}`}>
+                {tab === "hoy" && overdue.total > 0 && (
+                  <span className="rounded-full bg-destructive px-1.5 text-xs text-destructive-foreground">
+                    {overdue.total} vencidos
+                  </span>
+                )}
+                <span
+                  className={`rounded-full px-1.5 text-xs ${active ? "bg-primary-foreground/20" : "bg-muted"}`}
+                >
                   {count}
                 </span>
               </button>
@@ -1087,7 +1009,7 @@ export default function LeadsBoard() {
                 {searchLoading ? "Buscando en toda la base..." : "Cargando Cerrados y Descartados..."}
               </p>
             )}
-            {!searching && activeStage !== "agenda" && activeStage !== "cola" && (
+            {!searching && !enHoy && (
               <div className="mb-2 flex justify-end">
                 <button
                   onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
@@ -1098,9 +1020,11 @@ export default function LeadsBoard() {
                 </button>
               </div>
             )}
-            {!searching && activeStage === "cola" && (
+            {!searching && enHoy && (
               <p className="mb-2 text-xs text-muted-foreground">
-                Orden de atención: 💰 pagos por verificar → 🔁 reintentos vencidos (los &quot;no contestó&quot; vuelven solos a las 24h) → 🔥 por cerrar (el más nuevo primero) → 🌡️ tibios → 💬 seguimientos.
+                Orden de atención: 💰 pagos por verificar → 📅 recontactos vencidos → 🔥 por
+                cerrar → y después los que nadie llamó, empezando por 🛒 carrito (41% llega a
+                cerrar) → 🔥 enganchado → 💬 conversó → ❄️ frío. Se trabaja de arriba hacia abajo.
               </p>
             )}
             <div className="space-y-2">
@@ -1109,7 +1033,7 @@ export default function LeadsBoard() {
                   key={lead.id}
                   lead={lead}
                   onOpen={() => setDrawerLead(lead)}
-                  queuePosition={!searching && activeStage === "cola" ? index + 1 : undefined}
+                  queuePosition={!searching && enHoy ? index + 1 : undefined}
                 />
               ))}
             </div>

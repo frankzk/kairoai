@@ -73,7 +73,16 @@ describe("hasProductLink", () => {
   });
 });
 
-describe("el link de producto asciende el lead a Conversó", () => {
+// MEDIDO Y REVERTIDO. La spec del CRM de origen cuenta como "converso" a quien
+// mando un unico mensaje si ese mensaje ya trae el link de la ficha de producto.
+// Se implemento asi y despues se midio en esta base: de 708 leads con ese
+// patron, solo el 0,1% llego a "por cerrar" o a tener pedido — el PEOR de todos
+// los segmentos, por debajo de los frios (1,0%). Ascenderlos los ponia por
+// delante de gente que convierte 400 veces mas.
+//
+// hasProductLink() se conserva porque identifica un origen real (el boton
+// "consultar por WhatsApp" de la ficha), pero ya no decide el segmento.
+describe("el link de producto NO asciende el lead", () => {
   const base = {
     status: "conversando",
     status_source: "auto",
@@ -82,26 +91,18 @@ describe("el link de producto asciende el lead a Conversó", () => {
     shopify_cart_open: false,
     shopify_draft_cart_count: 0,
     has_cart_signal: false,
-    district: null,
   };
 
-  it("un unico mensaje con link de producto no es frio", () => {
-    expect(
-      leadSegment({
-        ...base,
-        inbound_count: 1,
-        first_inbound_text: "https://mireva.cr/products/collagen-plus Tengo una consulta",
-      })
-    ).toBe("converso");
+  it("un unico mensaje con link de producto sigue siendo frio", () => {
+    expect(leadSegment({ ...base, inbound_count: 1 })).toBe("frio");
   });
 
-  it("un unico 'hola' sigue siendo frio", () => {
-    expect(leadSegment({ ...base, inbound_count: 1, first_inbound_text: "hola" })).toBe("frio");
+  it("lo que manda es cuantos mensajes escribio, no de donde vino", () => {
+    expect(leadSegment({ ...base, inbound_count: 2 })).toBe("converso");
+    expect(leadSegment({ ...base, inbound_count: 10 })).toBe("enganchado");
   });
 
-  it("el link no inventa una conversacion donde el cliente no escribio", () => {
-    expect(
-      leadSegment({ ...base, inbound_count: 0, first_inbound_text: "https://x.cr/products/y" })
-    ).toBe("frio");
+  it("hasProductLink sigue reconociendo el patron aunque no ascienda", () => {
+    expect(hasProductLink("https://mireva.cr/products/collagen-plus Tengo una consulta")).toBe(true);
   });
 });
