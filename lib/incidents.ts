@@ -1,6 +1,7 @@
 import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID } from "@/lib/store-config";
 import { applyDetection, buildIncidentKey } from "@/lib/incidents-detect";
+import { buildTrend } from "@/lib/incidents-trend";
 
 export * from "./incidents-types";
 import type {
@@ -147,12 +148,20 @@ export async function incidentTimeStats(storeId: number): Promise<IncidentTimeSt
   const start30 = startToday - 29 * DAY;
   const sinceIso = new Date(start30).toISOString();
 
+  // Paginado, no `.limit(5000)`: PostgREST corta en 1.000 en silencio (ver
+  // fetchAll). Con `.limit()` a secas los chips de la cabecera contaban de
+  // menos igual que la tendencia.
   const db = getDB();
   const [nuevasRes, resueltasRes] = await Promise.all([
-    db.from("incidents").select("id, created_at")
-      .eq("store_id", storeId).gte("created_at", sinceIso).limit(5000),
-    db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id)")
-      .eq("incidents.store_id", storeId).eq("to_status", "resuelta").gte("created_at", sinceIso).limit(5000),
+    fetchAll((from, to) =>
+      db.from("incidents").select("id, created_at")
+        .eq("store_id", storeId).gte("created_at", sinceIso).order("id").range(from, to)
+    ),
+    fetchAll((from, to) =>
+      db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id)")
+        .eq("incidents.store_id", storeId).eq("to_status", "resuelta").gte("created_at", sinceIso)
+        .order("id").range(from, to)
+    ),
   ]);
   if (nuevasRes.error) throw new Error(`incidentTimeStats(nuevas): ${nuevasRes.error.message}`);
   if (resueltasRes.error) throw new Error(`incidentTimeStats(resueltas): ${resueltasRes.error.message}`);
@@ -185,6 +194,45 @@ export async function incidentTimeStats(storeId: number): Promise<IncidentTimeSt
 // monto, tendencia), abiertas (snapshot: edad / >48h / mas antigua) y llamadas
 // (primera gestion 30d). El embed incidents!inner filtra eventos por tienda y trae
 // el cod / fecha de alta de la incidencia padre.
+/**
+ * Trae TODAS las filas de una consulta, de a paginas.
+ *
+ * POR QUE: PostgREST corta la respuesta en 1.000 filas por mas que se pida
+ * `.limit(8000)`, y lo hace EN SILENCIO. Este modulo pedia 8.000 de una y
+ * recibia 1.000 — sin ORDER BY, las mas VIEJAS — asi que todo el tablero de
+ * Novedades venia contando de menos la actividad reciente.
+ *
+ * Medido cuando se encontro: la tabla mostraba 64 nuevas en 7 dias y 342 en 30
+ * cuando en la base habia 272 y 905. Simular el corte de 1.000 reproducia 66 y
+ * 379, casi exacto.
+ *
+ * El `.order("id")` no es decorativo: sin un orden estable dos paginas pueden
+ * traer la misma fila o saltarse otra.
+ *
+ * lib/leads.ts ya paginaba de a 1.000 por este mismo motivo (fetchLeadPages);
+ * Novedades nunca lo hizo.
+ */
+const PAGE_SIZE = 1000;
+const MAX_PAGES = 50;
+
+async function fetchAll<T>(
+  page: (
+    from: number,
+    to: number
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const all: T[] = [];
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const from = i * PAGE_SIZE;
+    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    if (error) return { data: all, error };
+    const rows = data ?? [];
+    all.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+  }
+  return { data: all, error: null };
+}
+
 export async function incidentExecutiveStats(storeId: number): Promise<IncidentExecutiveStats> {
   const DAY = 86_400_000;
   const TZ_OFFSET = 6 * 60 * 60 * 1000; // UTC-6 (Costa Rica / Honduras)
@@ -198,23 +246,39 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
   const startOfPrevMonth = Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth() - 1, 1) + TZ_OFFSET;
   // Piso de fetch para creadas/resueltas: cubre 30d y el mes pasado completo.
   const sinceIso = new Date(Math.min(startToday - 29 * DAY, startOfPrevMonth)).toISOString();
-  const caDayKey = (ms: number) => new Date(ms - TZ_OFFSET).toISOString().slice(0, 10);
 
   const db = getDB();
   const [createdRes, resolvedRes, openRes, callRes, reprogRes, dispatchedRes] = await Promise.all([
-    db.from("incidents").select("id, created_at, status, category, cod_amount")
-      .eq("store_id", storeId).gte("created_at", sinceIso).limit(8000),
-    db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, cod_amount)")
-      .eq("incidents.store_id", storeId).eq("to_status", "resuelta").gte("created_at", sinceIso).limit(8000),
-    db.from("incidents").select("order_name, guide_number, created_at")
-      .eq("store_id", storeId).not("status", "in", "(resuelta,perdida,descartada)").limit(8000),
-    db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, created_at)")
-      .eq("incidents.store_id", storeId).eq("kind", "llamada").gte("created_at", sinceIso).limit(8000),
-    db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id)")
-      .eq("incidents.store_id", storeId).eq("to_status", "reprogramada").gte("created_at", sinceIso).limit(8000),
+    fetchAll((from, to) =>
+      db.from("incidents").select("id, created_at, status, category, cod_amount")
+        .eq("store_id", storeId).gte("created_at", sinceIso).order("id").range(from, to)
+    ),
+    fetchAll((from, to) =>
+      db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, cod_amount)")
+        .eq("incidents.store_id", storeId).eq("to_status", "resuelta").gte("created_at", sinceIso)
+        .order("id").range(from, to)
+    ),
+    fetchAll((from, to) =>
+      db.from("incidents").select("order_name, guide_number, created_at")
+        .eq("store_id", storeId).not("status", "in", "(resuelta,perdida,descartada)")
+        .order("id").range(from, to)
+    ),
+    fetchAll((from, to) =>
+      db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, created_at)")
+        .eq("incidents.store_id", storeId).eq("kind", "llamada").gte("created_at", sinceIso)
+        .order("id").range(from, to)
+    ),
+    fetchAll((from, to) =>
+      db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id)")
+        .eq("incidents.store_id", storeId).eq("to_status", "reprogramada").gte("created_at", sinceIso)
+        .order("id").range(from, to)
+    ),
     // Pedidos despachados (con guia) por fecha de pedido, para la tasa Inc./Despachados.
-    db.from("shopify_orders").select("shopify_created_at")
-      .eq("store_id", storeId).neq("tracking_number", "").gte("shopify_created_at", since30).limit(50000),
+    fetchAll((from, to) =>
+      db.from("shopify_orders").select("shopify_created_at")
+        .eq("store_id", storeId).neq("tracking_number", "").gte("shopify_created_at", since30)
+        .order("id").range(from, to)
+    ),
   ]);
   for (const r of [createdRes, resolvedRes, openRes, callRes]) {
     if (r.error) throw new Error(`incidentExecutiveStats: ${r.error.message}`);
@@ -341,51 +405,27 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
     .sort((a, b) => b.total - a.total);
 
   // ----- Tendencia diaria (generadas / resueltas / reprogramadas / 1a gestion) + totales.
-  const genByDay = new Map<string, number>();
   // Cohorte: de las creadas ESE dia, cuantas ya estan resueltas hoy. Es la
   // unica cifra que se puede dividir por `generadas` para sacar un porcentaje,
   // porque mide la misma poblacion. `resByDay` de abajo cuenta EVENTOS de
   // resolucion ocurridos ese dia sobre incidencias de cualquier fecha: dividir
   // eso por las nuevas del dia daba cosas como 775%.
-  const resDeLasNuevasByDay = new Map<string, number>();
-  for (const r of created) {
-    const k = caDayKey(Date.parse(r.created_at));
-    genByDay.set(k, (genByDay.get(k) ?? 0) + 1);
-    if (r.status === "resuelta") {
-      resDeLasNuevasByDay.set(k, (resDeLasNuevasByDay.get(k) ?? 0) + 1);
-    }
-  }
-  const resByDay = new Map<string, number>();
-  for (const r of resolved) { const k = caDayKey(Date.parse(r.created_at)); resByDay.set(k, (resByDay.get(k) ?? 0) + 1); }
-  const reprogByDay = new Map<string, number>();
-  for (const r of reprog) { const k = caDayKey(Date.parse(r.created_at)); reprogByDay.set(k, (reprogByDay.get(k) ?? 0) + 1); }
-  // 1a gestion promedio por dia, segun el dia de creacion de la incidencia.
-  const pgByDay = new Map<string, { sum: number; n: number }>();
-  for (const m of firstMgmt) {
-    const k = caDayKey(m.createdMs);
-    const e = pgByDay.get(k) ?? { sum: 0, n: 0 };
-    e.sum += m.diffMs;
-    e.n += 1;
-    pgByDay.set(k, e);
-  }
-  const trend: IncidentTrendPoint[] = [];
+  // La serie la arma el modulo puro, que esta probado aparte
+  // (tests/incidents-trend.test.ts). Aca solo se le pasan las filas ya leidas.
+  const serie = buildTrend({
+    created,
+    resolved,
+    reprogramadas: reprog,
+    firstMgmt,
+    nowMs,
+    days: 30,
+  });
+  const trend: IncidentTrendPoint[] = serie;
   let genTot = 0;
   let resTot = 0;
-  for (let i = 29; i >= 0; i--) {
-    const k = caDayKey(startToday - i * DAY);
-    const g = genByDay.get(k) ?? 0;
-    const rr = resByDay.get(k) ?? 0;
-    const pg = pgByDay.get(k);
-    genTot += g;
-    resTot += rr;
-    trend.push({
-      date: k,
-      generadas: g,
-      resueltas: rr,
-      reprogramadas: reprogByDay.get(k) ?? 0,
-      primera_gestion_horas: pg && pg.n ? pg.sum / pg.n / 3_600_000 : null,
-      resueltas_de_las_nuevas: resDeLasNuevasByDay.get(k) ?? 0,
-    });
+  for (const d of serie) {
+    genTot += d.generadas;
+    resTot += d.resueltas;
   }
 
   // Totales por periodo: nuevas (creadas), resueltas y reprogramadas (por evento)
