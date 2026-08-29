@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  boardFacets,
   classifyLead,
   isInCallQueue,
   leadSegment,
   leadWorkState,
+  segmentCounts,
   type SegmentInput,
 } from "../lib/leads-segment";
 
@@ -84,45 +84,54 @@ describe("isInCallQueue", () => {
   });
 });
 
-describe("boardFacets (los contadores)", () => {
-  // Los facets leen los ejes ya resueltos, tal como llegan de la API.
-  const clasificar = (rows: SegmentInput[]) => rows.map((r) => classifyLead(r));
+describe("segmentCounts (los chips de intención)", () => {
+  const clasificar = (rows: SegmentInput[]) =>
+    rows.map((r) => ({ ...r, ...classifyLead(r) }));
 
-  const universo = clasificar([
-    // sin llamar
+  const cola = clasificar([
     lead({ shopify_cart_open: true }),
     lead({ shopify_cart_open: true }),
     lead({ inbound_count: 12 }),
     lead({ inbound_count: 3 }),
     lead(),
     lead(),
-    // en seguimiento (la asesora ya los toco)
     lead({ status: "contactado_dejo_wsp", status_source: "manual", shopify_cart_open: true }),
     lead({ status: "no_responde", status_source: "manual" }),
-    // fuera de la cola
-    lead({ status: "pedido_generado", category: "won" }),
-    lead({ status: "sinpe_por_verificar", category: "hot" }),
   ]);
 
-  it("los segmentos suman exactamente el total del tab activo", () => {
-    // Es la comprobacion que delata un scope mal puesto.
-    for (const estado of ["sin_llamar", "seguimiento"] as const) {
-      const f = boardFacets(universo, estado);
-      const suma = Object.values(f.bySegment).reduce((a, b) => a + b, 0);
-      expect(suma).toBe(f.byWorkState[estado]);
-    }
+  it("los chips suman exactamente lo que se les paso", () => {
+    // La invariante: el numero del chip tiene que coincidir con lo que uno
+    // recibe al hacer clic. Se cumple porque el que llama pasa los leads del
+    // tab activo, no toda la cola.
+    const counts = segmentCounts(cola);
+    const suma = Object.values(counts).reduce((a, b) => a + b, 0);
+    expect(suma).toBe(cola.length);
   });
 
-  it("los contadores del eje 1 NO se encogen al elegir un segmento", () => {
-    const sinFiltro = boardFacets(universo, null);
-    const conFiltro = boardFacets(universo, "sin_llamar");
-    expect(conFiltro.byWorkState).toEqual(sinFiltro.byWorkState);
+  it("contar un subconjunto da el total de ESE subconjunto", () => {
+    // El bug que tenia: parado en "Hoy" (619 leads) los chips contaban toda la
+    // cola (2.580 = Hoy + Seguimiento), asi que "Carrito 196" filtraba a los
+    // carritos de Hoy, muchos menos que 196.
+    const soloGestionados = cola.filter((l) => l.work_state === "seguimiento");
+    const counts = segmentCounts(soloGestionados);
+    const suma = Object.values(counts).reduce((a, b) => a + b, 0);
+    expect(suma).toBe(soloGestionados.length);
+    expect(suma).toBe(2);
+    expect(counts.carrito).toBe(1);
   });
 
-  it("cuenta la cola sin los ganados ni los pagos por verificar", () => {
-    const f = boardFacets(universo, null);
-    expect(f.total).toBe(8);
-    expect(f.byWorkState).toEqual({ sin_llamar: 6, seguimiento: 2 });
+  it("reparte cada lead en un solo segmento", () => {
+    const counts = segmentCounts(cola);
+    expect(counts).toEqual({ carrito: 3, enganchado: 1, converso: 1, solo_saludo: 3 });
+  });
+
+  it("una lista vacia da todo en cero, no undefined", () => {
+    expect(segmentCounts([])).toEqual({
+      carrito: 0,
+      enganchado: 0,
+      converso: 0,
+      solo_saludo: 0,
+    });
   });
 
   it("un lead con carrito Y ya contactado cuenta en los dos ejes a la vez", () => {
@@ -135,9 +144,6 @@ describe("boardFacets (los contadores)", () => {
     });
     expect(leadWorkState(conCarritoYGestion)).toBe("seguimiento");
     expect(leadSegment(conCarritoYGestion)).toBe("carrito");
-
-    const f = boardFacets([classifyLead(conCarritoYGestion)], "seguimiento");
-    expect(f.bySegment.carrito).toBe(1);
-    expect(f.byWorkState.seguimiento).toBe(1);
+    expect(segmentCounts(clasificar([conCarritoYGestion])).carrito).toBe(1);
   });
 });

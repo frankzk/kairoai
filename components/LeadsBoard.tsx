@@ -37,10 +37,9 @@ import {
   type BoardStage,
 } from "@/lib/leads-classify";
 import {
-  boardFacets,
+  segmentCounts,
   SEGMENT_META,
   SEGMENT_ORDER,
-  WORK_STATE_META,
   type LeadSegment,
   type LeadWorkState,
 } from "@/lib/leads-segment";
@@ -546,16 +545,20 @@ export default function LeadsBoard() {
       ? facetedLeads.filter((l) => l.board_stage === stage).length
       : counts?.byStage[stage] ?? 0;
 
-  // Contadores de los dos ejes. Cada faceta se cuenta sobre el conjunto
-  // filtrado por todo MENOS por ella misma:
+  // Los leads del tab activo SIN el filtro de intencion. Es el conjunto sobre
+  // el que se cuentan los chips, para que sumen exactamente el total del tab y
+  // el numero coincida con lo que uno recibe al hacer clic.
   //
-  //   - Los segmentos aplican el tab activo -> suman su total exacto.
-  //   - Los tabs del eje 1 ignoran el segmento -> no se encogen al filtrar,
-  //     asi no se pierde la referencia de donde uno esta parado.
-  const facets = useMemo(
-    () => boardFacets(facetedLeads, activeStage === "seguimiento" ? "seguimiento" : null),
-    [facetedLeads, activeStage]
-  );
+  // Antes los chips se contaban sobre TODA la cola: parado en Hoy (619) decian
+  // 2.580, que es Hoy + Seguimiento. "Carrito 196" filtraba a los carritos de
+  // Hoy, muchos menos que 196.
+  const leadsDelTab = useMemo(() => {
+    if (searching) return facetedLeads;
+    if (enHoy) return buildWorkQueue(facetedLeads, chartNow);
+    return facetedLeads.filter(matchesTab);
+  }, [searching, facetedLeads, enHoy, matchesTab, chartNow]);
+
+  const facets = useMemo(() => segmentCounts(leadsDelTab), [leadsDelTab]);
 
   // Agenda: seguimientos programados y cuantos ya vencieron.
   const agenda = useMemo(() => {
@@ -916,12 +919,12 @@ export default function LeadsBoard() {
           >
             Todos
             <span className="rounded-full bg-muted px-1.5 tabular-nums">
-              {SEGMENT_ORDER.reduce((sum, s) => sum + facets.bySegment[s], 0)}
+              {SEGMENT_ORDER.reduce((sum, s) => sum + facets[s], 0)}
             </span>
           </button>
           {SEGMENT_ORDER.map((seg) => {
             const meta = SEGMENT_META[seg];
-            const count = facets.bySegment[seg];
+            const count = facets[seg];
             const active = activeSegment === seg;
             // Distrito y Conversó siguen vacíos hasta que se pueble district e
             // inbound_count; no se muestran para no ofrecer un filtro que no
@@ -1022,9 +1025,18 @@ export default function LeadsBoard() {
             )}
             {!searching && enHoy && (
               <p className="mb-2 text-xs text-muted-foreground">
+                {/* Los segmentos salen de SEGMENT_ORDER, no escritos a mano: cuando
+                    "Frío" paso a llamarse "Solo saludó" esta linea quedo mintiendo
+                    porque tenia los nombres hardcodeados. */}
                 Orden de atención: 💰 pagos por verificar → 📅 recontactos vencidos → 🔥 por
-                cerrar → y después los que nadie llamó, empezando por 🛒 carrito (41% llega a
-                cerrar) → 🔥 enganchado → 💬 conversó → ❄️ frío. Se trabaja de arriba hacia abajo.
+                cerrar → y después los que nadie llamó, en este orden:{" "}
+                {SEGMENT_ORDER.map((seg, i) => (
+                  <span key={seg}>
+                    {i > 0 && " → "}
+                    {SEGMENT_META[seg].emoji} {SEGMENT_META[seg].label.toLowerCase()}
+                  </span>
+                ))}
+                . Se trabaja de arriba hacia abajo.
               </p>
             )}
             <div className="space-y-2">
