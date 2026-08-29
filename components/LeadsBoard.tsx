@@ -172,6 +172,16 @@ const TAB_META: Record<BoardTab, { label: string; emoji: string; hint: string }>
 
 const TABS_VISIBLES: BoardTab[] = ["hoy", "seguimiento", "cerrado"];
 
+// Color de la etiqueta segun cuanto convierte el segmento (ver la medicion en
+// lib/leads-segment.ts): carrito 41,4% · enganchado 15,8% · converso 1,5% ·
+// frio 1,0%.
+const SEGMENT_VARIANT: Record<LeadSegment, BadgeVariant> = {
+  carrito: "info",
+  enganchado: "destructive",
+  converso: "secondary",
+  frio: "muted",
+};
+
 interface LeadRow {
   id: number;
   store_id: number;
@@ -1099,7 +1109,15 @@ function LeadCard({
   onOpen: () => void;
   queuePosition?: number;
 }) {
-  const meta = STAGE_META[lead.board_stage];
+  // La etiqueta muestra el SEGMENTO, que es lo que decide el orden de la cola
+  // y lo que dicen los chips de arriba.
+  //
+  // Antes mostraba el board_stage y se contradecia con el filtro: un lead con
+  // 22 mensajes salia en el chip "Enganchado" pero con la etiqueta "Frío",
+  // porque `status = frio` lo pone el bot por INACTIVIDAD, no por cuantos
+  // mensajes escribio. Son dos cosas distintas y la tarjeta mostraba la que no
+  // explicaba por que estaba ahi.
+  const meta = SEGMENT_META[lead.segment];
   const isNext = queuePosition === 1;
   return (
     <Card className={`transition-colors hover:border-primary/50 ${isNext ? "border-primary/70 bg-primary/5" : ""}`}>
@@ -1117,7 +1135,7 @@ function LeadCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate font-medium">{lead.name || "Sin nombre"}</span>
-            <Badge variant={meta.variant} className="shrink-0">
+            <Badge variant={SEGMENT_VARIANT[lead.segment]} className="shrink-0" title={meta.hint}>
               {meta.emoji} {meta.label}
             </Badge>
             {lead.status_source === "manual" && (
