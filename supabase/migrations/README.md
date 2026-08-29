@@ -39,6 +39,7 @@ Estado actual:
 | `0029_zadarma_calls.sql` | Telefonía Zadarma: columna `payroll_staff.zadarma_sip` (extensión por asesora) + `zadarma_calls` (CDR que escribe el webhook). Sin ella el botón "Llamar" y el teléfono web quedan deshabilitados; el resto del tablero no se ve afectado | Si (24/08/2026) |
 | `0030_leads_purchase_beats_manual.sql` | El cruce lead↔orden ya no ignora los estados manuales (una compra real gana, como dice la ley 2 del clasificador), salvo `lista_negra`/`cancelado_cliente`/`cancelado`; además guarda `shopify_order_name`. Sacó 389 leads ya comprados del tablero | Si (25/08/2026) |
 | `0031_leads_inbound_enrichment.sql` | Enriquecimiento del chat para el segmento "Conversó" del tablero: columnas `first_inbound_text` e `inbound_synced_at` (esta última hace de cursor) + RPCs `leads_pending_inbound`/`leads_pending_inbound_count`. Van por RPC porque la condición compara dos columnas entre sí y los filtros de PostgREST no pueden. Las puebla el cron leads-inbound | Si (27/08/2026) |
+| `0032_leads_phone_trigram.sql` | Índice GIN trigram en `leads.phone` + RPC `leads_phone_similar`: cuando la búsqueda exacta de un teléfono no encuentra nada (un dígito mal tecleado da 0 resultados y ninguna pista), el tablero ofrece los números parecidos. Caso real: se buscó 5068428896 y el lead estaba como 50684288896 | Si (28/08/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de

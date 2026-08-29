@@ -229,6 +229,9 @@ export default function LeadsBoard() {
   // Lo que devolvio el servidor para la busqueda actual. null = no se busco.
   const [searchResults, setSearchResults] = useState<LeadRow[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
+  // La busqueda exacta no encontro nada y lo que se muestra son telefonos
+  // parecidos (un digito mal tecleado). Hay que decirlo o se leen como exactos.
+  const [searchAproximado, setSearchAproximado] = useState(false);
 
   // El "ya lo pedi" vive en una ref, NO en el estado. Cuando dependia de
   // archiveLoading, ponerlo en true re-ejecutaba este efecto, su limpieza
@@ -327,6 +330,7 @@ export default function LeadsBoard() {
   useEffect(() => {
     if (!searching) {
       setSearchResults(null);
+      setSearchAproximado(false);
       setSearchLoading(false);
       return;
     }
@@ -339,12 +343,16 @@ export default function LeadsBoard() {
         .then(async (res) => {
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Error al buscar");
-          if (!cancelado) setSearchResults(data.leads ?? []);
+          if (!cancelado) {
+            setSearchResults(data.leads ?? []);
+            setSearchAproximado(Boolean(data.aproximado));
+          }
         })
         .catch((err) => {
           if (!cancelado) {
             setError(err instanceof Error ? err.message : "Error al buscar");
             setSearchResults([]);
+            setSearchAproximado(false);
           }
         })
         .finally(() => {
@@ -1067,6 +1075,12 @@ export default function LeadsBoard() {
           </p>
         ) : (
           <>
+            {searching && searchAproximado && !searchLoading && (
+              <p className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                No hay ninguna coincidencia exacta con <strong>{search.trim()}</strong>. Estos
+                números se parecen — revisá si alguno es el que buscabas.
+              </p>
+            )}
             {(esperandoArchivo || searchLoading) && (
               <p className="mb-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <RefreshCw className="h-3 w-3 animate-spin" />
