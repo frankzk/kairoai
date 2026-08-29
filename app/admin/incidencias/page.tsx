@@ -293,32 +293,57 @@ function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
   // Antes la barra era `resueltas / generadas`, la misma razon rota que tenia
   // el %: como `resueltas` cuenta eventos sobre TODO el acumulado, daba 443%
   // un lunes con 7 nuevas y 31 resoluciones, se recortaba a 100% y salia
-  // llena en todas las filas. Era decoracion que ademas contradecia el
-  // numero de al lado.
+  // llena en todas las filas.
   const maxNuevas = Math.max(1, ...dias.map((d) => d.generadas));
+
+  // Anchos compartidos por el encabezado y las filas, para que las dos
+  // mitades queden alineadas sin repetir la columna de dia.
+  const C = {
+    dia: "w-10 shrink-0",
+    barra: "hidden w-24 shrink-0 sm:block",
+    nuevas: "w-12 shrink-0 text-right",
+    entregadas: "w-14 shrink-0 text-right",
+    pct: "w-10 shrink-0 text-right",
+    llamada: "w-14 shrink-0 text-right",
+    // El borde es el que separa los dos relojes.
+    trabajoEntregas: "w-16 shrink-0 border-l border-border pl-2 text-right",
+    trabajoReprog: "w-16 shrink-0 text-right",
+  };
 
   return (
     <Card>
       <CardContent className="p-4 sm:p-5">
         <div className="text-sm font-semibold">Tendencia de 7 días</div>
+        <div className="mb-3 text-xs text-muted-foreground">
+          A la izquierda, <span className="text-primary">las novedades que entraron ese día</span> y
+          qué pasó con ellas. A la derecha, <span className="text-emerald-400">las gestiones hechas
+          ese día</span> sobre novedades de cualquier fecha — por eso no se dividen entre sí.
+        </div>
 
-        {/* ── BLOQUE 1: la cohorte del día ── */}
-        <div className="mt-3 text-xs font-medium text-primary">Lo que entró cada día</div>
-        <div className="mb-1.5 text-[11px] text-muted-foreground">
-          Las novedades que nacieron ese día y qué pasó con ellas
-        </div>
-        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.05em] text-muted-foreground sm:gap-3">
-          <span className="w-10 shrink-0">Día</span>
-          <span className="hidden flex-1 sm:block">Volumen</span>
-          <span className="w-12 shrink-0 text-right text-primary">Nuevas</span>
-          <span className="w-16 shrink-0 text-right text-emerald-400" title="De las nuevas de ese día, cuántas ya se entregaron">
-            Entregadas
-          </span>
-          <span className="w-10 shrink-0 text-right">%</span>
-          <span className="w-14 shrink-0 text-right" title="Horas desde que nació la novedad hasta la primera llamada">
-            1ª llamada
+        {/* Encabezado de grupo: nombra los dos relojes una sola vez. */}
+        <div className="flex items-end gap-1.5 text-[10px] uppercase tracking-[0.05em] text-muted-foreground sm:gap-2">
+          <span className={C.dia} />
+          <span className={C.barra} />
+          <span className="w-[9.5rem] shrink-0 text-center text-primary/80">De las que entraron</span>
+          <span className="w-[8.5rem] shrink-0 border-l border-border pl-2 text-center text-emerald-400/80">
+            Trabajo del día
           </span>
         </div>
+        <div className="mt-1 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.05em] text-muted-foreground sm:gap-2">
+          <span className={C.dia}>Día</span>
+          <span className={C.barra}>Volumen</span>
+          <span className={`${C.nuevas} text-primary`}>Nuevas</span>
+          <span className={`${C.entregadas} text-emerald-400`} title="De las nuevas de ese día, cuántas ya se entregaron">
+            Entreg.
+          </span>
+          <span className={C.pct}>%</span>
+          <span className={C.llamada} title="Horas desde que nació la novedad hasta la primera llamada">
+            1ª ll.
+          </span>
+          <span className={`${C.trabajoEntregas} text-emerald-400`}>Entregas</span>
+          <span className={`${C.trabajoReprog} text-cyan-400`}>Reprog.</span>
+        </div>
+
         <div className="mt-1.5 space-y-1.5">
           {dias.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">Sin datos.</p>}
           {dias.map((d, i) => {
@@ -326,33 +351,29 @@ function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
             const pct = pctResueltas(d.resueltas_de_las_nuevas, d.generadas);
             const maduro = diasDesde(d.date) >= DIAS_PARA_MADURAR;
             return (
-              <div key={d.date} className="flex items-center gap-1.5 text-xs sm:gap-3">
-                <span className={`w-10 shrink-0 ${isHoy ? "font-bold text-foreground" : "text-muted-foreground"}`}>
+              <div key={d.date} className="flex items-center gap-1.5 text-xs sm:gap-2">
+                <span className={`${C.dia} ${isHoy ? "font-bold text-foreground" : "text-muted-foreground"}`}>
                   {diaLabel(d.date, isHoy)}
                 </span>
                 <div
-                  className="relative hidden h-1.5 flex-1 overflow-hidden rounded-full bg-muted sm:block"
-                  title={`${d.generadas} novedades nuevas · ${d.resueltas_de_las_nuevas} ya entregadas`}
+                  className={`${C.barra} relative h-1.5 overflow-hidden rounded-full bg-muted`}
+                  title={`${d.generadas} nuevas · ${d.resueltas_de_las_nuevas} ya entregadas`}
                 >
-                  {/* Ancho = volumen del día contra el pico de la semana.
-                      Verde = la parte ya entregada. */}
                   <div
                     className="absolute inset-y-0 left-0 rounded-full bg-primary/40"
                     style={{ width: `${(d.generadas / maxNuevas) * 100}%` }}
                   />
                   <div
                     className="absolute inset-y-0 left-0 rounded-full bg-emerald-400"
-                    style={{
-                      width: `${(d.resueltas_de_las_nuevas / maxNuevas) * 100}%`,
-                    }}
+                    style={{ width: `${(d.resueltas_de_las_nuevas / maxNuevas) * 100}%` }}
                   />
                 </div>
-                <span className="w-12 shrink-0 text-right font-mono font-bold tabular-nums text-primary">{d.generadas}</span>
-                <span className="w-16 shrink-0 text-right font-mono font-bold tabular-nums text-emerald-400">
+                <span className={`${C.nuevas} font-mono font-bold tabular-nums text-primary`}>{d.generadas}</span>
+                <span className={`${C.entregadas} font-mono font-bold tabular-nums text-emerald-400`}>
                   {d.resueltas_de_las_nuevas}
                 </span>
                 <span
-                  className={`w-10 shrink-0 text-right font-mono tabular-nums ${pctTone(pct, maduro)}`}
+                  className={`${C.pct} font-mono tabular-nums ${pctTone(pct, maduro)}`}
                   title={
                     `${d.resueltas_de_las_nuevas} de las ${d.generadas} nuevas de ese día ya están entregadas` +
                     (maduro ? "" : ` · todavía en gestión (una novedad tarda ~${DIAS_PARA_MADURAR} días en cerrarse)`)
@@ -360,64 +381,36 @@ function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
                 >
                   {pct}%
                 </span>
-                <span className="w-14 shrink-0 text-right font-mono tabular-nums text-muted-foreground">
+                <span className={`${C.llamada} font-mono tabular-nums text-muted-foreground`}>
                   {fmtH(d.primera_gestion_horas)}
                 </span>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* ── BLOQUE 2: el trabajo del día ── */}
-        <div className="mt-5 border-t border-border pt-3 text-xs font-medium text-emerald-400">
-          Lo que se trabajó cada día
-        </div>
-        <div className="mb-1.5 text-[11px] text-muted-foreground">
-          Gestiones hechas ese día, sobre novedades de <strong>cualquier</strong> fecha. Por eso no
-          se pueden dividir por las nuevas de arriba.
-        </div>
-        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.05em] text-muted-foreground sm:gap-3">
-          <span className="w-10 shrink-0">Día</span>
-          <span className="hidden flex-1 sm:block" />
-          <span className="w-16 shrink-0 text-right text-emerald-400">Entregadas</span>
-          <span className="w-16 shrink-0 text-right text-cyan-400">Reprogram.</span>
-        </div>
-        <div className="mt-1.5 space-y-1.5">
-          {dias.map((d, i) => {
-            const isHoy = i === dias.length - 1;
-            return (
-              <div key={d.date} className="flex items-center gap-1.5 text-xs sm:gap-3">
-                <span className={`w-10 shrink-0 ${isHoy ? "font-bold text-foreground" : "text-muted-foreground"}`}>
-                  {diaLabel(d.date, isHoy)}
+                <span className={`${C.trabajoEntregas} font-mono font-bold tabular-nums text-emerald-400`}>
+                  {d.resueltas}
                 </span>
-                <span className="hidden flex-1 sm:block" />
-                <span className="w-16 shrink-0 text-right font-mono font-bold tabular-nums text-emerald-400">{d.resueltas}</span>
-                <span className="w-16 shrink-0 text-right font-mono font-bold tabular-nums text-cyan-400">{d.reprogramadas}</span>
+                <span className={`${C.trabajoReprog} font-mono font-bold tabular-nums text-cyan-400`}>
+                  {d.reprogramadas}
+                </span>
               </div>
             );
           })}
         </div>
 
-        {/* ── Totales por periodo (cohorte, como el bloque 1) ── */}
         {totales.length > 0 && (
-          <div className="mt-5 space-y-1.5 border-t border-border pt-3">
-            <div className="mb-1 text-[10px] uppercase tracking-[0.05em] text-muted-foreground">
-              Por período · de las que entraron, cuántas se entregaron
-            </div>
+          <div className="mt-3 space-y-1.5 border-t border-border pt-3">
             {totales.map((row) => {
               const pct = pctResueltas(row.t.resueltas_de_las_nuevas, row.t.nuevas);
               // "Total 7 días" cubre la misma ventana inmadura que las filas de
               // arriba; 30 días y los meses ya se pueden juzgar contra la meta.
               const maduro = row.label !== "Total 7 días";
               return (
-                <div key={row.label} className="flex items-center gap-1.5 text-xs sm:gap-3">
-                  <span className="flex-1 text-muted-foreground">{row.label}</span>
-                  <span className="w-12 shrink-0 text-right font-mono font-bold tabular-nums text-primary">{row.t.nuevas}</span>
-                  <span className="w-16 shrink-0 text-right font-mono font-bold tabular-nums text-emerald-400">
+                <div key={row.label} className="flex items-center gap-1.5 text-xs sm:gap-2">
+                  <span className="w-10 shrink-0 text-muted-foreground sm:w-[8.5rem]">{row.label}</span>
+                  <span className={`${C.nuevas} font-mono font-bold tabular-nums text-primary`}>{row.t.nuevas}</span>
+                  <span className={`${C.entregadas} font-mono font-bold tabular-nums text-emerald-400`}>
                     {row.t.resueltas_de_las_nuevas}
                   </span>
                   <span
-                    className={`w-10 shrink-0 text-right font-mono tabular-nums ${pctTone(pct, maduro)}`}
+                    className={`${C.pct} font-mono tabular-nums ${pctTone(pct, maduro)}`}
                     title={
                       `${row.t.resueltas_de_las_nuevas} de las ${row.t.nuevas} nuevas del período ya están entregadas` +
                       (maduro ? "" : ` · todavía en gestión (una novedad tarda ~${DIAS_PARA_MADURAR} días en cerrarse)`)
@@ -425,8 +418,14 @@ function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
                   >
                     {pct}%
                   </span>
-                  <span className="w-14 shrink-0 text-right font-mono tabular-nums text-muted-foreground">
+                  <span className={`${C.llamada} font-mono tabular-nums text-muted-foreground`}>
                     {fmtH(row.t.primera_gestion_horas)}
+                  </span>
+                  <span className={`${C.trabajoEntregas} font-mono font-bold tabular-nums text-emerald-400`}>
+                    {row.t.resueltas}
+                  </span>
+                  <span className={`${C.trabajoReprog} font-mono font-bold tabular-nums text-cyan-400`}>
+                    {row.t.reprogramadas}
                   </span>
                 </div>
               );
