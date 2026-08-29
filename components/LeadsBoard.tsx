@@ -30,8 +30,8 @@ import { Badge } from "@/components/ui/badge";
 import { FINANCE_STORES, getFinanceStoreById, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import {
-  BOARD_VIEWS,
   BOARD_STAGE_PRIORITY,
+  getStatusDef,
   isNoAnswerStatus,
   schedulesFollowup,
   type BoardStage,
@@ -131,16 +131,6 @@ function PhoneWithCopy({ phone }: { phone: string }) {
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "muted";
 
-const STAGE_META: Record<BoardStage, { label: string; variant: BadgeVariant; emoji: string }> = {
-  pago_verificar: { label: "Pago por verificar", variant: "warning", emoji: "💰" },
-  por_cerrar: { label: "Por cerrar", variant: "destructive", emoji: "🔥" },
-  carrito: { label: "Carrito", variant: "info", emoji: "🛒" },
-  tibios: { label: "Tibios", variant: "warning", emoji: "🌡️" },
-  seguimiento: { label: "Seguimiento", variant: "secondary", emoji: "💬" },
-  frio: { label: "Frio", variant: "muted", emoji: "❄️" },
-  cerrado: { label: "Cerrado", variant: "success", emoji: "✅" },
-  descartado: { label: "Descartado", variant: "outline", emoji: "🚫" },
-};
 
 // La fila de tabs responde UNA sola pregunta: que estoy mirando.
 //
@@ -174,12 +164,12 @@ const TABS_VISIBLES: BoardTab[] = ["hoy", "seguimiento", "cerrado"];
 
 // Color de la etiqueta segun cuanto convierte el segmento (ver la medicion en
 // lib/leads-segment.ts): carrito 41,4% · enganchado 15,8% · converso 1,5% ·
-// frio 1,0%.
+// solo saludo 1,0%.
 const SEGMENT_VARIANT: Record<LeadSegment, BadgeVariant> = {
   carrito: "info",
   enganchado: "destructive",
   converso: "secondary",
-  frio: "muted",
+  solo_saludo: "muted",
 };
 
 interface LeadRow {
@@ -1139,8 +1129,11 @@ function LeadCard({
               {meta.emoji} {meta.label}
             </Badge>
             {lead.status_source === "manual" && (
+              // Que marco la asesora, no solo que la hubo. En Seguimiento la
+              // diferencia entre "No responde" y "Volver a llamar" decide si
+              // se vuelve a marcar hoy o no.
               <Badge variant="outline" className="shrink-0">
-                gestion manual
+                {getStatusDef(lead.status)?.label ?? "gestión manual"}
               </Badge>
             )}
             {lead.unread_count > 0 && (
