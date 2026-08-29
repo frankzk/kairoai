@@ -113,7 +113,6 @@ export function isInCallQueue(lead: SegmentInput): boolean {
 
 /** Orden de llamada, de mas a menos probable. Ver `leadSegment`. */
 export const SEGMENT_ORDER: LeadSegment[] = ["carrito", "enganchado", "converso", "solo_saludo"];
-export const WORK_STATE_ORDER: LeadWorkState[] = ["sin_llamar", "seguimiento"];
 
 export const SEGMENT_META: Record<LeadSegment, { label: string; emoji: string; hint: string }> = {
   carrito: { label: "Carrito", emoji: "🛒", hint: "Armó un carrito real · 41% llega a cerrar" },
@@ -127,10 +126,6 @@ export const SEGMENT_META: Record<LeadSegment, { label: string; emoji: string; h
   solo_saludo: { label: "Solo saludó", emoji: "👋", hint: "Un mensaje o ninguno · 1%" },
 };
 
-export const WORK_STATE_META: Record<LeadWorkState, { label: string; emoji: string }> = {
-  sin_llamar: { label: "Sin llamar", emoji: "📵" },
-  seguimiento: { label: "En seguimiento", emoji: "💬" },
-};
 
 /** Los dos ejes ya resueltos. Los calcula la API una vez y viajan con el lead. */
 export interface ClassifiedLead {
@@ -149,50 +144,29 @@ export function classifyLead(lead: SegmentInput): Omit<ClassifiedLead, "needs_at
   };
 }
 
-export interface BoardFacets {
-  /** Total de la cola, sin aplicar ninguna de las dos facetas. */
-  total: number;
-  /** Ignora eje 1 Y eje 2: los tabs de arriba no se encogen al filtrar. */
-  byWorkState: Record<LeadWorkState, number>;
-  /** Aplica eje 1, ignora eje 2: los segmentos suman el total del tab activo. */
-  bySegment: Record<LeadSegment, number>;
-  /** Cuantos del tab activo piden atencion (semaforo). */
-  needsAttention: number;
-}
-
 /**
- * Contadores facetados. Cada faceta se cuenta sobre el conjunto filtrado por
- * todo MENOS por ella misma. Son dos reglas distintas y hay que respetarlas o
- * los numeros se contradicen en pantalla:
+ * Cuenta los segmentos del conjunto que se le pase.
  *
- *   - Segmentos: aplican el filtro de eje 1 -> suman el total del tab activo.
- *   - Eje 1: NO aplican el filtro de segmento -> totales estables, no se
- *     encogen al elegir un segmento. Si se encogieran, el usuario perderia la
- *     referencia de donde esta parado.
+ * REGLA: el que llama tiene que pasarle los leads del TAB ACTIVO ya filtrados,
+ * pero SIN aplicar el filtro de intencion. Asi los chips suman exactamente el
+ * total del tab y el numero coincide con lo que uno recibe al hacer clic.
+ *
+ * Antes esto era boardFacets(), que recibia todos los leads de la cola y solo
+ * aplicaba el eje de gestion. En el tab "Hoy" — que no es un estado de gestion
+ * sino una cola armada — se le pasaba null y contaba TODA la cola: los chips
+ * decian 2.580 (Hoy + Seguimiento) parado en un Hoy de 619. El chip "Carrito
+ * 196" filtraba a los carritos de Hoy, que son muchos menos.
  */
-export function boardFacets<T extends ClassifiedLead>(
-  leads: T[],
-  activeWorkState: LeadWorkState | null
-): BoardFacets {
-  const byWorkState: Record<LeadWorkState, number> = { sin_llamar: 0, seguimiento: 0 };
-  const bySegment: Record<LeadSegment, number> = {
+export function segmentCounts<T extends { segment: LeadSegment }>(
+  leads: T[]
+): Record<LeadSegment, number> {
+  const counts: Record<LeadSegment, number> = {
     carrito: 0,
     enganchado: 0,
     converso: 0,
     solo_saludo: 0,
   };
-  let total = 0;
-  let needsAttention = 0;
-
-  for (const lead of leads) {
-    if (!lead.in_call_queue) continue;
-    total += 1;
-    byWorkState[lead.work_state] += 1;
-    if (activeWorkState === null || lead.work_state === activeWorkState) {
-      bySegment[lead.segment] += 1;
-      if (lead.needs_attention) needsAttention += 1;
-    }
-  }
-
-  return { total, byWorkState, bySegment, needsAttention };
+  for (const lead of leads) counts[lead.segment] += 1;
+  return counts;
 }
+
