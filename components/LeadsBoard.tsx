@@ -1022,9 +1022,18 @@ export default function LeadsBoard() {
             )}
             {!searching && enHoy && (
               <p className="mb-2 text-xs text-muted-foreground">
+                {/* Los segmentos salen de SEGMENT_ORDER, no escritos a mano: cuando
+                    "Frío" paso a llamarse "Solo saludó" esta linea quedo mintiendo
+                    porque tenia los nombres hardcodeados. */}
                 Orden de atención: 💰 pagos por verificar → 📅 recontactos vencidos → 🔥 por
-                cerrar → y después los que nadie llamó, empezando por 🛒 carrito (41% llega a
-                cerrar) → 🔥 enganchado → 💬 conversó → ❄️ frío. Se trabaja de arriba hacia abajo.
+                cerrar → y después los que nadie llamó, en este orden:{" "}
+                {SEGMENT_ORDER.map((seg, i) => (
+                  <span key={seg}>
+                    {i > 0 && " → "}
+                    {SEGMENT_META[seg].emoji} {SEGMENT_META[seg].label.toLowerCase()}
+                  </span>
+                ))}
+                . Se trabaja de arriba hacia abajo.
               </p>
             )}
             <div className="space-y-2">
