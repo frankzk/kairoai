@@ -142,6 +142,12 @@ function loadScript(src: string): Promise<void> {
   });
 }
 
+// Tras esta cantidad de fallos seguidos se deja de consultar: si el servidor
+// no contesta, insistir no lo va a arreglar y solo agrega carga. El telefono
+// se queda visible y la asesora lo cierra con el boton, que es el
+// comportamiento que ya existia antes de la ocultacion automatica.
+const MAX_FALLOS_SEGUIDOS = 5;
+
 export default function ZadarmaWebphone() {
   const [vendedoraId, setVendedora] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -204,14 +210,18 @@ export default function ZadarmaWebphone() {
     if (!visible || !vendedoraId) return;
     let cancelled = false;
     let baseline: number | null | undefined;
+    let fallos = 0;
+    let timer: number | undefined;
 
     const check = async () => {
       try {
         const res = await fetch(`/api/zadarma/last-call?vendedora_id=${vendedoraId}`, {
           cache: "no-store",
         });
+        if (!res.ok) throw new Error(String(res.status));
         const data = (await res.json()) as { last_call_id: number | null };
         if (cancelled) return;
+        fallos = 0;
         if (baseline === undefined) {
           baseline = data.last_call_id;
           return;
@@ -220,15 +230,37 @@ export default function ZadarmaWebphone() {
           setVisible(false);
         }
       } catch {
-        /* sin señal, el telefono se queda como esta */
+        // El servidor no contesta. Se cuenta el fallo para espaciar el
+        // siguiente intento en vez de seguir golpeando cada 5 segundos.
+        fallos += 1;
       }
     };
 
-    void check();
-    const timer = window.setInterval(check, 5_000);
+    // Reprograma cada intento en vez de usar un setInterval fijo: con backoff,
+    // el intervalo depende de cuantos fallos seguidos hubo.
+    //
+    // INCIDENTE 29/08/2026: esto era un setInterval de 5s con el error tragado
+    // en silencio. Cuando Supabase dejo de aceptar conexiones, cada consulta
+    // fallaba, el telefono NUNCA se ocultaba (porque ocultarlo depende de esta
+    // misma respuesta) y seguia consultando para siempre. Vercel alerto por
+    // /api/zadarma/last-call: 46 fallos en 5 minutos contra un promedio de 0.
+    // Un lazo que se realimenta justo cuando el sistema esta caido.
+    const agendar = () => {
+      const espera = fallos === 0 ? 5_000 : Math.min(5_000 * 2 ** fallos, 60_000);
+      timer = window.setTimeout(async () => {
+        if (cancelled) return;
+        await check();
+        if (!cancelled && fallos < MAX_FALLOS_SEGUIDOS) agendar();
+      }, espera);
+    };
+
+    void check().then(() => {
+      if (!cancelled) agendar();
+    });
+
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [visible, vendedoraId]);
 

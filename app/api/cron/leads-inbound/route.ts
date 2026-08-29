@@ -5,6 +5,18 @@ import { runLeadsInboundSync } from "@/lib/leads-inbound-sync";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+// APAGADO EL 29/08/2026 — sin entrada en vercel.json.
+//
+// Supabase empezo a rechazar conexiones (Cloudflare 522, "connection timed
+// out") y el tablero de Leads dejo de cargar. Este cron era la unica carga de
+// ESCRITURA continua que se habia agregado ese dia: cada 10 minutos leia hasta
+// 150 transcripts por tienda con concurrencia 4 y escribia un UPDATE por lead.
+//
+// La ruta se deja viva a proposito: sigue siendo publica y se puede disparar a
+// mano con ?limit=N para terminar el barrido cuando la base este sana. Antes de
+// volver a programarla hay que bajar la frecuencia y la concurrencia, y
+// confirmar que el pico de conexiones no viene de aca.
+//
 // Cron: lee el transcript de Icomfly y guarda cuantos mensajes escribio el
 // cliente (inbound_count) y cual fue el primero (first_inbound_text). Es lo que
 // llena el segmento "Converso" del tablero de leads.
