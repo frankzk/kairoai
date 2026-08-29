@@ -77,7 +77,7 @@ describe("hasProductLink", () => {
 // mando un unico mensaje si ese mensaje ya trae el link de la ficha de producto.
 // Se implemento asi y despues se midio en esta base: de 708 leads con ese
 // patron, solo el 0,1% llego a "por cerrar" o a tener pedido — el PEOR de todos
-// los segmentos, por debajo de los frios (1,0%). Ascenderlos los ponia por
+// los segmentos, por debajo de los que solo saludaron (1,0%). Ascenderlos los ponia por
 // delante de gente que convierte 400 veces mas.
 //
 // hasProductLink() se conserva porque identifica un origen real (el boton
@@ -93,8 +93,8 @@ describe("el link de producto NO asciende el lead", () => {
     has_cart_signal: false,
   };
 
-  it("un unico mensaje con link de producto sigue siendo frio", () => {
-    expect(leadSegment({ ...base, inbound_count: 1 })).toBe("frio");
+  it("un unico mensaje con link de producto sigue contando como solo saludó", () => {
+    expect(leadSegment({ ...base, inbound_count: 1 })).toBe("solo_saludo");
   });
 
   it("lo que manda es cuantos mensajes escribio, no de donde vino", () => {

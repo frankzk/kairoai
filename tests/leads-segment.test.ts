@@ -58,13 +58,13 @@ describe("leadSegment (eje 2: cuanta intencion)", () => {
     expect(leadSegment(lead({ inbound_count: 9 }))).toBe("converso");
   });
 
-  it("converso son 2 a 9 mensajes", () => {
+  it("converso son 2 a 9 mensajes; con uno o ninguno, solo saludó", () => {
     expect(leadSegment(lead({ inbound_count: 2 }))).toBe("converso");
-    expect(leadSegment(lead({ inbound_count: 1 }))).toBe("frio");
+    expect(leadSegment(lead({ inbound_count: 1 }))).toBe("solo_saludo");
   });
 
-  it("frio es el caso por defecto", () => {
-    expect(leadSegment(lead())).toBe("frio");
+  it("solo saludó es el caso por defecto", () => {
+    expect(leadSegment(lead())).toBe("solo_saludo");
   });
 });
 

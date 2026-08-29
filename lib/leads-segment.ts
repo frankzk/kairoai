@@ -3,7 +3,7 @@
 // El tablero cruza DOS preguntas independientes sobre el mismo lead:
 //
 //   Eje 1 — ¿alguien ya lo llamo?   -> leadWorkState()  (Sin llamar / En seguimiento)
-//   Eje 2 — ¿cuanta intencion tiene? -> leadSegment()   (Carrito / Enganchado / Converso / Frio)
+//   Eje 2 — ¿cuanta intencion tiene? -> leadSegment()   (Carrito / Enganchado / Converso / Solo saludó)
 //
 // Se combinan con Y: el segmento filtra DENTRO del estado activo, no lo
 // reemplaza. Por eso los segmentos suman exactamente el total del eje 1 activo.
@@ -29,7 +29,7 @@ export const ENGANCHADO_MIN_MENSAJES = 10;
 export type LeadWorkState = "sin_llamar" | "seguimiento";
 
 /** Eje 2: cuanta intencion de compra muestra. Cascada, gana el primero. */
-export type LeadSegment = "carrito" | "enganchado" | "converso" | "frio";
+export type LeadSegment = "carrito" | "enganchado" | "converso" | "solo_saludo";
 
 /** Campos que necesita la clasificacion. Nada mas: es una funcion pura. */
 export interface SegmentInput {
@@ -64,7 +64,7 @@ export function leadWorkState(lead: Pick<SegmentInput, "status_source">): LeadWo
  *   carrito ................ 41,4%  (326 leads)
  *   enganchado (10+ msgs) .. 15,8%  (165)
  *   converso (2-9 msgs) ..... 1,5%  (1.484)
- *   frio (0-1 msg) .......... 1,0%  (900)
+ *   solo saludo (0-1 msg) ... 1,0%  (900)
  *
  * La separacion real esta entre los dos primeros y el resto: un carrito vale
  * 27 veces mas que un converso. Por eso "converso" junta 2-9 mensajes — dentro
@@ -79,7 +79,7 @@ export function leadWorkState(lead: Pick<SegmentInput, "status_source">): LeadWo
  * SE MIDIO Y SE DESCARTO: la regla del link de producto (un unico mensaje que
  * ya trae la URL de la ficha, que en el CRM de origen cuenta como "converso").
  * Aca esos 708 leads llegan lejos en el 0,1% de los casos — el peor segmento
- * de todos, por debajo de los frios. Se dejan en frio.
+ * de todos, por debajo de los que solo saludaron. Se dejan ahi.
  *
  * `district` se saco de la cascada: la columna nunca se poblo y no hay con que
  * ubicarla en este orden.
@@ -95,7 +95,7 @@ export function leadSegment(lead: SegmentInput): LeadSegment {
   }
   if ((lead.inbound_count ?? 0) >= ENGANCHADO_MIN_MENSAJES) return "enganchado";
   if ((lead.inbound_count ?? 0) >= 2) return "converso";
-  return "frio";
+  return "solo_saludo";
 }
 
 /**
@@ -112,14 +112,19 @@ export function isInCallQueue(lead: SegmentInput): boolean {
 }
 
 /** Orden de llamada, de mas a menos probable. Ver `leadSegment`. */
-export const SEGMENT_ORDER: LeadSegment[] = ["carrito", "enganchado", "converso", "frio"];
+export const SEGMENT_ORDER: LeadSegment[] = ["carrito", "enganchado", "converso", "solo_saludo"];
 export const WORK_STATE_ORDER: LeadWorkState[] = ["sin_llamar", "seguimiento"];
 
 export const SEGMENT_META: Record<LeadSegment, { label: string; emoji: string; hint: string }> = {
   carrito: { label: "Carrito", emoji: "🛒", hint: "Armó un carrito real · 41% llega a cerrar" },
   enganchado: { label: "Enganchado", emoji: "🔥", hint: "10+ mensajes suyos · 16% llega a cerrar" },
   converso: { label: "Conversó", emoji: "💬", hint: "2 a 9 mensajes suyos · 1,5%" },
-  frio: { label: "Frío", emoji: "❄️", hint: "Un mensaje o ninguno · 1%" },
+  // Se llama "Solo saludó" y no "Frío" a proposito: `frio` tambien es una
+  // ETAPA (status que pone el bot por inactividad) y las dos cosas convivian en
+  // la misma pantalla significando cosas distintas. Medido: de 231 leads en
+  // etapa Frío, 116 NO eran frios de intencion (108 conversaron, 6 enganchados,
+  // 2 con carrito). El nombre dice lo que el cliente hizo, no como se "siente".
+  solo_saludo: { label: "Solo saludó", emoji: "👋", hint: "Un mensaje o ninguno · 1%" },
 };
 
 export const WORK_STATE_META: Record<LeadWorkState, { label: string; emoji: string }> = {
@@ -174,7 +179,7 @@ export function boardFacets<T extends ClassifiedLead>(
     carrito: 0,
     enganchado: 0,
     converso: 0,
-    frio: 0,
+    solo_saludo: 0,
   };
   let total = 0;
   let needsAttention = 0;

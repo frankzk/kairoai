@@ -20,7 +20,7 @@ function lead(
     // Por defecto: nadie lo trabajo. Los que ya tienen gestion se marcan
     // explicitamente con work_state: "seguimiento".
     work_state: "sin_llamar",
-    segment: "frio",
+    segment: "solo_saludo",
     ...extra,
   };
 }
@@ -34,7 +34,7 @@ describe("buildWorkQueue", () => {
   it("primero pagos y por cerrar, despues el orden lo da el segmento", () => {
     const queue = buildWorkQueue(
       [
-        lead("frio", "tibios", "2026-07-25T17:00:00Z", null, { segment: "frio" }),
+        lead("solo-saludo", "tibios", "2026-07-25T17:00:00Z", null, { segment: "solo_saludo" }),
         lead("converso", "tibios", "2026-07-25T17:00:00Z", null, { segment: "converso" }),
         lead("carrito", "carrito", "2026-07-25T17:00:00Z", null, { segment: "carrito" }),
         lead("enganchado", "tibios", "2026-07-25T17:00:00Z", null, { segment: "enganchado" }),
@@ -49,7 +49,7 @@ describe("buildWorkQueue", () => {
       "carrito",
       "enganchado",
       "converso",
-      "frio",
+      "solo-saludo",
     ]);
   });
 

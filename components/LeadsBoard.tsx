@@ -30,8 +30,8 @@ import { Badge } from "@/components/ui/badge";
 import { FINANCE_STORES, getFinanceStoreById, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import {
-  BOARD_VIEWS,
   BOARD_STAGE_PRIORITY,
+  getStatusDef,
   isNoAnswerStatus,
   schedulesFollowup,
   type BoardStage,
@@ -131,16 +131,6 @@ function PhoneWithCopy({ phone }: { phone: string }) {
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "muted";
 
-const STAGE_META: Record<BoardStage, { label: string; variant: BadgeVariant; emoji: string }> = {
-  pago_verificar: { label: "Pago por verificar", variant: "warning", emoji: "💰" },
-  por_cerrar: { label: "Por cerrar", variant: "destructive", emoji: "🔥" },
-  carrito: { label: "Carrito", variant: "info", emoji: "🛒" },
-  tibios: { label: "Tibios", variant: "warning", emoji: "🌡️" },
-  seguimiento: { label: "Seguimiento", variant: "secondary", emoji: "💬" },
-  frio: { label: "Frio", variant: "muted", emoji: "❄️" },
-  cerrado: { label: "Cerrado", variant: "success", emoji: "✅" },
-  descartado: { label: "Descartado", variant: "outline", emoji: "🚫" },
-};
 
 // La fila de tabs responde UNA sola pregunta: que estoy mirando.
 //
@@ -171,6 +161,16 @@ const TAB_META: Record<BoardTab, { label: string; emoji: string; hint: string }>
 };
 
 const TABS_VISIBLES: BoardTab[] = ["hoy", "seguimiento", "cerrado"];
+
+// Color de la etiqueta segun cuanto convierte el segmento (ver la medicion en
+// lib/leads-segment.ts): carrito 41,4% · enganchado 15,8% · converso 1,5% ·
+// solo saludo 1,0%.
+const SEGMENT_VARIANT: Record<LeadSegment, BadgeVariant> = {
+  carrito: "info",
+  enganchado: "destructive",
+  converso: "secondary",
+  solo_saludo: "muted",
+};
 
 interface LeadRow {
   id: number;
@@ -1099,7 +1099,15 @@ function LeadCard({
   onOpen: () => void;
   queuePosition?: number;
 }) {
-  const meta = STAGE_META[lead.board_stage];
+  // La etiqueta muestra el SEGMENTO, que es lo que decide el orden de la cola
+  // y lo que dicen los chips de arriba.
+  //
+  // Antes mostraba el board_stage y se contradecia con el filtro: un lead con
+  // 22 mensajes salia en el chip "Enganchado" pero con la etiqueta "Frío",
+  // porque `status = frio` lo pone el bot por INACTIVIDAD, no por cuantos
+  // mensajes escribio. Son dos cosas distintas y la tarjeta mostraba la que no
+  // explicaba por que estaba ahi.
+  const meta = SEGMENT_META[lead.segment];
   const isNext = queuePosition === 1;
   return (
     <Card className={`transition-colors hover:border-primary/50 ${isNext ? "border-primary/70 bg-primary/5" : ""}`}>
@@ -1117,12 +1125,15 @@ function LeadCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate font-medium">{lead.name || "Sin nombre"}</span>
-            <Badge variant={meta.variant} className="shrink-0">
+            <Badge variant={SEGMENT_VARIANT[lead.segment]} className="shrink-0" title={meta.hint}>
               {meta.emoji} {meta.label}
             </Badge>
             {lead.status_source === "manual" && (
+              // Que marco la asesora, no solo que la hubo. En Seguimiento la
+              // diferencia entre "No responde" y "Volver a llamar" decide si
+              // se vuelve a marcar hoy o no.
               <Badge variant="outline" className="shrink-0">
-                gestion manual
+                {getStatusDef(lead.status)?.label ?? "gestión manual"}
               </Badge>
             )}
             {lead.unread_count > 0 && (

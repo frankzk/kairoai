@@ -5,7 +5,7 @@
 //   1. Pagos por verificar        el cliente ya pago; se verifica en orden de llegada
 //   2. Recontactos vencidos       lo que se le prometio al cliente, mas reciente primero
 //   3. Por cerrar                 dio datos, falta cerrar
-//   4. Sin llamar, por SEGMENTO   carrito -> enganchado -> converso -> frio
+//   4. Sin llamar, por SEGMENTO   carrito -> enganchado -> converso -> solo saludo
 //
 // El paso 4 es el cambio de fondo: antes el orden lo daba la ETAPA (tibios
 // antes que seguimientos), que no dice nada sobre la probabilidad de cerrar.
@@ -110,7 +110,7 @@ function queueRank(lead: QueueLead, nowMs: number): number {
   // Ya lo trabajo una asesora y no tiene recontacto vencido: no es trabajo de
   // hoy. Vive en Seguimiento, donde se puede buscar y filtrar.
   if (lead.work_state === "seguimiento") return RANK_FUERA;
-  const i = SEGMENT_ORDER.indexOf(lead.segment ?? "frio");
+  const i = SEGMENT_ORDER.indexOf(lead.segment ?? "solo_saludo");
   return RANK_SEGMENTO_BASE + (i < 0 ? SEGMENT_ORDER.length : i);
 }
 
