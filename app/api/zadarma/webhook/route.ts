@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  AGENT_LEG_RINGING,
+  agentLegStatus,
   getRecordLink,
   isZadarmaNotifyIp,
+  readOutgoingLegRoles,
   signatureStringForEvent,
   verifyNotifySignature,
 } from "@/lib/zadarma";
@@ -111,33 +114,40 @@ async function handleEvent(
 
   switch (event) {
     // ─── Saliente: la asesora marca al cliente ──────────────────────────────
+    //
+    // Puede ser la llamada al cliente o la pata previa, la centralita
+    // timbrando el telefono de la asesora. `readOutgoingLegRoles` distingue
+    // cual es (ver lib/zadarma.ts); si no, la pata de timbrado se guardaba como
+    // una llamada al "cliente 100", sin lead y sin asesora.
     case "NOTIFY_OUT_START": {
+      const legs = readOutgoingLegRoles(body);
       const context = await resolveCallContext({
-        rawPhone: body.destination,
-        internal: body.internal,
+        rawPhone: legs.customerPhone,
+        internal: legs.internal,
       });
       await upsertZadarmaCall({
         pbxCallId,
         direction: "outgoing",
-        internal: body.internal ?? null,
-        rawPhone: body.destination ?? null,
+        internal: legs.internal,
+        rawPhone: legs.customerPhone,
         startedAt,
-        status: "calling",
+        status: legs.isAgentLeg ? AGENT_LEG_RINGING : "calling",
         ...context,
       });
       return;
     }
     case "NOTIFY_OUT_END": {
+      const legs = readOutgoingLegRoles(body);
       const context = await resolveCallContext({
-        rawPhone: body.destination,
-        internal: body.internal,
+        rawPhone: legs.customerPhone,
+        internal: legs.internal,
       });
       await upsertZadarmaCall({
         pbxCallId,
         direction: "outgoing",
-        internal: body.internal ?? null,
-        rawPhone: body.destination ?? null,
-        status: body.disposition ?? null,
+        internal: legs.internal,
+        rawPhone: legs.customerPhone,
+        status: legs.isAgentLeg ? agentLegStatus(body.disposition) : (body.disposition ?? null),
         durationSeconds: Number.isFinite(duration) ? duration : 0,
         // Solo se marca en positivo: NOTIFY_RECORD puede llegar antes que el
         // fin de la llamada y un `false` tardio borraria la grabacion ya vista.

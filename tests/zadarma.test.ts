@@ -1,8 +1,13 @@
 import { describe, expect, it, afterEach } from "vitest";
 import crypto from "crypto";
 import {
+  AGENT_LEG_ANSWERED,
+  AGENT_LEG_NO_ANSWER,
+  agentLegStatus,
   buildParamsString,
+  isInternalExtension,
   isValidSipLogin,
+  readOutgoingLegRoles,
   isZadarmaNotifyIp,
   parseZadarmaTime,
   signRequest,
@@ -227,6 +232,64 @@ describe("estados de llamada en el timeline", () => {
   it("no inventa etiqueta para un estado desconocido", () => {
     expect(describeZadarmaCall({ direction: "outgoing", status: "brand_new", duration_seconds: 0 }))
       .toBe("Saliente · brand_new");
+  });
+
+  it("cuenta la pata de timbrado desde la asesora, no desde el cliente", () => {
+    // "Saliente · cancelada" hacia pensar que el cliente colgo, cuando lo que
+    // paso fue que el telefono de la asesora nunca descolgo y el cliente ni
+    // siquiera llego a sonar.
+    expect(
+      describeZadarmaCall({
+        direction: "outgoing",
+        status: AGENT_LEG_NO_ANSWER,
+        duration_seconds: 0,
+      })
+    ).toBe("tu teléfono web no contestó: el cliente nunca sonó");
+  });
+});
+
+describe("las dos patas del click-to-call", () => {
+  it("endereza la pata de timbrado, que llega con los papeles cambiados", () => {
+    // Lo que manda la centralita cuando timbra la extension 100 avisando que
+    // el cliente 5066401XXXX es a quien se va a llamar.
+    expect(readOutgoingLegRoles({ internal: "50664015230", destination: "100" })).toEqual({
+      internal: "100",
+      customerPhone: "50664015230",
+      isAgentLeg: true,
+    });
+  });
+
+  it("deja la llamada al cliente tal cual", () => {
+    expect(readOutgoingLegRoles({ internal: "103", destination: "50664015230" })).toEqual({
+      internal: "103",
+      customerPhone: "50664015230",
+      isAgentLeg: false,
+    });
+  });
+
+  it("no confunde una extension llamando a otra con la pata de timbrado", () => {
+    // Llamada interna entre asesoras: el destino es una extension, pero el
+    // origen tambien, asi que no hay nada que enderezar.
+    expect(readOutgoingLegRoles({ internal: "102", destination: "104" })).toEqual({
+      internal: "102",
+      customerPhone: "104",
+      isAgentLeg: false,
+    });
+  });
+
+  it("distingue extensiones de telefonos de tres digitos que no lo son", () => {
+    expect(isInternalExtension("100")).toBe(true);
+    expect(isInternalExtension("999")).toBe(true);
+    expect(isInternalExtension("099")).toBe(false);
+    expect(isInternalExtension("1000")).toBe(false);
+    expect(isInternalExtension("50664015230")).toBe(false);
+    expect(isInternalExtension(undefined)).toBe(false);
+  });
+
+  it("marca contestada o no la pata segun la disposicion de la centralita", () => {
+    expect(agentLegStatus("answered")).toBe(AGENT_LEG_ANSWERED);
+    expect(agentLegStatus("cancel")).toBe(AGENT_LEG_NO_ANSWER);
+    expect(agentLegStatus(undefined)).toBe(AGENT_LEG_NO_ANSWER);
   });
 });
 

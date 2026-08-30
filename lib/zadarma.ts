@@ -595,6 +595,70 @@ export function isAnsweredDisposition(disposition: string | undefined | null): b
   return String(disposition ?? "").toLowerCase() === "answered";
 }
 
+// ─── Las dos patas del click-to-call ─────────────────────────────────────────
+//
+// `/v1/request/callback/` no marca al cliente de una: primero timbra la
+// extension de la asesora y solo cuando ella descuelga marca al cliente. Para
+// la centralita son DOS llamadas, cada una con su pbx_call_id, y las dos
+// llegan como NOTIFY_OUT_*.
+//
+// En la pata de timbrado Zadarma invierte los papeles: `destination` es la
+// extension y `internal` trae el numero del CLIENTE, porque ese es el
+// identificador que se le muestra a la asesora para que sepa a quien va a
+// llamar. Sin deshacer el cambio, el CDR guardaba llamadas "al numero 100":
+// sin lead (ningun cliente tiene ese telefono) y sin asesora (el campo de la
+// extension traia un celular). Y era justo el caso que hay que poder ver, el
+// de la asesora que no contesta su propio telefono y el cliente nunca suena.
+
+/** Extension interna de la centralita: 100-999. */
+export function isInternalExtension(value: string | undefined | null): boolean {
+  return /^[1-9][0-9]{2}$/.test(String(value ?? "").trim());
+}
+
+export interface OutgoingLegRoles {
+  /** Extension de la asesora, en corto. */
+  internal: string | null;
+  /** Telefono del cliente. */
+  customerPhone: string | null;
+  /** La centralita esta timbrando a la asesora; al cliente aun no se marca. */
+  isAgentLeg: boolean;
+}
+
+/** Reparte `internal` y `destination` de un NOTIFY_OUT_* en sus papeles reales. */
+export function readOutgoingLegRoles(body: {
+  internal?: string;
+  destination?: string;
+}): OutgoingLegRoles {
+  const internal = String(body.internal ?? "").trim();
+  const destination = String(body.destination ?? "").trim();
+  if (isInternalExtension(destination) && !isInternalExtension(internal)) {
+    return { internal: destination, customerPhone: internal || null, isAgentLeg: true };
+  }
+  return { internal: internal || null, customerPhone: destination || null, isAgentLeg: false };
+}
+
+// Estados propios de la pata de timbrado. No los reporta Zadarma: los pone
+// Kairo para que el timeline diga "no contestaste tu telefono" y no "llamada
+// cancelada", que echaba al cliente la culpa de algo que paso de este lado.
+export const AGENT_LEG_RINGING = "agent_ringing";
+export const AGENT_LEG_ANSWERED = "agent_answered";
+export const AGENT_LEG_NO_ANSWER = "agent_no_answer";
+
+const AGENT_LEG_STATUSES = new Set([
+  AGENT_LEG_RINGING,
+  AGENT_LEG_ANSWERED,
+  AGENT_LEG_NO_ANSWER,
+]);
+
+export function isAgentLegStatus(status: string | undefined | null): boolean {
+  return AGENT_LEG_STATUSES.has(String(status ?? ""));
+}
+
+/** Como termino la pata de timbrado, segun la disposicion de la centralita. */
+export function agentLegStatus(disposition: string | undefined | null): string {
+  return isAnsweredDisposition(disposition) ? AGENT_LEG_ANSWERED : AGENT_LEG_NO_ANSWER;
+}
+
 // ─── Presentacion de una llamada ─────────────────────────────────────────────
 
 // Estados que reporta la centralita. Los de saldo/limite importan tanto como
@@ -615,6 +679,10 @@ const DISPOSITION_LABEL: Record<string, string> = {
   "unallocated number": "el número no existe",
   calling: "marcando",
   ringing: "timbrando",
+  // La pata de timbrado se cuenta desde la asesora, no desde el cliente.
+  [AGENT_LEG_RINGING]: "timbrando tu teléfono web",
+  [AGENT_LEG_ANSWERED]: "contestaste tu teléfono web",
+  [AGENT_LEG_NO_ANSWER]: "tu teléfono web no contestó: el cliente nunca sonó",
 };
 
 /** "Saliente · contestada · 1m 20s" para el timeline del lead. */
@@ -626,6 +694,10 @@ export function describeZadarmaCall(row: {
   const direction = row.direction === "incoming" ? "Entrante" : "Saliente";
   const raw = String(row.status ?? "");
   const status = DISPOSITION_LABEL[raw.toLowerCase()] ?? raw;
+  // La pata de timbrado ya se explica sola y su duracion es la de la asesora
+  // descolgando, no la de una conversacion: mostrarla como "Saliente · 0s"
+  // solo confundiria.
+  if (isAgentLegStatus(raw)) return status;
   const seconds = row.duration_seconds ?? 0;
   const duration = seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
   return [direction, status, seconds > 0 ? duration : null].filter(Boolean).join(" · ");
