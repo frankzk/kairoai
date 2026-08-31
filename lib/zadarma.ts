@@ -362,13 +362,21 @@ export async function requestCallback(input: {
   sip?: string;
 }): Promise<CallbackResult> {
   const from = input.from.trim();
-  const to = input.to.replace(/\D+/g, "");
+  const digits = input.to.replace(/\D+/g, "");
   if (!isValidSipLogin(from)) {
     throw new ZadarmaError(`Extension invalida: ${input.from}`, "/v1/request/callback/");
   }
-  if (to.length < 8) {
+  if (digits.length < 8) {
     throw new ZadarmaError(`Telefono invalido: ${input.to}`, "/v1/request/callback/");
   }
+  // El '+' no es cosmetico: sin el, Zadarma trata el numero como NACIONAL y le
+  // antepone el codigo de pais que tenga configurado por defecto la extension
+  // que llama. Un 50689526718 de Costa Rica salio marcado como 5150689526718
+  // —"Peru", "no ha podido realizarse"— porque la extension tenia Peru por
+  // defecto, y el cliente nunca sono. Con '+' el numero ya es internacional y
+  // la centralita no tiene nada que adivinar. Importa mas aqui que en otras
+  // integraciones porque Kairo llama a tres paises desde la misma cuenta.
+  const to = `+${digits}`;
 
   // Ambos parametros van con la extension corta (100), no con el login
   // completo (499499-100). Con el login, Zadarma acepta la peticion y
