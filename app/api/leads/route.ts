@@ -115,6 +115,17 @@ export async function GET(req: NextRequest) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer leads";
+    // Se registra ANTES de responder. Sin esto, un 500 aqui no deja rastro en
+    // el servidor: el motivo viaja en el cuerpo de la respuesta, que solo ve
+    // el navegador de quien lo sufrio. Paso de verdad — 12 errores 500 en dos
+    // horas y el panel de errores de Vercel decia "no runtime errors", porque
+    // nadie los escribia. Se apuntan los parametros que deciden la consulta,
+    // que es lo unico que permite reproducirla.
+    console.error(
+      `[leads GET] ${store.code} scope=${req.nextUrl.searchParams.get("scope") ?? "trabajo"} ` +
+        `q=${req.nextUrl.searchParams.get("q") ? "si" : "no"} ` +
+        `all=${req.nextUrl.searchParams.get("all") ?? "0"}: ${message}`
+    );
     return NextResponse.json({ leads: [], counts: null, error: message }, { status: 500 });
   }
 }
@@ -146,6 +157,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error sincronizando leads";
+    console.error(`[leads POST] ${store.code}: ${message}`);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
