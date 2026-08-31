@@ -1371,8 +1371,17 @@ export function phoneFromNoteAttributes(
 export function phoneFromNote(note?: string | null): string | null {
   if (!note) return null;
   const compact = String(note).replace(/[\s()./+-]/g, "");
-  const m = compact.match(/(?:506)?([2678]\d{7})/);
-  return m ? m[1] : null;
+  // 1) Con codigo de pais 506: tomar los 8 digitos que van DESPUES del 506,
+  //    nunca el "6" del propio 506. Evita numeros falsos: p.ej. la nota real
+  //    "+506901100459" (el bloque tras 506 no arranca en digito CR valido) ya
+  //    no produce "69011004" robando el 6 del prefijo.
+  const withCode = compact.match(/506([2678]\d{7})/);
+  if (withCode) return withCode[1];
+  // 2) Numero CR de 8 digitos por su forma, exigiendo frontera no numerica
+  //    antes para no recortarlo de un bloque de digitos mas largo y malformado
+  //    (p.ej. "+119201609509" no es un celular CR reconocible -> null).
+  const bare = compact.match(/(?:^|\D)([2678]\d{7})/);
+  return bare ? bare[1] : null;
 }
 
 export function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
