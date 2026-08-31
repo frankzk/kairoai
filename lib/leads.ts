@@ -408,28 +408,29 @@ export async function searchLeadsByPhoneSimilar(
  *
  * Antes los contadores salian de contar la lista ya truncada, asi que decian
  * "Carrito 77" cuando en la base habia 246, y bajaban solos al entrar leads
- * nuevos que empujaban a los viejos fuera del cupo. Aca se traen unicamente
- * las cuatro columnas que deciden el bucket, que es barato incluso sobre la
- * tabla entera.
+ * nuevos que empujaban a los viejos fuera del cupo.
+ *
+ * POR QUE UN RPC: la version anterior ya pedia solo las cuatro columnas que
+ * deciden el bucket, pero seguia bajando UNA FILA POR LEAD para contarlas aca.
+ * PostgREST corta las respuestas en 1.000 filas, asi que en Costa Rica (6.212
+ * elegibles) eran SIETE viajes de ida y vuelta antes de poder pintar los
+ * contadores. Agrupando en Postgres es un viaje y 55 filas — el mismo conteo
+ * tarda 17 ms en la base.
+ *
+ * El RPC devuelve las tuplas SIN clasificar a proposito: el mapeo a bucket
+ * sigue saliendo de `leadBoardStage` y del catalogo de estados, que es la unica
+ * fuente de verdad. Ver 0033_leads_stage_tuples.sql.
  */
 export async function countLeadStages(
   storeId: number,
   sinceIso?: string
 ): Promise<LeadBoardCounts> {
-  const rows = await fetchLeadPages<Record<string, unknown>>({
-    storeId,
-    select: "status,status_source,shopify_cart_open,has_order",
-    limit: 100000,
-    sinceIso,
+  const { data, error } = await getDB().rpc("leads_stage_tuples", {
+    p_store_id: storeId,
+    p_since: sinceIso ?? null,
   });
-  return countByStage(
-    rows.map((row) => ({
-      status: String(row.status),
-      status_source: row.status_source as StatusSource,
-      shopify_cart_open: Boolean(row.shopify_cart_open),
-      has_order: Boolean(row.has_order),
-    }))
-  );
+  if (error) throw new Error(`countLeadStages: ${error.message}`);
+  return countByStageTuples((data ?? []) as StageTuple[]);
 }
 
 // ─── Productividad de la asesora (contactos + pedidos por periodo) ───────────
@@ -494,11 +495,20 @@ export interface LeadBoardCounts {
   byStage: Record<BoardStage, number>;
 }
 
-/** Cuenta por bucket. Toma solo lo que decide el bucket, para poder contar
- *  sin traerse la fila entera (ver countLeadStages). */
-export function countByStage(
-  leads: Array<Pick<LeadRecord, "status" | "status_source" | "shopify_cart_open" | "has_order">>
-): LeadBoardCounts {
+/** Lo unico que decide el bucket, mas cuantos leads comparten esa combinacion. */
+export type StageTuple = Pick<
+  LeadRecord,
+  "status" | "status_source" | "shopify_cart_open" | "has_order"
+> & { n: number };
+
+/**
+ * Cuenta por bucket a partir de las tuplas ya agrupadas por Postgres.
+ *
+ * Es el mismo reparto de siempre, solo que cada fila trae su multiplicidad en
+ * vez de venir repetida. El catalogo de estados sigue mandando: quien traduce
+ * status -> bucket es `leadBoardStage`, aca y en la lista.
+ */
+export function countByStageTuples(tuples: StageTuple[]): LeadBoardCounts {
   const byStage: Record<BoardStage, number> = {
     por_cerrar: 0,
     pago_verificar: 0,
@@ -509,8 +519,21 @@ export function countByStage(
     cerrado: 0,
     descartado: 0,
   };
-  for (const lead of leads) byStage[leadBoardStage(lead)] += 1;
-  return { total: leads.length, byStage };
+  let total = 0;
+  for (const tuple of tuples) {
+    // `count(*)` de Postgres puede llegar como string segun el driver.
+    const n = Number(tuple.n) || 0;
+    byStage[leadBoardStage(tuple)] += n;
+    total += n;
+  }
+  return { total, byStage };
+}
+
+/** Cuenta por bucket una lista de leads sueltos (una fila = un lead). */
+export function countByStage(
+  leads: Array<Pick<LeadRecord, "status" | "status_source" | "shopify_cart_open" | "has_order">>
+): LeadBoardCounts {
+  return countByStageTuples(leads.map((lead) => ({ ...lead, n: 1 })));
 }
 
 export async function getLead(storeId: number, leadId: number): Promise<LeadRecord | null> {

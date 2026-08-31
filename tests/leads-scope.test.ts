@@ -12,15 +12,20 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 type LeadsModule = typeof import("../lib/leads");
+// Solo el tipo: no evalua el modulo antes de que este puesto el fetch de mentira.
+type StageTuple = import("../lib/leads").StageTuple;
 
 let leads: LeadsModule;
 const requests: string[] = [];
+/** Cuerpo JSON de cada peticion (los RPC mandan los argumentos por POST). */
+const bodies: unknown[] = [];
 
 beforeAll(async () => {
   process.env.SUPABASE_URL = "https://fake.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "fake-service-role-key";
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     requests.push(String(input));
+    bodies.push(typeof init?.body === "string" ? JSON.parse(init.body) : undefined);
     // Una pagina vacia corta la paginacion en la primera vuelta.
     return new Response("[]", {
       status: 200,
@@ -32,6 +37,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   requests.length = 0;
+  bodies.length = 0;
 });
 
 /** La query string, ya decodificada, de la peticion numero `index`. */
@@ -88,23 +94,92 @@ describe("listLeads", () => {
 });
 
 describe("countLeadStages", () => {
-  it("cuenta sobre TODA la poblacion, sin partir por scope", async () => {
+  it("cuenta en UN viaje, agregando en Postgres", async () => {
     await leads.countLeadStages(1);
 
+    // Antes eran siete: PostgREST corta en 1.000 filas y en Costa Rica hay
+    // 6.212 leads elegibles, asi que el tablero esperaba siete idas y vueltas
+    // solo para pintar los contadores.
     expect(requests).toHaveLength(1);
-    const q = query();
-    // El conteo no se parte en mitades: ese era el bug (contaba el pedazo
-    // que cabia en la pantalla).
-    expect(q).not.toContain("status=not.in.(");
-    expect(q).not.toContain("has_order=eq.");
-    // Y se trae solo lo que decide el bucket, no la fila entera.
-    expect(q).toContain("select=status,status_source,shopify_cart_open,has_order");
+    expect(requests[0]).toContain("/rpc/leads_stage_tuples");
   });
 
-  it("respeta la misma ventana de antiguedad que la lista", async () => {
+  it("le pasa la tienda y la misma ventana de antiguedad que la lista", async () => {
     await leads.countLeadStages(1, "2026-08-01T00:00:00.000Z");
 
-    expect(query()).toContain("last_interaction_at.gte.2026-08-01T00:00:00.000Z");
+    expect(bodies[0]).toEqual({
+      p_store_id: 1,
+      p_since: "2026-08-01T00:00:00.000Z",
+    });
+  });
+
+  it("sin ventana manda null, para contar toda la poblacion", async () => {
+    await leads.countLeadStages(1);
+
+    expect(bodies[0]).toEqual({ p_store_id: 1, p_since: null });
+  });
+});
+
+describe("countByStageTuples", () => {
+  const tupla = (
+    partial: Partial<StageTuple> & { n: number }
+  ): StageTuple => ({
+    status: "conversando",
+    status_source: "auto",
+    shopify_cart_open: false,
+    has_order: false,
+    ...partial,
+  });
+
+  it("cada tupla aporta su multiplicidad, no una unidad", () => {
+    // Es la diferencia entre contar filas agrupadas y contar filas sueltas: si
+    // se ignora `n`, los contadores dirian 3 donde hay 6.212.
+    const counts = leads.countByStageTuples([
+      tupla({ status: "conversando", n: 900 }),
+      tupla({ status: "frio", n: 231 }),
+      tupla({ status: "por_cerrar", status_source: "auto", n: 40 }),
+    ]);
+    expect(counts.total).toBe(1171);
+    expect(counts.byStage.tibios).toBe(900);
+    expect(counts.byStage.frio).toBe(231);
+    expect(counts.byStage.por_cerrar).toBe(40);
+  });
+
+  it("aplica las mismas reglas de bucket que la lista", () => {
+    // leadBoardStage sigue mandando: un carrito abierto de origen automatico
+    // cae en Carrito, y un pedido manda a Cerrado pase lo que pase.
+    const counts = leads.countByStageTuples([
+      tupla({ status: "conversando", shopify_cart_open: true, n: 5 }),
+      tupla({ status: "conversando", has_order: true, n: 3 }),
+      // Con estado manual el carrito NO gana: la asesora ya lo movio.
+      tupla({ status: "no_responde", status_source: "manual", shopify_cart_open: true, n: 2 }),
+    ]);
+    expect(counts.byStage.carrito).toBe(5);
+    expect(counts.byStage.cerrado).toBe(3);
+    expect(counts.byStage.seguimiento).toBe(2);
+  });
+
+  it("dos tuplas que caen en el mismo bucket se suman", () => {
+    const counts = leads.countByStageTuples([
+      tupla({ status: "por_cerrar", n: 7 }),
+      tupla({ status: "casi_cierra", n: 4 }),
+    ]);
+    expect(counts.byStage.por_cerrar).toBe(11);
+  });
+
+  it("un conteo que llega como texto no rompe la suma", () => {
+    // Segun el driver, `count(*)` puede viajar como string en el JSON.
+    const counts = leads.countByStageTuples([
+      { ...tupla({ n: 0 }), n: "12" as unknown as number },
+    ]);
+    expect(counts.total).toBe(12);
+    expect(counts.byStage.tibios).toBe(12);
+  });
+
+  it("sin tuplas da todo en cero, no undefined", () => {
+    const counts = leads.countByStageTuples([]);
+    expect(counts.total).toBe(0);
+    expect(Object.values(counts.byStage).every((n) => n === 0)).toBe(true);
   });
 });
 
