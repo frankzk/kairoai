@@ -118,10 +118,31 @@ describe("detectOrderInTranscript", () => {
 });
 
 describe("detectSinpeText", () => {
-  it("detects SINPE payment phrases", () => {
-    expect(detectSinpeText("ya le hice el sinpe")).toBe(true);
-    expect(detectSinpeText("acabo de transferir")).toBe(true);
-    expect(detectSinpeText("hola, cuanto cuesta?")).toBe(false);
+  it("detecta el aviso de pago cuando lo dice el cliente", () => {
+    expect(detectSinpeText("ya le hice el sinpe", "customer")).toBe(true);
+    expect(detectSinpeText("acabo de transferir", "customer")).toBe(true);
+    expect(detectSinpeText("hola, cuanto cuesta?", "customer")).toBe(false);
+  });
+
+  // El guion del bot ofrece el metodo de pago con las mismas palabras. Mirar el
+  // texto sin mirar al autor convertia esa PREGUNTA en un COBRO: los 8 leads
+  // que estaban en "pagos por verificar" eran los 8 falsos positivos.
+  it("la misma frase dicha por el bot NO es un pago", () => {
+    const guion = "¿Me confirmas si pagas contraentrega o SINPE al recibir?";
+    expect(detectSinpeText(guion, "bot")).toBe(false);
+    expect(detectSinpeText("Pago: contraentrega o SINPE al recibir", "bot")).toBe(false);
+    // Ni siquiera la frase mas explicita cuenta si no la escribio el cliente.
+    expect(detectSinpeText("ya le hice el sinpe", "bot")).toBe(false);
+  });
+
+  it("tampoco cuenta si la escribio la asesora", () => {
+    // 'admin' es el valor real que manda Icomfly para la asesora.
+    expect(detectSinpeText("ya le hice el sinpe", "admin")).toBe(false);
+  });
+
+  it("sin autor conocido no se asume que hubo pago", () => {
+    expect(detectSinpeText("ya le hice el sinpe", null)).toBe(false);
+    expect(detectSinpeText("ya le hice el sinpe", "")).toBe(false);
   });
 });
 
@@ -172,10 +193,29 @@ describe("classifyConversation priority", () => {
     expect(c.status).toBe("postventa");
     expect(statusBoardStage(c.status)).toBe("descartado");
   });
-  it("SINPE in last message -> pago_verificar", () => {
-    const c = classifyConversation(makeConv({ lastMessageText: "ya te hice el sinpe" }));
+  it("SINPE que avisa el cliente -> pago_verificar", () => {
+    const c = classifyConversation(
+      makeConv({ lastMessageText: "ya te hice el sinpe", lastMessageSender: "customer" })
+    );
     expect(c.status).toBe("sinpe_por_verificar");
     expect(statusBoardStage(c.status)).toBe("pago_verificar");
+  });
+
+  // Caso real de produccion (lead 20286, 80 dias en la cola). El bot ofrece el
+  // metodo de pago y el cliente no vuelve a escribir: es un carrito que se
+  // enfrio, no un pago esperando verificacion. Estaba de PRIMERO en la cola de
+  // llamadas, que es el puesto mas caro del tablero.
+  it("el guion del bot que ofrece SINPE no manda a nadie a pago_verificar", () => {
+    const c = classifyConversation(
+      makeConv({
+        lastMessageText:
+          "¡Muchas gracias, Arturo! 😊 Te confirmo:\nShilajit x5 por ₡59 700, envío gratis.\n¿Me confirmas si pagas contraentrega o SINPE al recibir?",
+        lastMessageSender: "bot",
+        labels: ["Carrito Abandonado"],
+      })
+    );
+    expect(c.status).not.toBe("sinpe_por_verificar");
+    expect(statusBoardStage(c.status)).not.toBe("pago_verificar");
   });
   it("chatbot disabled (human took over) -> por_cerrar", () => {
     const c = classifyConversation(makeConv({ chatbotDisabled: true }));

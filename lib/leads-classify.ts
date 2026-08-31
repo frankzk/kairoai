@@ -200,7 +200,29 @@ export function detectOrderInTranscript(messages: ConversationMessage[]): boolea
 // ─── Deteccion de pago adelantado (SINPE) por texto ──────────────────────────
 const SINPE_RE = /\b(sinpe|ya (te )?(hice|pase|envie) el sinpe|transferi|transferencia|ya pague|deposit)/i;
 
-export function detectSinpeText(text: string | null | undefined): boolean {
+/**
+ * "El cliente ya pago, hay que verificar el SINPE" — pero SOLO si lo dijo el
+ * cliente.
+ *
+ * QUIEN LO DICE ES PARTE DEL HECHO. El guion del bot ofrece el metodo de pago
+ * con estas mismas palabras ("¿Me confirmas si pagas contraentrega o SINPE al
+ * recibir?"), asi que mirar el texto sin mirar al autor convertia una PREGUNTA
+ * del bot en un COBRO del cliente.
+ *
+ * Medido antes de este cambio: de 146 leads cuyo ultimo mensaje menciona SINPE,
+ * 145 lo habian escrito el bot o la asesora y UNO el cliente (y ese ya tenia
+ * pedido). Los 8 que estaban en la cola de "pagos por verificar" eran los 8
+ * falsos positivos, con hasta 80 dias de antiguedad, ocupando el primer lugar
+ * de la cola de llamadas — el puesto mas caro del tablero.
+ *
+ * `sender` es el mismo campo que ya usa la regla de "conversando" mas abajo; el
+ * dato siempre estuvo ahi, esta regla no lo miraba.
+ */
+export function detectSinpeText(
+  text: string | null | undefined,
+  sender: string | null | undefined
+): boolean {
+  if (!isInbound(sender ?? "")) return false;
   return Boolean(text && SINPE_RE.test(text));
 }
 
@@ -244,9 +266,10 @@ export function classifyConversation(
     return base("cancelado", `conversacion cerrada en Icomfly${conv.closedReason ? `: ${conv.closedReason}` : ""}`);
   }
 
-  // 5) Pago adelantado (SINPE) detectado en el ultimo mensaje -> verificar.
-  if (detectSinpeText(conv.lastMessageText)) {
-    return base("sinpe_por_verificar", "SINPE detectado en el ultimo mensaje");
+  // 5) Pago adelantado (SINPE) que dijo EL CLIENTE -> verificar. Si la palabra
+  //    viene del guion del bot no es un pago: es una oferta de metodo de pago.
+  if (detectSinpeText(conv.lastMessageText, conv.lastMessageSender)) {
+    return base("sinpe_por_verificar", "el cliente dice que ya hizo el SINPE");
   }
 
   // 6) Dando datos / esperando pago, o humano gestionando -> POR CERRAR.

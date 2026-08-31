@@ -110,13 +110,35 @@ describe("countLeadStages", () => {
     expect(bodies[0]).toEqual({
       p_store_id: 1,
       p_since: "2026-08-01T00:00:00.000Z",
+      p_always_statuses: ["sinpe_por_verificar"],
     });
   });
 
   it("sin ventana manda null, para contar toda la poblacion", async () => {
     await leads.countLeadStages(1);
 
-    expect(bodies[0]).toEqual({ p_store_id: 1, p_since: null });
+    expect(bodies[0]).toEqual({
+      p_store_id: 1,
+      p_since: null,
+      p_always_statuses: ["sinpe_por_verificar"],
+    });
+  });
+
+  // La invariante que 0033 dejo anotada: si el conteo y la lista no exceptuan
+  // lo MISMO, los contadores dejan de sumar lo que la pantalla muestra.
+  it("exceptua de la ventana exactamente lo mismo que la lista", async () => {
+    await leads.countLeadStages(1, "2026-08-01T00:00:00.000Z");
+    const exentosEnElConteo = (bodies[0] as { p_always_statuses: string[] })
+      .p_always_statuses;
+
+    requests.length = 0;
+    await leads.listLeads({ storeId: 1, scope: "trabajo", sinceIso: "2026-08-01T00:00:00.000Z" });
+    const filtroDeLaLista = query();
+
+    expect(exentosEnElConteo.length).toBeGreaterThan(0);
+    for (const status of exentosEnElConteo) {
+      expect(filtroDeLaLista).toContain(status);
+    }
   });
 });
 
