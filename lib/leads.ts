@@ -227,11 +227,31 @@ export interface ListLeadsOptions {
   scope?: LeadScope;
 }
 
+/**
+ * Estados que NUNCA desaparecen por antiguedad.
+ *
+ * Un cliente que dice haber pagado no deja de importar por llevar un mes
+ * esperando: si acaso, importa mas. La cola ya los pone de primeros
+ * (`RANK_PAGO` en lib/leads-queue.ts), pero eso no servia de nada porque la
+ * ventana de 30 dias los descartaba ANTES de que llegaran a la cola — la misma
+ * falla que dejo invisibles a 174 recontactos vencidos, por otra puerta.
+ *
+ * Sale del catalogo y no escrito a mano: si manaña Honduras agrega otro estado
+ * de pago, entra solo.
+ */
+const ALWAYS_VISIBLE_STATUSES = statusesForBoard("pago_verificar");
+
 /** La ventana de antiguedad, igual para la lista y para los conteos. */
 function sinceFilter(sinceIso: string): string {
   // Oculta los muy antiguos, PERO conserva los que tienen seguimiento
-  // programado o estan marcados para atencion (no se pueden perder).
-  return `last_interaction_at.gte.${sinceIso},next_followup_at.not.is.null,needs_attention.is.true`;
+  // programado, estan marcados para atencion, o dicen tener un pago sin
+  // verificar (no se pueden perder).
+  return [
+    `last_interaction_at.gte.${sinceIso}`,
+    "next_followup_at.not.is.null",
+    "needs_attention.is.true",
+    `status.in.(${ALWAYS_VISIBLE_STATUSES.join(",")})`,
+  ].join(",");
 }
 
 /**
@@ -428,6 +448,9 @@ export async function countLeadStages(
   const { data, error } = await getDB().rpc("leads_stage_tuples", {
     p_store_id: storeId,
     p_since: sinceIso ?? null,
+    // Las mismas excepciones que `sinceFilter`, o los contadores dejan de
+    // sumar lo que la lista muestra.
+    p_always_statuses: ALWAYS_VISIBLE_STATUSES,
   });
   if (error) throw new Error(`countLeadStages: ${error.message}`);
   return countByStageTuples((data ?? []) as StageTuple[]);

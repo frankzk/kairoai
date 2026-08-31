@@ -261,6 +261,9 @@ export default function LeadsBoard() {
       if (!res.ok) throw new Error(data.error || "Error al cargar leads");
       setLeads(data.leads ?? []);
       setCounts(data.counts ?? null);
+      // Los contadores pueden fallar solos sin llevarse la lista (ver la ruta).
+      // Se avisa, pero el tablero se sigue trabajando.
+      setError(data.counts_error ? `Contadores no disponibles: ${data.counts_error}` : null);
       setArchive(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar leads");

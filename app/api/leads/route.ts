@@ -88,12 +88,29 @@ export async function GET(req: NextRequest) {
     // Los contadores se cuentan SIEMPRE contra toda la poblacion elegible, no
     // contra la mitad que se acaba de traer: son el numero que el equipo usa
     // para decidir a que etapa entrarle.
-    const counts = scope === "trabajo" ? await countLeadStages(store.id, sinceIso) : null;
+    //
+    // Y si fallan, NO se llevan puesta la lista. Los contadores son un adorno
+    // util; los leads son el trabajo del dia. Cuando esto iba dentro del try
+    // general, un error de los contadores devolvia `leads: []` con 500 y la
+    // asesora se quedaba sin tablero: paso de verdad al agregarle un parametro
+    // al RPC, que dejo dos sobrecargas vivas un minuto. Se avisa el error, se
+    // muestra la lista.
+    let counts: Awaited<ReturnType<typeof countLeadStages>> | null = null;
+    let countsError: string | undefined;
+    if (scope === "trabajo") {
+      try {
+        counts = await countLeadStages(store.id, sinceIso);
+      } catch (err) {
+        countsError = err instanceof Error ? err.message : "Error contando etapas";
+        console.error(`[leads counts] ${store.code}: ${countsError}`);
+      }
+    }
     return NextResponse.json({
       store: store.code,
       views: BOARD_VIEWS,
       scope,
       counts,
+      counts_error: countsError,
       leads: withStage,
     });
   } catch (err) {
