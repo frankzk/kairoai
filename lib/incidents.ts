@@ -158,8 +158,10 @@ export async function incidentTimeStats(storeId: number): Promise<IncidentTimeSt
         .eq("store_id", storeId).gte("created_at", sinceIso).order("id").range(from, to)
     ),
     fetchAll((from, to) =>
+      // Excluye eventos de llamada: sellan to_status con el estado ACTUAL (no una
+      // entrega), y contarian doble al registrar "contesto" sobre una ya resuelta.
       db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id)")
-        .eq("incidents.store_id", storeId).eq("to_status", "resuelta").gte("created_at", sinceIso)
+        .eq("incidents.store_id", storeId).eq("to_status", "resuelta").neq("kind", "llamada").gte("created_at", sinceIso)
         .order("id").range(from, to)
     ),
   ]);
@@ -254,8 +256,11 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
         .eq("store_id", storeId).gte("created_at", sinceIso).order("id").range(from, to)
     ),
     fetchAll((from, to) =>
+      // Solo transiciones reales a 'resuelta' (estado_cambiado manual o auto por
+      // entrega). Se excluyen las llamadas: su to_status es el estado actual, no
+      // una entrega, y duplicaban ENTREGAS al poner "contesto" en una ya resuelta.
       db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id, cod_amount)")
-        .eq("incidents.store_id", storeId).eq("to_status", "resuelta").gte("created_at", sinceIso)
+        .eq("incidents.store_id", storeId).eq("to_status", "resuelta").neq("kind", "llamada").gte("created_at", sinceIso)
         .order("id").range(from, to)
     ),
     fetchAll((from, to) =>
@@ -269,8 +274,10 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
         .order("id").range(from, to)
     ),
     fetchAll((from, to) =>
+      // Igual que resueltas: una llamada "contesto" sobre una novedad ya
+      // reprogramada NO es una reprogramacion nueva; se excluye para no inflar REPROG.
       db.from("incident_events").select("incident_id, created_at, incidents!inner(store_id)")
-        .eq("incidents.store_id", storeId).eq("to_status", "reprogramada").gte("created_at", sinceIso)
+        .eq("incidents.store_id", storeId).eq("to_status", "reprogramada").neq("kind", "llamada").gte("created_at", sinceIso)
         .order("id").range(from, to)
     ),
     // Pedidos despachados (con guia) por fecha de pedido, para la tasa Inc./Despachados.

@@ -19,6 +19,22 @@ describe("phoneFromNote (celular en la nota de texto del pedido)", () => {
     expect(phoneFromNote("Pedido #8927 - 150 mts al sur de la iglesia")).toBeNull();
   });
 
+  it("no roba el 6 del codigo 506 cuando el bloque tras 506 es invalido", () => {
+    // Nota real #MCRC18095: tras 506 viene "901100459" (no arranca en digito CR).
+    // El regex previo devolvia "69011004" robando el 6 del 506. Ahora: null.
+    expect(phoneFromNote("Pedido #7707 - Venta por bot - WhatsApp +506901100459")).toBeNull();
+  });
+
+  it("toma los 8 digitos que siguen a un 506 valido", () => {
+    // Nota real #MCRC16678.
+    expect(phoneFromNote("Pedido #6782 - Venta por bot - WhatsApp +506206270561")).toBe("20627056");
+  });
+
+  it("descarta bloques de digitos malformados sin frontera CR", () => {
+    // Nota real #MCRC16593: prefijo "+119", no es un celular CR reconocible.
+    expect(phoneFromNote("Venta por bot - WhatsApp +119201609509")).toBeNull();
+  });
+
   it("devuelve null cuando no hay celular", () => {
     expect(phoneFromNote("")).toBeNull();
     expect(phoneFromNote(null)).toBeNull();

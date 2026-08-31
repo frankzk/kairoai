@@ -9172,8 +9172,14 @@ function phoneFromNoteAttributes(
 function phoneFromNote(note?: string | null): string | null {
   if (!note) return null;
   const compact = String(note).replace(/[\s()./+-]/g, "");
-  const m = compact.match(/(?:506)?([2678]\d{7})/);
-  return m ? m[1] : null;
+  // Igual que phoneFromNote en lib/finance-orders.ts (mantener en sincronia).
+  // 1) Con codigo 506: 8 digitos DESPUES del 506, nunca el "6" del propio 506.
+  const withCode = compact.match(/506([2678]\d{7})/);
+  if (withCode) return withCode[1];
+  // 2) Numero CR de 8 digitos por su forma, con frontera no numerica antes para
+  //    no recortarlo de un bloque de digitos mas largo y malformado.
+  const bare = compact.match(/(?:^|\D)([2678]\d{7})/);
+  return bare ? bare[1] : null;
 }
 
 function persistedOrderToSummary(order: Record<string, unknown>): ShopifyOrderSummary {
