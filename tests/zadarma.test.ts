@@ -34,6 +34,15 @@ describe("firma de la API de Zadarma", () => {
     );
   });
 
+  it("escapa el '+' del numero internacional", () => {
+    // La firma se calcula sobre esta misma cadena y la URL se arma con ella,
+    // asi que el escape tiene que ser el mismo en los dos lados o Zadarma
+    // responde "not authorized".
+    expect(buildParamsString({ to: "+50688887777", from: "100", sip: "100" })).toBe(
+      "from=100&sip=100&to=%2B50688887777"
+    );
+  });
+
   it("codifica espacios como '+' y reservados como PHP", () => {
     expect(buildParamsString({ b: "hola mundo", a: "x+y/z", c: "ñ" })).toBe(
       "a=x%2By%2Fz&b=hola+mundo&c=%C3%B1"
