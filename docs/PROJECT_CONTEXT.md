@@ -1115,6 +1115,42 @@ registrando la asesora a mano con los botones que ya existían
 (Contestó / No contesta / Buzón…): la centralita reporta `answered` también
 cuando contesta un buzón, así que no se pre-selecciona nada.
 
+### Kairo es solo para llamadas SALIENTES
+
+Decisión de negocio (agosto 2026): **las asesoras no atienden llamadas
+entrantes desde Kairo**. El seguimiento entrante va por WhatsApp; el teléfono
+web existe solo para llamar.
+
+Eso **no se implementa en Kairo, se configura en Zadarma**: en el escenario de
+llamadas entrantes se sacan las extensiones de las asesoras, y así la
+centralita nunca les timbra. Hacerlo del lado de Kairo sería tapar el síntoma —
+la extensión seguiría registrada, la centralita seguiría timbrándola y el
+sonido igual sonaría, solo que con el widget escondido.
+
+Las entrantes **se siguen registrando** en `zadarma_calls`: el webhook recibe
+`NOTIFY_START` de todas las llamadas de la cuenta, timbre donde timbre. O sea
+que se puede ver quién llamó y no fue atendido aunque nadie conteste.
+
+Consecuencia útil: con las entrantes apagadas, **si el teléfono web suena es
+siempre la propia llamada saliente de la asesora**. Deja de haber ambigüedad y
+el aviso del botón puede ser tajante: "contestá el verde".
+
+### Por qué el timbre intermedio no se puede quitar
+
+La pregunta sale sola: si solo hay salientes, ¿para qué timbrar primero a la
+asesora? Porque así funciona `/v1/request/callback/`, y la única forma de
+evitarlo sería que el widget marcara él mismo desde el navegador.
+
+**No se puede: Zadarma no expone API para eso.** Verificado en el navegador —
+`window.ZadarmaWebphoneAPI` y `window.zdrmWebrtcPhoneInterface` son clases
+cuyo prototipo tiene solo `constructor`, y las instancias (`zdrmWebPhone`,
+`zdrmWebrtcPhone`, `webRTCSocket`) están `undefined` a nivel de ventana: el
+teléfono vive en un closure.
+
+Llegar a él exigiría hurgar en las tripas del widget, que es exactamente lo
+que rompió producción dos veces (ver la nota de `lib/webphone.ts`). El timbre
+intermedio se queda, y lo que se arregla es que el aviso lo explique.
+
 ### Asignar extensiones
 
 `/api/zadarma/extensions` lee las extensiones reales de la centralita con
