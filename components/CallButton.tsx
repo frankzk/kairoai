@@ -56,13 +56,17 @@ export default function CallButton({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "No se pudo iniciar la llamada");
-      // La centralita acepto la peticion; que timbre depende de que el
-      // telefono web este abierto. Decirlo asi y no "te estamos timbrando":
-      // prometer el timbre y que no suene deja a la asesora esperando sin
-      // saber que mirar.
+      // La centralita NO marca al cliente de una: primero timbra el telefono
+      // web de la asesora y solo cuando ella descuelga marca al cliente. Hay
+      // que decir eso y no "debe timbrar tu telefono", que se lee como que ya
+      // esta sonando el del cliente y no hay nada que hacer.
+      //
+      // Medido: en 5 dias, 72 llamadas murieron en esa pata porque nadie
+      // descolgo. Ninguna llego a marcarse al cliente, y en el tablero se veian
+      // como "cancelada", o sea como si el cliente hubiera colgado.
       setFeedback({
         kind: "ok",
-        text: "Llamada pedida. Debe timbrar tu teléfono web en unos segundos.",
+        text: "Va a timbrar TU teléfono: contestá el botón verde y ahí se marca al cliente.",
       });
     } catch (err) {
       setFeedback({
@@ -71,7 +75,10 @@ export default function CallButton({
       });
     } finally {
       setCalling(false);
-      setTimeout(() => setFeedback(null), 6000);
+      // 15s y no 6: el aviso tiene que seguir en pantalla cuando el telefono
+      // empieza a timbrar (tarda unos segundos) y mientras dura el timbre. Si
+      // desaparece antes, la asesora ve sonar algo sin la instruccion al lado.
+      setTimeout(() => setFeedback(null), 15_000);
     }
   }
 
@@ -86,9 +93,12 @@ export default function CallButton({
         Llamar
       </Button>
       {feedback && (
+        // El aviso de exito es una INSTRUCCION, no una confirmacion: si no se
+        // lee, la llamada no llega al cliente. Por eso va mas grande que el
+        // resto de la letra chica de la ficha.
         <p
-          className={`max-w-[16rem] text-right text-[10px] ${
-            feedback.kind === "ok" ? "text-emerald-400" : "text-destructive"
+          className={`max-w-[16rem] text-right ${
+            feedback.kind === "ok" ? "text-xs text-emerald-400" : "text-[10px] text-destructive"
           }`}
         >
           {feedback.text}
