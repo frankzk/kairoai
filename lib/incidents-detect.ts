@@ -207,6 +207,31 @@ export interface DetectionResult {
   event?: DetectionEvent;
 }
 
+/**
+ * Refresco de snapshot SIN transicion de estado: si no cambia nada, no se
+ * escribe.
+ *
+ * POR QUE EXISTE: `applyDetection` devolvia "update" para toda novedad
+ * existente, cambiara algo o no, porque el patch siempre trae los tres campos
+ * del snapshot del courier. Con 2.302 novedades (2.105 en estado terminal, que
+ * por definicion ya no se mueven) eso es reescribir la tabla entera cada vez.
+ *
+ * Medido en el incidente del 03/09: el boton "Detectar novedades" hizo 1.031
+ * escrituras y solo TRES correspondian a un cambio real. Las otras 1.028
+ * copaban la cola de PostgREST hasta que empezo a responder 503 — y el que se
+ * quedaba sin tablero era el modulo de Leads, que no tiene nada que ver.
+ *
+ * null y undefined cuentan como el mismo valor: el candidato trae undefined
+ * donde la fila tiene null, y tomar eso por un cambio devolveria el problema.
+ */
+function refrescoDeSnapshot(existing: Incident, patch: Partial<Incident>): DetectionResult {
+  const igual = (a: unknown, b: unknown) => (a ?? null) === (b ?? null);
+  const cambia = (Object.keys(patch) as Array<keyof Incident>).some(
+    (campo) => !igual(patch[campo], existing[campo])
+  );
+  return cambia ? { action: "update", patch } : { action: "skip", patch: {} };
+}
+
 // Decide que hacer con una candidata frente al registro existente. Reconcilia el
 // ESTADO de las novedades NO terminales con el outcome del courier:
 //   entregada -> resuelta · devuelta -> perdida · reprogramada que fallo ->
@@ -272,7 +297,9 @@ export function applyDetection(
   if (!existing.cod_amount && candidate.cod_amount) patch.cod_amount = candidate.cod_amount;
 
   // Estados cerrados a mano (resuelta/perdida/descartada): nunca se reabren.
-  if (TERMINAL_STATUSES.includes(existing.status)) return { action: "update", patch };
+  // Son 2.105 de 2.302 novedades: si igual se reescriben, la corrida completa
+  // toca casi toda la tabla para nada.
+  if (TERMINAL_STATUSES.includes(existing.status)) return refrescoDeSnapshot(existing, patch);
 
   // --- No terminales: el estado se reconcilia con el outcome del courier. ---
   // Entrega confirmada -> Resuelta.
@@ -336,5 +363,5 @@ export function applyDetection(
   }
 
   // Falla activa sin condicion de cambio: solo refresca el snapshot.
-  return { action: "update", patch };
+  return refrescoDeSnapshot(existing, patch);
 }

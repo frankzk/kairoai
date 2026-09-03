@@ -472,16 +472,43 @@ export async function incidentExecutiveStats(storeId: number): Promise<IncidentE
 
 // Conjunto de claves existentes, para que la deteccion automatica descarte
 // entregas ya confirmadas sin consultar fila por fila.
-export async function listIncidentKeys(storeId: number): Promise<Set<string>> {
-  const { data, error } = await getDB()
-    .from("incidents")
-    .select("incident_key")
-    .eq("store_id", storeId)
-    .limit(10000);
-  if (error) throw new Error(`listIncidentKeys: ${error.message}`);
-  const keys = new Set<string>();
-  for (const row of (data ?? []) as Array<{ incident_key: string }>) keys.add(row.incident_key);
-  return keys;
+/**
+ * Todas las novedades de la tienda, indexadas por su clave de envio.
+ *
+ * REEMPLAZA A `listIncidentKeys`, que tenia DOS problemas:
+ *
+ * 1. Pedia `.limit(10000)` pero PostgREST corta las respuestas en 1.000 filas
+ *    sin avisar. Con 2.302 novedades en Costa Rica, el conjunto de claves veia
+ *    el 43%. La deteccion usa esas claves para decidir si un envio ya entregado
+ *    o devuelto corresponde a una novedad abierta que hay que CERRAR; una clave
+ *    que no estaba en la lista truncada se descartaba con `continue`, asi que la
+ *    novedad se quedaba abierta para siempre. Medido: 26 novedades cuyo paquete
+ *    el courier ya entrego y 42 ya devueltos seguian figurando como trabajo
+ *    pendiente (68 de 197 abiertas, el 35%).
+ *
+ * 2. Traia solo la clave, asi que el upsert tenia que ir a buscar la fila
+ *    entera de a una — un viaje por candidata.
+ *
+ * Devolviendo la fila completa se resuelven las dos cosas con una sola lectura
+ * paginada.
+ */
+export async function listIncidentsByKey(storeId: number): Promise<Map<string, Incident>> {
+  const pageSize = 1000;
+  const byKey = new Map<string, Incident>();
+  for (let from = 0; from < 200000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("incidents")
+      .select("*")
+      .eq("store_id", storeId)
+      // Orden estable: sin el, dos paginas pueden repetir u omitir filas.
+      .order("id")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listIncidentsByKey: ${error.message}`);
+    const page = (data ?? []) as Incident[];
+    for (const row of page) if (row.incident_key) byKey.set(row.incident_key, row);
+    if (page.length < pageSize) break;
+  }
+  return byKey;
 }
 
 // Novedades de Moovin/Forza con nombre o telefono vacio (y que no son gestion
@@ -754,18 +781,31 @@ export async function updateIncident(
 // Deteccion automatica idempotente: busca por incident_key y decide insertar,
 // actualizar o ignorar via applyDetection (respeta gestion manual y terminales).
 export async function upsertDetectedIncident(
-  candidate: DetectedIncident
+  candidate: DetectedIncident,
+  /**
+   * La fila existente, si el llamador ya la tiene cargada (null = ya comprobo
+   * que no hay). Se pasa para evitar un SELECT por candidata: ese era el otro
+   * lado del pico del 03/09 — 1.066 lecturas y 1.057 escrituras en cinco
+   * minutos, una por novedad, que dejaron a PostgREST devolviendo 503 a todo el
+   * resto de la aplicacion. Sin el argumento se sigue comportando como antes.
+   */
+  preloaded?: { existing: Incident | null }
 ): Promise<{ incident: Incident | null; outcome: "created" | "updated" | "skipped" }> {
   if (!candidate.incident_key) return { incident: null, outcome: "skipped" };
   const db = getDB();
-  const { data: existingRow, error: findError } = await db
-    .from("incidents")
-    .select("*")
-    .eq("store_id", candidate.store_id)
-    .eq("incident_key", candidate.incident_key)
-    .maybeSingle();
-  if (findError) throw new Error(`upsertDetectedIncident: ${findError.message}`);
-  const existing = (existingRow as Incident | null) ?? null;
+  let existing: Incident | null;
+  if (preloaded) {
+    existing = preloaded.existing;
+  } else {
+    const { data: existingRow, error: findError } = await db
+      .from("incidents")
+      .select("*")
+      .eq("store_id", candidate.store_id)
+      .eq("incident_key", candidate.incident_key)
+      .maybeSingle();
+    if (findError) throw new Error(`upsertDetectedIncident: ${findError.message}`);
+    existing = (existingRow as Incident | null) ?? null;
+  }
 
   const decision = applyDetection(existing, candidate);
   if (decision.action === "skip") return { incident: existing, outcome: "skipped" };

@@ -350,6 +350,80 @@ describe("applyDetection", () => {
     expect(r.patch.status).toBeUndefined();
   });
 
+  // El pico del 03/09: el boton "Detectar novedades" hizo 1.031 escrituras y
+  // solo TRES eran un cambio real. Las otras 1.028 copaban la cola de PostgREST
+  // hasta que empezo a responder 503 al resto de la aplicacion.
+  describe("no escribe cuando no cambio nada", () => {
+    /**
+     * Una novedad que ya tiene guardado exactamente lo que trae la candidata:
+     * el snapshot del courier Y los datos que las reglas de "rellenar vacios"
+     * completarian. Si alguno quedara vacio, esa regla dispararia sola y el
+     * caso dejaria de probar lo que dice probar.
+     */
+    const alDia = (over: Partial<Incident> = {}) =>
+      incident({
+        detail: cand.detail,
+        last_tracking_status: cand.last_tracking_status,
+        last_tracking_group: cand.last_tracking_group,
+        order_name: cand.order_name,
+        guide_number: cand.guide_number,
+        shopify_order_id: cand.shopify_order_id,
+        customer_name: cand.customer_name,
+        customer_phone: cand.customer_phone,
+        courier: cand.courier,
+        cod_amount: cand.cod_amount,
+        ...over,
+      });
+
+    it("una terminal ya al dia se salta", () => {
+      // Son 2.105 de 2.302 novedades: por definicion no se mueven mas, asi que
+      // reescribirlas es tocar casi toda la tabla para nada.
+      expect(applyDetection(alDia({ status: "perdida" }), cand).action).toBe("skip");
+      expect(applyDetection(alDia({ status: "resuelta" }), cand).action).toBe("skip");
+    });
+
+    it("una falla activa ya al dia se salta", () => {
+      expect(applyDetection(alDia({ status: "sin_contestar" }), cand).action).toBe("skip");
+    });
+
+    it("pero si el snapshot del courier cambio, si escribe", () => {
+      const r = applyDetection(alDia({ status: "perdida", last_tracking_status: "otra cosa" }), cand);
+      expect(r.action).toBe("update");
+      expect(r.patch.last_tracking_status).toBe(cand.last_tracking_status);
+    });
+
+    it("rellenar un dato vacio cuenta como cambio", () => {
+      const conTelefono = { ...cand, customer_phone: "50688887777" };
+      const r = applyDetection(alDia({ status: "perdida", customer_phone: "" }), conTelefono);
+      expect(r.action).toBe("update");
+      expect(r.patch.customer_phone).toBe("50688887777");
+    });
+
+    it("una transicion de estado real NUNCA se salta", () => {
+      // Aunque el snapshot venga identico, cerrar la novedad es el trabajo.
+      const delivered = detectMoovinIncident(moovin({ id_package: "G1", latest_group: "delivered" }))!;
+      const r = applyDetection(
+        incident({
+          status: "sin_contestar",
+          detail: delivered.detail,
+          last_tracking_status: delivered.last_tracking_status,
+          last_tracking_group: delivered.last_tracking_group,
+        }),
+        delivered
+      );
+      expect(r.action).toBe("update");
+      expect(r.patch.status).toBe("resuelta");
+    });
+
+    it("null y undefined son el mismo valor, no un cambio", () => {
+      // La candidata trae undefined donde la fila guarda null. Tomarlo por un
+      // cambio devolveria la reescritura completa por la puerta de atras.
+      const sinDetalle = { ...cand, detail: undefined as unknown as string };
+      const fila = alDia({ status: "perdida", detail: null as unknown as string });
+      expect(applyDetection(fila, sinDetalle).action).toBe("skip");
+    });
+  });
+
   it("auto-resuelve cuando el courier confirma la entrega", () => {
     const delivered = detectMoovinIncident(moovin({ id_package: "G1", latest_group: "delivered" }))!;
     const r = applyDetection(incident({ status: "sin_contestar", manual_override: false }), delivered);

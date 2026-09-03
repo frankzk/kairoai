@@ -16,7 +16,7 @@ import { detectForzaIncident, detectMoovinIncident } from "@/lib/incidents-detec
 import {
   backfillIncidentContact,
   getIncidentWatermark,
-  listIncidentKeys,
+  listIncidentsByKey,
   listIncidentsMissingContact,
   recordIncidentRun,
   setIncidentWatermark,
@@ -141,10 +141,10 @@ export async function detectIncidents(full: boolean): Promise<DetectIncidentsRes
     const tracking = await listMoovinTracking({ since });
     if (tracking.length) {
       for (const store of moovinStores) {
-        const [rows, shopifyByGuide, existingKeys] = await Promise.all([
+        const [rows, shopifyByGuide, existentes] = await Promise.all([
           listLogisticsRows(undefined, store.id),
           loadShopifyByGuide(store.id),
-          listIncidentKeys(store.id),
+          listIncidentsByKey(store.id),
         ]);
         const byGuide = indexByGuide(rows);
         for (const t of tracking) {
@@ -159,12 +159,14 @@ export async function detectIncidents(full: boolean): Promise<DetectIncidentsRes
           // una novedad para ese envio: sirve para cerrarla, no para crear una.
           if (
             (candidate.last_tracking_group === "delivered" || candidate.last_tracking_group === "returned") &&
-            !existingKeys.has(candidate.incident_key)
+            !existentes.has(candidate.incident_key)
           ) {
             continue;
           }
           scanned += 1;
-          const { outcome } = await upsertDetectedIncident(candidate);
+          const { outcome } = await upsertDetectedIncident(candidate, {
+            existing: existentes.get(candidate.incident_key) ?? null,
+          });
           bump(outcome);
         }
       }
@@ -181,10 +183,10 @@ export async function detectIncidents(full: boolean): Promise<DetectIncidentsRes
     const tracking = await listForzaTracking(store.id, { since });
     if (!tracking.length) continue;
 
-    const [rows, shopifyByGuide, existingKeys] = await Promise.all([
+    const [rows, shopifyByGuide, existentes] = await Promise.all([
       listLogisticsRows(undefined, store.id),
       loadShopifyByGuide(store.id),
-      listIncidentKeys(store.id),
+      listIncidentsByKey(store.id),
     ]);
     const byGuide = indexByGuide(rows);
     for (const t of tracking) {
@@ -196,12 +198,14 @@ export async function detectIncidents(full: boolean): Promise<DetectIncidentsRes
       if (!candidate) continue;
       if (
         (candidate.last_tracking_group === "delivered" || candidate.last_tracking_group === "returned") &&
-        !existingKeys.has(candidate.incident_key)
+        !existentes.has(candidate.incident_key)
       ) {
         continue;
       }
       scanned += 1;
-      const { outcome } = await upsertDetectedIncident(candidate);
+      const { outcome } = await upsertDetectedIncident(candidate, {
+        existing: existentes.get(candidate.incident_key) ?? null,
+      });
       bump(outcome);
     }
     const next = maxChecked(tracking, since ?? "");
