@@ -515,16 +515,23 @@ export async function listIncidentsByKey(storeId: number): Promise<Map<string, I
 // manual), para que el cron las re-enriquezca desde el pedido de Shopify
 // matcheado por guia.
 export async function listIncidentsMissingContact(storeId: number): Promise<Incident[]> {
-  const { data, error } = await getDB()
-    .from("incidents")
-    .select("*")
-    .eq("store_id", storeId)
-    .eq("manual_override", false)
-    .neq("guide_number", "")
-    .or("customer_name.is.null,customer_name.eq.,customer_phone.is.null,customer_phone.eq.")
-    .limit(2000);
+  // Paginado, no `.limit(2000)`: PostgREST corta en 1.000 en silencio. Hoy esta
+  // consulta devuelve 0 filas, asi que el tope no molestaba a nadie — pero el
+  // dia que el relleno de contacto se atrase, se rellenarian 1.000 y las demas
+  // quedarian sin nombre ni telefono sin que nada lo diga.
+  const { data, error } = await fetchAll<Incident>((from, to) =>
+    getDB()
+      .from("incidents")
+      .select("*")
+      .eq("store_id", storeId)
+      .eq("manual_override", false)
+      .neq("guide_number", "")
+      .or("customer_name.is.null,customer_name.eq.,customer_phone.is.null,customer_phone.eq.")
+      .order("id")
+      .range(from, to)
+  );
   if (error) throw new Error(`listIncidentsMissingContact: ${error.message}`);
-  return (data ?? []) as Incident[];
+  return data;
 }
 
 // Rellena nombre/telefono vacios SIN marcar manual_override (lo hace el cron de

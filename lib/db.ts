@@ -23,14 +23,41 @@ export function getDB(): SupabaseClient {
 
 const RETRYABLE_SUPABASE_STATUSES = new Set([408, 429, 500, 502, 503, 504, 522, 524]);
 
-async function supabaseFetchWithReadRetry(
+/**
+ * Cuanto aguanta una lectura antes de rendirse.
+ *
+ * POR QUE ESTOS NUMEROS: el 03/09/2026 PostgREST se REINICIO (los logs muestran
+ * "Starting PostgREST 14.5" y, en el arranque, "connection refused" contra
+ * Postgres). Mientras tanto Cloudflare devolvia 521 y toda la aplicacion se caia
+ * a la vez — incluido el tablero de Leads, que no tenia nada que ver con lo que
+ * disparo el problema.
+ *
+ * El reintento de antes hacia 3 intentos con esperas de 250 y 500 ms: 0,75
+ * segundos en total. Un reinicio tarda entre 10 y 30, asi que se rendia casi de
+ * inmediato y el error llegaba a la pantalla. Con esta escalera se aguantan ~31
+ * segundos, que cubre el reinicio observado.
+ *
+ * NO SE TOCAN LAS ESCRITURAS: un POST/PATCH que fallo puede haberse aplicado
+ * igual, asi que reintentarlo puede duplicar. Eso ya era asi y sigue igual.
+ *
+ * El tope de 30 s deja margen bajo el `maxDuration` de 60 s de las rutas mas
+ * cortas; las de 300 s tienen de sobra.
+ */
+export const READ_RETRY_BACKOFF_MS = [500, 1_000, 2_000, 4_000, 8_000, 15_000];
+
+/** Ruido aleatorio para que N funciones no reintenten todas en el mismo instante. */
+function conJitter(ms: number): number {
+  return ms + Math.floor(Math.random() * (ms * 0.25));
+}
+
+export async function supabaseFetchWithReadRetry(
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> {
   const method =
     (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
   const canRetry = method === "GET" || method === "HEAD";
-  const attempts = canRetry ? 3 : 1;
+  const attempts = canRetry ? READ_RETRY_BACKOFF_MS.length + 1 : 1;
   let lastError: unknown;
 
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -48,7 +75,7 @@ async function supabaseFetchWithReadRetry(
       if (!canRetry || attempt === attempts - 1) throw error;
     }
 
-    await sleep(250 * (attempt + 1));
+    await sleep(conJitter(READ_RETRY_BACKOFF_MS[attempt]));
   }
 
   throw lastError instanceof Error ? lastError : new Error("Supabase no respondio");
