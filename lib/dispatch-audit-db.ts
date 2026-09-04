@@ -12,7 +12,12 @@
 import { getDB } from "./db";
 import { auditRows, type AuditFinding, type AuditInput, type AuditSummary } from "./dispatch-audit";
 
-const MAX_ROWS = 2000;
+// Se pagina de a 1.000 porque PostgREST corta ahi EN SILENCIO: un `.limit(2000)`
+// no topa, miente. Hoy son 496 envios, asi que todavia no mordia — pero una
+// auditoria que solo mira los 1.000 mas nuevos y calla el resto es peor que no
+// tenerla, porque reporta "todo limpio" sobre lo que nunca miro.
+const PAGE_SIZE = 1000;
+const MAX_PAGES = 20;
 
 interface ShipmentRow {
   guide_number: string | null;
@@ -47,6 +52,35 @@ export interface DispatchAuditResult {
   crm_synced_at: string | null;
 }
 
+/**
+ * Todos los envios de la tienda, de a paginas.
+ *
+ * El `.order()` lleva `id` de desempate: `latest_at` se repite (varios envios
+ * comparten el mismo minuto) y sin un orden total dos paginas pueden traer la
+ * misma fila o saltarse otra.
+ */
+async function fetchAllShipments(
+  storeId: number
+): Promise<{ data: Array<ShipmentRow & { checked_at: string | null }>; error: { message: string } | null }> {
+  const db = getDB();
+  const all: Array<ShipmentRow & { checked_at: string | null }> = [];
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const from = i * PAGE_SIZE;
+    const { data, error } = await db
+      .from("courier_shipments")
+      .select("guide_number,normalized_status,latest_at,raw_payload,checked_at")
+      .eq("store_id", storeId)
+      .order("latest_at", { ascending: false, nullsFirst: false })
+      .order("id")
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) return { data: all, error };
+    const rows = (data ?? []) as Array<ShipmentRow & { checked_at: string | null }>;
+    all.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+  }
+  return { data: all, error: null };
+}
+
 export async function runDispatchAudit(opts: {
   storeId: number;
   now?: number;
@@ -55,12 +89,7 @@ export async function runDispatchAudit(opts: {
   const { storeId } = opts;
 
   const [shipmentsRes, crmFreshnessRes] = await Promise.all([
-    db
-      .from("courier_shipments")
-      .select("guide_number,normalized_status,latest_at,raw_payload,checked_at")
-      .eq("store_id", storeId)
-      .order("latest_at", { ascending: false, nullsFirst: false })
-      .limit(MAX_ROWS),
+    fetchAllShipments(storeId),
     db
       .from("icomfly_orders")
       .select("synced_at")
