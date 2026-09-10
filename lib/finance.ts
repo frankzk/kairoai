@@ -219,8 +219,27 @@ export async function deleteSettlementImport(
   if (error) throw new Error(`deleteSettlementImport: ${error.message}`);
 }
 
+/**
+ * Lo que se conoce al importar el Excel. Los campos del cobro (received_usd,
+ * reference_rate, receipt_path...) NO van aca: se llenan despues, cuando la
+ * plata efectivamente entra a Mercury. Ver 0035_settlement_receipts.sql.
+ */
+export type NewSettlementImport = Omit<
+  SettlementImport,
+  | "id"
+  | "created_at"
+  | "store_id"
+  | "received_usd"
+  | "received_at"
+  | "reference_rate"
+  | "receipt_path"
+  | "received_note"
+  | "received_by"
+  | "received_recorded_at"
+>;
+
 export async function createSettlementImport(
-  input: Omit<SettlementImport, "id" | "created_at" | "store_id">,
+  input: NewSettlementImport,
   storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<SettlementImport> {
   const { data, error } = await getDB()

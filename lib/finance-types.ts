@@ -66,6 +66,20 @@ export interface SettlementImport {
   total_to_liquidate: number;
   status_summary: Record<string, { count: number; amount_to_liquidate: number }>;
   created_at: string;
+  // ─── Cobro: el doble check de que la plata llego (ver 0035) ───────────────
+  // `total_to_liquidate` es lo que Boxful DICE que va a pagar, en colones; esto
+  // es lo que entro a Mercury, en dolares. La diferencia contra la tasa de
+  // mercado es la perdida por tipo de cambio, que antes no figuraba en ninguna
+  // parte. Todo nullable: las liquidaciones viejas no lo tienen.
+  received_usd: number | null;
+  received_at: string | null;
+  /** Tasa de mercado del dia del cobro (moneda local por 1 USD). */
+  reference_rate: number | null;
+  /** Ruta del comprobante en el bucket privado `settlement-receipts`. */
+  receipt_path: string | null;
+  received_note: string | null;
+  received_by: string | null;
+  received_recorded_at: string | null;
 }
 
 export interface SettlementOrderItem {
