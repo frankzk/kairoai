@@ -58,6 +58,12 @@ import type {
   SettlementRow,
 } from "@/lib/finance-types";
 import {
+  checkReceipt,
+  VERDICT_META,
+  type ReceiptCheck,
+  type ReceiptVerdict,
+} from "@/lib/settlement-receipt";
+import {
   buildWynTrackingUrl,
   isWynGuide,
   normalizeWynGuide,
@@ -4438,16 +4444,31 @@ function SettlementsTab({
     }
     return counts;
   }, [rows]);
+  // Al guardar un cobro, la fila actualizada se guarda aca y se mezcla sobre
+  // `imports` (que lo maneja el padre). Asi el badge de la lista y el panel de
+  // detalle se actualizan a la vez sin cablear un refresh hasta arriba; el
+  // proximo refresco del padre trae lo mismo desde la base.
+  const [cobroOverrides, setCobroOverrides] = useState<Map<number, SettlementImport>>(
+    () => new Map()
+  );
+  const importsConCobro = useMemo(
+    () => imports.map((item) => cobroOverrides.get(item.id) ?? item),
+    [imports, cobroOverrides]
+  );
+  const handleCobroGuardado = useCallback((updated: SettlementImport) => {
+    setCobroOverrides((prev) => new Map(prev).set(updated.id, updated));
+  }, []);
+
   const sortedImports = useMemo(() => {
-    return [...imports].sort((a, b) => {
+    return [...importsConCobro].sort((a, b) => {
       const aDate = a.period_end || a.created_at || "";
       const bDate = b.period_end || b.created_at || "";
       const dateSort = bDate.localeCompare(aDate) || b.created_at.localeCompare(a.created_at);
       return importSort === "recent" ? dateSort : -dateSort;
     });
-  }, [importSort, imports]);
+  }, [importSort, importsConCobro]);
   const selectedImport =
-    imports.find((item) => item.id === selectedImportId) ?? sortedImports[0] ?? null;
+    importsConCobro.find((item) => item.id === selectedImportId) ?? sortedImports[0] ?? null;
   const activeSettlementImportId = selectedImport?.id ?? null;
   const selectedRows = useMemo(
     () =>
@@ -4638,6 +4659,9 @@ function SettlementsTab({
                         ) : (
                           <Badge variant="success">0 sin match</Badge>
                         )}
+                        <Badge variant={COBRO_BADGE[cobroDe(item).verdict]} title={VERDICT_META[cobroDe(item).verdict].hint}>
+                          {VERDICT_META[cobroDe(item).verdict].label}
+                        </Badge>
                         {shopifyCoverage?.oldest &&
                           item.period_end &&
                           item.period_end < shopifyCoverage.oldest.slice(0, 10) && (
@@ -4692,6 +4716,13 @@ function SettlementsTab({
             <MiniStat label="Sin match" value={settlementMatchCounts.unmatched} />
             <MiniStat label="A liquidar" value={currency(selectedImport?.total_to_liquidate ?? 0)} />
           </div>
+          {selectedImport && (
+            <CobroLiquidacion
+              item={selectedImport}
+              storeCode={storeCode}
+              onSaved={handleCobroGuardado}
+            />
+          )}
           <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-muted-foreground">
               Mostrando {visibleSettlementRows.length} de {selectedRows.length} filas de esta liquidacion.
@@ -8854,6 +8885,233 @@ function AlertStat({
       <span className="text-muted-foreground">{label}</span>
       <span className="font-semibold text-foreground">{value}</span>
     </span>
+  );
+}
+
+// ─── Cobro de una liquidacion ────────────────────────────────────────────────
+// `total_to_liquidate` es lo que Boxful DICE que va a pagar, en colones. La
+// plata llega a Mercury en DOLARES. Este bloque registra lo que llego de verdad
+// y mide la diferencia contra la tasa de mercado — la perdida por tipo de
+// cambio, que antes no figuraba en ningun lado.
+
+const COBRO_BADGE: Record<ReceiptVerdict, "muted" | "success" | "warning"> = {
+  sin_registrar: "muted",
+  sin_referencia: "muted",
+  ok: "success",
+  revisar: "warning",
+};
+
+/** El veredicto de una liquidacion, para el badge de la lista. */
+function cobroDe(item: SettlementImport): ReceiptCheck {
+  return checkReceipt({
+    declaredLocal: Number(item.total_to_liquidate),
+    receivedUsd: Number(item.received_usd ?? 0),
+    referenceRate: item.reference_rate,
+  });
+}
+
+const usd = (n: number) =>
+  `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function CobroLiquidacion({
+  item,
+  storeCode,
+  onSaved,
+}: {
+  item: SettlementImport;
+  storeCode: FinanceStoreCode;
+  onSaved: (updated: SettlementImport) => void;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState("");
+  const [tasaDelDia, setTasaDelDia] = useState<number | null>(null);
+
+  const check = cobroDe(item);
+  const meta = VERDICT_META[check.verdict];
+
+  // La tasa del dia solo sirve como sugerencia para un cobro de HOY: el
+  // proveedor gratuito no da historicos, asi que para un cobro viejo hay que
+  // escribirla a mano. Por eso el campo nunca se autocompleta en silencio.
+  useEffect(() => {
+    if (!abierto) return;
+    let cancelado = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/finance/exchange-rate?from=USD", { cache: "no-store" });
+        const json = (await res.json()) as { rate?: number };
+        if (!cancelado && res.ok && json.rate) setTasaDelDia(Number(json.rate));
+      } catch {
+        /* la sugerencia es opcional */
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, [abierto]);
+
+  async function guardar(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setGuardando(true);
+    setError("");
+    try {
+      const data = new FormData(event.currentTarget);
+      data.set("store", storeCode);
+      data.set("import_id", String(item.id));
+      const res = await fetch("/api/finance/settlements/receipt", { method: "POST", body: data });
+      const json = await readApiJson(res);
+      if (!res.ok) throw new Error(json.error ?? "No se pudo guardar el cobro");
+      onSaved(json.import as SettlementImport);
+      setAbierto(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo guardar el cobro");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function verComprobante() {
+    setError("");
+    try {
+      const res = await fetch(
+        `/api/finance/settlements/receipt?store=${storeCode}&import_id=${item.id}`,
+        { cache: "no-store" }
+      );
+      const json = await readApiJson(res);
+      if (!res.ok) throw new Error(json.error ?? "No se pudo abrir el comprobante");
+      window.open(json.url as string, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo abrir el comprobante");
+    }
+  }
+
+  return (
+    <div className="border-t border-border pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Cobro en Mercury</span>
+          <Badge variant={COBRO_BADGE[check.verdict]} title={meta.hint}>
+            {meta.label}
+          </Badge>
+          {item.received_usd != null && (
+            <span className="text-xs text-muted-foreground">
+              {usd(Number(item.received_usd))}
+              {item.received_at ? ` · ${formatDate(item.received_at)}` : ""}
+              {check.appliedRate != null ? ` · TC ${check.appliedRate.toFixed(2)}` : ""}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {item.receipt_path && (
+            <button
+              type="button"
+              onClick={verComprobante}
+              className="border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Ver comprobante
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setAbierto((v) => !v)}
+            className="border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {abierto ? "Cerrar" : item.received_usd != null ? "Corregir" : "Registrar cobro"}
+          </button>
+        </div>
+      </div>
+
+      {/* La perdida solo se muestra cuando se puede medir: sin tasa de
+          referencia no hay con que comparar, y una cifra inventada aca seria
+          peor que ninguna. */}
+      {check.diffLocal != null && check.spreadPct != null && (
+        <p
+          className={`mt-2 text-xs ${
+            check.verdict === "revisar" ? "text-yellow-400" : "text-muted-foreground"
+          }`}
+        >
+          {check.diffLocal < 0 ? "Perdida por tipo de cambio: " : "Diferencia a favor: "}
+          <span className="font-semibold">{currency(Math.abs(check.diffLocal))}</span>{" "}
+          ({check.spreadPct > 0 ? "+" : ""}
+          {check.spreadPct.toFixed(2)}%) · esperados {usd(check.expectedUsd ?? 0)} a tasa{" "}
+          {Number(item.reference_rate).toFixed(2)}
+        </p>
+      )}
+
+      {abierto && (
+        <form onSubmit={guardar} className="mt-3 grid gap-2 sm:grid-cols-2">
+          <label className="text-xs text-muted-foreground">
+            Dolares recibidos
+            <input
+              name="received_usd"
+              type="text"
+              inputMode="decimal"
+              required
+              defaultValue={item.received_usd != null ? String(item.received_usd) : ""}
+              placeholder="13600.50"
+              className="mt-1 w-full border border-border bg-background px-2 py-1 text-sm text-foreground"
+            />
+          </label>
+          <label className="text-xs text-muted-foreground">
+            Fecha en que entro
+            <input
+              name="received_at"
+              type="date"
+              defaultValue={item.received_at ?? ""}
+              className="mt-1 w-full border border-border bg-background px-2 py-1 text-sm text-foreground"
+            />
+          </label>
+          <label className="text-xs text-muted-foreground">
+            Tasa de mercado ese dia (CRC por 1 USD)
+            <input
+              name="reference_rate"
+              type="text"
+              inputMode="decimal"
+              defaultValue={item.reference_rate != null ? String(item.reference_rate) : ""}
+              placeholder={tasaDelDia ? tasaDelDia.toFixed(2) : "505.00"}
+              className="mt-1 w-full border border-border bg-background px-2 py-1 text-sm text-foreground"
+            />
+            {tasaDelDia && (
+              <span className="mt-1 block text-[11px] text-muted-foreground">
+                Hoy: {tasaDelDia.toFixed(2)}. Para un cobro de otra fecha, escribi la de ese dia.
+              </span>
+            )}
+          </label>
+          <label className="text-xs text-muted-foreground">
+            Comprobante (captura de Mercury)
+            <input
+              name="file"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,application/pdf"
+              className="mt-1 w-full border border-border bg-background px-2 py-1 text-xs text-foreground"
+            />
+            <span className="mt-1 block text-[11px] text-muted-foreground">
+              PNG, JPG, WEBP o PDF, hasta 5 MB. Opcional al corregir un monto.
+            </span>
+          </label>
+          <label className="text-xs text-muted-foreground sm:col-span-2">
+            Nota
+            <input
+              name="received_note"
+              type="text"
+              defaultValue={item.received_note ?? ""}
+              placeholder="Comision de wire, cobro parcial, etc."
+              className="mt-1 w-full border border-border bg-background px-2 py-1 text-sm text-foreground"
+            />
+          </label>
+          <div className="flex items-center gap-2 sm:col-span-2">
+            <Button type="submit" size="sm" disabled={guardando}>
+              {guardando ? "Guardando..." : "Guardar cobro"}
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Declarado por Boxful: {currency(Number(item.total_to_liquidate))}
+            </span>
+          </div>
+        </form>
+      )}
+
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+    </div>
   );
 }
 
