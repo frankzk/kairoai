@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-12T14:44:19.055Z",
+  "generatedAt": "2026-09-12T14:58:09.388Z",
   "title": "Design System: kairoai",
   "extensions": {
     "colorMeta": {
@@ -239,6 +239,14 @@
       "label-loud": {
         "displayName": "Label Loud",
         "purpose": "Encabezado de seccion y de columna, en mayusculas con espaciado. Hace el trabajo que en otro sistema haria un tamano mayor."
+      },
+      "label-micro": {
+        "displayName": "Label Micro",
+        "purpose": "Metadatos secundarios bajo un valor: la unidad, la fecha, la nota al pie de una fila. 77 apariciones."
+      },
+      "label-nano": {
+        "displayName": "Label Nano",
+        "purpose": "El piso de la rampa. Etiquetas dentro de badges compactos y encabezados micro en mayusculas. 64 apariciones."
       }
     },
     "shadows": [
@@ -398,6 +406,11 @@
         "name": "La Regla de los 12px",
         "section": "typography",
         "body": "En las superficies de operacion, 12px es el cuerpo y 14px es la excepcion para formularios. Subir la escala reduce lo que cabe en pantalla, y lo que no cabe no se ve. Un tamano mayor se justifica por jerarquia, nunca por comodidad."
+      },
+      {
+        "name": "La Regla del Piso de 10px",
+        "section": "typography",
+        "body": "La rampa termina en 10px y no baja mas. Por debajo de eso, gris secundario sobre un fondo al 4% de luminosidad deja de ser legible, y el dato que no se puede leer no esta. Si algo no cabe en 10px, el problema es el layout, no el tamano de la letra."
       },
       {
         "name": "La Regla de la Etiqueta Gris",
