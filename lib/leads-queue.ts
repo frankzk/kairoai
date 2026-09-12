@@ -23,7 +23,12 @@
 // tope (ver ahi por que).
 
 import type { BoardStage } from "./leads-classify";
-import { SEGMENT_ORDER, type LeadSegment, type LeadWorkState } from "./leads-segment";
+import {
+  SEGMENT_META,
+  SEGMENT_ORDER,
+  type LeadSegment,
+  type LeadWorkState,
+} from "./leads-segment";
 
 export interface QueueLead {
   board_stage: BoardStage;
@@ -103,20 +108,144 @@ export function isFollowupActionable(lead: QueueLead, nowMs: number): boolean {
   return nowMs - t <= STALE_FOLLOWUP_DAYS * 86_400_000;
 }
 
-function queueRank(lead: QueueLead, nowMs: number): number {
-  if (lead.board_stage === "pago_verificar") return RANK_PAGO;
-  if (isFollowupActionable(lead, nowMs)) return RANK_DUE;
-  if (lead.board_stage === "por_cerrar") return RANK_POR_CERRAR;
+/**
+ * La banda de prioridad de un lead: POR QUE esta donde esta en la cola.
+ *
+ * Antes esto era informacion que la cola calculaba y tiraba. `queueRank`
+ * devolvia un numero, `buildWorkQueue` ordenaba con el y despues entregaba una
+ * lista plana; el tablero compensaba con una frase en prosa ("Orden de
+ * atencion: pagos -> vencidos -> ...") y un contador 1, 2, 3...
+ *
+ * El problema con eso: la posicion 37 no dice en que banda estas. Un
+ * recontacto vencido es una promesa que la asesora HIZO ("me dijo que la
+ * llamara hoy") y un carrito sin llamar es un desconocido — dos llamadas
+ * distintas, con dos aperturas distintas. La lista las mostraba iguales.
+ *
+ * Ahora la banda es un valor de primera clase y el tablero la pinta como
+ * encabezado. La prosa sobra: la estructura se ve.
+ */
+export type QueueBand =
+  | "pago_verificar"
+  | "recontacto_vencido"
+  | "por_cerrar"
+  | LeadSegment;
+
+/**
+ * Banda de un lead, o null si no es trabajo de hoy.
+ *
+ * Esta funcion es la UNICA fuente del orden: `queueRank` deriva su numero de
+ * aca. Antes el orden vivia solo en `queueRank`; si la UI hubiera calculado las
+ * bandas por su cuenta, las dos habrian podido divergir en silencio — que es
+ * exactamente el bug que ya tuvimos cuando la etiqueta de la tarjeta mostraba
+ * `board_stage` y los chips filtraban por `segment`.
+ */
+export function queueBand(lead: QueueLead, nowMs: number): QueueBand | null {
+  if (lead.board_stage === "pago_verificar") return "pago_verificar";
+  if (isFollowupActionable(lead, nowMs)) return "recontacto_vencido";
+  if (lead.board_stage === "por_cerrar") return "por_cerrar";
   // Ya lo trabajo una asesora y no tiene recontacto vencido: no es trabajo de
   // hoy. Vive en Seguimiento, donde se puede buscar y filtrar.
-  if (lead.work_state === "seguimiento") return RANK_FUERA;
-  const i = SEGMENT_ORDER.indexOf(lead.segment ?? "solo_saludo");
+  if (lead.work_state === "seguimiento") return null;
+  return lead.segment ?? "solo_saludo";
+}
+
+/** Orden de las bandas. Es el orden de llamada, y el de los encabezados. */
+export const QUEUE_BAND_ORDER: QueueBand[] = [
+  "pago_verificar",
+  "recontacto_vencido",
+  "por_cerrar",
+  ...SEGMENT_ORDER,
+];
+
+/**
+ * Como se lee cada banda en el encabezado.
+ *
+ * El `hint` dice QUE TIPO DE LLAMADA es, no que significa la etiqueta: es la
+ * diferencia entre "ya te conoce y te esta esperando" y "no sabe quien sos",
+ * que es lo que cambia la primera frase de la asesora.
+ *
+ * Las cuatro bandas de segmento reusan `SEGMENT_META` en vez de repetir sus
+ * nombres: cuando "Frío" paso a llamarse "Solo saludó", la frase en prosa del
+ * tablero quedo mintiendo porque los tenia escritos a mano. No se repite el
+ * error.
+ */
+export const QUEUE_BAND_META: Record<QueueBand, { label: string; emoji: string; hint: string }> = {
+  pago_verificar: {
+    label: "Pagos por verificar",
+    emoji: "💰",
+    hint: "Ya pagó. Se verifica en orden de llegada, el que más espera primero",
+  },
+  recontacto_vencido: {
+    label: "Recontactos vencidos",
+    emoji: "📅",
+    hint: "Le prometiste llamar y ya pasó la hora. Te está esperando",
+  },
+  por_cerrar: {
+    label: "Por cerrar",
+    emoji: "🔥",
+    hint: "Ya dio sus datos. Falta cerrar el pedido",
+  },
+  carrito: {
+    label: SEGMENT_META.carrito.label,
+    emoji: SEGMENT_META.carrito.emoji,
+    hint: "Nadie lo llamó. Armó un carrito real · 41% llega a cerrar",
+  },
+  enganchado: {
+    label: SEGMENT_META.enganchado.label,
+    emoji: SEGMENT_META.enganchado.emoji,
+    hint: "Nadie lo llamó. 10+ mensajes suyos · 16% llega a cerrar",
+  },
+  converso: {
+    label: SEGMENT_META.converso.label,
+    emoji: SEGMENT_META.converso.emoji,
+    hint: "Nadie lo llamó. 2 a 9 mensajes suyos · 1,5%",
+  },
+  solo_saludo: {
+    label: SEGMENT_META.solo_saludo.label,
+    emoji: SEGMENT_META.solo_saludo.emoji,
+    hint: "Nadie lo llamó. Un mensaje o ninguno · 1%",
+  },
+};
+
+function queueRank(lead: QueueLead, nowMs: number): number {
+  const band = queueBand(lead, nowMs);
+  if (band === null) return RANK_FUERA;
+  if (band === "pago_verificar") return RANK_PAGO;
+  if (band === "recontacto_vencido") return RANK_DUE;
+  if (band === "por_cerrar") return RANK_POR_CERRAR;
+  const i = SEGMENT_ORDER.indexOf(band);
   return RANK_SEGMENTO_BASE + (i < 0 ? SEGMENT_ORDER.length : i);
 }
 
 /** Un lead entra a la cola de hoy si su rango no es RANK_FUERA. */
 export function isTrabajoDeHoy(lead: QueueLead, nowMs: number): boolean {
   return queueRank(lead, nowMs) !== RANK_FUERA;
+}
+
+/**
+ * Parte la cola YA ORDENADA en bandas contiguas.
+ *
+ * Recibe la salida de `buildWorkQueue` sin reordenar nada: como esa lista viene
+ * ordenada por rango, los leads de una banda ya estan juntos. Agrupar es
+ * recorrer una vez y cortar donde cambia la banda — no un `filter` por banda,
+ * que rompería el orden interno (el mas reciente primero dentro de cada una).
+ *
+ * Las bandas vacias no se devuelven: un encabezado con cero leads es ruido.
+ */
+export function groupQueueByBand<T extends QueueLead>(
+  orderedQueue: T[],
+  now: Date
+): Array<{ band: QueueBand; leads: T[] }> {
+  const nowMs = now.getTime();
+  const groups: Array<{ band: QueueBand; leads: T[] }> = [];
+  for (const lead of orderedQueue) {
+    const band = queueBand(lead, nowMs);
+    if (band === null) continue;
+    const last = groups[groups.length - 1];
+    if (last && last.band === band) last.leads.push(lead);
+    else groups.push({ band, leads: [lead] });
+  }
+  return groups;
 }
 
 export function buildWorkQueue<T extends QueueLead>(leads: T[], now: Date): T[] {

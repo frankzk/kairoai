@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { buildWorkQueue, type QueueLead } from "../lib/leads-queue";
+import {
+  buildWorkQueue,
+  groupQueueByBand,
+  QUEUE_BAND_META,
+  QUEUE_BAND_ORDER,
+  queueBand,
+  type QueueLead,
+} from "../lib/leads-queue";
 import type { BoardStage } from "../lib/leads-classify";
 
 const NOW = new Date("2026-07-25T18:00:00Z");
@@ -238,5 +245,94 @@ describe("buildWorkQueue", () => {
       NOW
     );
     expect(ids(pasado)).toEqual(["cerrar", "pasado"]);
+  });
+});
+
+// La banda es la informacion que la cola calculaba y tiraba. El tablero la
+// compensaba con una frase en prosa y un contador 1,2,3..., y la posicion 37
+// no decia en que banda estabas.
+describe("queueBand", () => {
+  it("nombra por que cada lead esta donde esta", () => {
+    const nowMs = NOW.getTime();
+    expect(queueBand(lead("a", "pago_verificar", "2026-07-25T17:00:00Z"), nowMs)).toBe("pago_verificar");
+    expect(queueBand(lead("b", "tibios", "2026-07-25T17:00:00Z", "2026-07-25T10:00:00Z"), nowMs)).toBe("recontacto_vencido");
+    expect(queueBand(lead("c", "por_cerrar", "2026-07-25T17:00:00Z"), nowMs)).toBe("por_cerrar");
+    expect(queueBand(lead("d", "carrito", "2026-07-25T17:00:00Z", null, { segment: "carrito" }), nowMs)).toBe("carrito");
+  });
+
+  it("un lead ya gestionado sin recontacto vencido no tiene banda: no es de hoy", () => {
+    const fuera = lead("x", "seguimiento", "2026-07-25T17:00:00Z", null, { work_state: "seguimiento" });
+    expect(queueBand(fuera, NOW.getTime())).toBeNull();
+  });
+
+  it("un pago gana sobre un recontacto vencido", () => {
+    // Mismo lead con las dos condiciones: el pago es lo primero de la cola.
+    const ambos = lead("p", "pago_verificar", "2026-07-25T17:00:00Z", "2026-07-25T10:00:00Z");
+    expect(queueBand(ambos, NOW.getTime())).toBe("pago_verificar");
+  });
+
+  it("un vencido DEMASIADO viejo deja de ser recontacto y cae a su segmento", () => {
+    // Pasados STALE_FOLLOWUP_DAYS el vencido no sube al tope (se midio: de 159
+    // "no contesto" vencidos, ninguno llego a tener un segundo intento).
+    const viejo = lead("v", "tibios", "2026-07-25T17:00:00Z", "2026-06-01T10:00:00Z", { segment: "converso" });
+    expect(queueBand(viejo, NOW.getTime())).toBe("converso");
+  });
+
+  it("cada banda del orden tiene su etiqueta, sin huecos", () => {
+    for (const band of QUEUE_BAND_ORDER) {
+      expect(QUEUE_BAND_META[band].label).toBeTruthy();
+      expect(QUEUE_BAND_META[band].emoji).toBeTruthy();
+      expect(QUEUE_BAND_META[band].hint).toBeTruthy();
+    }
+  });
+});
+
+describe("groupQueueByBand", () => {
+  const cola = () =>
+    buildWorkQueue(
+      [
+        lead("saludo", "tibios", "2026-07-25T17:00:00Z", null, { segment: "solo_saludo" }),
+        lead("carrito-viejo", "carrito", "2026-07-25T09:00:00Z", null, { segment: "carrito" }),
+        lead("pago", "pago_verificar", "2026-07-25T12:00:00Z"),
+        lead("carrito-nuevo", "carrito", "2026-07-25T17:00:00Z", null, { segment: "carrito" }),
+        lead("vencido", "tibios", "2026-07-25T16:00:00Z", "2026-07-25T10:00:00Z"),
+        lead("cerrar", "por_cerrar", "2026-07-25T17:00:00Z"),
+      ],
+      NOW
+    );
+
+  it("las bandas salen en el orden de llamada", () => {
+    expect(groupQueueByBand(cola(), NOW).map((g) => g.band)).toEqual([
+      "pago_verificar",
+      "recontacto_vencido",
+      "por_cerrar",
+      "carrito",
+      "solo_saludo",
+    ]);
+  });
+
+  it("no pierde ni duplica un solo lead", () => {
+    // La invariante: agrupar es cortar la lista, no re-filtrarla.
+    const q = cola();
+    const agrupados = groupQueueByBand(q, NOW).flatMap((g) => g.leads);
+    expect(ids(agrupados)).toEqual(ids(q));
+  });
+
+  it("conserva el orden interno de cada banda", () => {
+    // Dentro de carrito manda el mas reciente primero (regla de los 5 minutos).
+    const carrito = groupQueueByBand(cola(), NOW).find((g) => g.band === "carrito");
+    expect(ids(carrito!.leads)).toEqual(["carrito-nuevo", "carrito-viejo"]);
+  });
+
+  it("no devuelve bandas vacias", () => {
+    // Un encabezado con cero leads es ruido.
+    const grupos = groupQueueByBand(cola(), NOW);
+    expect(grupos.every((g) => g.leads.length > 0)).toBe(true);
+    // Solo cinco de las siete bandas tienen leads en este fixture.
+    expect(grupos).toHaveLength(5);
+  });
+
+  it("una cola vacia da cero bandas, no una banda vacia", () => {
+    expect(groupQueueByBand([], NOW)).toEqual([]);
   });
 });

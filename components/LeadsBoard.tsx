@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   BarChart3,
   CalendarClock,
+  ChevronDown,
   CalendarRange,
   Check,
   Copy,
@@ -43,7 +44,13 @@ import {
   type LeadSegment,
   type LeadWorkState,
 } from "@/lib/leads-segment";
-import { buildWorkQueue, isTrabajoDeHoy, QUEUE_STAGES } from "@/lib/leads-queue";
+import {
+  buildWorkQueue,
+  groupQueueByBand,
+  isTrabajoDeHoy,
+  QUEUE_BAND_META,
+  QUEUE_STAGES,
+} from "@/lib/leads-queue";
 import {
   buildUncalledLeadBuckets,
   isUncalledLeadOnDate,
@@ -426,11 +433,24 @@ export default function LeadsBoard() {
   // tarjetas que nadie iba a mirar y la lista no terminaba nunca de bajar.
   const [shownCount, setShownCount] = useState(LEADS_PER_PAGE);
 
+  // El histograma de antiguedad arranca CERRADO. Mide un backlog — un numero
+  // que solo puede crecer mientras la asesora esta al telefono — y ocupaba los
+  // primeros ~260px de la pantalla con la letra mas grande de toda la vista,
+  // por encima de la cola de llamadas. Sigue estando: es un filtro util para
+  // ir a buscar lo mas viejo. Pero se abre cuando se lo pide, no por defecto.
+  const [showBacklogChart, setShowBacklogChart] = useState(false);
+
   // Cada vez que cambia LO QUE se esta mirando, se vuelve a empezar por arriba:
   // si no, al saltar de una etapa larga a una corta quedaba abierta de mas.
   useEffect(() => {
     setShownCount(LEADS_PER_PAGE);
   }, [activeStage, q, store, interactionFrom, interactionTo, selectedUncalledBucket, sortDir]);
+
+  // Si se filtra por una barra del histograma, se abre solo: si no, el filtro
+  // activo quedaria aplicado con su control escondido.
+  useEffect(() => {
+    if (selectedUncalledBucket) setShowBacklogChart(true);
+  }, [selectedUncalledBucket]);
 
   const matchesInteractionRange = useCallback(
     (lead: LeadRow) =>
@@ -524,6 +544,16 @@ export default function LeadsBoard() {
     matchesSegment,
     chartNow,
   ]);
+
+  // La cola partida en bandas de prioridad. `buildWorkQueue` ya la devolvio
+  // ordenada; agrupar es solo cortar donde cambia la banda, sin re-filtrar.
+  //
+  // Se agrupa la cola COMPLETA y no la tanda visible: asi el encabezado dice
+  // cuantos leads tiene la banda de verdad, no cuantos alcanzo a dibujar.
+  const bandasDeHoy = useMemo(
+    () => (!searching && enHoy ? groupQueueByBand(visibleLeads, chartNow) : null),
+    [searching, enHoy, visibleLeads, chartNow]
+  );
 
   const chartContextLeads = useMemo(() => {
     if (searching) return searchMatches.filter(matchesSegment);
@@ -699,18 +729,35 @@ export default function LeadsBoard() {
                   </p>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-2xl font-semibold tabular-nums text-foreground">{uncalledTotal}</p>
-                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">sin llamar</p>
-                {uncalledTotal !== chartContextLeads.length && (
-                  <p className="mt-0.5 text-[10px] text-muted-foreground/70">
-                    de {chartContextLeads.length} {searching ? "en la búsqueda" : `en ${activeTabLabel}`}
+              <div className="flex items-center gap-3 text-right">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                    sin llamar
                   </p>
-                )}
+                  <p className="text-base font-semibold tabular-nums text-foreground">{uncalledTotal}</p>
+                  {uncalledTotal !== chartContextLeads.length && (
+                    // `/70` no: a 3,4:1 no pasa AA, y esta linea es justamente
+                    // la que aclara que el numero de al lado es un subconjunto.
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      de {chartContextLeads.length} {searching ? "en la búsqueda" : `en ${activeTabLabel}`}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowBacklogChart((v) => !v)}
+                  aria-expanded={showBacklogChart}
+                  className="inline-flex h-8 items-center gap-1 border border-border px-2 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {showBacklogChart ? "Ocultar" : "Por antigüedad"}
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 transition-transform ${showBacklogChart ? "rotate-180" : ""}`}
+                  />
+                </button>
               </div>
             </div>
 
-            <div className="overflow-x-auto px-3 pb-3 pt-4">
+            <div className={`overflow-x-auto px-3 pb-3 pt-4 ${showBacklogChart ? "" : "hidden"}`}>
               <div
                 className="grid min-w-[720px] grid-cols-[repeat(15,minmax(0,1fr))] gap-2"
                 role="group"
@@ -1037,32 +1084,63 @@ export default function LeadsBoard() {
                 </button>
               </div>
             )}
-            {!searching && enHoy && (
-              <p className="mb-2 text-xs text-muted-foreground">
-                {/* Los segmentos salen de SEGMENT_ORDER, no escritos a mano: cuando
-                    "Frío" paso a llamarse "Solo saludó" esta linea quedo mintiendo
-                    porque tenia los nombres hardcodeados. */}
-                Orden de atención: 💰 pagos por verificar → 📅 recontactos vencidos → 🔥 por
-                cerrar → y después los que nadie llamó, en este orden:{" "}
-                {SEGMENT_ORDER.map((seg, i) => (
-                  <span key={seg}>
-                    {i > 0 && " → "}
-                    {SEGMENT_META[seg].emoji} {SEGMENT_META[seg].label.toLowerCase()}
-                  </span>
+            {/* La estructura de la cola se VE, no se explica.
+                Antes esto era una frase en prosa ("Orden de atención: pagos →
+                vencidos → ...") y un contador 1, 2, 3... El problema: la
+                posición 37 no dice en qué banda estás, y un recontacto vencido
+                —una promesa que ella hizo— y un carrito de un desconocido son
+                dos llamadas distintas con dos aperturas distintas.
+                La prosa sobra cuando la lista lleva encabezados. */}
+            {bandasDeHoy ? (
+              <div className="space-y-4">
+                {(() => {
+                  let dibujados = 0;
+                  return bandasDeHoy.map(({ band, leads: deLaBanda }) => {
+                    if (dibujados >= shownCount) return null;
+                    const desde = dibujados;
+                    const visibles = deLaBanda.slice(0, shownCount - dibujados);
+                    dibujados += visibles.length;
+                    const meta = QUEUE_BAND_META[band];
+                    return (
+                      <section key={band} aria-label={`${meta.label}: ${deLaBanda.length} leads`}>
+                        {/* Pegajoso: en una banda de 196 carritos, saber en cuál
+                            estás no puede depender de recordar el encabezado. */}
+                        {/* Fondo SOLIDO, no un 95% con blur: el encabezado pasa
+                            por encima de tarjetas mientras se scrollea, y el
+                            texto detras tiene que desaparecer, no verse
+                            difuminado. La profundidad la da el tono mas el
+                            borde de 1px, como el resto del sistema. */}
+                        <div className="sticky top-0 z-10 -mx-1 mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-border bg-background px-1 py-1.5">
+                          <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground">
+                            {meta.emoji} {meta.label}
+                          </h3>
+                          <span className="text-xs tabular-nums text-muted-foreground">
+                            {deLaBanda.length}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground">{meta.hint}</span>
+                        </div>
+                        <div className="space-y-2">
+                          {visibles.map((lead, i) => (
+                            <LeadCard
+                              key={lead.id}
+                              lead={lead}
+                              onOpen={() => setDrawerLead(lead)}
+                              queuePosition={desde + i + 1}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  });
+                })()}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {visibleLeads.slice(0, shownCount).map((lead) => (
+                  <LeadCard key={lead.id} lead={lead} onOpen={() => setDrawerLead(lead)} />
                 ))}
-                . Se trabaja de arriba hacia abajo.
-              </p>
+              </div>
             )}
-            <div className="space-y-2">
-              {visibleLeads.slice(0, shownCount).map((lead, index) => (
-                <LeadCard
-                  key={lead.id}
-                  lead={lead}
-                  onOpen={() => setDrawerLead(lead)}
-                  queuePosition={!searching && enHoy ? index + 1 : undefined}
-                />
-              ))}
-            </div>
             {visibleLeads.length > shownCount && (
               <div className="mt-3 flex flex-col items-center gap-1">
                 <Button
