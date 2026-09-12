@@ -1,0 +1,441 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-12T14:44:19.055Z",
+  "title": "Design System: kairoai",
+  "extensions": {
+    "colorMeta": {
+      "background": {
+        "role": "neutral",
+        "displayName": "Noche Profunda",
+        "canonical": "hsl(224 71% 4%)",
+        "tonalRamp": [
+          "hsl(224 71% 15%)",
+          "hsl(224 71% 26%)",
+          "hsl(224 71% 37%)",
+          "hsl(224 71% 48%)",
+          "hsl(224 71% 59%)",
+          "hsl(224 71% 70%)",
+          "hsl(224 71% 84%)",
+          "hsl(224 71% 95%)"
+        ]
+      },
+      "card": {
+        "role": "neutral",
+        "displayName": "Noche Elevada",
+        "canonical": "hsl(224 71% 6%)",
+        "tonalRamp": [
+          "hsl(224 71% 15%)",
+          "hsl(224 71% 26%)",
+          "hsl(224 71% 37%)",
+          "hsl(224 71% 48%)",
+          "hsl(224 71% 59%)",
+          "hsl(224 71% 70%)",
+          "hsl(224 71% 84%)",
+          "hsl(224 71% 95%)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Noche Hundida",
+        "canonical": "hsl(223 47% 11%)",
+        "tonalRamp": [
+          "hsl(223 47% 15%)",
+          "hsl(223 47% 26%)",
+          "hsl(223 47% 37%)",
+          "hsl(223 47% 48%)",
+          "hsl(223 47% 59%)",
+          "hsl(223 47% 70%)",
+          "hsl(223 47% 84%)",
+          "hsl(223 47% 95%)"
+        ]
+      },
+      "secondary": {
+        "role": "secondary",
+        "displayName": "Azul Pizarra",
+        "canonical": "hsl(215 27.9% 16.9%)",
+        "tonalRamp": [
+          "hsl(215 28% 15%)",
+          "hsl(215 28% 26%)",
+          "hsl(215 28% 37%)",
+          "hsl(215 28% 48%)",
+          "hsl(215 28% 59%)",
+          "hsl(215 28% 70%)",
+          "hsl(215 28% 84%)",
+          "hsl(215 28% 95%)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Gris Estructura",
+        "canonical": "hsl(216 34% 17%)",
+        "tonalRamp": [
+          "hsl(216 34% 15%)",
+          "hsl(216 34% 26%)",
+          "hsl(216 34% 37%)",
+          "hsl(216 34% 48%)",
+          "hsl(216 34% 59%)",
+          "hsl(216 34% 70%)",
+          "hsl(216 34% 84%)",
+          "hsl(216 34% 95%)"
+        ]
+      },
+      "foreground": {
+        "role": "neutral",
+        "displayName": "Blanco Papel",
+        "canonical": "hsl(213 31% 91%)",
+        "tonalRamp": [
+          "hsl(213 31% 15%)",
+          "hsl(213 31% 26%)",
+          "hsl(213 31% 37%)",
+          "hsl(213 31% 48%)",
+          "hsl(213 31% 59%)",
+          "hsl(213 31% 70%)",
+          "hsl(213 31% 84%)",
+          "hsl(213 31% 95%)"
+        ]
+      },
+      "muted-foreground": {
+        "role": "neutral",
+        "displayName": "Gris Secundario",
+        "canonical": "hsl(215.4 16.3% 56.9%)",
+        "tonalRamp": [
+          "hsl(215 16% 15%)",
+          "hsl(215 16% 26%)",
+          "hsl(215 16% 37%)",
+          "hsl(215 16% 48%)",
+          "hsl(215 16% 59%)",
+          "hsl(215 16% 70%)",
+          "hsl(215 16% 84%)",
+          "hsl(215 16% 95%)"
+        ]
+      },
+      "primary": {
+        "role": "primary",
+        "displayName": "Violeta de Mando",
+        "canonical": "hsl(263 70% 50%)",
+        "tonalRamp": [
+          "hsl(263 70% 15%)",
+          "hsl(263 70% 26%)",
+          "hsl(263 70% 37%)",
+          "hsl(263 70% 48%)",
+          "hsl(263 70% 59%)",
+          "hsl(263 70% 70%)",
+          "hsl(263 70% 84%)",
+          "hsl(263 70% 95%)"
+        ]
+      },
+      "destructive": {
+        "role": "primary",
+        "displayName": "Rojo Ejecutor",
+        "canonical": "hsl(0 63% 31%)",
+        "tonalRamp": [
+          "hsl(0 63% 15%)",
+          "hsl(0 63% 26%)",
+          "hsl(0 63% 37%)",
+          "hsl(0 63% 48%)",
+          "hsl(0 63% 59%)",
+          "hsl(0 63% 70%)",
+          "hsl(0 63% 84%)",
+          "hsl(0 63% 95%)"
+        ]
+      },
+      "status-good": {
+        "role": "tertiary",
+        "displayName": "Verde Entregado",
+        "canonical": "#34d399",
+        "tonalRamp": [
+          "#064e3b",
+          "#065f46",
+          "#047857",
+          "#059669",
+          "#10b981",
+          "#34d399",
+          "#6ee7b7",
+          "#a7f3d0"
+        ]
+      },
+      "status-warn": {
+        "role": "tertiary",
+        "displayName": "Ambar Pendiente",
+        "canonical": "#f59e0b",
+        "tonalRamp": [
+          "#78350f",
+          "#92400e",
+          "#b45309",
+          "#d97706",
+          "#f59e0b",
+          "#fbbf24",
+          "#fcd34d",
+          "#fde68a"
+        ]
+      },
+      "status-bad": {
+        "role": "tertiary",
+        "displayName": "Rojo Fallo",
+        "canonical": "#f87171",
+        "tonalRamp": [
+          "#7f1d1d",
+          "#991b1b",
+          "#b91c1c",
+          "#dc2626",
+          "#ef4444",
+          "#f87171",
+          "#fca5a5",
+          "#fecaca"
+        ]
+      },
+      "status-info": {
+        "role": "tertiary",
+        "displayName": "Cian Informativo",
+        "canonical": "#67e8f9",
+        "tonalRamp": [
+          "#164e63",
+          "#155e75",
+          "#0e7490",
+          "#0891b2",
+          "#06b6d4",
+          "#22d3ee",
+          "#67e8f9",
+          "#a5f3fc"
+        ]
+      },
+      "status-critical": {
+        "role": "tertiary",
+        "displayName": "Rosa Critico",
+        "canonical": "#f43f5e",
+        "tonalRamp": [
+          "#881337",
+          "#9f1239",
+          "#be123c",
+          "#e11d48",
+          "#f43f5e",
+          "#fb7185",
+          "#fda4af",
+          "#fecdd3"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "El numero grande de un KPI de cabecera. Uno o dos por pantalla como maximo."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Titulo de bloque dentro de una tarjeta."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Titulo de tarjeta real del sistema (16px). El primitivo declara 24px pero se sobreescribe en 14 de 19 usos."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Texto de formulario, valores de campo, parrafos de ayuda."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "El cuerpo de trabajo real: filas, chips, etiquetas, metadatos. La escala mas usada del sistema."
+      },
+      "label-loud": {
+        "displayName": "Label Loud",
+        "purpose": "Encabezado de seccion y de columna, en mayusculas con espaciado. Hace el trabajo que en otro sistema haria un tamano mayor."
+      }
+    },
+    "shadows": [
+      {
+        "name": "reposo",
+        "value": "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        "purpose": "Asentamiento minimo de las tarjetas. Casi imperceptible sobre el oscuro; no es elevacion."
+      },
+      {
+        "name": "flotante",
+        "value": "0 25px 50px -12px rgb(0 0 0 / 0.25)",
+        "purpose": "Exclusiva de modales y drawers: lo unico que de verdad esta encima de todo."
+      }
+    ],
+    "motion": [
+      {
+        "name": "transicion-color",
+        "value": "150ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Unica transicion del sistema: cambios de color en hover, foco y seleccion. No se anima geometria."
+      },
+      {
+        "name": "pulso",
+        "value": "2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+        "purpose": "Placeholder de carga (skeleton). Opacidad 1 -> 0.5 -> 1."
+      },
+      {
+        "name": "acordeon",
+        "value": "200ms ease-out",
+        "purpose": "Apertura y cierre de secciones colapsables."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      },
+      {
+        "name": "container-max",
+        "value": "1400px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Boton Primario",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Accion principal de una pantalla. El unico lugar donde el violeta de marca ocupa area solida.",
+      "html": "<button class=\"ds-btn-primary\">Actualizar</button>",
+      "css": ".ds-btn-primary { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 8px 16px; font-size: 14px; font-weight: 500; color: hsl(210 20% 98%); background: hsl(263 70% 50%); border: none; border-radius: 6px; cursor: pointer; transition: background-color 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-primary:hover { background: hsl(263 70% 50% / 0.9); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 2px hsl(224 71% 4%), 0 0 0 4px hsl(263 70% 50%); } .ds-btn-primary:disabled { opacity: 0.5; pointer-events: none; }"
+    },
+    {
+      "name": "Boton Contorno",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "La accion secundaria mas usada del sistema. Fondo del lienzo con borde de campo; en hover pasa al tono de realce.",
+      "html": "<button class=\"ds-btn-outline\">Sync Shopify</button>",
+      "css": ".ds-btn-outline { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 8px 16px; font-size: 14px; font-weight: 500; color: hsl(213 31% 91%); background: hsl(224 71% 4%); border: 1px solid hsl(216 34% 17%); border-radius: 6px; cursor: pointer; transition: background-color 150ms cubic-bezier(0.4,0,0.2,1), color 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-outline:hover { background: hsl(216 34% 17%); color: hsl(210 20% 98%); } .ds-btn-outline:focus-visible { outline: none; box-shadow: 0 0 0 2px hsl(224 71% 4%), 0 0 0 4px hsl(263 70% 50%); }"
+    },
+    {
+      "name": "Chip de Filtro",
+      "kind": "chip",
+      "refersTo": "chip-dense",
+      "description": "El patron mas repetido del sistema. Esquina RECTA a proposito: la fila se lee como un bloque continuo, no como una tira de pildoras.",
+      "html": "<div class=\"ds-chip-row\"><button class=\"ds-chip is-active\">Todos <span>19796</span></button><button class=\"ds-chip\">Pendientes <span>784</span></button><button class=\"ds-chip\">Entregados <span>8929</span></button></div>",
+      "css": ".ds-chip-row { display: flex; flex-wrap: wrap; gap: 8px; } .ds-chip { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: 12px; color: hsl(215.4 16.3% 56.9%); background: hsl(224 71% 4%); border: 1px solid hsl(216 34% 17%); border-radius: 0; cursor: pointer; transition: color 150ms cubic-bezier(0.4,0,0.2,1), border-color 150ms cubic-bezier(0.4,0,0.2,1), background-color 150ms cubic-bezier(0.4,0,0.2,1); } .ds-chip span { font-variant-numeric: tabular-nums; opacity: 0.75; } .ds-chip:hover { color: hsl(213 31% 91%); } .ds-chip.is-active { color: hsl(263 70% 50%); border-color: hsl(263 70% 50%); background: hsl(263 70% 50% / 0.1); } .ds-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px hsl(263 70% 50%); }"
+    },
+    {
+      "name": "Badge de Estado",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Vehiculo principal del estado. Completamente redondo: es la unica forma redonda del sistema, asi que se identifica antes de leerse. Fondo del color de estado al 15-20% de alfa.",
+      "html": "<div class=\"ds-badge-row\"><span class=\"ds-badge ds-badge--good\">Recibido</span><span class=\"ds-badge ds-badge--warn\">Revisar</span><span class=\"ds-badge ds-badge--bad\">No entregado</span><span class=\"ds-badge ds-badge--info\">74 incidencias</span><span class=\"ds-badge ds-badge--muted\">Sin confirmar</span></div>",
+      "css": ".ds-badge-row { display: flex; flex-wrap: wrap; gap: 6px; } .ds-badge { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: inline-flex; align-items: center; padding: 2px 10px; font-size: 12px; font-weight: 600; border-radius: 9999px; border: 1px solid transparent; } .ds-badge--good { background: rgb(16 185 129 / 0.2); color: #34d399; border-color: rgb(16 185 129 / 0.3); } .ds-badge--warn { background: rgb(245 158 11 / 0.2); color: #fbbf24; border-color: rgb(245 158 11 / 0.3); } .ds-badge--bad { background: rgb(239 68 68 / 0.2); color: #f87171; border-color: rgb(239 68 68 / 0.3); } .ds-badge--info { background: rgb(34 211 238 / 0.2); color: #67e8f9; } .ds-badge--muted { background: hsl(223 47% 11%); color: hsl(215.4 16.3% 56.9%); }"
+    },
+    {
+      "name": "Mini-Stat",
+      "kind": "custom",
+      "refersTo": "ministat",
+      "description": "Bloque de KPI del sistema, en filas de tres a cinco. Esquina recta para poder alinearlos en cuadricula sin que se lean como tarjetas sueltas.",
+      "html": "<div class=\"ds-ministat-row\"><div class=\"ds-ministat\"><p>Corte</p><p>12/08/2026</p></div><div class=\"ds-ministat\"><p>Filas</p><p>727</p></div><div class=\"ds-ministat\"><p>A liquidar</p><p>&#8353;6 949 192</p></div></div>",
+      "css": ".ds-ministat-row { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; } .ds-ministat { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 12px; background: hsl(224 71% 4%); border: 1px solid hsl(216 34% 17%); border-radius: 0; } .ds-ministat p:first-child { margin: 0; font-size: 12px; color: hsl(215.4 16.3% 56.9%); } .ds-ministat p:last-child { margin: 4px 0 0; font-size: 18px; font-weight: 600; color: hsl(213 31% 91%); font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Tarjeta",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Contenedor de bloque. Un escalon de tono sobre el lienzo mas un borde de 1px; la profundidad no la da la sombra.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card__head\"><h3>Seguimiento de pedidos</h3><p>Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.</p></div><div class=\"ds-card__body\">Contenido</div></div>",
+      "css": ".ds-card { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: hsl(224 71% 6%); color: hsl(213 31% 91%); border: 1px solid hsl(216 34% 17%); border-radius: 8px; box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); } .ds-card__head { padding: 24px; display: flex; flex-direction: column; gap: 6px; } .ds-card__head h3 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; } .ds-card__head p { margin: 0; font-size: 12px; color: hsl(215.4 16.3% 56.9%); } .ds-card__body { padding: 0 24px 24px; font-size: 14px; }"
+    },
+    {
+      "name": "Campo de Texto",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Fondo del lienzo, o sea HUNDIDO respecto de la tarjeta que lo contiene. El foco es un anillo violeta, sin cambio de fondo.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Buscar pedido: #MCRC11566, guia o cliente\" />",
+      "css": ".ds-input { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; height: 40px; width: 100%; padding: 8px 12px; font-size: 14px; color: hsl(213 31% 91%); background: hsl(224 71% 4%); border: 1px solid hsl(216 34% 17%); border-radius: 6px; } .ds-input::placeholder { color: hsl(215.4 16.3% 56.9%); } .ds-input:focus-visible { outline: none; box-shadow: 0 0 0 2px hsl(224 71% 4%), 0 0 0 4px hsl(263 70% 50%); } .ds-input:disabled { opacity: 0.5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Tabs",
+      "kind": "nav",
+      "refersTo": "tab",
+      "description": "Subrayado de 2px como unico indicador: sin fondo ni pildora. El activo lleva borde y texto violeta.",
+      "html": "<nav class=\"ds-tabs\"><button class=\"ds-tab is-active\">Pedidos</button><button class=\"ds-tab\">Despacho</button><button class=\"ds-tab\">Auditoria</button><button class=\"ds-tab\">Liquidaciones</button></nav>",
+      "css": ".ds-tabs { display: flex; gap: 0; border-bottom: 1px solid hsl(216 34% 17%); } .ds-tab { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: inline-flex; align-items: center; gap: 8px; padding: 12px 16px; font-size: 14px; font-weight: 500; color: hsl(215.4 16.3% 56.9%); background: transparent; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; transition: color 150ms cubic-bezier(0.4,0,0.2,1), border-color 150ms cubic-bezier(0.4,0,0.2,1); } .ds-tab:hover { color: hsl(213 31% 91%); } .ds-tab.is-active { color: hsl(263 70% 50%); border-bottom-color: hsl(263 70% 50%); } .ds-tab:focus-visible { outline: none; box-shadow: 0 0 0 2px hsl(263 70% 50%); }"
+    },
+    {
+      "name": "Fila Seleccionable",
+      "kind": "custom",
+      "refersTo": "chip-dense-active",
+      "description": "Item de lista maestro-detalle: liquidaciones, leads, pedidos. Esquina recta, tres niveles de informacion (nombre, metadatos, badges) y seleccion marcada con borde y fondo violeta al 10%. Es el patron por el que se navega casi todo el sistema.",
+      "html": "<div class=\"ds-rows\"><div class=\"ds-row is-selected\"><button class=\"ds-row__main\"><span class=\"ds-row__name\">Liquidacion cd2330.xlsx</span><span class=\"ds-row__meta\">12/08/2026 &middot; 727 filas &middot; &#8353;6 949 192</span><span class=\"ds-row__tags\"><span class=\"ds-badge ds-badge--good\">0 sin match</span><span class=\"ds-badge ds-badge--muted\">Sin confirmar</span></span></button><button class=\"ds-row__kill\" title=\"Eliminar\">&times;</button></div><div class=\"ds-row\"><button class=\"ds-row__main\"><span class=\"ds-row__name\">Liquidacion 004128.xlsx</span><span class=\"ds-row__meta\">06/08/2026 &middot; 630 filas &middot; &#8353;5 211 442</span><span class=\"ds-row__tags\"><span class=\"ds-badge ds-badge--good\">0 sin match</span></span></button><button class=\"ds-row__kill\" title=\"Eliminar\">&times;</button></div></div>",
+      "css": ".ds-rows { display: flex; flex-direction: column; gap: 8px; } .ds-row { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 8px; background: hsl(224 71% 4%); border: 1px solid hsl(216 34% 17%); border-radius: 0; transition: background-color 150ms cubic-bezier(0.4,0,0.2,1), border-color 150ms cubic-bezier(0.4,0,0.2,1); } .ds-row:hover { border-color: hsl(263 70% 50% / 0.5); } .ds-row.is-selected { border-color: hsl(263 70% 50%); background: hsl(263 70% 50% / 0.1); } .ds-row__main { display: block; text-align: left; min-width: 0; background: none; border: none; padding: 0; cursor: pointer; font: inherit; } .ds-row__name { display: block; font-size: 12px; font-weight: 600; color: hsl(213 31% 91%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-row.is-selected .ds-row__name { color: hsl(263 70% 50%); } .ds-row__meta { display: block; margin-top: 4px; font-size: 12px; color: hsl(215.4 16.3% 56.9%); font-variant-numeric: tabular-nums; } .ds-row__tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; } .ds-row__kill { align-self: start; background: none; border: none; padding: 2px 4px; font-size: 14px; line-height: 1; color: hsl(215.4 16.3% 56.9%); cursor: pointer; transition: color 150ms cubic-bezier(0.4,0,0.2,1); } .ds-row__kill:hover { color: #f87171; } .ds-row__main:focus-visible, .ds-row__kill:focus-visible { outline: none; box-shadow: 0 0 0 2px hsl(263 70% 50%); } .ds-badge { display: inline-flex; align-items: center; padding: 2px 10px; font-size: 12px; font-weight: 600; border-radius: 9999px; border: 1px solid transparent; } .ds-badge--good { background: rgb(16 185 129 / 0.2); color: #34d399; border-color: rgb(16 185 129 / 0.3); } .ds-badge--muted { background: hsl(223 47% 11%); color: hsl(215.4 16.3% 56.9%); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "La Sala de Control",
+    "overview": "kairoai no es un dashboard que se consulta: es un panel de instrumentos que alguien trabaja de turno. La asesora vive en la pantalla de Leads decidiendo a quien llamar ahora; el operador vive en Finanzas decidiendo que pedido cuadra y que liquidacion falta cobrar. Las dos personas necesitan la misma cosa: el maximo de informacion cierta por pantalla, iluminada por estado, sin tener que hacer scroll para saber si algo anda mal.\n\nDe ahi sale la densidad, y la densidad es una decision, no un descuido. La escala tipografica esta corrida hacia abajo a proposito — 481 usos de 12px contra 188 de 14px — porque un dato mas visible vale mas que un dato mas grande. Las esquinas de los controles compactos son rectas porque la recta se alinea en cuadricula y ahorra pixeles. Las superficies son planas porque la profundidad falsa no informa nada. Lo unico que se eleva es lo que de verdad esta encima de todo: un modal.\n\nEl color hace el trabajo pesado. Sobre un fondo casi negro, un verde, un ambar o un rojo son lo primero que el ojo encuentra, y eso es exactamente la intencion: en una operacion de contra-entrega el estado *es* la informacion. El violeta de marca no compite con ellos — marca lo que se puede tocar y lo que esta seleccionado, nunca como va algo.",
+    "keyCharacteristics": [
+      "Densidad deliberada: 12px es el cuerpo de trabajo, no el texto secundario",
+      "Fondo casi negro (4% de luminosidad) con capas por tono, no por sombra",
+      "Color de estado semantico como canal primario de informacion",
+      "Un solo acento de marca, reservado a accion, foco e identidad de modulo",
+      "Esquina recta en lo compacto, radio en lo que contiene",
+      "Sin webfont: el stack del sistema, cargado a costo cero"
+    ],
+    "rules": [
+      {
+        "name": "La Regla del Canal Unico",
+        "section": "colors",
+        "body": "El estado se comunica con la paleta de estado y solo con ella. El violeta de marca nunca significa 'bien' ni 'mal': significa 'esto se puede tocar' o 'esto esta seleccionado'. Si un estado necesita color, sale del verde/ambar/rojo/cian; si no, va en gris."
+      },
+      {
+        "name": "La Regla del Velo",
+        "section": "colors",
+        "body": "Los fondos de estado se pintan con alfa sobre el oscuro (/10, /15, /20), no con el color solido. El solido se reserva para puntos indicadores y barras de progreso, donde el area es minima."
+      },
+      {
+        "name": "La Regla de la Linea Unica",
+        "section": "colors",
+        "body": "Todo lo que separa, contiene o agrupa usa el gris estructura a 1px. No hay una segunda linea mas clara ni mas oscura para casos especiales. La monotonia del borde es lo que deja respirar al color de estado."
+      },
+      {
+        "name": "La Regla de los 12px",
+        "section": "typography",
+        "body": "En las superficies de operacion, 12px es el cuerpo y 14px es la excepcion para formularios. Subir la escala reduce lo que cabe en pantalla, y lo que no cabe no se ve. Un tamano mayor se justifica por jerarquia, nunca por comodidad."
+      },
+      {
+        "name": "La Regla de la Etiqueta Gris",
+        "section": "typography",
+        "body": "El dato va en blanco papel y lo que lo describe va en gris secundario, un tamano por debajo. Nunca al mismo peso: si la etiqueta compite con el numero, la pantalla deja de escanearse y empieza a leerse."
+      },
+      {
+        "name": "La Regla del Plano por Tono",
+        "section": "elevation",
+        "body": "Para separar dos superficies se cambia el tono un escalon y se pone un borde. No se agrega una sombra. Una sombra en una superficie que no flota es profundidad decorativa, y en una pantalla densa solo agrega ruido."
+      },
+      {
+        "name": "La Regla de los Dos Registros",
+        "section": "shapes",
+        "body": "Si el elemento es un control compacto dentro de una fila densa, va cuadrado. Si contiene otras cosas o es un control de formulario de tamano completo, lleva radio. Ante la duda, mirar la altura: por debajo de 32px, cuadrado."
+      }
+    ],
+    "dos": [
+      "Do usar 12px como cuerpo en superficies de operacion y reservar 14px para formularios. La densidad es la funcion.",
+      "Do dejar el estado en manos de la paleta verde/ambar/rojo/cian, y el violeta en manos de la accion, el foco y la identidad de modulo.",
+      "Do pintar los fondos de estado con alfa (/10, /15, /20) sobre el oscuro. El solido solo para puntos y barras.",
+      "Do separar superficies con un escalon de tono mas un borde de 1px en gris estructura.",
+      "Do dar esquina recta a todo control compacto por debajo de 32px de alto, y radio a lo que contiene.",
+      "Do sobreescribir CardTitle a 16px (text-base). Es el tamano real de titulo del sistema.",
+      "Do poner el dato en blanco papel y su etiqueta en gris secundario, un tamano por debajo.",
+      "Do hacer que las tablas anchas scrolleen dentro de su contenedor, nunca el cuerpo de la pagina.",
+      "Do mantener el anillo de foco violeta de 2px en todo control interactivo."
+    ],
+    "donts": [
+      "Don't agregar sombras a superficies que no floten. Solo modales y drawers llevan la sombra flotante.",
+      "Don't usar el violeta de marca para indicar que algo esta bien, mal o pendiente. Ese es trabajo del color de estado.",
+      "Don't cargar un webfont. El stack del sistema es una decision de rendimiento, no una omision.",
+      "Don't redondear los chips de filtro ni los mini-stats. La fila de chips se lee como un bloque por su esquina recta.",
+      "Don't subir la escala tipografica 'para que se lea mejor': reduce lo que cabe en pantalla, y lo que no cabe no se ve.",
+      "Don't introducir una segunda linea divisoria mas clara o mas oscura que el gris estructura.",
+      "Don't usar el rojo de estado para acciones destructivas — para eso esta el rojo ejecutor, mas apagado a proposito.",
+      "Don't parecer un SaaS generico: sin degradados violeta, sin ilustraciones, sin tarjetas enormes con mucho aire, sin saludos de bienvenida.",
+      "Don't parecer un ERP viejo: la densidad nunca justifica gris sobre gris ni tablas donde todo pesa lo mismo. La jerarquia es obligatoria."
+    ]
+  }
+}
