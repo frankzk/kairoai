@@ -60,6 +60,16 @@ typography:
     fontSize: "0.75rem"
     fontWeight: 500
     letterSpacing: "0.025em"
+  label-micro:
+    fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    fontSize: "11px"
+    fontWeight: 400
+    lineHeight: 1.3
+  label-nano:
+    fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    fontSize: "10px"
+    fontWeight: 400
+    lineHeight: 1.2
 rounded:
   none: "0"
   sm: "calc(0.5rem - 4px)"
@@ -212,10 +222,14 @@ La paleta de estado. No es decoración: es el canal principal por el que la pant
 - **Body** (400, 14px): texto de formulario, valores de campo, párrafos de ayuda.
 - **Label** (400, 12px): **el cuerpo de trabajo real.** Filas de tabla, chips, etiquetas, metadatos, badges. Es la escala más usada del sistema con diferencia.
 - **Label Loud** (500, 12px, +0.025em, mayúsculas): encabezado de sección y de columna. La mayúscula y el espaciado hacen el trabajo que en otro sistema haría un tamaño mayor.
+- **Label Micro** (400, 11px): metadatos secundarios bajo un valor — la unidad, la fecha, la nota al pie de una fila. Casi siempre en gris secundario; es el escalón más usado después de los 12px (77 apariciones).
+- **Label Nano** (400, 10px): el piso. Etiquetas dentro de badges compactos y encabezados micro en mayúsculas con `tracking-wide`. 64 apariciones.
 
 ### Named Rules
 
 **La Regla de los 12px.** En las superficies de operación, 12px es el cuerpo y 14px es la excepción para formularios. Subir la escala "para que se lea mejor" reduce lo que cabe en pantalla, y lo que no cabe no se ve — que es peor que leerlo pequeño. Un tamaño mayor se justifica por jerarquía, nunca por comodidad.
+
+**La Regla del Piso de 10px.** La rampa termina en 10px y no baja más. Por debajo de eso, gris secundario sobre un fondo al 4% de luminosidad deja de ser legible, y el dato que no se puede leer no está. Si algo no cabe en 10px, el problema es el layout, no el tamaño de la letra.
 
 **La Regla de la Etiqueta Gris.** El dato va en `{colors.foreground}` y lo que lo describe va en `{colors.muted-foreground}`, un tamaño por debajo. Nunca al mismo peso: si la etiqueta compite con el número, la pantalla deja de escanearse y empieza a leerse.
 

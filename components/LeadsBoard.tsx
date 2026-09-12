@@ -120,7 +120,18 @@ function PhoneWithCopy({ phone }: { phone: string }) {
         onClick={copy}
         title={copied ? "Copiado" : "Copiar numero"}
         aria-label="Copiar numero"
-        className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+        // El area tactil es de 24x24 (h-6 w-6) aunque el icono siga siendo de
+        // 12px: antes eran 16x16 y no llegaba al minimo de 24 CSS px que pide
+        // WCAG 2.2. Es el control que la asesora usa para copiar el numero y
+        // marcar, en cada una de las 50+ filas de la lista.
+        //
+        // El `-my-1` devuelve los 8px que crecio, asi que la fila no cambia de
+        // alto: el area se agranda sin mover el diseno.
+        //
+        // Y lleva anillo de foco, como todo control interactivo del sistema
+        // (ver el "Do" del anillo violeta en DESIGN.md). Sin el, quien navega
+        // con teclado no ve donde esta parado.
+        className="-my-1 inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
       </button>
