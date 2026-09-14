@@ -65,8 +65,18 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
       status,
       note: body?.note ?? null,
       nextFollowupAt,
+      // El lead TAL COMO ESTABA: se guarda en el historial para que se pueda
+      // deshacer. Ya se leyo arriba para validar que existe.
+      previous: lead,
     });
-    return NextResponse.json({ ok: true, ...result, next_followup_at: nextFollowupAt });
+    return NextResponse.json({
+      ok: true,
+      status: result.status,
+      category: result.category,
+      next_followup_at: nextFollowupAt,
+      // Con que el cliente pueda ofrecer "Deshacer" sobre ESTA gestion.
+      call_id: result.callId,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al registrar la gestion";
     return NextResponse.json({ error: message }, { status: 500 });

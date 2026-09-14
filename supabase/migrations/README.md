@@ -44,6 +44,8 @@ Estado actual:
 | `0034_leads_stage_tuples_always_visible.sql` | Agrega `p_always_statuses` al RPC de conteos, para que exceptue de la ventana de 30 dias lo mismo que `sinceFilter` (hoy: los pagos por verificar). Borra explicitamente la firma de 2 argumentos: dejar las dos vivas hace que PostgREST no pueda elegir candidata y devuelva 500 en todo el tablero | Si (31/08/2026) |
 | `0035_settlement_receipts.sql` | Doble check del cobro de una liquidacion: columnas `received_usd`/`received_at`/`reference_rate`/`receipt_path` en `settlement_imports` + bucket PRIVADO `settlement-receipts` (5 MB, imagenes y PDF). `total_to_liquidate` es lo que Boxful dice que va a pagar en colones y la plata llega a Mercury en dolares; la diferencia contra la tasa de mercado es la perdida por tipo de cambio, que antes no figuraba en ninguna parte | Si (10/09/2026) |
 
+| `0036_lead_calls_prev_state.sql` | Columna `prev_state` (JSONB) en `lead_calls`: la instantanea de los siete campos del lead ANTES de cada gestion, para poder deshacerla. "Resultado de la llamada" es la unica accion destructiva del tablero de Leads, se dispara con un clic sin confirmar, y el historial solo guardaba el estado NUEVO: no habia con que volver. Las filas anteriores quedan en NULL y no se pueden revertir | Si (14/09/2026) |
+
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de
 migraciones busca evitar.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   BarChart3,
@@ -266,6 +266,36 @@ export default function LeadsBoard() {
   // vieja si mientras tanto se cambio de tienda o se refresco.
   const archivePedido = useRef({ id: 0, pedido: false });
 
+  /**
+   * El reloj con el que se decide que es "hoy" y que esta "vencido".
+   *
+   * ESTABA CONGELADO al montar (`useState(() => new Date())` sin setter). Este
+   * valor alimenta `isTrabajoDeHoy`, `isFollowupActionable`, los buckets del
+   * histograma y TODOS los conteos de tab. La pantalla se trabaja ocho horas
+   * seguidas, asi que:
+   *
+   *   - Un recontacto prometido para las 14:00 no aparecia en Hoy si la pagina
+   *     se habia cargado a las 8:00. Se quedaba en Seguimiento, en silencio.
+   *   - `Actualizar` refrescaba los DATOS pero no el reloj, asi que el remedio
+   *     obvio no funcionaba: spinner, lista nueva, y la clasificacion seguia
+   *     calculada contra las 8:00.
+   *
+   * Ahora avanza cada minuto y ademas en cada `load()`. Un minuto alcanza: la
+   * unidad mas fina que se juzga es una cita con hora, no con segundos.
+   *
+   * Se declara ANTES de `load` a proposito: `load` lo adelanta.
+   */
+  const [chartNow, setChartNow] = useState(() => new Date());
+  // De cuando son los datos que estan en pantalla. El reloj puede avanzar sin
+  // que la lista cambie, y la asesora necesita saber cual de las dos cosas
+  // esta vieja.
+  const [dataAt, setDataAt] = useState<Date | null>(null);
+
+  useEffect(() => {
+    const t = setInterval(() => setChartNow(new Date()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
   const load = useCallback(async () => {
     // Invalida el archivo de la carga anterior ANTES de pedir nada: lo que
     // venga en camino de la tienda vieja se descarta al llegar.
@@ -278,6 +308,11 @@ export default function LeadsBoard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error al cargar leads");
       setLeads(data.leads ?? []);
+      // Datos nuevos: el reloj con el que se clasifican tambien avanza. Antes
+      // `Actualizar` traia la lista nueva y la seguia juzgando contra la hora
+      // en que se habia abierto la pagina.
+      setChartNow(new Date());
+      setDataAt(new Date());
       setCounts(data.counts ?? null);
       // Los contadores pueden fallar solos sin llevarse la lista (ver la ruta).
       // Se avisa, pero el tablero se sigue trabajando.
@@ -463,13 +498,44 @@ export default function LeadsBoard() {
     [hasInteractionRange, allLeads, matchesInteractionRange]
   );
 
-  // Al buscar, los resultados son de TODAS las etapas (busqueda global).
-  const searchMatches = useMemo(
-    () => (searching ? rangeFilteredLeads.filter((l) => matchesSearch(l, q)) : []),
-    [rangeFilteredLeads, q, searching, matchesSearch]
+  /**
+   * Los ids que el servidor devolvio para esta busqueda.
+   *
+   * POR QUE EXISTE: el servidor busca con los digitos normalizados
+   * (`phone.ilike.%50684288896%`) y, si no encuentra nada exacto, cae al plan B
+   * de similitud por trigramas. El cliente volvia a filtrar ESOS resultados con
+   * `l.phone.includes(q)` sobre el texto crudo, y eso descartaba justo lo que
+   * el servidor habia encontrado:
+   *
+   *   1. Un telefono con formato. Buscar "+506 8428-8896" hace que el servidor
+   *      encuentre el lead guardado como "50684288896", y el cliente lo tira
+   *      porque la cadena cruda no esta contenida en el numero.
+   *   2. TODA coincidencia aproximada. Un match por similitud, por definicion,
+   *      no contiene lo que se tecleo. Se filtraban los 8 de 8, la lista
+   *      quedaba en cero, salia "Sin resultados" y el banner ambar —que vive en
+   *      la rama NO vacia— no llegaba a renderizarse nunca.
+   *
+   * O sea: la red de seguridad que se construyo para el caso real del
+   * 5068428896 no podia dispararse desde la interfaz.
+   */
+  const idsDelServidor = useMemo(
+    () => new Set((searchResults ?? []).map((l) => l.id)),
+    [searchResults]
   );
 
-  const [chartNow] = useState(() => new Date());
+  // Al buscar, los resultados son de TODAS las etapas (busqueda global).
+  //
+  // El filtro local se mantiene como OR y no se borra: mientras el fetch va en
+  // camino (hay debounce) es lo unico que da respuesta inmediata al tipear. Lo
+  // que cambia es que ya no puede VETAR lo que el servidor encontro.
+  const searchMatches = useMemo(
+    () =>
+      searching
+        ? rangeFilteredLeads.filter((l) => idsDelServidor.has(l.id) || matchesSearch(l, q))
+        : [],
+    [rangeFilteredLeads, q, searching, matchesSearch, idsDelServidor]
+  );
+
   const olderBucketKey = `older-than-${UNCALLED_CHART_DAYS}`;
 
   const matchesSelectedBucket = useCallback(
@@ -554,6 +620,114 @@ export default function LeadsBoard() {
     () => (!searching && enHoy ? groupQueueByBand(visibleLeads, chartNow) : null),
     [searching, enHoy, visibleLeads, chartNow]
   );
+
+  /**
+   * La secuencia EXACTA de tarjetas dibujadas, en el orden en que se ven.
+   *
+   * Se deriva de `bandasDeHoy` cuando existe y no de `visibleLeads`, porque
+   * `groupQueueByBand` descarta los leads sin banda: si se recorriera
+   * `visibleLeads`, el cursor del teclado podria pararse en un lead que no
+   * esta en pantalla y `j` se sentiria como que se salta filas.
+   */
+  const leadsEnPantalla = useMemo(() => {
+    const fuente = bandasDeHoy ? bandasDeHoy.flatMap((b) => b.leads) : visibleLeads;
+    return fuente.slice(0, shownCount);
+  }, [bandasDeHoy, visibleLeads, shownCount]);
+
+  /**
+   * El cursor del teclado. Guarda el ID, NO el indice.
+   *
+   * `onGestionDone` refetchea el tablero entero con la ficha abierta y el lead
+   * gestionado normalmente sale de Hoy, asi que la lista se re-ordena debajo.
+   * Con un indice, el cursor habria quedado apuntando a otro cliente —el que
+   * ocupo ese lugar— y `Enter` habria abierto una ficha equivocada. Con el ID,
+   * si el lead se fue, el cursor se cae solo a null.
+   */
+  const [cursorId, setCursorId] = useState<number | null>(null);
+  const cursorRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const cursorIndex = leadsEnPantalla.findIndex((l) => l.id === cursorId);
+
+  // El cursor solo existe mientras su lead siga en pantalla.
+  useEffect(() => {
+    if (cursorId != null && !leadsEnPantalla.some((l) => l.id === cursorId)) {
+      setCursorId(null);
+    }
+  }, [cursorId, leadsEnPantalla]);
+
+  // Enfocar de verdad: el navegador trae la fila a la vista y el lector de
+  // pantalla la lee. Tambien corre al cerrar la ficha, y asi el foco vuelve a
+  // la tarjeta desde la que se abrio.
+  useEffect(() => {
+    if (cursorId == null || drawerLead) return;
+    cursorRef.current?.focus({ preventScroll: true });
+    cursorRef.current?.scrollIntoView({ block: "nearest" });
+  }, [cursorId, drawerLead]);
+
+  /**
+   * Atajos de teclado. La pantalla se trabaja ocho horas seguidas y tenia cero.
+   *
+   * `j`/`k` (y las flechas) mueven el cursor, `Enter` abre la ficha, `Esc` la
+   * cierra o suelta el cursor, `/` va al buscador. Son los de Gmail: quien
+   * trabaja con teclado ya los tiene en los dedos.
+   *
+   * No se tocan las teclas cuando el foco esta escribiendo en un campo —si no,
+   * buscar "jose" movia el cursor cuatro veces— ni cuando hay un modificador
+   * apretado, que son atajos del navegador.
+   */
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      // La ficha tiene su propio manejador (en captura): mientras este
+      // abierta, el tablero de atras no responde al teclado.
+      if (drawerLead) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.isContentEditable ||
+          ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+      ) {
+        // `Esc` en el buscador si suelta el campo: es la salida esperada.
+        if (e.key === "Escape") target.blur();
+        return;
+      }
+
+      const mover = (paso: number) => {
+        if (!leadsEnPantalla.length) return;
+        e.preventDefault();
+        const desde = cursorIndex;
+        const siguiente =
+          desde < 0
+            ? paso > 0
+              ? 0
+              : leadsEnPantalla.length - 1
+            : Math.min(leadsEnPantalla.length - 1, Math.max(0, desde + paso));
+        setCursorId(leadsEnPantalla[siguiente].id);
+      };
+
+      if (e.key === "j" || e.key === "ArrowDown") return mover(1);
+      if (e.key === "k" || e.key === "ArrowUp") return mover(-1);
+      if (e.key === "Enter") {
+        const lead = leadsEnPantalla[cursorIndex];
+        if (lead) {
+          e.preventDefault();
+          setDrawerLead(lead);
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        setCursorId(null);
+        return;
+      }
+      if (e.key === "/") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [leadsEnPantalla, cursorIndex, drawerLead]);
 
   const chartContextLeads = useMemo(() => {
     if (searching) return searchMatches.filter(matchesSegment);
@@ -682,6 +856,19 @@ export default function LeadsBoard() {
                 </option>
               ))}
             </select>
+            {/* De cuando son los datos. Sin esto, "Hoy" y "vencido" eran
+                juicios sin fecha: la pantalla se deja abierta todo el turno y
+                nada decia si lo que se ve es de hace un minuto o de las 8am. */}
+            {dataAt && (
+              <span className="text-xs tabular-nums text-muted-foreground" title="Hora de los datos en pantalla">
+                Actualizado{" "}
+                {dataAt.toLocaleTimeString("es-CR", {
+                  timeZone: "America/Costa_Rica",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </span>
+            )}
             <Button
               onClick={load}
               disabled={loading}
@@ -831,8 +1018,9 @@ export default function LeadsBoard() {
         <div className="mb-4">
           <div className="flex flex-col gap-2 lg:flex-row">
             <Input
+              ref={searchRef}
               className="min-w-0 flex-1"
-              placeholder="Buscar por nombre, telefono o mensaje... (en todas las etapas)"
+              placeholder="Buscar por nombre, teléfono o mensaje… (en todas las etapas · tecla /)"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -1043,6 +1231,19 @@ export default function LeadsBoard() {
             ya esta cargado y los cerrados se suman cuando llegan. Bloquear la
             lista mientras tanto dejaba el buscador "colgado" en cada busqueda,
             aunque el lead buscado ya estuviera a la vista. */}
+        {/* El aviso de busqueda aproximada va FUERA de las dos ramas.
+            Vivia dentro de la rama "hay resultados", que es justo la que no se
+            renderiza cuando el arreglo hace falta: si la busqueda exacta no
+            encontro nada y el servidor devolvio telefonos parecidos, cualquier
+            cosa que los descarte deja la lista en cero, sale "Sin resultados"
+            y el aviso —que explicaba por que esos numeros no son exactos— no
+            llegaba a aparecer nunca. */}
+        {searching && searchAproximado && !searchLoading && (
+          <p className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+            No hay ninguna coincidencia exacta con <strong>{search.trim()}</strong>. Estos números
+            se parecen — revisá si alguno es el que buscabas.
+          </p>
+        )}
         {loading ? (
           <p className="py-12 text-center text-muted-foreground">Cargando...</p>
         ) : visibleLeads.length === 0 ? (
@@ -1061,12 +1262,16 @@ export default function LeadsBoard() {
           </p>
         ) : (
           <>
-            {searching && searchAproximado && !searchLoading && (
-              <p className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                No hay ninguna coincidencia exacta con <strong>{search.trim()}</strong>. Estos
-                números se parecen — revisá si alguno es el que buscabas.
-              </p>
-            )}
+            {/* Los atajos existen: hay que decirlo una vez, en la pantalla.
+                Toda la ayuda de este tablero vivia en atributos `title`, que
+                no se alcanzan por teclado — justo quien necesita esta linea. */}
+            <p className="mb-2 text-[11px] text-muted-foreground">
+              <kbd className="border border-border px-1 font-sans">j</kbd>{" "}
+              <kbd className="border border-border px-1 font-sans">k</kbd> se mueve ·{" "}
+              <kbd className="border border-border px-1 font-sans">Enter</kbd> abre el chat ·{" "}
+              <kbd className="border border-border px-1 font-sans">Esc</kbd> cierra ·{" "}
+              <kbd className="border border-border px-1 font-sans">/</kbd> busca
+            </p>
             {(esperandoArchivo || searchLoading) && (
               <p className="mb-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <RefreshCw className="h-3 w-3 animate-spin" />
@@ -1123,8 +1328,14 @@ export default function LeadsBoard() {
                           {visibles.map((lead, i) => (
                             <LeadCard
                               key={lead.id}
+                              ref={lead.id === cursorId ? cursorRef : undefined}
+                              isCursor={lead.id === cursorId}
+                              nowMs={chartNow.getTime()}
                               lead={lead}
-                              onOpen={() => setDrawerLead(lead)}
+                              onOpen={() => {
+                                setCursorId(lead.id);
+                                setDrawerLead(lead);
+                              }}
                               queuePosition={desde + i + 1}
                             />
                           ))}
@@ -1136,8 +1347,18 @@ export default function LeadsBoard() {
               </div>
             ) : (
               <div className="space-y-2">
-                {visibleLeads.slice(0, shownCount).map((lead) => (
-                  <LeadCard key={lead.id} lead={lead} onOpen={() => setDrawerLead(lead)} />
+                {leadsEnPantalla.map((lead) => (
+                  <LeadCard
+                    key={lead.id}
+                    ref={lead.id === cursorId ? cursorRef : undefined}
+                    isCursor={lead.id === cursorId}
+                    nowMs={chartNow.getTime()}
+                    lead={lead}
+                    onOpen={() => {
+                      setCursorId(lead.id);
+                      setDrawerLead(lead);
+                    }}
+                  />
                 ))}
               </div>
             )}
@@ -1171,8 +1392,13 @@ export default function LeadsBoard() {
   );
 }
 
-function FollowupBadge({ iso }: { iso: string }) {
-  const overdue = new Date(iso).getTime() <= Date.now();
+// `nowMs` viene del reloj del tablero, NO de `Date.now()`.
+//
+// Eran DOS relojes en la misma tarjeta: la cola clasificaba contra `chartNow`
+// y este badge contra la hora real de cada render. Un badge podia decir
+// "Seguir hoy" en una tarjeta que la cola habia colocado como no vencida.
+function FollowupBadge({ iso, nowMs }: { iso: string; nowMs: number }) {
+  const overdue = new Date(iso).getTime() <= nowMs;
   const when = (() => {
     try {
       return new Date(iso).toLocaleString("es-CR", {
@@ -1194,15 +1420,22 @@ function FollowupBadge({ iso }: { iso: string }) {
   );
 }
 
-function LeadCard({
-  lead,
-  onOpen,
-  queuePosition,
-}: {
-  lead: LeadRow;
-  onOpen: () => void;
-  queuePosition?: number;
-}) {
+const LeadCard = forwardRef(function LeadCard(
+  {
+    lead,
+    onOpen,
+    queuePosition,
+    nowMs,
+    isCursor = false,
+  }: {
+    lead: LeadRow;
+    onOpen: () => void;
+    queuePosition?: number;
+    nowMs: number;
+    isCursor?: boolean;
+  },
+  ref: React.Ref<HTMLDivElement>
+) {
   // La etiqueta muestra el SEGMENTO, que es lo que decide el orden de la cola
   // y lo que dicen los chips de arriba.
   //
@@ -1214,7 +1447,25 @@ function LeadCard({
   const meta = SEGMENT_META[lead.segment];
   const isNext = queuePosition === 1;
   return (
-    <Card className={`transition-colors hover:border-primary/50 ${isNext ? "border-primary/70 bg-primary/5" : ""}`}>
+    // `tabIndex={-1}`: la tarjeta no entra en el orden de tabulacion (serian
+    // 50 paradas antes de cualquier control), pero SI se puede enfocar por
+    // codigo, que es como `j`/`k` mueven el cursor. Enfocar de verdad —y no
+    // pintar un borde— es lo que hace que el navegador la traiga a la vista y
+    // que un lector de pantalla lea la fila en la que se esta.
+    <Card
+      ref={ref}
+      tabIndex={-1}
+      aria-current={isCursor ? "true" : undefined}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && e.currentTarget === e.target) {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className={`outline-none transition-colors hover:border-primary/50 ${
+        isNext ? "border-primary/70 bg-primary/5" : ""
+      } ${isCursor ? "ring-2 ring-ring ring-offset-2 ring-offset-background" : ""}`}
+    >
       <CardContent className="flex items-center gap-3 py-3">
         {queuePosition != null && (
           <span
@@ -1250,7 +1501,9 @@ function LeadCard({
                 ya tiene pedido
               </Badge>
             )}
-            {lead.next_followup_at && <FollowupBadge iso={lead.next_followup_at} />}
+            {lead.next_followup_at && (
+              <FollowupBadge iso={lead.next_followup_at} nowMs={nowMs} />
+            )}
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
             <PhoneWithCopy phone={lead.phone} />
@@ -1281,7 +1534,7 @@ function LeadCard({
       </CardContent>
     </Card>
   );
-}
+});
 
 function LeadDrawer({
   lead,
@@ -1296,10 +1549,79 @@ function LeadDrawer({
 }) {
   const [showOrder, setShowOrder] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   // Al cerrar la ficha se lleva el telefono. Va en el desmontaje y no en el
   // boton de cerrar para cubrir todas las salidas: la X y el clic en el fondo.
   useEffect(() => () => hideWebphone(), []);
+
+  /**
+   * Esta ficha tapa la pantalla entera: es un dialogo, y tenia que comportarse
+   * como uno. No lo hacia.
+   *
+   * Sin `Escape`, sin retorno de foco y sin trampa: con el teclado se podia
+   * tabular FUERA de la ficha hacia el tablero vivo que quedaba debajo de un
+   * fondo opaco, y operar controles invisibles. Cerrar haciendo clic en el
+   * fondo no tenia equivalente por teclado: no habia forma de salir.
+   *
+   * `capture: true` para que `Escape` se atienda aqui y no en el manejador del
+   * tablero de atras.
+   */
+  useEffect(() => {
+    const focoAnterior = document.activeElement as HTMLElement | null;
+    panelRef.current?.focus();
+
+    const seleccionables = () => {
+      const panel = panelRef.current;
+      if (!panel) return [] as HTMLElement[];
+      return Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+        // `offsetParent === null` descarta lo que esta oculto, como el panel
+        // de "Crear pedido" cuando no se ha abierto.
+      ).filter((el) => el.offsetParent !== null);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const lista = seleccionables();
+      if (!lista.length) {
+        e.preventDefault();
+        panel.focus();
+        return;
+      }
+      const primero = lista[0];
+      const ultimo = lista[lista.length - 1];
+      const activo = document.activeElement as HTMLElement | null;
+      if (!panel.contains(activo)) {
+        e.preventDefault();
+        (e.shiftKey ? ultimo : primero).focus();
+      } else if (!e.shiftKey && activo === ultimo) {
+        e.preventDefault();
+        primero.focus();
+      } else if (e.shiftKey && (activo === primero || activo === panel)) {
+        e.preventDefault();
+        ultimo.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      // Devolver el foco de donde vino. Si la tarjeta ya no existe —el lead
+      // gestionado suele salir de Hoy— el tablero lo recoloca en su cursor.
+      focoAnterior?.focus?.();
+    };
+  }, [onClose]);
 
   // El drawer opera SIEMPRE con la tienda del propio lead, no con la del
   // selector del tablero. Si al cambiar de tienda el tablero alcanza a mostrar
@@ -1317,7 +1639,12 @@ function LeadDrawer({
       {/* 70rem = dos columnas del ancho que tenia el chat (~35rem cada una).
           Mitad y mitad: ninguna necesita mas espacio que la otra. */}
       <div
-        className="flex h-full w-full max-w-[70rem] flex-col border-l border-border bg-card"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Ficha de ${lead.name || lead.phone}`}
+        tabIndex={-1}
+        className="flex h-full w-full max-w-[70rem] flex-col border-l border-border bg-card outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border p-4">
@@ -1332,7 +1659,15 @@ function LeadDrawer({
             <ShoppingCart className="mr-2 h-4 w-4" />
             {showOrder ? "Ocultar pedido" : "Crear pedido"}
           </Button>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground" aria-label="Cerrar">
+          {/* 24x24 reales y con anillo de foco: es la unica salida de un
+              dialogo que tapa la pantalla. 20px sin anillo la dejaba fuera del
+              minimo tactil y muda por teclado. */}
+          <button
+            onClick={onClose}
+            className="flex h-6 w-6 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+            aria-label="Cerrar la ficha (Esc)"
+            title="Cerrar (Esc)"
+          >
             <X className="h-5 w-5" />
           </button>
         </div>
