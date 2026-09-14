@@ -5,6 +5,12 @@
 import { getDB } from "./db";
 import { statusBoardStage, statusCategory, statusesForBoard, type BoardStage } from "./leads-classify";
 import type { ChatLeadSummary, LeadCategory, LeadStateSnapshot, StatusSource } from "./leads-types";
+import {
+  decidirDeshacer,
+  KINDS_QUE_MUEVEN_EL_ESTADO,
+  type FilaDeHistorial,
+  type GestionSnapshot,
+} from "./leads-undo";
 import { normalizePhone, phoneConfigForStore } from "./phone-cr";
 import { AGENT_LEG_ANSWERED, describeZadarmaCall } from "./zadarma";
 
@@ -642,17 +648,27 @@ export async function insertLeadCall(row: {
   new_status?: string | null;
   note?: string | null;
   next_followup_at?: string | null;
-}): Promise<void> {
-  const { error } = await getDB().from("lead_calls").insert({
-    lead_id: row.lead_id,
-    store_id: row.store_id,
-    vendedora: row.vendedora,
-    kind: row.kind,
-    new_status: row.new_status ?? null,
-    note: row.note ?? null,
-    next_followup_at: row.next_followup_at ?? null,
-  });
+  prev_state?: GestionSnapshot | null;
+}): Promise<number | null> {
+  const { data, error } = await getDB()
+    .from("lead_calls")
+    .insert({
+      lead_id: row.lead_id,
+      store_id: row.store_id,
+      vendedora: row.vendedora,
+      kind: row.kind,
+      new_status: row.new_status ?? null,
+      note: row.note ?? null,
+      next_followup_at: row.next_followup_at ?? null,
+      prev_state: row.prev_state ?? null,
+    })
+    // Devuelve el id para que quien registra una gestion pueda ofrecer
+    // "Deshacer" apuntando a ESA fila y no a "la ultima", que puede haber
+    // cambiado mientras la asesora leia el mensaje.
+    .select("id")
+    .single();
   if (error) throw new Error(`insertLeadCall: ${error.message}`);
+  return (data as { id: number } | null)?.id ?? null;
 }
 
 /**
@@ -692,9 +708,30 @@ export async function markLeadWonByAdvisor(opts: {
 }
 
 /**
+ * El lead reducido a los CAMPOS_DE_GESTION: lo que hay que guardar para poder
+ * deshacer. Las reglas de que se puede deshacer viven en `lib/leads-undo.ts`.
+ */
+export function snapshotDeGestion(lead: LeadRecord): GestionSnapshot {
+  return {
+    status: lead.status,
+    category: lead.category,
+    status_source: lead.status_source,
+    auto_reason: lead.auto_reason,
+    needs_attention: lead.needs_attention,
+    closed_by: lead.closed_by,
+    next_followup_at: lead.next_followup_at,
+  };
+}
+
+/**
  * Registra un "resultado de la llamada" (gestion manual de la asesora).
  * status_source='manual' -> la ingesta NUNCA lo revierte. Si el estado es
  * terminal (lost/won) se marca closed_by. Devuelve el estado aplicado.
+ *
+ * `previous` es el lead TAL COMO ESTABA. Se guarda en el historial para que
+ * `undoDisposition` pueda revertir; sin el, un clic equivocado no tiene vuelta.
+ * Lo pasa quien llama porque ya tuvo que leer el lead para validar que existe:
+ * pedirlo aqui seria una segunda consulta de lo mismo.
  */
 export async function applyDisposition(opts: {
   storeId: number;
@@ -703,7 +740,8 @@ export async function applyDisposition(opts: {
   status: string;
   note?: string | null;
   nextFollowupAt?: string | null;
-}): Promise<{ status: string; category: LeadCategory }> {
+  previous: LeadRecord;
+}): Promise<{ status: string; category: LeadCategory; callId: number | null }> {
   const category = statusCategory(opts.status);
   const patch: Record<string, unknown> = {
     status: opts.status,
@@ -722,7 +760,7 @@ export async function applyDisposition(opts: {
     .eq("id", opts.leadId);
   if (error) throw new Error(`applyDisposition: ${error.message}`);
 
-  await insertLeadCall({
+  const callId = await insertLeadCall({
     lead_id: opts.leadId,
     store_id: opts.storeId,
     vendedora: opts.vendedora,
@@ -730,8 +768,95 @@ export async function applyDisposition(opts: {
     new_status: opts.status,
     note: opts.note ?? null,
     next_followup_at: opts.nextFollowupAt ?? null,
+    prev_state: snapshotDeGestion(opts.previous),
   });
-  return { status: opts.status, category };
+  return { status: opts.status, category, callId };
+}
+
+export type UndoResult =
+  | { ok: true; status: string; category: LeadCategory }
+  | { ok: false; reason: string };
+
+/**
+ * Deshace UNA gestion concreta y devuelve el lead a como estaba.
+ *
+ * Por que existe: "Resultado de la llamada" es la unica accion destructiva del
+ * tablero y se dispara con un clic, sin confirmar. Seis botones rapidos
+ * pegados, y un desplegable de 19 estados —incluido `lista_negra`— que escribe
+ * con `onChange`, o sea que navegarlo con las flechas del teclado ya
+ * compromete el estado. Encima agenda una fecha de recontacto.
+ *
+ * Recibe el `callId` de la gestion a deshacer, NO "la ultima": entre el clic
+ * equivocado y el clic en Deshacer la ultima pudo cambiar, y revertir la que
+ * no era seria un segundo error, esta vez silencioso.
+ *
+ * Los tres candados (gestion con instantanea, ultima que movio el estado, y
+ * reciente) viven en `decidirDeshacer`, en `lib/leads-undo.ts`, sin base de
+ * datos. Aqui solo se leen las dos filas que necesita y se aplica el veredicto.
+ *
+ * NO borra nada del historial: deja una fila `kind='undo'` con su propia
+ * instantanea. El historial es auditoria, y deshacer es un hecho mas, no la
+ * cancelacion de un hecho.
+ */
+export async function undoDisposition(opts: {
+  storeId: number;
+  leadId: number;
+  callId: number;
+  vendedora: number;
+  now?: Date;
+}): Promise<UndoResult> {
+  const db = getDB();
+  const { data: fila, error: errFila } = await db
+    .from("lead_calls")
+    .select("id, kind, prev_state, new_status, occurred_at")
+    .eq("id", opts.callId)
+    .eq("store_id", opts.storeId)
+    .eq("lead_id", opts.leadId)
+    .maybeSingle();
+  if (errFila) throw new Error(`undoDisposition: ${errFila.message}`);
+
+  const { data: ultima, error: errUltima } = await db
+    .from("lead_calls")
+    .select("id")
+    .eq("store_id", opts.storeId)
+    .eq("lead_id", opts.leadId)
+    .in("kind", KINDS_QUE_MUEVEN_EL_ESTADO)
+    .order("id", { ascending: false })
+    .limit(1);
+  if (errUltima) throw new Error(`undoDisposition(ultima): ${errUltima.message}`);
+
+  const decision = decidirDeshacer({
+    fila: (fila as FilaDeHistorial | null) ?? null,
+    ultimoIdQueMovioElEstado: (ultima as { id: number }[] | null)?.[0]?.id ?? null,
+    nowMs: (opts.now ?? new Date()).getTime(),
+  });
+  if (!decision.ok) return decision;
+  const previo = decision.previo;
+
+  // El estado ACTUAL, para que el propio Deshacer quede auditado con su
+  // instantanea (y sea, a su vez, reversible).
+  const actual = await getLead(opts.storeId, opts.leadId);
+  if (!actual) return { ok: false, reason: "Ese lead ya no existe." };
+
+  const { error: errUpdate } = await db
+    .from("leads")
+    .update(previo)
+    .eq("store_id", opts.storeId)
+    .eq("id", opts.leadId);
+  if (errUpdate) throw new Error(`undoDisposition(update): ${errUpdate.message}`);
+
+  await insertLeadCall({
+    lead_id: opts.leadId,
+    store_id: opts.storeId,
+    vendedora: opts.vendedora,
+    kind: "undo",
+    new_status: previo.status,
+    note: `Gestión deshecha: ${(fila as FilaDeHistorial).new_status ?? "?"} → ${previo.status}`,
+    next_followup_at: previo.next_followup_at,
+    prev_state: snapshotDeGestion(actual),
+  });
+
+  return { ok: true, status: previo.status, category: previo.category };
 }
 
 /**

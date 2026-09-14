@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, Undo2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { DISPOSITION_OPTIONS, DISPOSITION_QUICK } from "@/lib/leads-classify";
 import { getVendedoraId, setVendedoraId as persistVendedoraId } from "@/lib/vendedora";
@@ -29,6 +29,12 @@ export default function GestionBar({
   const [followupAt, setFollowupAt] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
   const [savedStatus, setSavedStatus] = useState<string | null>(null);
+  // La gestion que se acaba de registrar, para poder deshacerla. Se guarda el
+  // id de ESA fila y no "la ultima": entre el clic equivocado y el clic en
+  // Deshacer la ultima pudo cambiar.
+  const [undoableCallId, setUndoableCallId] = useState<number | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const [undone, setUndone] = useState(false);
   // Fecha de recontacto que quedo agendada (custom o automatica), para que la
   // asesora vea que el reintento existe sin ir a la Agenda.
   const [savedFollowup, setSavedFollowup] = useState<string | null>(null);
@@ -82,17 +88,48 @@ export default function GestionBar({
       if (!res.ok) throw new Error(data.error || "Error al gestionar");
       setSavedStatus(status);
       setSavedFollowup(data.next_followup_at ?? null);
+      setUndoableCallId(typeof data.call_id === "number" ? data.call_id : null);
+      setUndone(false);
       setNote("");
       setFollowupAt("");
       onDone(status);
+      // 30 s y no 4: este mensaje ahora lleva colgado el unico "Deshacer" de
+      // la pantalla, y cuatro segundos no alcanzan para darse cuenta de que se
+      // apreto el boton equivocado, leerlo y decidir. El servidor acepta
+      // deshacer hasta 10 minutos despues, asi que la oferta nunca miente.
       setTimeout(() => {
         setSavedStatus(null);
         setSavedFollowup(null);
-      }, 4000);
+        setUndoableCallId(null);
+      }, 30_000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al gestionar");
     } finally {
       setSaving(null);
+    }
+  }
+
+  async function undo(callId: number) {
+    setUndoing(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/leads/${leadId}/disposition/undo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store, vendedora_id: vendedoraId, call_id: callId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error al deshacer");
+      setUndone(true);
+      setUndoableCallId(null);
+      setSavedFollowup(null);
+      // Refrescar el historial y el tablero: el lead volvio a su estado
+      // anterior y probablemente vuelve a la cola de hoy.
+      onDone(data.status);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al deshacer");
+    } finally {
+      setUndoing(false);
     }
   }
 
@@ -101,10 +138,15 @@ export default function GestionBar({
       <p className="text-xs font-medium text-muted-foreground">Resultado de la llamada</p>
 
       {error && <p className="text-xs text-destructive">{error}</p>}
+      {undone && !savedStatus && (
+        <p className="text-xs text-muted-foreground" role="status">
+          Gestión deshecha: el lead volvió a como estaba.
+        </p>
+      )}
       {savedStatus && (
-        <p className="flex items-center gap-1 text-xs text-emerald-400">
-          <Check className="h-3 w-3" /> Guardado
-          {savedFollowup && (
+        <p className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs text-emerald-400" role="status">
+          <Check className="h-3 w-3" /> {undone ? "Deshecho" : "Guardado"}
+          {savedFollowup && !undone && (
             <span className="text-muted-foreground">
               · reintento agendado el{" "}
               {new Date(savedFollowup).toLocaleString("es-CR", {
@@ -115,6 +157,23 @@ export default function GestionBar({
                 minute: "2-digit",
               })}
             </span>
+          )}
+          {/* El unico Deshacer de la pantalla.
+              Gestionar escribe siete campos del lead con un clic sin
+              confirmar —y el desplegable de 19 estados lo hace con `onChange`,
+              o sea que navegarlo con el teclado ya compromete el estado,
+              `lista_negra` incluido—. La salida tiene que estar donde ella
+              esta mirando: pegada al "Guardado", no en un menu. */}
+          {undoableCallId != null && !undone && (
+            <button
+              type="button"
+              onClick={() => undo(undoableCallId)}
+              disabled={undoing}
+              className="ml-1 inline-flex h-6 items-center gap-1 border border-border px-2 text-xs text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:opacity-50"
+            >
+              {undoing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />}
+              Deshacer
+            </button>
           )}
         </p>
       )}
