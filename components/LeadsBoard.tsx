@@ -179,15 +179,81 @@ const TAB_META: Record<BoardTab, { label: string; emoji: string; hint: string }>
 
 const TABS_VISIBLES: BoardTab[] = ["hoy", "seguimiento", "cerrado"];
 
-// Color de la etiqueta segun cuanto convierte el segmento (ver la medicion en
-// lib/leads-segment.ts): carrito 41,4% · enganchado 15,8% · converso 1,5% ·
-// solo saludo 1,0%.
+/**
+ * Color de la etiqueta segun cuanto convierte el segmento (ver la medicion en
+ * lib/leads-segment.ts): carrito 41,4% · enganchado 15,8% · converso 1,5% ·
+ * solo saludo 1,0%.
+ *
+ * `enganchado` estaba en `destructive`, o sea que "🔥 Enganchado" —un segmento
+ * informativo y POSITIVO, del 15,8% de conversion— se pintaba del mismo rojo
+ * que una promesa incumplida (`FollowupBadge`), a 12px de distancia en la
+ * misma fila. La asesora escanea por color: cuando el rojo significa a la vez
+ * "tu mejor lead" y "vas tarde", el escaneo deja de funcionar y hay que leer
+ * cada fila.
+ *
+ * Ahora va en ambar, que en este sistema es "esto espera a alguien" — que es
+ * exactamente lo que es un lead enganchado sin llamar. El rojo queda exclusivo
+ * de lo vencido (La Regla del Canal Unico).
+ */
 const SEGMENT_VARIANT: Record<LeadSegment, BadgeVariant> = {
   carrito: "info",
-  enganchado: "destructive",
+  enganchado: "warning",
   converso: "secondary",
   solo_saludo: "muted",
 };
+
+/**
+ * El anillo de foco del sistema: 2px violeta con separacion (el "Do" de
+ * DESIGN.md).
+ *
+ * Se comparte porque estaba escrito a mano en tres controles, faltaba
+ * entero en los otros diez, y los dos campos de fecha lo tenian en
+ * `focus:ring-1` sin separacion: la mitad de grosor, pegado al borde del
+ * campo, donde casi no se distingue. Una sola constante y no puede volver a
+ * divergir.
+ */
+const ANILLO_FOCO =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
+/**
+ * Chip de filtro: esquina RECTA.
+ *
+ * La Regla de los Dos Registros manda cuadrado por debajo de 32px, y el
+ * redondo es EXCLUSIVO del badge de estado — eso es lo que hace que una
+ * pildora signifique "estado" sin necesidad de leerla. Mientras las dos filas
+ * de filtros eran pildoras y `LeadCard` pintaba hasta cinco pildoras reales,
+ * la forma no distinguia filtro de estado en ninguna parte.
+ *
+ * `min-h-6` es el minimo tactil de 24 CSS px de WCAG 2.2.
+ */
+const CHIP_BASE = `inline-flex min-h-6 items-center gap-1.5 border px-2.5 py-1 text-xs transition-colors ${ANILLO_FOCO}`;
+const CHIP_ACTIVO = "border-primary bg-primary/15 text-foreground";
+const CHIP_INACTIVO = "border-border bg-card text-muted-foreground hover:bg-accent";
+
+/** El contador que va dentro de un chip o de un tab. Cuadrado, por lo mismo. */
+const CONTADOR_EN_CHIP = "bg-muted px-1.5 tabular-nums";
+
+/**
+ * Enlace de texto de las barras de filtros.
+ *
+ * Eran cuatro controles de ~16px de alto: por debajo del minimo tactil y sin
+ * anillo de foco. `min-h-6` los sube a 24px y el `-my-1` devuelve lo que
+ * crecieron, asi que la fila no cambia de alto.
+ */
+const ENLACE_FILTRO = `-my-1 inline-flex min-h-6 items-center text-xs text-muted-foreground underline-offset-2 hover:underline ${ANILLO_FOCO}`;
+
+/**
+ * Tab de vista. Es el patron que el sistema ya tiene escrito en Finanzas
+ * (`app/admin/finance/page.tsx`): subrayado de 2px como UNICO indicador, sin
+ * fondo y sin pildora.
+ *
+ * Antes el tab activo era una pildora violeta solida. Dos problemas a la vez:
+ * redondo donde el sistema manda cuadrado, y relleno solido de marca donde
+ * DESIGN.md especifica subrayado.
+ */
+const TAB_BASE = `inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${ANILLO_FOCO}`;
+const TAB_ACTIVO = "border-primary text-primary";
+const TAB_INACTIVO = "border-transparent text-muted-foreground hover:text-foreground";
 
 interface LeadRow {
   id: number;
@@ -1004,7 +1070,7 @@ export default function LeadsBoard() {
                 <button
                   type="button"
                   onClick={() => setSelectedUncalledBucket(null)}
-                  className="inline-flex items-center gap-1 rounded px-2 py-1 font-medium text-primary hover:bg-primary/10"
+                  className={`inline-flex min-h-6 items-center gap-1 rounded px-2 py-1 font-medium text-primary hover:bg-primary/10 ${ANILLO_FOCO}`}
                 >
                   <X className="h-3.5 w-3.5" />
                   Quitar filtro
@@ -1038,10 +1104,12 @@ export default function LeadsBoard() {
                     setInteractionFrom(next);
                     if (next && interactionTo && next > interactionTo) setInteractionTo(next);
                   }}
-                  className="h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+                  className={`h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground ${ANILLO_FOCO}`}
                 />
               </label>
-              <span className="text-muted-foreground/50" aria-hidden="true">—</span>
+              {/* El guion es lo que hace leer los dos campos como UN rango.
+                  Al 50% de alfa daba ~2,5:1 y practicamente no estaba. */}
+              <span className="text-muted-foreground" aria-hidden="true">—</span>
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span>Hasta</span>
                 <input
@@ -1054,7 +1122,7 @@ export default function LeadsBoard() {
                     setInteractionTo(next);
                     if (next && interactionFrom && next < interactionFrom) setInteractionFrom(next);
                   }}
-                  className="h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+                  className={`h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground ${ANILLO_FOCO}`}
                 />
               </label>
               {hasInteractionRange && (
@@ -1066,7 +1134,8 @@ export default function LeadsBoard() {
                   }}
                   aria-label="Quitar rango de última interacción"
                   title="Quitar rango"
-                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  // Eran 22x22 (p-1 sobre un icono de 14px). 24x24 es el piso.
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground ${ANILLO_FOCO}`}
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -1092,7 +1161,7 @@ export default function LeadsBoard() {
           <button
             type="button"
             onClick={() => setActiveStage("hoy")}
-            className="mb-4 flex w-full items-center gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/20"
+            className={`mb-4 flex w-full items-center gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/20 ${ANILLO_FOCO}`}
           >
             <CalendarClock className="h-4 w-4 shrink-0" />
             <span>
@@ -1102,47 +1171,60 @@ export default function LeadsBoard() {
           </button>
         )}
 
-        {/* Fila de tabs: que estoy mirando. Ver BoardTab. */}
-        <div className="mb-4 flex flex-wrap items-center gap-2">
+        {/* Fila de tabs: que estoy mirando. Ver BoardTab.
+            El riel de 1px debajo es lo que deja leer el subrayado del activo
+            como una interrupcion de la linea, y no como una raya suelta.
+            Sin `items-center` a proposito: los tabs tienen que estirarse al
+            alto de la fila para que su `border-b-2` caiga EXACTAMENTE sobre el
+            riel. Centrados, el subrayado queda flotando unos pixeles arriba.
+            Es la misma forma que usan los tabs de Finanzas. */}
+        <div className="mb-4 flex flex-wrap gap-2 border-b border-border">
           {tabs.map((tab) => {
             const meta = TAB_META[tab];
             const active = activeStage === tab && !searching;
             const count = tabCount(tab);
+            const vencidosEnHoy = tab === "hoy" && overdue.total > 0 ? overdue.total : 0;
             return (
               <button
                 key={tab}
                 onClick={() => setActiveStage(tab)}
                 title={meta.hint}
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
-                  active
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-card hover:bg-accent"
+                // Es un boton que cambia la vista, no un `role="tab"`: un
+                // tablist de verdad exige tabindex movil y navegacion con
+                // flechas, y prometerlo sin eso deja al lector de pantalla
+                // peor que antes. `aria-pressed` dice la verdad.
+                aria-pressed={active}
+                // La etiqueta se leia como cuatro fragmentos sueltos ("🎯",
+                // "Hoy", "174 vencidos", "619"). Ahora es una frase.
+                aria-label={`${meta.label}: ${count} leads${
+                  vencidosEnHoy ? `, ${vencidosEnHoy} con recontacto vencido` : ""
                 }`}
+                className={`${TAB_BASE} ${active ? TAB_ACTIVO : TAB_INACTIVO}`}
               >
-                <span>{meta.emoji}</span>
+                <span aria-hidden="true">{meta.emoji}</span>
                 <span>{meta.label}</span>
-                {tab === "hoy" && overdue.total > 0 && (
-                  <span className="rounded-full bg-destructive px-1.5 text-xs text-destructive-foreground">
-                    {overdue.total} vencidos
+                {vencidosEnHoy > 0 && (
+                  // Velo, no solido: era `bg-destructive` pleno mientras el
+                  // banner del MISMO concepto, doce lineas arriba, ya usaba la
+                  // forma correcta con alfa.
+                  <span className="border border-destructive/50 bg-destructive/15 px-1.5 text-xs tabular-nums text-destructive">
+                    {vencidosEnHoy} vencidos
                   </span>
                 )}
-                <span
-                  className={`rounded-full px-1.5 text-xs ${active ? "bg-primary-foreground/20" : "bg-muted"}`}
-                >
-                  {count}
-                </span>
+                <span className={`${CONTADOR_EN_CHIP} text-xs`}>{count}</span>
               </button>
             );
           })}
+          {/* `self-center`: los tabs se estiran, estos enlaces no. */}
           <button
             onClick={() => setShowHidden((s) => !s)}
-            className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:underline"
+            className={`ml-auto self-center ${ENLACE_FILTRO}`}
           >
             {showHidden ? "Ocultar descartados" : "Ver descartados"}
           </button>
           <button
             onClick={() => setIncludeOld((v) => !v)}
-            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+            className={`self-center ${ENLACE_FILTRO}`}
             title="Por defecto se ocultan leads con más de 30 días sin actividad"
           >
             {includeOld ? "Ocultar antiguos (+30 días)" : "Incluir antiguos (+30 días)"}
@@ -1160,14 +1242,11 @@ export default function LeadsBoard() {
           </span>
           <button
             onClick={() => setActiveSegment(null)}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${
-              activeSegment === null
-                ? "border-primary bg-primary/15 text-foreground"
-                : "border-border bg-card text-muted-foreground hover:bg-accent"
-            }`}
+            aria-pressed={activeSegment === null}
+            className={`${CHIP_BASE} ${activeSegment === null ? CHIP_ACTIVO : CHIP_INACTIVO}`}
           >
             Todos
-            <span className="rounded-full bg-muted px-1.5 tabular-nums">
+            <span className={CONTADOR_EN_CHIP}>
               {SEGMENT_ORDER.reduce((sum, s) => sum + facets[s], 0)}
             </span>
           </button>
@@ -1184,23 +1263,18 @@ export default function LeadsBoard() {
                 key={seg}
                 onClick={() => setActiveSegment(active ? null : seg)}
                 title={meta.hint}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${
-                  active
-                    ? "border-primary bg-primary/15 text-foreground"
-                    : "border-border bg-card text-muted-foreground hover:bg-accent"
-                }`}
+                aria-pressed={active}
+                aria-label={`${meta.label}: ${count} leads`}
+                className={`${CHIP_BASE} ${active ? CHIP_ACTIVO : CHIP_INACTIVO}`}
               >
-                <span>{meta.emoji}</span>
+                <span aria-hidden="true">{meta.emoji}</span>
                 <span>{meta.label}</span>
-                <span className="rounded-full bg-muted px-1.5 tabular-nums">{count}</span>
+                <span className={CONTADOR_EN_CHIP}>{count}</span>
               </button>
             );
           })}
           {activeSegment !== null && (
-            <button
-              onClick={() => setActiveSegment(null)}
-              className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-            >
+            <button onClick={() => setActiveSegment(null)} className={ENLACE_FILTRO}>
               Quitar filtro
             </button>
           )}
@@ -1282,7 +1356,7 @@ export default function LeadsBoard() {
               <div className="mb-2 flex justify-end">
                 <button
                   onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
-                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                  className={`-my-1 inline-flex min-h-6 items-center gap-1 text-xs text-muted-foreground hover:text-foreground ${ANILLO_FOCO}`}
                   title="Ordenar por fecha del último mensaje"
                 >
                   Última interacción {sortDir === "desc" ? "↓ reciente primero" : "↑ antiguo primero"}
@@ -1468,8 +1542,12 @@ const LeadCard = forwardRef(function LeadCard(
     >
       <CardContent className="flex items-center gap-3 py-3">
         {queuePosition != null && (
+          // Cuadrado: el ultimo `rounded-full` que quedaba fuera del badge de
+          // estado. La pildora significa "estado" en este sistema, y un numero
+          // de posicion no es un estado — mientras esto tambien fuera redondo,
+          // la forma seguia sin querer decir nada.
           <span
-            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${
+            className={`flex h-7 w-7 shrink-0 items-center justify-center text-xs font-semibold tabular-nums ${
               isNext ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
             }`}
             title={isNext ? "Siguiente en la cola" : `Posición ${queuePosition} en la cola`}
@@ -1508,8 +1586,12 @@ const LeadCard = forwardRef(function LeadCard(
           <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
             <PhoneWithCopy phone={lead.phone} />
           </div>
+          {/* Sin el `/70`: medido, el modificador daba 3,43:1 sobre el fondo
+              —falla AA— y esta es la frase que explica POR QUE el lead esta en
+              la cola. El gris secundario pleno da 6,04:1 y ya marca la
+              jerarquia por si solo (La Regla de la Etiqueta Gris). */}
           {lead.auto_reason && (
-            <p className="mt-0.5 truncate text-xs text-muted-foreground/70">{lead.auto_reason}</p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{lead.auto_reason}</p>
           )}
           {lead.board_stage === "carrito" && lead.cart_summary && (
             <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
