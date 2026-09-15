@@ -62,6 +62,66 @@ export function mapBoxfulCategory(boxfulStatus: string): IncidentCategory | null
   return null;
 }
 
+/**
+ * Dias desde el pedido, sin entrega ni devolucion, a partir de los cuales el
+ * envio entra a la bandeja como demora.
+ *
+ * DE DONDE SALE EL 14: es el p95 del tiempo real de entrega. Sobre las 3.865
+ * entregas de los ultimos 90 dias en Costa Rica (medido el 15/09), la mitad se
+ * entrego en 3,9 dias, el 90% en 10,4 y el 95% en 13,4. Un envio que pasa de 14
+ * dias esta en el 5% mas lento: ya no es lentitud normal, es una senal.
+ *
+ * Bajarlo a 10 dias dispararia 73 novedades en vez de 46; subirlo a 21, 27.
+ */
+export const DEMORA_DIAS_DESDE_PEDIDO = 14;
+
+/**
+ * Dias sin NINGUN evento nuevo del courier a partir de los cuales el envio entra
+ * como demora, aunque el pedido sea reciente. Un envio joven pero mudo tambien
+ * esta atascado: el peor caso medido llevaba 111 dias sin un solo evento.
+ */
+export const DEMORA_DIAS_SIN_MOVIMIENTO = 7;
+
+const DIA_MS = 86_400_000;
+
+/** Dias transcurridos desde `iso` hasta `nowMs`; null si la fecha no sirve. */
+function diasDesde(iso: string | null | undefined, nowMs: number): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const dias = (nowMs - t) / DIA_MS;
+  return dias >= 0 ? dias : null;
+}
+
+/**
+ * Motivo por el que un envio EN CURSO (sin falla reportada) ya se paso de
+ * tiempo, o null si todavia esta dentro de lo razonable.
+ *
+ * Dos senales independientes, porque fallan por motivos distintos: el pedido
+ * viejo detecta al que nunca llego, y el silencio del courier al que se perdio
+ * en el camino aunque el pedido sea reciente. Cualquiera de las dos alcanza.
+ */
+export function motivoDemora(
+  orderCreatedAt: string | null | undefined,
+  lastMovementAt: string | null | undefined,
+  now: string = new Date().toISOString()
+): string | null {
+  const nowMs = Date.parse(now);
+  if (Number.isNaN(nowMs)) return null;
+
+  const diasPedido = diasDesde(orderCreatedAt, nowMs);
+  if (diasPedido !== null && diasPedido >= DEMORA_DIAS_DESDE_PEDIDO) {
+    return `Sin entregar tras ${Math.floor(diasPedido)} dias desde el pedido`;
+  }
+
+  const diasSinMovimiento = diasDesde(lastMovementAt, nowMs);
+  if (diasSinMovimiento !== null && diasSinMovimiento >= DEMORA_DIAS_SIN_MOVIMIENTO) {
+    return `Sin movimiento del courier hace ${Math.floor(diasSinMovimiento)} dias`;
+  }
+
+  return null;
+}
+
 // Fecha del evento de FALLA mas reciente (group "failed"). Sirve para saber si
 // una reprogramada volvio a fallar DESPUES de reprogramarse. Devuelve null si no
 // hay eventos de falla con fecha.
@@ -84,7 +144,8 @@ export function detectMoovinIncident(
   tracking: MoovinTrackingRow,
   row?: LogisticsRow,
   storeId: number = DEFAULT_FINANCE_STORE_ID,
-  shopify?: ShopifyOrderSummary
+  shopify?: ShopifyOrderSummary,
+  now: string = new Date().toISOString()
 ): DetectedIncident | null {
   // Reinterpreta el grupo con el clasificador vigente. Las filas de
   // moovin_tracking guardadas ANTES de mapear un codigo (p.ej. los codigos de
@@ -103,7 +164,14 @@ export function detectMoovinIncident(
   const isFailure = tracking.has_incident || group === "failed";
   const isDelivered = group === "delivered";
   const isReturned = group === "returned";
-  if (!isFailure && !isDelivered && !isReturned) return null;
+  // Envio EN CURSO que ya se paso de tiempo: entra como novedad de demora. Sin
+  // esto un paquete que nunca falla se queda "en ruta" para siempre y no lo
+  // persigue nadie (habia pedidos de julio en ruta en septiembre).
+  const demora =
+    isFailure || isDelivered || isReturned
+      ? null
+      : motivoDemora(shopify?.created_at, tracking.latest_at, now);
+  if (!isFailure && !isDelivered && !isReturned && !demora) return null;
 
   const guide = tracking.id_package || row?.guide_number || "";
   // Datos de cliente/pedido por prioridad: 1) logistica importada, 2) pedido de
@@ -123,8 +191,10 @@ export function detectMoovinIncident(
     customer_phone: row?.customer_phone || shopify?.phone || "",
     courier: row?.courier || "Moovin",
     cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
-    category: isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
-    detail: reason,
+    category: demora ? "demora_entrega" : isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
+    // En una demora el estado del courier ya va en last_tracking_status; el
+    // detalle lleva el motivo, que es lo que el operador necesita leer.
+    detail: demora ?? reason,
     last_tracking_status: tracking.latest_status || "",
     last_tracking_group: group,
     last_failure_at: lastFailureDate(tracking.events),
@@ -138,13 +208,18 @@ export function detectMoovinIncident(
 export function detectForzaIncident(
   tracking: ForzaTrackingRow,
   row?: LogisticsRow,
-  shopify?: ShopifyOrderSummary
+  shopify?: ShopifyOrderSummary,
+  now: string = new Date().toISOString()
 ): DetectedIncident | null {
   const group = tracking.latest_group || "";
   const isFailure = tracking.has_incident || group === "failed";
   const isDelivered = group === "delivered";
   const isReturned = group === "returned";
-  if (!isFailure && !isDelivered && !isReturned) return null;
+  const demora =
+    isFailure || isDelivered || isReturned
+      ? null
+      : motivoDemora(shopify?.created_at, tracking.latest_at, now);
+  if (!isFailure && !isDelivered && !isReturned && !demora) return null;
 
   const guide = tracking.guide_number || row?.guide_number || "";
   const orderName = row?.order_name || shopify?.name || "";
@@ -161,8 +236,8 @@ export function detectForzaIncident(
     customer_phone: row?.customer_phone || shopify?.phone || "",
     courier: row?.courier || "Forza",
     cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
-    category: isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
-    detail: reason,
+    category: demora ? "demora_entrega" : isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
+    detail: demora ?? reason,
     last_tracking_status: tracking.latest_status || "",
     last_tracking_group: group,
     last_failure_at: lastFailureDate(tracking.events),
@@ -276,7 +351,10 @@ export function applyDetection(
         kind: "detectada",
         from_status: "",
         to_status: "pendiente",
-        message: `Novedad detectada automaticamente (${candidate.source})`,
+        message:
+          candidate.category === "demora_entrega"
+            ? `Demora detectada automaticamente (${candidate.source}): ${candidate.detail}`
+            : `Novedad detectada automaticamente (${candidate.source})`,
         result: "info",
       },
     };
@@ -300,6 +378,18 @@ export function applyDetection(
   // Son 2.105 de 2.302 novedades: si igual se reescriben, la corrida completa
   // toca casi toda la tabla para nada.
   if (TERMINAL_STATUSES.includes(existing.status)) return refrescoDeSnapshot(existing, patch);
+
+  // Una demora que DESPUES falla de verdad se reclasifica con la causa real: la
+  // novedad nacio porque el paquete no se movia, y ahora el courier dijo por
+  // que. Solo pisa la causa si sigue siendo la que puso la deteccion
+  // ("demora_entrega"); si el operador ya la cambio, se respeta.
+  if (
+    existing.category === "demora_entrega" &&
+    candidate.category !== "demora_entrega" &&
+    candidate.category !== "otro"
+  ) {
+    patch.category = candidate.category;
+  }
 
   // --- No terminales: el estado se reconcilia con el outcome del courier. ---
   // Entrega confirmada -> Resuelta.

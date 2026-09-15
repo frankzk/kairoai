@@ -23,6 +23,9 @@ export type IncidentCategory =
   | "cliente_rechaza"
   | "devuelto_origen"
   | "dano_paquete"
+  // El courier nunca reporto una falla, pero el envio lleva demasiado tiempo sin
+  // entregarse ni devolverse (ver DEMORA_* en lib/incidents-detect.ts).
+  | "demora_entrega"
   | "otro";
 
 export type IncidentEventKind =
