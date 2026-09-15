@@ -7,6 +7,9 @@ import {
   detectForzaIncident,
   detectBoxfulIncident,
   applyDetection,
+  motivoDemora,
+  DEMORA_DIAS_DESDE_PEDIDO,
+  DEMORA_DIAS_SIN_MOVIMIENTO,
 } from "../lib/incidents-detect";
 import type { MoovinTrackingRow, ForzaTrackingRow, LogisticsRow } from "../lib/finance-types";
 import type { ShopifyOrderSummary } from "../lib/finance-orders";
@@ -478,5 +481,171 @@ describe("applyDetection", () => {
     );
     expect(r.patch.customer_phone).toBe("70000000"); // estaba vacio: se rellena
     expect(r.patch.shopify_order_id).toBeUndefined(); // ya tenia valor: no se pisa
+  });
+});
+
+// Un envio que NUNCA falla pero tampoco llega se quedaba "en curso" para siempre
+// y no entraba a la bandeja: al 15/09 habia 417 envios en curso en Costa Rica,
+// 13 de ellos con mas de 30 dias. Ahora entran como causa "demora_entrega".
+describe("demora de entrega (envios en curso que se pasan de tiempo)", () => {
+  const NOW = "2026-09-15T12:00:00.000Z";
+  const haceDias = (d: number) => new Date(Date.parse(NOW) - d * 86_400_000).toISOString();
+
+  describe("motivoDemora", () => {
+    it("marca el envio cuyo pedido ya paso el umbral", () => {
+      expect(motivoDemora(haceDias(20), haceDias(1), NOW)).toContain("20 dias desde el pedido");
+    });
+
+    it("marca el envio mudo aunque el pedido sea reciente", () => {
+      const motivo = motivoDemora(haceDias(2), haceDias(DEMORA_DIAS_SIN_MOVIMIENTO + 3), NOW);
+      expect(motivo).toContain("Sin movimiento del courier");
+    });
+
+    it("no marca un envio dentro de lo normal", () => {
+      expect(motivoDemora(haceDias(3), haceDias(1), NOW)).toBeNull();
+    });
+
+    it("el umbral del pedido es inclusivo: 14 dias si, 13 no", () => {
+      expect(motivoDemora(haceDias(DEMORA_DIAS_DESDE_PEDIDO), null, NOW)).not.toBeNull();
+      expect(motivoDemora(haceDias(DEMORA_DIAS_DESDE_PEDIDO - 1), null, NOW)).toBeNull();
+    });
+
+    it("sin fechas utiles no inventa una demora", () => {
+      expect(motivoDemora(null, null, NOW)).toBeNull();
+      expect(motivoDemora("", "", NOW)).toBeNull();
+      expect(motivoDemora("no-es-fecha", undefined, NOW)).toBeNull();
+    });
+  });
+
+  const enCurso = (over: Partial<MoovinTrackingRow> = {}) =>
+    moovin({
+      id_package: "2600001",
+      latest_group: "in_progress",
+      latest_status: "En ruta para entregar a lo largo del dia",
+      latest_at: haceDias(1),
+      ...over,
+    });
+
+  it("da de alta un envio en curso que lleva demasiado desde el pedido", () => {
+    const c = detectMoovinIncident(
+      enCurso(),
+      undefined,
+      1,
+      shopify({ name: "#MCRC19000", created_at: haceDias(20) }),
+      NOW
+    )!;
+    expect(c).not.toBeNull();
+    expect(c.category).toBe("demora_entrega");
+    expect(c.detail).toContain("20 dias desde el pedido");
+    // El estado del courier se conserva: la demora no lo disfraza de falla.
+    expect(c.last_tracking_group).toBe("in_progress");
+  });
+
+  it("deja en paz al envio en curso que va en tiempo", () => {
+    const c = detectMoovinIncident(
+      enCurso(),
+      undefined,
+      1,
+      shopify({ created_at: haceDias(2) }),
+      NOW
+    );
+    expect(c).toBeNull();
+  });
+
+  it("una falla real sigue mandando sobre la demora", () => {
+    const c = detectMoovinIncident(
+      enCurso({ latest_group: "failed", has_incident: true, incident_reason: "Direccion incorrecta" }),
+      undefined,
+      1,
+      shopify({ created_at: haceDias(30) }),
+      NOW
+    )!;
+    expect(c.category).toBe("direccion_incorrecta");
+  });
+
+  it("un envio entregado no es una demora por viejo que sea", () => {
+    const c = detectMoovinIncident(
+      enCurso({ latest_group: "delivered" }),
+      undefined,
+      1,
+      shopify({ created_at: haceDias(60) }),
+      NOW
+    )!;
+    expect(c.category).not.toBe("demora_entrega");
+    expect(c.last_tracking_group).toBe("delivered");
+  });
+
+  it("Forza (Honduras) aplica la misma regla", () => {
+    const c = detectForzaIncident(
+      forza({ guide_number: "FD123", latest_group: "in_progress", latest_at: haceDias(1) }),
+      undefined,
+      shopify({ created_at: haceDias(18) }),
+      NOW
+    )!;
+    expect(c.category).toBe("demora_entrega");
+  });
+
+  describe("ciclo de vida de una demora", () => {
+    const demora = () =>
+      detectMoovinIncident(
+        enCurso(),
+        undefined,
+        1,
+        shopify({ name: "#MCRC19000", created_at: haceDias(20) }),
+        NOW
+      )!;
+
+    it("entra como pendiente y el historial explica por que", () => {
+      const r = applyDetection(null, demora(), NOW);
+      expect(r.action).toBe("insert");
+      expect(r.patch.status).toBe("pendiente");
+      expect(r.patch.category).toBe("demora_entrega");
+      expect(r.event?.message).toContain("Demora detectada");
+      expect(r.event?.message).toContain("20 dias desde el pedido");
+    });
+
+    it("si despues falla de verdad, se reclasifica con la causa real", () => {
+      const fallo = detectMoovinIncident(
+        enCurso({ latest_group: "failed", has_incident: true, incident_reason: "Direccion incorrecta" }),
+        undefined,
+        1,
+        shopify({ created_at: haceDias(25) }),
+        NOW
+      )!;
+      const r = applyDetection(
+        incident({ status: "pendiente", category: "demora_entrega" }),
+        fallo,
+        NOW
+      );
+      expect(r.patch.category).toBe("direccion_incorrecta");
+    });
+
+    it("no pisa la causa si el operador ya la cambio", () => {
+      const fallo = detectMoovinIncident(
+        enCurso({ latest_group: "failed", has_incident: true, incident_reason: "Direccion incorrecta" }),
+        undefined,
+        1,
+        shopify({ created_at: haceDias(25) }),
+        NOW
+      )!;
+      const r = applyDetection(
+        incident({ status: "pendiente", category: "cliente_no_responde" }),
+        fallo,
+        NOW
+      );
+      expect(r.patch.category).toBeUndefined();
+    });
+
+    it("la entrega del courier la cierra sola, como cualquier novedad", () => {
+      const entregado = detectMoovinIncident(enCurso({ latest_group: "delivered" }), undefined, 1, shopify(), NOW)!;
+      const r = applyDetection(
+        incident({ status: "pendiente", category: "demora_entrega" }),
+        entregado,
+        NOW
+      );
+      expect(r.patch.status).toBe("resuelta");
+      // La causa no se pisa con el "otro" que traen los cierres.
+      expect(r.patch.category).toBeUndefined();
+    });
   });
 });

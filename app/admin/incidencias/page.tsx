@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import Link from "next/link";
 import {
   Activity, AlertTriangle, ArrowLeft, Ban, CalendarClock, Check, ChevronDown, ChevronsUpDown, ChevronUp, Copy,
-  Download, HelpCircle, History, MapPin, MessageSquare, PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Undo2, X,
+  Download, HelpCircle, History, MapPin, MessageSquare, PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Timer, Undo2, X,
   type LucideIcon,
 } from "lucide-react";
 import LeadChatPanel from "@/components/LeadChatPanel";
@@ -39,6 +39,7 @@ const CATEGORY_LABELS: Record<IncidentCategory, string> = {
   cliente_rechaza: "Cliente rechaza",
   devuelto_origen: "Devuelto al origen",
   dano_paquete: "Paquete dañado",
+  demora_entrega: "Demora en entrega",
   otro: "Otro",
 };
 
@@ -50,6 +51,7 @@ const CATEGORY_ICONS: Record<IncidentCategory, LucideIcon> = {
   cliente_rechaza: Ban,
   devuelto_origen: Undo2,
   dano_paquete: AlertTriangle,
+  demora_entrega: Timer,
   otro: HelpCircle,
 };
 
