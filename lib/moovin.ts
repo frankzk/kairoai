@@ -18,6 +18,17 @@ const MOOVIN_UA =
 
 const MOOVIN_STATUS_GROUP: Record<string, MoovinGroup> = {
   DELIVERED: "delivered",
+  // "Entrega completa": Moovin cierra algunas entregas con este codigo en vez de
+  // DELIVERED, con la MISMA descripcion ("El paquete ha sido entregado en la
+  // direccion de destino"). Sin mapear caia a in_progress: el pedido figuraba
+  // como "No entregado" en finanzas y, si era viejo, la deteccion lo daba de
+  // alta como demora (paso con #MCRC16612 y #MCRC17995 en septiembre).
+  //
+  // Ya se habia arreglado una vez (#131, julio, en la rama codex) pero ese
+  // arreglo no llego a main cuando se consolido produccion. #131 rescataba la
+  // entrega por TEXTO ("ha sido entregado"); aca se mapea el codigo, porque el
+  // texto es fragil: un futuro "no ha sido entregado" se contaria como entrega.
+  DELIVEREDCOMPLETE: "delivered",
   FAILED: "failed",
   RETURNED: "returned",
   RETURN: "returned",
