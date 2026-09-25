@@ -14,6 +14,17 @@ const DEFAULT_REFRESH_DAYS = 14;
 const TIME_BUDGET_MS = 50_000;
 const MAX_PAGES_PER_STORE = 80; // tope duro de seguridad
 
+// Si CRON_SECRET esta configurado, exigirlo (Vercel cron manda
+// "Authorization: Bearer <CRON_SECRET>"). Si no esta, se permite, igual que en
+// cron/moovin y cron/wyn. La ruta es publica en el middleware y acepta
+// ?next_url, asi que sin esto cualquiera podia dispararla; la URL en si la
+// valida fetchShopifyPage (el token solo va al Admin API de la tienda).
+function authorized(req: Request): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return true;
+  return req.headers.get("authorization") === `Bearer ${secret}`;
+}
+
 // Barrida PROFUNDA por updated_at (14 dias por defecto): captura guias y
 // fulfillments creados despues del pedido, que el sync inicial (que solo mira
 // created_at) nunca reconsulta.
@@ -21,6 +32,9 @@ const MAX_PAGES_PER_STORE = 80; // tope duro de seguridad
 // Para que un pedido NUEVO aparezca rapido esta el cron shopify-recent, que
 // corre cada 10 minutos con una ventana corta. Este es el respaldo.
 export async function GET(req: NextRequest) {
+  if (!authorized(req)) {
+    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  }
   const startedAt = Date.now();
   const daysParam = Number(req.nextUrl.searchParams.get("days"));
   const days = Number.isFinite(daysParam) && daysParam > 0 ? daysParam : DEFAULT_REFRESH_DAYS;
