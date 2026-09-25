@@ -16,17 +16,15 @@ import { getForzaTrackingByGuide, getMoovinTrackingByPackage } from "@/lib/finan
 import { findChatLeadForCustomer } from "@/lib/leads";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import type { Incident, IncidentCategory, IncidentSource, IncidentStatus, TrackingEvent } from "@/lib/incidents-types";
+import { INCIDENT_CATEGORIES, INCIDENT_SOURCES, INCIDENT_STATUSES } from "@/lib/incidents-types";
 
 export const runtime = "nodejs";
 
-const STATUSES = new Set([
-  "pendiente", "reprogramada", "sin_contestar", "no_llamar", "resuelta", "perdida", "descartada",
-]);
-const CATEGORIES = new Set([
-  "fallo_entrega", "direccion_incorrecta", "cliente_no_responde", "cliente_rechaza",
-  "devuelto_origen", "dano_paquete", "otro",
-]);
-const SOURCES = new Set(["moovin", "forza", "boxful", "manual"]);
+// Salen de las listas exhaustivas de incidents-types: una lista escrita aca a
+// mano se quedo sin reprog_fallida ni demora_entrega y los rechazaba con 400.
+const STATUSES = new Set<string>(INCIDENT_STATUSES);
+const CATEGORIES = new Set<string>(INCIDENT_CATEGORIES);
+const SOURCES = new Set<string>(INCIDENT_SOURCES);
 
 function asStatus(v: string | null): IncidentStatus | undefined {
   return v && STATUSES.has(v) ? (v as IncidentStatus) : undefined;

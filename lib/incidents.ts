@@ -4,6 +4,7 @@ import { applyDetection, buildIncidentKey } from "@/lib/incidents-detect";
 import { buildTrend } from "@/lib/incidents-trend";
 
 export * from "./incidents-types";
+import { INCIDENT_CATEGORIES, INCIDENT_STATUSES } from "./incidents-types";
 import type {
   DetectedIncident,
   Incident,
@@ -93,11 +94,8 @@ export async function listIncidents(filters: IncidentFilters = {}): Promise<Inci
 // no la lista filtrada que se muestra en la tabla. Usa count exacto por estado
 // (head: true, sin traer filas).
 export async function countIncidentsByStatus(storeId: number): Promise<Record<string, number>> {
-  const statuses: IncidentStatus[] = [
-    "pendiente", "reprogramada", "reprog_fallida", "sin_contestar", "no_llamar", "resuelta", "perdida", "descartada",
-  ];
   const pairs = await Promise.all(
-    statuses.map(async (s) => {
+    INCIDENT_STATUSES.map(async (s) => {
       const { count, error } = await getDB()
         .from("incidents")
         .select("id", { count: "exact", head: true })
@@ -114,12 +112,9 @@ export async function countIncidentsByStatus(storeId: number): Promise<Record<st
 // bandeja), en paralelo a countIncidentsByStatus. Alimenta el conteo de las
 // pildoras de causa.
 export async function countIncidentsByCategory(storeId: number): Promise<Record<string, number>> {
-  const categories: IncidentCategory[] = [
-    "fallo_entrega", "direccion_incorrecta", "cliente_no_responde", "cliente_rechaza",
-    "devuelto_origen", "dano_paquete", "otro",
-  ];
+  // Lista exhaustiva (incidents-types): la escrita a mano no tenia demora_entrega.
   const pairs = await Promise.all(
-    categories.map(async (c) => {
+    INCIDENT_CATEGORIES.map(async (c) => {
       const { count, error } = await getDB()
         .from("incidents")
         .select("id", { count: "exact", head: true })
