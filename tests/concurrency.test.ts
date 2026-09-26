@@ -3,6 +3,20 @@ import { describe, expect, it } from "vitest";
 import { forEachRateLimited, sleep } from "../lib/concurrency";
 
 describe("forEachRateLimited", () => {
+  it("deja de arrancar consultas cuando shouldStop da true", async () => {
+    const started: number[] = [];
+    let stop = false;
+    await forEachRateLimited(
+      [1, 2, 3, 4, 5, 6],
+      async (item) => {
+        started.push(item);
+        if (item === 2) stop = true;
+      },
+      { concurrency: 1, minIntervalMs: 1, shouldStop: () => stop }
+    );
+    expect(started).toEqual([1, 2]);
+  });
+
   it("procesa todos los items exactamente una vez", async () => {
     const items = [1, 2, 3, 4, 5, 6, 7];
     const seen: number[] = [];
