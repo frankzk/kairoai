@@ -265,8 +265,8 @@ async function postMoovinAction(
         networkError: false,
       };
     }
-    const latest = detail.events[0] ?? null;
-    const incident = computeIncident(detail.events);
+    const latest = effectiveLatestMoovinEvent(detail.events);
+    const incident = computeIncident(latest);
     return {
       tracking: {
         ...base,
@@ -448,12 +448,35 @@ export function extractActionIds(js: string): string[] {
   return Array.from(ids);
 }
 
-// Incidencia activa = el evento mas reciente es FAILED. Si despues hubo una
-// entrega o reintento, ya no cuenta como riesgo.
-function computeIncident(events: MoovinEvent[]): { active: boolean; reason: string } {
-  const latest = events[0];
+// Incidencia activa = el estado actual es FAILED. Si despues hubo una entrega o
+// reintento, ya no cuenta como riesgo.
+function computeIncident(latest: MoovinEvent | null): { active: boolean; reason: string } {
   if (!latest || latest.group !== "failed") return { active: false, reason: "" };
   return { active: true, reason: latest.note || latest.description };
+}
+
+// Avisos que Moovin le manda al cliente sin que el paquete se mueva. Despues de
+// una entrega no la revierten: el 01/06 Moovin mando "Preecoordinacion enviada"
+// a 25 paquetes ya entregados, y tomar el evento mas reciente los devolvia a
+// "en camino".
+const MOOVIN_NOTICE_CODES = new Set(["PRECOORDINATIONSEND", "CONFIRMEDPRECOODINATION", "CAMPAIGNMESSAGE"]);
+
+/**
+ * El estado actual de la guia, con `events` ordenado del mas reciente al mas
+ * viejo (como lo deja parseMoovinResponse).
+ *
+ * Es el evento mas reciente, salvo que sea un aviso posterior a una entrega.
+ * Un MOVIMIENTO posterior (vuelve a la sede, sale a ruta, incidencia,
+ * cancelado) si revierte la entrega: Moovin lo hizo con 8 guias entre marzo y
+ * julio. Por eso la entrega NO es terminal a secas; asi lo trataba #121 y
+ * congelo como entregadas guias que Moovin despues cancelo.
+ */
+export function effectiveLatestMoovinEvent(events: MoovinEvent[]): MoovinEvent | null {
+  const delivered = events.findIndex((e) => e.group === "delivered");
+  for (let i = 0; i < delivered; i++) {
+    if (!MOOVIN_NOTICE_CODES.has(events[i].code.toUpperCase())) return events[i];
+  }
+  return events[Math.max(delivered, 0)] ?? null;
 }
 
 interface RawStatus {

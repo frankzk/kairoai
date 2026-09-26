@@ -18,7 +18,9 @@ const PER_REQUEST_DELAY_MS = 400;
 // cobertura sale de la frecuencia, no del tope: con el cron cada hora son
 // 24 x 130 = 3.120 lecturas al dia, o sea una barrida completa cada ~5 horas.
 // Quien entra en cada corrida lo decide listMoovinSyncCandidates, que ordena por
-// antiguedad de lectura para que ninguna guia se quede sin turno.
+// antiguedad de lectura para que ninguna guia se quede sin turno. Hasta un
+// cuarto de la corrida va a releer una vez las entregas de hace mas de 48 horas,
+// porque Moovin a veces revierte una entrega (ver lib/moovin-sync-plan.ts).
 const MAX_PER_RUN = Number(process.env.MOOVIN_MAX_PER_RUN ?? 130);
 // No reconsultar guias vistas dentro de esta ventana. Con el cron cada hora, 20
 // min solo evita repetir si una corrida manual pisa a la programada.

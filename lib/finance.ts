@@ -2,6 +2,7 @@ import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
 import { normalizeForzaGuide } from "./forza";
 import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
+import { isDeliveryRecheckDue, planMoovinSync } from "./moovin-sync-plan";
 import { normalizeMatchKey } from "./order-matching";
 import {
   deriveWynGroup,
@@ -1473,28 +1474,39 @@ export async function listMoovinSyncCandidates(
   }
 
   // 2) Excluir terminales en cache (entregado/devuelto) y los frescos. La misma
-  // pasada anota CUANDO se leyo por ultima vez cada guia viva: es lo que ordena
-  // la cola mas abajo.
+  // pasada anota CUANDO se leyo por ultima vez cada guia viva, que es lo que
+  // ordena la cola, y que entregas tienen pendiente la segunda lectura (ver
+  // lib/moovin-sync-plan.ts).
   const terminal = new Set<string>();
   const lastCheckedAt = new Map<string, number>();
+  const rechecks: Array<{ guide: string; deliveredAt: number }> = [];
+  const nowMs = Date.now();
+  const toMs = (value: string | null) => {
+    const at = Date.parse(String(value ?? ""));
+    return Number.isNaN(at) ? 0 : at;
+  };
   for (let from = 0; from < 50000; from += pageSize) {
     const { data, error } = await getDB()
       .from("moovin_tracking")
-      .select("id_package, latest_group, checked_at")
+      .select("id_package, latest_group, latest_at, checked_at")
       .range(from, from + pageSize - 1);
     if (error) break;
     const page = (data ?? []) as Array<{
       id_package: string;
       latest_group: string | null;
+      latest_at: string | null;
       checked_at: string | null;
     }>;
     for (const row of page) {
       if (row.latest_group === "delivered" || row.latest_group === "returned") {
         terminal.add(row.id_package);
+        const tracked = { group: row.latest_group, deliveredAt: toMs(row.latest_at), checkedAt: toMs(row.checked_at) };
+        if (isDeliveryRecheckDue(tracked, nowMs)) {
+          rechecks.push({ guide: row.id_package, deliveredAt: tracked.deliveredAt });
+        }
         continue;
       }
-      const at = Date.parse(String(row.checked_at ?? ""));
-      lastCheckedAt.set(row.id_package, Number.isNaN(at) ? 0 : at);
+      lastCheckedAt.set(row.id_package, toMs(row.checked_at));
     }
     if (page.length < pageSize) break;
   }
@@ -1518,9 +1530,11 @@ export async function listMoovinSyncCandidates(
     seen.add(guide);
     pending.push({ guide, checkedAt: lastCheckedAt.get(guide) ?? 0 });
   }
-  pending.sort((a, b) => a.checkedAt - b.checkedAt);
 
-  return pending.slice(0, limit).map(({ guide }) => {
+  // Solo se puede releer lo que tiene nombre para la consulta a Moovin.
+  const dueRechecks = rechecks.filter((r) => byGuide.has(r.guide) && !fresh.has(r.guide));
+
+  return planMoovinSync({ live: pending, rechecks: dueRechecks, limit }).map((guide) => {
     const names = byGuide.get(guide) as { lastName: string; fullName: string };
     return { idPackage: guide, lastName: names.lastName, fullName: names.fullName };
   });
