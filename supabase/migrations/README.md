@@ -45,6 +45,9 @@ Estado actual:
 | `0035_settlement_receipts.sql` | Doble check del cobro de una liquidacion: columnas `received_usd`/`received_at`/`reference_rate`/`receipt_path` en `settlement_imports` + bucket PRIVADO `settlement-receipts` (5 MB, imagenes y PDF). `total_to_liquidate` es lo que Boxful dice que va a pagar en colones y la plata llega a Mercury en dolares; la diferencia contra la tasa de mercado es la perdida por tipo de cambio, que antes no figuraba en ninguna parte | Si (10/09/2026) |
 
 | `0036_lead_calls_prev_state.sql` | Columna `prev_state` (JSONB) en `lead_calls`: la instantanea de los siete campos del lead ANTES de cada gestion, para poder deshacerla. "Resultado de la llamada" es la unica accion destructiva del tablero de Leads, se dispara con un clic sin confirmar, y el historial solo guardaba el estado NUEVO: no habia con que volver. Las filas anteriores quedan en NULL y no se pueden revertir | Si (14/09/2026) |
+| `0019_demora_entrega.sql` | Agrega la categoria `demora_entrega` al CHECK de `incidents`: los envios en camino hace mas de 14 dias desde el pedido, o sin movimiento hace 7, entran a Novedades | Si (15/09/2026) |
+| `0020_moovin_deliveredcomplete.sql` | Pasa a entregadas 2 guias de Moovin cerradas con "Entrega completa" (DELIVEREDCOMPLETE) que habian quedado como en curso porque el clasificador no conocia ese codigo | Si (23/09/2026) |
+| `0037_moovin_entregas_revertidas.sql` | Pasa a "Cancelado" 5 guias de Moovin guardadas como entregadas cuando Moovin revirtio la entrega (las liquidaciones de Boxful confirman que no se cobraron). Deja a proposito como entregadas otras 2 con el mismo patron a las que Boxful si les liquido el COD | Si (26/09/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de
