@@ -55,10 +55,11 @@ function guiaDeBoxful(guide: string) {
   return { guide_number: guide, last_name: "Perez", customer_name: "Ana Perez", courier: "Moovin" };
 }
 
-function lectura(guide: string, opts: { horas: number; group?: string }) {
+function lectura(guide: string, opts: { horas: number; group?: string; entregadaHace?: number }) {
   return {
     id_package: guide,
     latest_group: opts.group ?? "in_progress",
+    latest_at: opts.entregadaHace === undefined ? null : hace(opts.entregadaHace),
     checked_at: hace(opts.horas),
   };
 }
@@ -111,21 +112,40 @@ describe("listMoovinSyncCandidates", () => {
     expect(candidatos.map((c) => c.idPackage)).toContain("YA_LEIDA");
   });
 
-  it("no vuelve a consultar entregados ni devueltos", async () => {
+  it("no vuelve a consultar devoluciones ni entregas ya verificadas", async () => {
     tables.logistics_rows = [
-      guiaDeBoxful("ENTREGADA"),
+      guiaDeBoxful("VERIFICADA"),
+      guiaDeBoxful("VIEJA"),
       guiaDeBoxful("DEVUELTA"),
       guiaDeBoxful("VIVA"),
     ];
     tables.moovin_tracking = [
-      lectura("ENTREGADA", { horas: 500, group: "delivered" }),
-      lectura("DEVUELTA", { horas: 500, group: "returned" }),
+      // Leida 90 horas despues de entregar: la segunda lectura ya se hizo.
+      lectura("VERIFICADA", { horas: 10, group: "delivered", entregadaHace: 100 }),
+      // Entregada hace 60 dias: fuera de la ventana de segunda lectura.
+      lectura("VIEJA", { horas: 1439, group: "delivered", entregadaHace: 1440 }),
+      lectura("DEVUELTA", { horas: 500, group: "returned", entregadaHace: 501 }),
       lectura("VIVA", { horas: 1 }),
     ];
 
     const candidatos = await listMoovinSyncCandidates(10, 20);
 
     expect(candidatos.map((c) => c.idPackage)).toEqual(["VIVA"]);
+  });
+
+  it("relee una vez la entrega de hace mas de 48 horas, antes que las guias en camino", async () => {
+    // Moovin revierte entregas: marca "Entregado" y horas despues el paquete
+    // vuelve a la sede y termina "Cancelado" (migracion 0037).
+    tables.logistics_rows = [guiaDeBoxful("RELEER"), guiaDeBoxful("RECIENTE"), guiaDeBoxful("VIVA")];
+    tables.moovin_tracking = [
+      lectura("RELEER", { horas: 49, group: "delivered", entregadaHace: 50 }),
+      lectura("RECIENTE", { horas: 9, group: "delivered", entregadaHace: 10 }),
+      lectura("VIVA", { horas: 3 }),
+    ];
+
+    const candidatos = await listMoovinSyncCandidates(10, 20);
+
+    expect(candidatos.map((c) => c.idPackage)).toEqual(["RELEER", "VIVA"]);
   });
 
   it("respeta la ventana fresca: lo leido hace un momento no se repite", async () => {
