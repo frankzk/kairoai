@@ -6,6 +6,10 @@
       "schedule": "0 * * * *"
     },
     {
+      "path": "/api/cron/forza",
+      "schedule": "30 * * * *"
+    },
+    {
       "path": "/api/cron/wyn",
       "schedule": "20,50 * * * *"
     },
@@ -63,6 +67,9 @@
       "maxDuration": 25
     },
     "app/api/cron/moovin/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/forza/route.ts": {
       "maxDuration": 300
     },
     "app/api/cron/wyn/route.ts": {

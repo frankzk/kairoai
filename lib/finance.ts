@@ -1,6 +1,7 @@
 import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
 import { normalizeForzaGuide } from "./forza";
+import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
 import { normalizeMatchKey } from "./order-matching";
 import {
   deriveWynGroup,
@@ -1522,6 +1523,78 @@ export async function listMoovinSyncCandidates(
   return pending.slice(0, limit).map(({ guide }) => {
     const names = byGuide.get(guide) as { lastName: string; fullName: string };
     return { idPackage: guide, lastName: names.lastName, fullName: names.fullName };
+  });
+}
+
+/**
+ * Guias de Forza a consultar en una corrida del cron de Honduras, ya ordenadas
+ * (ver planForzaSync).
+ *
+ * Dos fuentes:
+ * - Las guias Forza (FD...) de pedidos de Shopify de los ultimos
+ *   `discoveryDays` dias. El Excel de logistica de HN no se carga desde junio,
+ *   asi que Shopify es la unica fuente de guias nuevas.
+ * - Todo forza_tracking de la tienda, para re-leer lo que sigue en camino sin
+ *   importar la antiguedad del pedido.
+ *
+ * Solo lee columnas chicas y paginado: corre cada hora contra la misma base que
+ * dio 503 en septiembre.
+ */
+export async function listForzaSyncCandidates(
+  storeId: number,
+  opts: { limit: number; freshWindowMinutes: number; discoveryDays: number; nowMs?: number }
+): Promise<string[]> {
+  const nowMs = opts.nowMs ?? Date.now();
+  const pageSize = 1000;
+  const since = new Date(nowMs - opts.discoveryDays * 86_400_000).toISOString();
+
+  const orderGuides: ForzaOrderGuide[] = [];
+  for (let from = 0; from < 100000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("shopify_orders")
+      .select("tracking_number, shopify_created_at")
+      .eq("store_id", storeId)
+      .ilike("tracking_number", "FD%")
+      .is("cancelled_at", null)
+      .gte("shopify_created_at", since)
+      .order("id")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listForzaSyncCandidates(shopify_orders): ${error.message}`);
+    const page = (data ?? []) as Array<{ tracking_number: string | null; shopify_created_at: string | null }>;
+    for (const row of page) {
+      const orderedAt = Date.parse(String(row.shopify_created_at ?? ""));
+      orderGuides.push({ guide: row.tracking_number ?? "", orderedAt: Number.isNaN(orderedAt) ? 0 : orderedAt });
+    }
+    if (page.length < pageSize) break;
+  }
+
+  const tracked: ForzaTrackedGuide[] = [];
+  for (let from = 0; from < 200000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("forza_tracking")
+      .select("guide_number, latest_group, checked_at")
+      .eq("store_id", storeId)
+      .order("guide_number")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listForzaSyncCandidates(forza_tracking): ${error.message}`);
+    const page = (data ?? []) as Array<{ guide_number: string; latest_group: string | null; checked_at: string | null }>;
+    for (const row of page) {
+      const checkedAt = Date.parse(String(row.checked_at ?? ""));
+      tracked.push({
+        guide: row.guide_number,
+        group: row.latest_group ?? "",
+        checkedAt: Number.isNaN(checkedAt) ? 0 : checkedAt,
+      });
+    }
+    if (page.length < pageSize) break;
+  }
+
+  return planForzaSync({
+    orderGuides,
+    tracked,
+    nowMs,
+    limit: opts.limit,
+    freshWindowMs: opts.freshWindowMinutes * 60_000,
   });
 }
 

@@ -15,6 +15,7 @@ const PUBLIC_PATHS = [
   "/api/zadarma/webhook",
   "/api/cron/retries",
   "/api/cron/moovin",
+  "/api/cron/forza",
   "/api/cron/wyn",
   "/api/cron/shopify-refresh",
   "/api/cron/shopify-recent",
