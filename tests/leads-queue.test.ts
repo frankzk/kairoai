@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildWorkQueue,
+  followupStateAt,
   groupQueueByBand,
   QUEUE_BAND_META,
   QUEUE_BAND_ORDER,
   queueBand,
+  STALE_FOLLOWUP_DAYS,
+  vencidosEnCola,
   type QueueLead,
 } from "../lib/leads-queue";
 import type { BoardStage } from "../lib/leads-classify";
@@ -334,5 +337,69 @@ describe("groupQueueByBand", () => {
 
   it("una cola vacia da cero bandas, no una banda vacia", () => {
     expect(groupQueueByBand([], NOW)).toEqual([]);
+  });
+});
+
+// EL CONTADOR ROJO. Medido el 04/10/2026: decia 213 recontactos vencidos en
+// Costa Rica ("están primero en Hoy") y la cola subia 7. Contaba todo lo que
+// tuviera fecha pasada, incluidos recontactos de hace un mes que la regla de
+// STALE_FOLLOWUP_DAYS ya no sube, y leads que ya compraron.
+describe("vencidosEnCola: el contador es la banda", () => {
+  const nowMs = NOW.getTime();
+  const haceDias = (d: number) => new Date(nowMs - d * 86_400_000).toISOString();
+  const ATRAS = "2026-07-25T17:00:00Z";
+  const seguimiento = (id: string, followup: string | null, extra: Partial<QueueLead> = {}) =>
+    lead(id, "seguimiento", ATRAS, followup, { work_state: "seguimiento", ...extra });
+
+  it("cuenta el que vencio hace dos dias", () => {
+    expect(ids(vencidosEnCola([seguimiento("a", haceDias(2))], NOW))).toEqual(["a"]);
+  });
+
+  it("NO cuenta uno de hace un mes: la cola ya no lo sube", () => {
+    expect(vencidosEnCola([seguimiento("viejo", haceDias(30))], NOW)).toEqual([]);
+  });
+
+  it("NO cuenta uno que todavia no vence", () => {
+    expect(vencidosEnCola([seguimiento("futuro", haceDias(-1))], NOW)).toEqual([]);
+  });
+
+  it("NO cuenta a quien ya compro", () => {
+    expect(vencidosEnCola([seguimiento("compro", haceDias(1), { has_order: true })], NOW)).toEqual([]);
+  });
+
+  it("el limite es exactamente STALE_FOLLOWUP_DAYS", () => {
+    expect(vencidosEnCola([seguimiento("borde", haceDias(STALE_FOLLOWUP_DAYS))], NOW)).toHaveLength(1);
+    expect(vencidosEnCola([seguimiento("pasado", haceDias(STALE_FOLLOWUP_DAYS + 0.01))], NOW)).toHaveLength(0);
+  });
+
+  it("LA INVARIANTE: todo lo que cuenta esta en la banda de vencidos de Hoy, y viceversa", () => {
+    // "están primero en Hoy" tiene que ser verdad para cada uno.
+    const todos = [
+      seguimiento("v1", haceDias(1)),
+      seguimiento("v2", haceDias(6)),
+      seguimiento("viejo", haceDias(20)),
+      seguimiento("compro", haceDias(1), { has_order: true }),
+      seguimiento("futuro", haceDias(-2)),
+      lead("pago", "pago_verificar", ATRAS, haceDias(1)),
+      lead("carrito", "carrito", ATRAS, null, { segment: "carrito" }),
+    ];
+    const banda = groupQueueByBand(buildWorkQueue(todos, NOW), NOW).find(
+      (g) => g.band === "recontacto_vencido"
+    );
+    expect(ids(vencidosEnCola(todos, NOW)).sort()).toEqual(ids(banda?.leads ?? []).sort());
+    expect(ids(vencidosEnCola(todos, NOW)).sort()).toEqual(["v1", "v2"]);
+  });
+});
+
+describe("followupStateAt: una sola regla para cola, contador y tarjeta", () => {
+  const nowMs = NOW.getTime();
+  it("clasifica futuro, vencido y viejo", () => {
+    expect(followupStateAt(new Date(nowMs + 3_600_000).toISOString(), nowMs)).toBe("futuro");
+    expect(followupStateAt(new Date(nowMs - 86_400_000).toISOString(), nowMs)).toBe("vencido");
+    expect(followupStateAt(new Date(nowMs - 30 * 86_400_000).toISOString(), nowMs)).toBe("viejo");
+  });
+  it("sin fecha o con fecha ilegible no hay estado", () => {
+    expect(followupStateAt(null, nowMs)).toBeNull();
+    expect(followupStateAt("no es fecha", nowMs)).toBeNull();
   });
 });

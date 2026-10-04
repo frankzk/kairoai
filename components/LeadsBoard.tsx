@@ -46,10 +46,12 @@ import {
 } from "@/lib/leads-segment";
 import {
   buildWorkQueue,
+  followupStateAt,
   groupQueueByBand,
   isTrabajoDeHoy,
   QUEUE_BAND_META,
   QUEUE_STAGES,
+  vencidosEnCola,
 } from "@/lib/leads-queue";
 import {
   buildUncalledLeadBuckets,
@@ -798,11 +800,14 @@ export default function LeadsBoard() {
   // clientes que pidieron la llamada; los otros 159 eran "no contesto" a los
   // que el sistema les agendo el reintento de 24h. Decirle a la asesora que
   // 174 clientes le pidieron que los llamara era, sencillamente, falso.
+  //
+  // Y el TOTAL tambien mentia: contaba todo lo que tuviera fecha pasada,
+  // incluidos recontactos de hace un mes que la cola ya no sube (regla de
+  // STALE_FOLLOWUP_DAYS). El banner decia "213 recontactos vencidos — están
+  // primero en Hoy" y la cola subia 7. Ahora el contador ES la banda de Hoy, y
+  // con el reloj del tablero, no con `Date.now()`.
   const overdue = useMemo(() => {
-    const now = Date.now();
-    const vencidos = leads.filter(
-      (l) => l.next_followup_at != null && new Date(l.next_followup_at).getTime() <= now
-    );
+    const vencidos = vencidosEnCola(leads, chartNow);
     return {
       total: vencidos.length,
       // Prometio el cliente ("llamame el jueves"): es una cita, no un reintento.
@@ -810,7 +815,7 @@ export default function LeadsBoard() {
       // Los agendo el sistema al marcar buzon / no responde / cuelga.
       reintentos: vencidos.filter((l) => isNoAnswerStatus(l.status)).length,
     };
-  }, [leads]);
+  }, [leads, chartNow]);
 
   // Descartados solo aparece con el toggle; el resto son fijos.
   const tabs: BoardTab[] = showHidden ? [...TABS_VISIBLES, "descartado"] : TABS_VISIBLES;
@@ -1397,25 +1402,35 @@ export default function LeadsBoard() {
 // Eran DOS relojes en la misma tarjeta: la cola clasificaba contra `chartNow`
 // y este badge contra la hora real de cada render. Un badge podia decir
 // "Seguir hoy" en una tarjeta que la cola habia colocado como no vencida.
+//
+// Tres estados, con la MISMA regla que la cola (followupStateAt). Antes un
+// recontacto vencido hace un mes salia en rojo "Seguir hoy" en una tarjeta que
+// la cola ya no subia: la tarjeta le pedia urgencia a algo que el orden de la
+// lista habia decidido que no la tenia. Ahora el rojo queda para lo que de
+// verdad toca hoy, y lo viejo dice cuando vencio, en gris.
 function FollowupBadge({ iso, nowMs }: { iso: string; nowMs: number }) {
-  const overdue = new Date(iso).getTime() <= nowMs;
-  const when = (() => {
+  const estado = followupStateAt(iso, nowMs);
+  const fmt = (opts: Intl.DateTimeFormatOptions) => {
     try {
-      return new Date(iso).toLocaleString("es-CR", {
-        timeZone: "America/Costa_Rica",
-        day: "2-digit",
-        month: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+      return new Date(iso).toLocaleString("es-CR", { timeZone: "America/Costa_Rica", ...opts });
     } catch {
       return iso;
     }
-  })();
+  };
+  if (estado === "viejo") {
+    return (
+      <Badge variant="muted" className="shrink-0 gap-1" title="La cola ya no lo sube: venció hace más de una semana">
+        <CalendarClock className="h-3 w-3" />
+        Venció el {fmt({ day: "2-digit", month: "2-digit" })}
+      </Badge>
+    );
+  }
+  const when = fmt({ day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const vencido = estado === "vencido";
   return (
-    <Badge variant={overdue ? "destructive" : "warning"} className="shrink-0 gap-1">
+    <Badge variant={vencido ? "destructive" : "warning"} className="shrink-0 gap-1">
       <CalendarClock className="h-3 w-3" />
-      {overdue ? "Seguir hoy" : "Seguir"} · {when}
+      {vencido ? "Seguir hoy" : "Seguir"} · {when}
     </Badge>
   );
 }
