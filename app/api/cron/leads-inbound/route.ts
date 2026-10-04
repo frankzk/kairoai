@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listConfiguredIcomflyStoreContexts } from "@/lib/icomfly";
 import { runLeadsInboundSync } from "@/lib/leads-inbound-sync";
+import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
+// Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
+export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // APAGADO EL 29/08/2026 — sin entrada en vercel.json.
@@ -64,10 +67,13 @@ async function handle(req: NextRequest) {
   }
 }
 
-export async function GET(req: NextRequest) {
+async function handleGet(req: NextRequest) {
   return handle(req);
 }
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   return handle(req);
 }
+
+export const GET = withCronRun("leads-inbound", handleGet);
+export const POST = withCronRun("leads-inbound", handlePost);

@@ -8,15 +8,18 @@ import {
   saveCallRecord,
 } from "@/lib/db";
 import { createOutboundCall } from "@/lib/retell";
+import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
+// Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
+export const dynamic = "force-dynamic";
 export const maxDuration = 25;
 
-export async function GET() {
+async function handleGet() {
   return handleCron();
 }
 
-export async function POST() {
+async function handlePost() {
   return handleCron();
 }
 
@@ -95,3 +98,6 @@ async function handleCron() {
 
   return NextResponse.json({ processed, skipped });
 }
+
+export const GET = withCronRun("retries", handleGet);
+export const POST = withCronRun("retries", handlePost);

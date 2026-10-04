@@ -14,7 +14,12 @@ import { useEffect } from "react";
 const LOGIN_PATH = "/login";
 // El login responde 401 con "Password incorrecto": ese error es del formulario
 // y no debe disparar una redireccion.
-const IGNORED_PATHS = ["/api/auth/login", "/api/auth/logout"];
+//
+// La salud de los crons la consulta un componente en SEGUNDO PLANO cada 5
+// minutos. Si la sesion vence, ese chequeo no puede mandar al login a alguien
+// que esta escribiendo un WhatsApp: perderia el borrador por algo que no hizo.
+// La redireccion la dispara la siguiente accion real de la persona.
+const IGNORED_PATHS = ["/api/auth/login", "/api/auth/logout", "/api/health/crons"];
 
 function resolvePathname(input: RequestInfo | URL): string | null {
   try {

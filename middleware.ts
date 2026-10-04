@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
+import { cronAccessAllowed } from "@/lib/cron-auth";
 
+// Los crons NO van en esta lista: tienen su propia puerta mas abajo (sesion o
+// CRON_SECRET, ver lib/cron-auth.ts). Antes estaban los 14 aca, abiertos a
+// cualquiera, y agregar un cron exigia acordarse de sumarlo — el olvido que
+// dejo a shopify-recent cortado con 401 en cada invocacion.
 const PUBLIC_PATHS = [
   "/login",
   "/api/auth/login",
@@ -13,21 +18,9 @@ const PUBLIC_PATHS = [
   // Notificaciones de la centralita Zadarma: se autentican con la firma HMAC
   // del propio evento, no con la cookie de sesion.
   "/api/zadarma/webhook",
-  "/api/cron/retries",
-  "/api/cron/moovin",
-  "/api/cron/forza",
-  "/api/cron/wyn",
-  "/api/cron/shopify-refresh",
-  "/api/cron/shopify-recent",
-  "/api/cron/shopify-recheck-stale",
-  "/api/cron/finance-index",
-  "/api/cron/incidencias",
-  "/api/cron/icomfly",
-  "/api/cron/leads",
-  "/api/cron/leads-reclassify",
-  "/api/cron/leads-inbound",
-  "/api/cron/leads-shopify-match",
 ];
+
+const CRON_PREFIX = "/api/cron/";
 
 function isPublicPath(pathname: string): boolean {
   return (
@@ -44,6 +37,17 @@ export async function middleware(req: NextRequest) {
 
   if (pathname === "/login" && authenticated) {
     return NextResponse.redirect(new URL("/", req.url));
+  }
+
+  if (pathname.startsWith(CRON_PREFIX)) {
+    const allowed = cronAccessAllowed({
+      authenticated,
+      authorization: req.headers.get("authorization"),
+      secret: process.env.CRON_SECRET,
+    });
+    return allowed
+      ? NextResponse.next()
+      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   if (isPublicPath(pathname)) {

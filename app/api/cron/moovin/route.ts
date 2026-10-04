@@ -4,8 +4,11 @@ import { listMoovinSyncCandidates, upsertMoovinTracking } from "@/lib/finance";
 import { FINANCE_STORES, getStoreConfig } from "@/lib/stores";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 import { detectIncidents } from "@/lib/incidents-run";
+import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
+// Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
+export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 // ~2 req/s a Moovin.
@@ -25,15 +28,6 @@ const MAX_PER_RUN = Number(process.env.MOOVIN_MAX_PER_RUN ?? 130);
 // No reconsultar guias vistas dentro de esta ventana. Con el cron cada hora, 20
 // min solo evita repetir si una corrida manual pisa a la programada.
 const FRESH_WINDOW_MINUTES = Number(process.env.MOOVIN_FRESH_WINDOW_MIN ?? 20);
-
-// Si CRON_SECRET esta configurado, exigirlo (Vercel cron y el workflow de
-// GitHub mandan "Authorization: Bearer <CRON_SECRET>"). Si no esta, se permite
-// (compatibilidad con el comportamiento actual).
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
 
 async function run(chainDetect: boolean) {
   let candidates;
@@ -120,16 +114,17 @@ async function run(chainDetect: boolean) {
   });
 }
 
-export async function GET(req: Request) {
-  if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function handleGet() {
   return run(true);
 }
 
-export async function POST(req: Request) {
-  if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function handlePost() {
   return run(false);
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+export const GET = withCronRun("moovin", handleGet);
+export const POST = withCronRun("moovin", handlePost);
