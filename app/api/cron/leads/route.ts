@@ -3,8 +3,11 @@ import { listConfiguredIcomflyStoreContexts } from "@/lib/icomfly";
 import { runLeadsSync } from "@/lib/leads-sync";
 import { runShopifyDraftCartSync } from "@/lib/shopify-draft-carts";
 import { FINANCE_STORES, getStoreConfig } from "@/lib/stores";
+import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
+// Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
+export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 // Cron: ingiere y clasifica conversaciones de WhatsApp desde Icomfly.
@@ -48,10 +51,13 @@ async function handle() {
   }
 }
 
-export async function GET() {
+async function handleGet() {
   return handle();
 }
 
-export async function POST() {
+async function handlePost() {
   return handle();
 }
+
+export const GET = withCronRun("leads", handleGet);
+export const POST = withCronRun("leads", handlePost);

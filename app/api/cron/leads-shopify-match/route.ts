@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { listConfiguredIcomflyStoreContexts } from "@/lib/icomfly";
 import { matchLeadsToShopifyOrders } from "@/lib/leads";
+import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
+// Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
+export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // Cron (1 vez/hora): cruza el telefono de cada lead contra las ordenes reales
@@ -29,10 +32,13 @@ async function handle() {
   }
 }
 
-export async function GET() {
+async function handleGet() {
   return handle();
 }
 
-export async function POST() {
+async function handlePost() {
   return handle();
 }
+
+export const GET = withCronRun("leads-shopify-match", handleGet);
+export const POST = withCronRun("leads-shopify-match", handlePost);

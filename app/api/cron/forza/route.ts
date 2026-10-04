@@ -4,8 +4,11 @@ import { syncForzaGuides } from "@/lib/forza-sync";
 import { FINANCE_STORES, getStoreConfig } from "@/lib/stores";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 import { detectIncidents } from "@/lib/incidents-run";
+import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
+// Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
+export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 // POR QUE EXISTE: el tracking de Forza (Honduras) solo se actualizaba con el
@@ -27,15 +30,6 @@ const DISCOVERY_DAYS = Number(process.env.FORZA_DISCOVERY_DAYS ?? 90);
 // Dejar de arrancar consultas con margen antes del maxDuration (300 s) para
 // guardar, refrescar la cache y detectar novedades.
 const TIME_BUDGET_MS = 200_000;
-
-// Si CRON_SECRET esta configurado, exigirlo (Vercel cron manda
-// "Authorization: Bearer <CRON_SECRET>"). Si no esta, se permite, igual que en
-// los demas crons.
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
 
 type StoreResult =
   | {
@@ -106,12 +100,13 @@ async function run(chainDetect: boolean) {
   return NextResponse.json({ results, detected }, { status: failed ? 500 : 200 });
 }
 
-export async function GET(req: Request) {
-  if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function handleGet() {
   return run(true);
 }
 
-export async function POST(req: Request) {
-  if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function handlePost() {
   return run(false);
 }
+
+export const GET = withCronRun("forza", handleGet);
+export const POST = withCronRun("forza", handlePost);

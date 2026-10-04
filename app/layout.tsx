@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import SessionGuard from "@/components/SessionGuard";
+import CronHealthBanner from "@/components/CronHealthBanner";
 
 export const metadata: Metadata = {
   title: "Kairo AI — Voice Agents para E-commerce COD",
@@ -17,6 +18,7 @@ export default function RootLayout({
     <html lang="es" className="dark">
       <body style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
         <SessionGuard />
+        <CronHealthBanner />
         {children}
       </body>
     </html>
