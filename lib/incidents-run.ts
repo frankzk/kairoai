@@ -1,5 +1,5 @@
 // Deteccion de novedades (incidencias de reparto): cruza el tracking del courier
-// (Moovin en CR; Forza en HN) con la logistica importada y los pedidos de Shopify
+// (Moovin y WYN en CR; Forza en HN) con la logistica importada y los pedidos de Shopify
 // (por guia), y arma/actualiza la bandeja. Extraido de la ruta /api/cron/incidencias
 // para poder reutilizarlo: lo llaman tanto la ruta (cron + boton) como el cron de
 // Moovin (encadena la deteccion justo despues de refrescar el tracking).
@@ -8,11 +8,13 @@ import {
   listLogisticsRows,
   listMoovinTracking,
   listPersistedShopifyOrders,
+  listWynTracking,
 } from "@/lib/finance";
 import { FINANCE_STORES } from "@/lib/store-config";
 import type { LogisticsRow } from "@/lib/finance-types";
 import { persistedOrderToSummary, type ShopifyOrderSummary } from "@/lib/finance-orders";
-import { detectForzaIncident, detectMoovinIncident } from "@/lib/incidents-detect";
+import type { DetectedIncident } from "@/lib/incidents-types";
+import { detectForzaIncident, detectMoovinIncident, detectWynIncident } from "@/lib/incidents-detect";
 import {
   backfillIncidentContact,
   getIncidentWatermark,
@@ -117,6 +119,49 @@ async function backfillMissingContact(): Promise<number> {
   return filled;
 }
 
+// Recorre el tracking de UN courier en UNA tienda (Forza, WYN: los que ya vienen
+// particionados por store_id) y arma/actualiza sus novedades. Avanza el
+// watermark de esa fuente solo despues de procesar todo el lote.
+async function scanStoreTracking<T extends { guide_number: string; checked_at: string }>(
+  sourceKey: string,
+  storeId: number,
+  full: boolean,
+  list: (since: string | null) => Promise<T[]>,
+  detect: (t: T, row?: LogisticsRow, shopify?: ShopifyOrderSummary) => DetectedIncident | null,
+  bump: (outcome: "created" | "updated" | "skipped") => void,
+  addScanned: (n: number) => void
+): Promise<void> {
+  const since = full ? null : await getIncidentWatermark(sourceKey);
+  const tracking = await list(since);
+  if (!tracking.length) return;
+
+  const [rows, shopifyByGuide, existentes] = await Promise.all([
+    listLogisticsRows(undefined, storeId),
+    loadShopifyByGuide(storeId),
+    listIncidentsByKey(storeId),
+  ]);
+  const byGuide = indexByGuide(rows);
+  for (const t of tracking) {
+    const candidate = detect(t, byGuide.get(t.guide_number), lookupShopify(shopifyByGuide, t.guide_number));
+    if (!candidate) continue;
+    // Un cierre del courier (entrega/devolucion) solo importa si ya existe una
+    // novedad para ese envio: sirve para cerrarla, no para crear una.
+    if (
+      (candidate.last_tracking_group === "delivered" || candidate.last_tracking_group === "returned") &&
+      !existentes.has(candidate.incident_key)
+    ) {
+      continue;
+    }
+    addScanned(1);
+    const { outcome } = await upsertDetectedIncident(candidate, {
+      existing: existentes.get(candidate.incident_key) ?? null,
+    });
+    bump(outcome);
+  }
+  const next = maxChecked(tracking, since ?? "");
+  if (next) await setIncidentWatermark(sourceKey, next);
+}
+
 // Arma/actualiza la bandeja de novedades POR TIENDA. Idempotente por (store_id,
 // clave de envio): reejecutar no duplica ni pisa la gestion manual.
 //
@@ -178,38 +223,31 @@ export async function detectIncidents(full: boolean): Promise<DetectIncidentsRes
   // ----- Honduras (Forza): tracking ya particionado por tienda (store_id).
   const forzaStores = FINANCE_STORES.filter((s) => s.logisticsProvider === "forza");
   for (const store of forzaStores) {
-    const sourceKey = `forza:${store.id}`;
-    const since = full ? null : await getIncidentWatermark(sourceKey);
-    const tracking = await listForzaTracking(store.id, { since });
-    if (!tracking.length) continue;
+    await scanStoreTracking(
+      `forza:${store.id}`,
+      store.id,
+      full,
+      (since) => listForzaTracking(store.id, { since }),
+      (t, row, shopify) => detectForzaIncident(t, row, shopify),
+      bump,
+      (n) => { scanned += n; }
+    );
+  }
 
-    const [rows, shopifyByGuide, existentes] = await Promise.all([
-      listLogisticsRows(undefined, store.id),
-      loadShopifyByGuide(store.id),
-      listIncidentsByKey(store.id),
-    ]);
-    const byGuide = indexByGuide(rows);
-    for (const t of tracking) {
-      const candidate = detectForzaIncident(
-        t,
-        byGuide.get(t.guide_number),
-        lookupShopify(shopifyByGuide, t.guide_number)
-      );
-      if (!candidate) continue;
-      if (
-        (candidate.last_tracking_group === "delivered" || candidate.last_tracking_group === "returned") &&
-        !existentes.has(candidate.incident_key)
-      ) {
-        continue;
-      }
-      scanned += 1;
-      const { outcome } = await upsertDetectedIncident(candidate, {
-        existing: existentes.get(candidate.incident_key) ?? null,
-      });
-      bump(outcome);
-    }
-    const next = maxChecked(tracking, since ?? "");
-    if (next) await setIncidentWatermark(sourceKey, next);
+  // ----- WYN: segundo courier de Costa Rica (guias MLCR...). No reemplaza a
+  // Moovin en la tienda, convive con el, por eso no se elige por
+  // logisticsProvider: se recorre cada tienda y manda el dato (courier_shipments
+  // ya viene particionado por store_id; en Honduras sale vacio).
+  for (const store of FINANCE_STORES) {
+    await scanStoreTracking(
+      `wyn:${store.id}`,
+      store.id,
+      full,
+      (since) => listWynTracking(store.id, { since }),
+      (t, row, shopify) => detectWynIncident(t, row, shopify),
+      bump,
+      (n) => { scanned += n; }
+    );
   }
 
   // Repaso de relleno de nombre/telefono faltantes (best-effort).

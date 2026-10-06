@@ -10,8 +10,8 @@ describe("valores validos de novedades", () => {
     expect(INCIDENT_CATEGORIES).toContain("demora_entrega");
   });
 
-  // Fijados contra los CHECK de la tabla incidents (migraciones 0016, 0018 y
-  // 0019). Si este test falla porque se agrego un valor al tipo, falta la
+  // Fijados contra los CHECK de la tabla incidents (migraciones 0016, 0018,
+  // 0019 y 0039). Si este test falla porque se agrego un valor al tipo, falta la
   // migracion que lo agregue al CHECK: sin ella el insert revienta en produccion.
   it("coinciden con los CHECK de la base", () => {
     expect([...INCIDENT_STATUSES].sort()).toEqual([
@@ -21,6 +21,6 @@ describe("valores validos de novedades", () => {
       "cliente_no_responde", "cliente_rechaza", "dano_paquete", "demora_entrega",
       "devuelto_origen", "direccion_incorrecta", "fallo_entrega", "otro",
     ]);
-    expect([...INCIDENT_SOURCES].sort()).toEqual(["boxful", "forza", "manual", "moovin"]);
+    expect([...INCIDENT_SOURCES].sort()).toEqual(["boxful", "forza", "manual", "moovin", "wyn"]);
   });
 });

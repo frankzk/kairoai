@@ -3,7 +3,7 @@ import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dat
 import { listWynSyncCandidates, upsertWynTracking } from "@/lib/finance";
 import type { WynTrackingRow } from "@/lib/finance-types";
 import { getStoreConfig } from "@/lib/stores";
-import { fetchWynTracking, type WynTrackingResult } from "@/lib/wyn";
+import { fetchWynTracking, wynRunVerdict, type WynTrackingResult } from "@/lib/wyn";
 import { withCronRun } from "@/lib/cron-runs";
 
 export const dynamic = "force-dynamic";
@@ -120,7 +120,8 @@ async function run(): Promise<RunSummary> {
 async function handler(): Promise<NextResponse> {
   try {
     const summary = await run();
-    return NextResponse.json({ ok: !summary.blocked, store: STORE_CODE, ...summary });
+    const verdict = wynRunVerdict(summary);
+    return NextResponse.json({ ...verdict, store: STORE_CODE, ...summary });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo actualizar WYN.";
     return NextResponse.json({ ok: false, store: STORE_CODE, error: message }, { status: 500 });

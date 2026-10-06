@@ -49,6 +49,7 @@ Estado actual:
 | `0020_moovin_deliveredcomplete.sql` | Pasa a entregadas 2 guias de Moovin cerradas con "Entrega completa" (DELIVEREDCOMPLETE) que habian quedado como en curso porque el clasificador no conocia ese codigo | Si (23/09/2026) |
 | `0038_cron_runs.sql` | Salud de los procesos automaticos: tabla `cron_runs`, una fila por cron que se sobreescribe en cada corrida (inicio, fin, ultima corrida buena, ultimo error, resumen). La lee la tira de aviso que aparece arriba de todas las pantallas cuando un proceso lleva mas del doble de su intervalo sin terminar bien. Sin siembra a proposito: sembrar con la hora de la migracion prenderia la tira en falso si el deploy llega horas despues. RLS activa sin politicas (solo service role) | Si (04/10/2026) |
 | `0037_moovin_entregas_revertidas.sql` | Pasa a "Cancelado" 5 guias de Moovin guardadas como entregadas cuando Moovin revirtio la entrega (las liquidaciones de Boxful confirman que no se cobraron). Deja a proposito como entregadas otras 2 con el mismo patron a las que Boxful si les liquido el COD | Si (26/09/2026) |
+| `0039_incidents_source_wyn.sql` | Agrega `wyn` al CHECK de `incidents.source`: la bandeja de Novedades ahora detecta tambien las guias de WYN (MLCR...). Sin esto el primer insert de WYN rompia la corrida completa del cron de incidencias. Solo amplia los valores permitidos | Si (06/10/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de
