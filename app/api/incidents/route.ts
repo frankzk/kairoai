@@ -12,7 +12,8 @@ import {
   listIncidents,
   updateIncident,
 } from "@/lib/incidents";
-import { getForzaTrackingByGuide, getMoovinTrackingByPackage } from "@/lib/finance";
+import { getForzaTrackingByGuide, getMoovinTrackingByPackage, getWynTrackingByGuide } from "@/lib/finance";
+import { wynGroupForIncidents } from "@/lib/incidents-detect";
 import { findChatLeadForCustomer } from "@/lib/leads";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import type { Incident, IncidentCategory, IncidentSource, IncidentStatus, TrackingEvent } from "@/lib/incidents-types";
@@ -36,8 +37,8 @@ function asSource(v: string | null): IncidentSource | undefined {
   return v && SOURCES.has(v) ? (v as IncidentSource) : undefined;
 }
 
-// El historial de tracking del courier vive en moovin_tracking / forza_tracking
-// (columna events JSONB), no en la tabla incidents. Se trae por la guia para el
+// El historial de tracking del courier vive en moovin_tracking / forza_tracking /
+// courier_shipments (WYN) (columna events JSONB), no en la tabla incidents. Se trae por la guia para el
 // detalle. Es complementario: si la tabla falta o la consulta falla, se devuelve
 // vacio para no romper el detalle de la novedad.
 async function trackingEventsFor(incident: Incident): Promise<TrackingEvent[]> {
@@ -50,6 +51,12 @@ async function trackingEventsFor(incident: Incident): Promise<TrackingEvent[]> {
     if (incident.source === "forza") {
       const t = await getForzaTrackingByGuide(incident.store_id, incident.guide_number);
       return (t?.events ?? []) as TrackingEvent[];
+    }
+    if (incident.source === "wyn") {
+      // El detalle cuenta los intentos fallidos por group "failed"; WYN los
+      // marca "incident", asi que se traducen igual que en la deteccion.
+      const t = await getWynTrackingByGuide(incident.store_id, incident.guide_number);
+      return (t?.events ?? []).map((ev) => ({ ...ev, group: wynGroupForIncidents(ev.group) }));
     }
   } catch {
     // tracking complementario: ignorar y devolver vacio.

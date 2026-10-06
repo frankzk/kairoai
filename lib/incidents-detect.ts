@@ -5,7 +5,7 @@
 import { normalizeMatchKey } from "./order-matching";
 import { classifyMoovinGroup } from "./moovin";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
-import type { MoovinTrackingRow, ForzaTrackingRow, LogisticsRow } from "./finance-types";
+import type { MoovinTrackingRow, ForzaTrackingRow, WynTrackingRow, LogisticsRow } from "./finance-types";
 import type { ShopifyOrderSummary } from "./finance-orders";
 import type {
   DetectedIncident,
@@ -241,6 +241,93 @@ export function detectForzaIncident(
     last_tracking_status: tracking.latest_status || "",
     last_tracking_group: group,
     last_failure_at: lastFailureDate(tracking.events),
+  };
+}
+
+// Causa de una falla de WYN por el CODIGO del evento, que es univoco (ver
+// WYN_EVENT_GROUPS en lib/wyn.ts). El texto no alcanza: "Domicilio de entrega
+// incorrecto" no dice "direccion" y caeria en fallo_entrega. Un codigo que no
+// esta aca cae al mapeo por texto que comparten Moovin y Forza.
+const WYN_CATEGORY_BY_CODE: Record<string, IncidentCategory> = {
+  "LM-6": "fallo_entrega", // Zona de entrega intransitable
+  "LM-7": "cliente_no_responde", // Destinatario ausente
+  "LM-8": "cliente_rechaza", // Llego a domicilio y se rechazo el paquete
+  "LM-9": "direccion_incorrecta", // Domicilio de entrega incorrecto
+  "LM-10": "fallo_entrega", // Persona no autorizada para recibir
+  "AV-2": "fallo_entrega", // En investigacion
+};
+
+/**
+ * Traduce el grupo de WYN al vocabulario que entiende applyDetection, que es
+ * el de Moovin: "failed" (falla activa), "delivered" y "returned" (cierres).
+ *
+ * WYN habla distinto y por eso no se puede pasar tal cual:
+ *   - su falla activa se llama "incident", no "failed";
+ *   - "not_delivered" (siniestrado / robado) y "cancelled" son cierres sin
+ *     entrega, igual que una devolucion: la novedad abierta pasa a Perdida;
+ *   - has_incident NO sirve como senal de falla, porque WYN lo marca tambien en
+ *     las devueltas (isWynIncidentGroup). Usarlo crearia 205 novedades de
+ *     envios que ya volvieron hace meses.
+ * Cualquier otro grupo (en_route, pending, unknown) es envio en curso.
+ */
+export function wynGroupForIncidents(group: string): string {
+  if (group === "incident") return "failed";
+  if (group === "delivered") return "delivered";
+  if (group === "returned" || group === "not_delivered" || group === "cancelled") return "returned";
+  return group || "";
+}
+
+// Construye una candidata desde el tracking de WYN (Costa Rica, guias MLCR...).
+// Misma semantica que Moovin y Forza: falla = novedad activa; entrega o
+// devolucion solo sirven para cerrar una novedad que ya existe; en curso y
+// pasado de tiempo = demora.
+export function detectWynIncident(
+  tracking: WynTrackingRow,
+  row?: LogisticsRow,
+  shopify?: ShopifyOrderSummary,
+  now: string = new Date().toISOString()
+): DetectedIncident | null {
+  const group = wynGroupForIncidents(tracking.latest_group || "");
+  const isFailure = group === "failed";
+  const isDelivered = group === "delivered";
+  const isReturned = group === "returned";
+  const demora =
+    isFailure || isDelivered || isReturned
+      ? null
+      : motivoDemora(shopify?.created_at, tracking.latest_at, now);
+  if (!isFailure && !isDelivered && !isReturned && !demora) return null;
+
+  const guide = tracking.guide_number || row?.guide_number || "";
+  const orderName = row?.order_name || shopify?.name || "";
+  const reason = tracking.incident_reason || tracking.latest_status || "";
+  const code = String(tracking.latest_code || "").trim().toUpperCase();
+  const category: IncidentCategory = demora
+    ? "demora_entrega"
+    : isFailure
+      ? WYN_CATEGORY_BY_CODE[code] ?? mapMoovinCategory(reason, group)
+      : isReturned
+        ? "devuelto_origen"
+        : "otro";
+
+  return {
+    store_id: tracking.store_id || row?.store_id || DEFAULT_FINANCE_STORE_ID,
+    incident_key: buildIncidentKey(guide, orderName),
+    source: "wyn",
+    order_name: orderName,
+    guide_number: guide,
+    shopify_order_id: row?.shopify_order_id || shopify?.id || "",
+    customer_name: row?.customer_name || shopifyCustomerName(shopify) || tracking.receiver_name || "",
+    customer_phone: row?.customer_phone || shopify?.phone || "",
+    courier: row?.courier || "WYN",
+    cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
+    category,
+    detail: demora ?? reason,
+    last_tracking_status: tracking.latest_status || "",
+    last_tracking_group: group,
+    // Los eventos de WYN marcan la falla como "incident", no "failed".
+    last_failure_at: lastFailureDate(
+      (tracking.events || []).map((ev) => ({ ...ev, group: wynGroupForIncidents(ev.group) }))
+    ),
   };
 }
 
