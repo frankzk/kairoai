@@ -8,17 +8,19 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// APAGADO EL 29/08/2026 — sin entrada en vercel.json.
+// HISTORIA. Se apago el 29/08/2026 (#217): Supabase rechazaba conexiones
+// (Cloudflare 522) y este era el cron de escritura nuevo de ese dia, asi que
+// se saco de vercel.json por las dudas. Nunca se volvio a prender, y nada lo
+// avisaba: del 29/08 al 07/10, 4.863 de los 4.872 leads nuevos de Costa Rica
+// quedaron sin conteo de mensajes y el tablero los mostraba como "Solo
+// saludó" aunque hubieran conversado (de 20 leads leidos al volver, 14 habian
+// escrito entre 2 y 8 mensajes).
 //
-// Supabase empezo a rechazar conexiones (Cloudflare 522, "connection timed
-// out") y el tablero de Leads dejo de cargar. Este cron era la unica carga de
-// ESCRITURA continua que se habia agregado ese dia: cada 10 minutos leia hasta
-// 150 transcripts por tienda con concurrencia 4 y escribia un UPDATE por lead.
-//
-// La ruta se deja viva a proposito: sigue siendo publica y se puede disparar a
-// mano con ?limit=N para terminar el barrido cuando la base este sana. Antes de
-// volver a programarla hay que bajar la frecuencia y la concurrencia, y
-// confirmar que el pico de conexiones no viene de aca.
+// SE VOLVIO A PRENDER el 07/10 despues de medir la carga, que es chica: la
+// consulta de la cola tarda 0,5 s y una corrida escribe como mucho 150 filas
+// por tienda (una por lead). Una corrida manual de 20+20 leads tardo 1,4 s.
+// Va cada 10 minutos al minuto 7, para no coincidir con `leads` (cada 5) ni
+// con `leads-reclassify` (minuto 2). Si se atrasa, la tira de salud lo dice.
 //
 // Cron: lee el transcript de Icomfly y guarda cuantos mensajes escribio el
 // cliente (inbound_count) y cual fue el primero (first_inbound_text). Es lo que
