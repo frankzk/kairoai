@@ -25,10 +25,10 @@ export const CRON_JOBS: CronJob[] = [
   { name: "leads", label: "Leads de WhatsApp", everyMinutes: 5 },
   { name: "leads-reclassify", label: "Clasificación de leads", everyMinutes: 10 },
   { name: "leads-shopify-match", label: "Leads que ya compraron", everyMinutes: 60 },
-  // Apagado a proposito el 29/08 (#217) durante una caida de Supabase. La ruta
-  // sigue viva para correrla a mano. Mientras no vuelva a vercel.json, el
-  // segmento "Conversó" no se actualiza para leads nuevos.
-  { name: "leads-inbound", label: "Chat de los leads (Conversó)", everyMinutes: null },
+  // Estuvo apagado del 29/08 al 07/10 (#217, en una caida de Supabase). En ese
+  // tiempo 4.863 de 4.872 leads nuevos de Costa Rica quedaron sin conteo y el
+  // tablero los mostraba a todos como "Solo saludó".
+  { name: "leads-inbound", label: "Chat de los leads (Conversó)", everyMinutes: 10 },
   { name: "icomfly", label: "Pedidos de Icomfly", everyMinutes: 30 },
   { name: "shopify-recent", label: "Pedidos nuevos de Shopify", everyMinutes: 10 },
   { name: "shopify-refresh", label: "Guías de Shopify", everyMinutes: 180 },
