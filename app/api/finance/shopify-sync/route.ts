@@ -22,7 +22,10 @@ import {
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// 300 y no 60: despues del presupuesto de paginado viene la reconstruccion de la
+// cache de Finanzas, y con 60 s Vercel cortaba la corrida a la mitad (ver
+// tests/cron-tiempo-limite.test.ts).
+export const maxDuration = 300;
 
 const MAX_GET_LIMIT = 1000;
 

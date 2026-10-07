@@ -7,7 +7,10 @@ import { withCronRun } from "@/lib/cron-runs";
 export const runtime = "nodejs";
 // Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// 300 y no 60: despues del presupuesto de paginado viene la reconstruccion de la
+// cache de Finanzas, y con 60 s Vercel cortaba la corrida a la mitad (ver
+// tests/cron-tiempo-limite.test.ts).
+export const maxDuration = 300;
 
 // Ventana corta y CRON cada 10 min: un pedido nuevo entra al tablero solo,
 // sin que nadie apriete "Sync Shopify". Antes el unico camino era la barrida
