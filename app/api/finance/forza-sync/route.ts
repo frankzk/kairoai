@@ -6,13 +6,17 @@ import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dat
 import { syncForzaGuides } from "@/lib/forza-sync";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// 300 y no 60: despues del presupuesto de paginado viene la reconstruccion de la
+// cache de Finanzas, y con 60 s Vercel cortaba la corrida a la mitad (ver
+// tests/cron-tiempo-limite.test.ts).
+export const maxDuration = 300;
 
 // La tasa y la concurrencia contra Forza viven en lib/forza-sync.ts, compartidas
 // con el cron /api/cron/forza.
 const MAX_GUIDES_PER_CALL = 80;
 const FRESH_WINDOW_MINUTES = 6 * 60;
-// Dejar de arrancar consultas con margen antes del maxDuration (60 s).
+// Dejar de arrancar consultas a los 50 s: lo que sigue (guardar y reconstruir
+// la cache de Finanzas) usa el resto del maxDuration.
 const TIME_BUDGET_MS = 50_000;
 
 interface RequestedGuide {

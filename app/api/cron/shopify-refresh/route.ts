@@ -7,13 +7,16 @@ import { withCronRun } from "@/lib/cron-runs";
 export const runtime = "nodejs";
 // Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// 300 y no 60: despues del presupuesto de paginado viene la reconstruccion de la
+// cache de Finanzas, y con 60 s Vercel cortaba la corrida a la mitad (ver
+// tests/cron-tiempo-limite.test.ts).
+export const maxDuration = 300;
 
 const DEFAULT_REFRESH_DAYS = 14;
-// Presupuesto de tiempo por corrida: paginamos en profundidad hasta acercarnos
-// al maxDuration (con margen para el ultimo upsert + respuesta). Asi una sola
-// corrida con ?days amplio cubre casi todo el backlog; lo que quede se reanuda
-// con ?next_url.
+// Presupuesto de paginado por corrida. Lo que sobra hasta el maxDuration queda
+// para el ultimo upsert, la cache de Finanzas y la respuesta. Una sola corrida
+// con ?days amplio cubre casi todo el backlog; lo que quede se reanuda con
+// ?next_url.
 const TIME_BUDGET_MS = 50_000;
 const MAX_PAGES_PER_STORE = 80; // tope duro de seguridad
 
