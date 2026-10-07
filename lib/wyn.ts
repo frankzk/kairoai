@@ -270,3 +270,42 @@ export function wynRunVerdict(summary: {
   }
   return { ok: true };
 }
+
+/**
+ * El historial guardado de una guia (courier_shipments) en la forma que devuelve
+ * fetchWynTracking, para mostrarlo cuando WYN no contesta en vivo.
+ *
+ * POR QUE: la ventana "Seguimiento WYN" solo consultaba en vivo. Desde el
+ * 06/10/2026 WYN no le responde al servidor ("no respondio dentro de 10
+ * segundos") y la ventana quedaba vacia, aunque las 518 guias de WYN tenian su
+ * historial completo guardado de consultas anteriores. Un historial de hace un
+ * dia, con su fecha a la vista, sirve; una ventana vacia no.
+ */
+export function wynResultFromCache(row: {
+  guide_number: string;
+  tracking_number: string;
+  latest_status: string;
+  latest_code: string;
+  latest_group: string;
+  latest_at: string | null;
+  has_incident: boolean;
+  incident_reason: string;
+  delivery_address: string;
+  receiver_name: string;
+  events: CourierTrackingEvent[];
+}): WynTrackingResult {
+  return {
+    guideNumber: row.guide_number,
+    trackingNumber: row.tracking_number || row.guide_number,
+    latestStatus: row.latest_status,
+    latestCode: row.latest_code,
+    latestGroup: row.latest_group as CourierNormalizedStatus,
+    latestAt: row.latest_at,
+    hasIncident: row.has_incident,
+    incidentReason: row.incident_reason,
+    deliveryAddress: row.delivery_address,
+    receiverName: row.receiver_name,
+    events: row.events ?? [],
+    raw: {},
+  };
+}

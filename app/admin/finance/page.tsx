@@ -3136,6 +3136,10 @@ function WynTrackingButton({
   );
 }
 
+// Respuesta de /api/finance/wyn-tracking: en vivo, o el historial guardado
+// cuando WYN no contesta (cached + cachedAt).
+type WynTrackingCached = WynTrackingResult & { cached?: boolean; cachedAt?: string | null };
+
 function WynTrackingModal({
   guide,
   storeCode,
@@ -3147,14 +3151,14 @@ function WynTrackingModal({
 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [data, setData] = useState<WynTrackingResult | null>(null);
+  const [data, setData] = useState<WynTrackingCached | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const params = new URLSearchParams({ store: storeCode, guide: normalizeWynGuide(guide) });
     fetch(`/api/finance/wyn-tracking?${params.toString()}`, { cache: "no-store" })
       .then(async (res) => {
-        const json = (await res.json()) as WynTrackingResult & { error?: string; ok?: boolean };
+        const json = (await res.json()) as WynTrackingCached & { error?: string; ok?: boolean };
         if (!res.ok || json.error || json.ok === false) {
           throw new Error(json.error || "WYN no devolvio datos para esta guia.");
         }
@@ -3214,6 +3218,12 @@ function WynTrackingModal({
           </div>
         ) : (
           <>
+            {data?.cached && (
+              <p className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                WYN no respondio ahora. Este es el historial guardado
+                {data.cachedAt ? ` el ${formatCourierDate(data.cachedAt, "es-CR")}` : ""}: puede faltar lo mas reciente.
+              </p>
+            )}
             <div className="mb-3 border border-border bg-background p-3">
               <p className="text-[11px] text-muted-foreground">Ultimo estado</p>
               <p className={`mt-0.5 text-sm font-semibold ${groupClass}`}>{data?.latestStatus || "Sin estado"}</p>
