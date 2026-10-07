@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { upsertWynTracking } from "@/lib/finance";
+import { getWynTrackingByGuide, upsertWynTracking } from "@/lib/finance";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
-import { fetchWynTracking, isWynGuide } from "@/lib/wyn";
+import { fetchWynTracking, isWynGuide, normalizeWynGuide, wynResultFromCache } from "@/lib/wyn";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -47,6 +47,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, ...tracking });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo consultar WYN.";
+    // WYN no contesto: se muestra el ultimo historial guardado, con su fecha,
+    // en vez de dejar la ventana vacia (ver wynResultFromCache).
+    try {
+      const cached = await getWynTrackingByGuide(store.id, normalizeWynGuide(guide));
+      if (cached) {
+        return NextResponse.json({
+          ok: true,
+          ...wynResultFromCache(cached),
+          cached: true,
+          cachedAt: cached.checked_at,
+          liveError: message,
+        });
+      }
+    } catch (cacheError) {
+      console.warn("[wyn-tracking cache read]", cacheError);
+    }
     return NextResponse.json({ ok: false, error: message }, { status: 502 });
   }
 }
