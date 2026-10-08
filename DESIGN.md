@@ -304,7 +304,7 @@ Las barras de progreso también son redondas, por la misma razón formal: son la
 - **Fechas:** los selectores nativos se fuerzan a `color-scheme: dark` y el icono de calendario se reemplaza por un SVG propio en blanco papel, porque el nativo se volvía invisible sobre el oscuro.
 
 ### Navigation
-- **Tabs:** subrayado de 2px, 16px por 12px de padding, texto de 14px en peso medio. Activo lleva borde y texto violeta; inactivo, borde transparente y gris secundario que aclara en hover. El subrayado es el único indicador — no hay fondo ni píldora.
+- **Tabs:** subrayado de 2px, texto de 14px en peso medio. Activo lleva borde y texto violeta; inactivo, borde transparente y gris secundario que aclara en hover. El subrayado es el único indicador — no hay fondo ni píldora. Dos tamaños según qué se cambia: **16px por 12px** para el tab de módulo, y **12px por 8px** para el cambio de vista dentro de una pantalla, que es el que se usa donde la densidad manda. Los dos van dentro de un riel de 1px en `{colors.border}`, y el tab se estira al alto de la fila para que su subrayado caiga sobre el riel y no flotando encima.
 - **Scrollbar:** 6px, pulgar en gris estructura que pasa a violeta en hover. Detalle pequeño y deliberado: hasta el scroll respeta el acento.
 
 ### Mini-Stat (componente firma)
