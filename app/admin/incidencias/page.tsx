@@ -18,6 +18,7 @@ import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import { exportXlsx } from "@/lib/export-xlsx";
 import type { ChatLeadSummary } from "@/lib/leads-types";
+import { reglaReprogramar } from "@/lib/incidents-reprog";
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "muted";
 
@@ -1162,37 +1163,11 @@ function DetailModal({
   const showResultView = incident.status === "reprogramada" && !reopened;
   const intentosEntrega = trackingEvents.filter((e) => e.group === "failed").length;
   const trackingOrdenado = [...trackingEvents].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  // Reprogramar requiere que la ultima llamada haya sido "contesto"; o, como
-  // excepcion, 3 "no contesto" en dias distintos (ahi se agenda al finde porque
-  // Moovin no hace un 3er intento de entrega).
-  const ultimaLlamada = [...events]
-    .filter((e) => e.kind === "llamada")
-    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0];
-  const clienteContesto = ultimaLlamada?.metadata?.resultado === "contesto";
-  const diasNoContesta = new Set(
-    events
-      .filter((e) => e.kind === "llamada" && e.metadata?.resultado === "no_contesto")
-      .map((e) => (e.created_at || "").slice(0, 10))
-      .filter(Boolean)
-  ).size;
-  const tresNoContesta = diasNoContesta >= 3;
-  const puedeReprogramar = clienteContesto || tresNoContesta;
-  const soloFinde = !clienteContesto && tresNoContesta;
-  // Proximo viernes y sabado (dias consecutivos): limitan el date picker cuando
-  // se agenda al finde tras 3 intentos sin contestar.
-  const ymd = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const hoyYMD = ymd(new Date());
-  const proxViernes = (() => {
-    const d = new Date();
-    d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7));
-    return ymd(d);
-  })();
-  const proxSabado = (() => {
-    const d = new Date(`${proxViernes}T00:00:00`);
-    d.setDate(d.getDate() + 1);
-    return ymd(d);
-  })();
+  // Cuando se puede reprogramar y para que fechas: lib/incidents-reprog.ts.
+  // Mientras carga el historial del courier no se sabe cuantos intentos hubo,
+  // asi que el camino del segundo intento recien se abre cuando llega.
+  const regla = reglaReprogramar(events, trackingEvents.length > 0 ? intentosEntrega : 0);
+  const puedeReprogramar = regla.modo !== null;
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [copiedNuevoEnvio, setCopiedNuevoEnvio] = useState(false);
 
@@ -1389,10 +1364,10 @@ function DetailModal({
             <div className="flex flex-wrap gap-2 items-center">
               <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Reprogramar</span>
               <Input type="date" className="h-9 w-auto" value={reprogFecha} disabled={!puedeReprogramar}
-                min={soloFinde ? proxViernes : hoyYMD} max={soloFinde ? proxSabado : undefined}
+                min={regla.min ?? undefined} max={regla.max ?? undefined}
                 onChange={(e) => setReprogFecha(e.target.value)} />
               <Button variant="outline" size="sm" disabled={busy || !reprogFecha || !puedeReprogramar} className="gap-2"
-                onClick={() => onAction("reprogramar", { fecha: reprogFecha })}>
+                onClick={() => onAction("reprogramar", { fecha: reprogFecha, modo: regla.modo })}>
                 <CalendarClock className="h-3.5 w-3.5" /> Reprogramar
               </Button>
             </div>
@@ -1401,7 +1376,13 @@ function DetailModal({
                 Registra una llamada con “Contestó” (o 3 “No contestó” en días distintos) para habilitar la reprogramación.
               </p>
             )}
-            {soloFinde && (
+            {regla.modo === "segundo_intento" && (
+              <p className="text-[11px] text-muted-foreground">
+                El courier registra un solo intento fallido: el segundo ya está pagado. Se puede reprogramar aunque el
+                cliente no conteste (queda marcada como “sin contacto”).
+              </p>
+            )}
+            {regla.modo === "finde" && (
               <p className="text-[11px] text-muted-foreground">
                 Sin contestar (3 intentos): solo se puede agendar el próximo viernes o sábado.
               </p>
