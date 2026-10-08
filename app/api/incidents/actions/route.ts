@@ -60,6 +60,11 @@ export async function POST(req: NextRequest) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
           return NextResponse.json({ error: "Fecha invalida (use YYYY-MM-DD)" }, { status: 400 });
         }
+        // "segundo_intento": se reprograma sin haber hablado con el cliente,
+        // para usar el intento de entrega que ya esta pagado. Queda marcado en
+        // el historial (sin_contacto) para poder medir despues cuantas de esas
+        // se entregan.
+        const sinContacto = body.modo === "segundo_intento";
         const updated = await patchIncident(
           id,
           { status: "reprogramada", reprogramada_para: fecha, reprogramada_at: new Date().toISOString() },
@@ -67,8 +72,15 @@ export async function POST(req: NextRequest) {
             kind: "reprogramada",
             from_status: incident.status,
             to_status: "reprogramada",
-            message: `Reprogramada para ${fecha}${body.nota ? ` - ${body.nota}` : ""}`,
-            metadata: { reprogramada_para: fecha, nota: body.nota ?? "" },
+            message:
+              `Reprogramada para ${fecha}` +
+              (sinContacto ? " · segundo intento sin contacto" : "") +
+              (body.nota ? ` - ${body.nota}` : ""),
+            metadata: {
+              reprogramada_para: fecha,
+              nota: body.nota ?? "",
+              ...(sinContacto ? { sin_contacto: true, modo: "segundo_intento" } : {}),
+            },
           }
         );
         return NextResponse.json({ incident: updated });
