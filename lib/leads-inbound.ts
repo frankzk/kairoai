@@ -32,6 +32,28 @@ export function hasProductLink(text: string | null | undefined): boolean {
 /** Cuanto texto guardamos del primer mensaje: alcanza para ver el link. */
 const FIRST_INBOUND_MAX = 500;
 
+// Medio emoji: una mitad de un par sustituto UTF-16 sin su pareja.
+const SUSTITUTO_SUELTO = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/**
+ * Recorta un texto a `max` caracteres sin partir un emoji, y le saca lo que la
+ * base no acepta.
+ *
+ * EL CASO REAL (07/10/2026): `slice(0, 500)` cuenta unidades UTF-16, y un emoji
+ * son dos. Cuando el emoji caia justo en la posicion 500 quedaba la primera
+ * mitad sola (`\ud83d`), JSON.stringify la mandaba tal cual y Supabase
+ * rechazaba el UPDATE con "Empty or invalid json". Ese lead encabezaba la cola,
+ * asi que todas las corridas del cron morian en el mismo lugar.
+ *
+ * Tambien saca el caracter nulo (\u0000), que un campo text de Postgres no
+ * admite.
+ */
+export function textoGuardable(text: string, max: number): string {
+  const limpio = text.replace(/\u0000/g, "").replace(SUSTITUTO_SUELTO, "\uFFFD");
+  const puntos = Array.from(limpio);
+  return puntos.length > max ? puntos.slice(0, max).join("") : limpio;
+}
+
 export function summarizeInbound(messages: ConversationMessage[]): InboundSummary {
   let inboundCount = 0;
   let firstInboundText: string | null = null;
@@ -46,7 +68,7 @@ export function summarizeInbound(messages: ConversationMessage[]): InboundSummar
     const text = (msg.text ?? msg.caption ?? "").trim();
     if (msg.timestamp < firstTs && text !== "") {
       firstTs = msg.timestamp;
-      firstInboundText = text.slice(0, FIRST_INBOUND_MAX);
+      firstInboundText = textoGuardable(text, FIRST_INBOUND_MAX);
     }
   }
 

@@ -24,11 +24,11 @@ const CONCURRENCY = 4;
 
 export interface InboundSyncResult {
   store: string;
-  /** Leads a los que se les leyo el transcript en esta corrida. */
+  /** Leads leidos y guardados en esta corrida. */
   checked: number;
   /** De esos, a cuantos les cambio el conteo o el primer mensaje. */
   updated: number;
-  /** Transcripts que fallaron (se reintentan en la proxima corrida). */
+  /** Leads que no se pudieron leer o guardar (se reintentan en la proxima corrida). */
   failed: number;
   /** Cuantos quedan pendientes despues de esta corrida. */
   pending: number;
@@ -121,21 +121,37 @@ export async function runLeadsInboundSync(opts: {
         continue;
       }
 
-      checked += 1;
       const changed =
         summary.inboundCount !== (lead.inbound_count ?? 0) ||
         summary.firstInboundText !== lead.first_inbound_text;
 
-      const { error } = await getDB()
-        .from("leads")
-        .update({
-          inbound_count: summary.inboundCount,
-          first_inbound_text: summary.firstInboundText,
-          inbound_synced_at: new Date().toISOString(),
-        })
-        .eq("id", lead.id)
-        .eq("store_id", storeId);
-      if (error) throw new Error(`runLeadsInboundSync: ${error.message}`);
+      const guardar = (firstInboundText: string | null) =>
+        getDB()
+          .from("leads")
+          .update({
+            inbound_count: summary.inboundCount,
+            first_inbound_text: firstInboundText,
+            inbound_synced_at: new Date().toISOString(),
+          })
+          .eq("id", lead.id)
+          .eq("store_id", storeId);
+
+      // Un lead que no se puede guardar NO tumba la corrida. Antes un solo
+      // texto invalido lanzaba aca, y como ese lead encabeza la cola, todas
+      // las corridas siguientes morian en el mismo lugar (07/10/2026). Se
+      // reintenta sin el texto —el conteo es lo que importa para el
+      // segmento— y si tampoco entra, se cuenta como fallido y se sigue.
+      let { error } = await guardar(summary.firstInboundText);
+      if (error && summary.firstInboundText != null) {
+        console.warn(`[leads-inbound] lead ${lead.id}: ${error.message}; se guarda sin el texto`);
+        ({ error } = await guardar(null));
+      }
+      if (error) {
+        console.warn(`[leads-inbound] lead ${lead.id}: ${error.message}`);
+        failed += 1;
+        continue;
+      }
+      checked += 1;
       if (changed) updated += 1;
     }
   }
