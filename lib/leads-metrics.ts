@@ -164,6 +164,48 @@ export function buildUncalledLeadBuckets(
   ];
 }
 
+const FECHA_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Tope de un rango elegido a mano: un año alcanza y evita barridas enormes. */
+export const MAX_CUSTOM_RANGE_DAYS = 366;
+
+/** Medianoche UTC de una fecha YYYY-MM-DD, o null si no es una fecha real. */
+function fechaUtc(value: string): number | null {
+  const m = FECHA_RE.exec(value);
+  if (!m) return null;
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // Rechaza fechas que Date "corrige" solas, como 2026-02-31.
+  return new Date(t).toISOString().slice(0, 10) === value ? t : null;
+}
+
+/**
+ * Rango elegido a mano con Desde/Hasta (dias locales, los dos INCLUSIVOS), como
+ * [fromIso, toIso) en UTC. Si viene una sola fecha, es ese dia. Devuelve null
+ * si las fechas no son validas, si Desde es posterior a Hasta o si el rango
+ * pasa de MAX_CUSTOM_RANGE_DAYS.
+ *
+ * Hasta es inclusivo: "Hasta 07/10" cuenta todo el 07/10 local, asi que el
+ * limite de arriba es la medianoche local del 08/10.
+ */
+export function crDateRange(
+  fromDate: string | null | undefined,
+  toDate: string | null | undefined,
+  offsetHours = -6
+): { fromIso: string; toIso: string } | null {
+  const desde = (fromDate || toDate || "").trim();
+  const hasta = (toDate || fromDate || "").trim();
+  const a = fechaUtc(desde);
+  const b = fechaUtc(hasta);
+  if (a == null || b == null || a > b) return null;
+  const dias = (b - a) / 86400_000 + 1;
+  if (dias > MAX_CUSTOM_RANGE_DAYS) return null;
+  const offsetMs = offsetHours * 3600_000;
+  return {
+    fromIso: new Date(a - offsetMs).toISOString(),
+    toIso: new Date(b + 86400_000 - offsetMs).toISOString(),
+  };
+}
+
 /**
  * Rango [fromIso, toIso) para una ventana, calculado sobre el dia local de la
  * tienda (offset fijo). `hoy`/`7d`/`30d`/`mes` terminan en "ahora"; `ayer` es
