@@ -29,7 +29,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { FINANCE_STORES, getFinanceStoreById, type FinanceStoreCode } from "@/lib/store-config";
-import { useSelectedStore } from "@/lib/use-selected-store";
+import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
 import {
   BOARD_STAGE_PRIORITY,
   getStatusDef,
@@ -233,6 +233,7 @@ interface BoardCounts {
 
 export default function LeadsBoard() {
   const [store, setStore] = useSelectedStore();
+  const tiendasPermitidas = useTiendasPermitidas();
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [counts, setCounts] = useState<BoardCounts | null>(null);
   const [activeStage, setActiveStage] = useState<BoardTab>("hoy");
@@ -858,7 +859,7 @@ export default function LeadsBoard() {
               value={store}
               onChange={(e) => setStore(e.target.value as FinanceStoreCode)}
             >
-              {FINANCE_STORES.map((s) => (
+              {tiendasPermitidas.map((s) => (
                 <option key={s.code} value={s.code}>
                   {s.label}
                 </option>

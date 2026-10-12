@@ -6,6 +6,7 @@ import {
   QUICK_REPLY_MAX_BODY,
   QUICK_REPLY_MAX_TITLE,
 } from "@/lib/quick-replies";
+import { vendedoraEfectiva } from "@/lib/identidad";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -57,7 +58,9 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-  const vendedoraId = Number(payload?.vendedora_id);
+  // Una asesora sin permiso de supervision queda SIEMPRE a su nombre
+  // (lib/identidad.ts): el navegador no puede registrar a nombre de otra.
+  const vendedoraId = vendedoraEfectiva(payload?.vendedora_id) ?? NaN;
   try {
     const reply = await createQuickReply({
       storeId: store.id,

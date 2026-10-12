@@ -5,6 +5,7 @@ import { sendChatMessage } from "@/lib/icomfly-chat";
 import { getDB } from "@/lib/db";
 import { insertLeadCall } from "@/lib/leads";
 import { bumpQuickReplyUsage } from "@/lib/quick-replies";
+import { vendedoraEfectiva } from "@/lib/identidad";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -33,7 +34,9 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
   if (!Number.isFinite(leadId)) {
     return NextResponse.json({ error: "leadId invalido" }, { status: 400 });
   }
-  const vendedoraId = Number(body?.vendedora_id);
+  // Una asesora sin permiso de supervision queda SIEMPRE a su nombre
+  // (lib/identidad.ts): el navegador no puede registrar a nombre de otra.
+  const vendedoraId = vendedoraEfectiva(body?.vendedora_id) ?? NaN;
   if (!Number.isFinite(vendedoraId) || vendedoraId <= 0) {
     return NextResponse.json(
       { error: "Selecciona quien eres (asesora) antes de enviar." },

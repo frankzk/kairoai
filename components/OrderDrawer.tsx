@@ -37,7 +37,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
 import { hideWebphone } from "@/lib/webphone";
-import { getVendedoraId, setVendedoraId as persistVendedoraId } from "@/lib/vendedora";
+import { getVendedoraId, setVendedoraId as persistVendedoraId, vendedoraBloqueada } from "@/lib/vendedora";
 import type { ChatLeadSummary } from "@/lib/leads-types";
 import type { CustomerOrder, CustomerSummary } from "@/lib/customer-history";
 import type { OrderAlert } from "@/lib/order-risk";
@@ -479,6 +479,9 @@ export default function OrderDrawer({
                 <select
                   className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                   value={vendedoraId ?? ""}
+                  // Una asesora fija (lib/vendedora.ts) no elige: queda a su nombre.
+                  disabled={vendedoraBloqueada() !== null}
+                  title={vendedoraBloqueada() !== null ? "Tus gestiones quedan a tu nombre" : undefined}
                   onChange={(e) => selectVendedora(e.target.value ? Number(e.target.value) : null)}
                 >
                   <option value="">Sin asignar</option>

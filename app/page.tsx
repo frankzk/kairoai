@@ -11,6 +11,7 @@ import { AgentStatus } from "@/components/AgentStatus";
 import { OrdersTable } from "@/components/OrdersTable";
 import { CartsTab } from "@/components/CartsTab";
 import type { CallRecord, RetryItem } from "@/lib/db";
+import { leerYo, tienePermiso, type Yo } from "@/lib/sesion-cliente";
 
 interface DashboardData {
   stats: StatsData;
@@ -36,6 +37,9 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string>("");
   const [tab, setTab] = useState<Tab>("calls");
+  // Botones de seccion: solo las que la persona puede abrir.
+  const [yo, setYo] = useState<Yo | null>(null);
+  useEffect(() => setYo(leerYo()), []);
 
   const fetchData = useCallback(async (showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
@@ -108,36 +112,46 @@ export default function DashboardPage() {
               <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Actualizar</span>
             </Button>
-            <Link href="/admin/upsell">
-              <Button variant="outline" size="sm" className="gap-2">
-                <TrendingUp className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Upsells</span>
-              </Button>
-            </Link>
-            <Link href="/admin/settings">
-              <Button variant="outline" size="sm" className="gap-2">
-                <Settings className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Config</span>
-              </Button>
-            </Link>
-            <Link href="/admin/finance">
-              <Button variant="outline" size="sm" className="gap-2">
-                <Banknote className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Gestion</span>
-              </Button>
-            </Link>
-            <Link href="/admin/incidencias">
-              <Button variant="outline" size="sm" className="gap-2">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Novedades</span>
-              </Button>
-            </Link>
-            <Link href="/admin/leads">
-              <Button variant="outline" size="sm" className="gap-2">
-                <MessageSquare className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Leads</span>
-              </Button>
-            </Link>
+            {tienePermiso(yo, "upsell") && (
+              <Link href="/admin/upsell">
+                <Button variant="outline" size="sm" className="gap-2">
+                  <TrendingUp className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Upsells</span>
+                </Button>
+              </Link>
+            )}
+            {tienePermiso(yo, "config") && (
+              <Link href="/admin/settings">
+                <Button variant="outline" size="sm" className="gap-2">
+                  <Settings className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Config</span>
+                </Button>
+              </Link>
+            )}
+            {(tienePermiso(yo, "pedidos") || tienePermiso(yo, "finanzas")) && (
+              <Link href="/admin/finance">
+                <Button variant="outline" size="sm" className="gap-2">
+                  <Banknote className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Gestion</span>
+                </Button>
+              </Link>
+            )}
+            {tienePermiso(yo, "novedades") && (
+              <Link href="/admin/incidencias">
+                <Button variant="outline" size="sm" className="gap-2">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Novedades</span>
+                </Button>
+              </Link>
+            )}
+            {(tienePermiso(yo, "leads") || tienePermiso(yo, "leads_equipo")) && (
+              <Link href="/admin/leads">
+                <Button variant="outline" size="sm" className="gap-2">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Leads</span>
+                </Button>
+              </Link>
+            )}
             <Button variant="ghost" size="sm" onClick={logout} className="gap-2">
               <LogOut className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Salir</span>
