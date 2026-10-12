@@ -16,6 +16,8 @@ const vivas = (n: number, prefix = "FD4"): ForzaTrackedGuide[] =>
     group: "in_progress",
     checkedAt: NOW - (i + 1) * D,
   }));
+// Los pedidos vigentes de esas guias ya leidas (solo esas se releen).
+const pedidosDe = (tracked: ForzaTrackedGuide[]) => tracked.map((t) => ({ guide: t.guide, orderedAt: NOW - 20 * D }));
 
 describe("isForzaGuide", () => {
   it("reconoce las guias Forza (FD + digitos), sin importar mayusculas ni espacios", () => {
@@ -61,24 +63,41 @@ describe("planForzaSync", () => {
   });
 
   it("re-lee lo que sigue en camino, la lectura mas vieja primero, y salta finales y frescas", () => {
-    const plan = planForzaSync({
-      ...base,
-      orderGuides: [],
-      tracked: [
-        { guide: "FD2000001", group: "in_progress", checkedAt: NOW - 2 * H },
-        // Congelada desde el 27/07: sin limite de antiguedad, igual entra.
-        { guide: "FD2000002", group: "in_progress", checkedAt: NOW - 60 * D },
-        { guide: "FD2000003", group: "delivered", checkedAt: NOW - 60 * D },
-        { guide: "FD2000004", group: "returned", checkedAt: NOW - 60 * D },
-        { guide: "FD2000005", group: "failed", checkedAt: NOW - 10 * MIN },
-        { guide: "FD2000006", group: "failed", checkedAt: NOW - 3 * D },
-      ],
-    });
+    const tracked: ForzaTrackedGuide[] = [
+      { guide: "FD2000001", group: "in_progress", checkedAt: NOW - 2 * H },
+      // Congelada desde el 27/07: mientras el pedido siga vigente, entra.
+      { guide: "FD2000002", group: "in_progress", checkedAt: NOW - 60 * D },
+      { guide: "FD2000003", group: "delivered", checkedAt: NOW - 60 * D },
+      { guide: "FD2000004", group: "returned", checkedAt: NOW - 60 * D },
+      { guide: "FD2000005", group: "failed", checkedAt: NOW - 10 * MIN },
+      { guide: "FD2000006", group: "failed", checkedAt: NOW - 3 * D },
+    ];
+    const plan = planForzaSync({ ...base, orderGuides: pedidosDe(tracked), tracked });
     expect(plan).toEqual(["FD2000002", "FD2000006", "FD2000001"]);
   });
 
+  it("no relee guias de pedidos cancelados o fuera de la ventana", () => {
+    // Paso con guias de enero que quedaron en "Creado": se releian cada pocas
+    // horas y nunca se iban a mover.
+    const plan = planForzaSync({
+      ...base,
+      orderGuides: [{ guide: "FD2000001", orderedAt: NOW - 10 * D }],
+      tracked: [
+        { guide: "FD2000001", group: "in_progress", checkedAt: NOW - 5 * H },
+        { guide: "FD1900001", group: "in_progress", checkedAt: NOW - 200 * D },
+      ],
+    });
+    expect(plan).toEqual(["FD2000001"]);
+  });
+
   it("con miles de guias nuevas atrasadas, las que estan en camino igual reciben su parte", () => {
-    const plan = planForzaSync({ ...base, limit: 20, orderGuides: nuevas(500), tracked: vivas(40) });
+    const enCamino = vivas(40);
+    const plan = planForzaSync({
+      ...base,
+      limit: 20,
+      orderGuides: [...nuevas(500), ...pedidosDe(enCamino)],
+      tracked: enCamino,
+    });
     expect(plan).toHaveLength(20);
     // 75% para nuevas, 25% garantizado para re-leer.
     expect(plan.filter((g) => g.startsWith("FD3"))).toHaveLength(15);
@@ -86,16 +105,19 @@ describe("planForzaSync", () => {
   });
 
   it("si un grupo no llena su parte, el otro usa lo que sobra", () => {
-    const pocasVivas = planForzaSync({ ...base, limit: 10, orderGuides: nuevas(20), tracked: vivas(1) });
+    const una = vivas(1);
+    const pocasVivas = planForzaSync({ ...base, limit: 10, orderGuides: [...nuevas(20), ...pedidosDe(una)], tracked: una });
     expect(pocasVivas.filter((g) => g.startsWith("FD3"))).toHaveLength(9);
     expect(pocasVivas.filter((g) => g.startsWith("FD4"))).toHaveLength(1);
 
-    const pocasNuevas = planForzaSync({ ...base, limit: 10, orderGuides: nuevas(2), tracked: vivas(20) });
+    const veinte = vivas(20);
+    const pocasNuevas = planForzaSync({ ...base, limit: 10, orderGuides: [...nuevas(2), ...pedidosDe(veinte)], tracked: veinte });
     expect(pocasNuevas.filter((g) => g.startsWith("FD3"))).toHaveLength(2);
     expect(pocasNuevas.filter((g) => g.startsWith("FD4"))).toHaveLength(8);
   });
 
   it("con tope cero no consulta nada", () => {
-    expect(planForzaSync({ ...base, limit: 0, orderGuides: nuevas(5), tracked: vivas(5) })).toEqual([]);
+    const cinco = vivas(5);
+    expect(planForzaSync({ ...base, limit: 0, orderGuides: [...nuevas(5), ...pedidosDe(cinco)], tracked: cinco })).toEqual([]);
   });
 });

@@ -575,14 +575,79 @@ describe("demora de entrega (envios en curso que se pasan de tiempo)", () => {
     expect(c.last_tracking_group).toBe("delivered");
   });
 
-  it("Forza (Honduras) aplica la misma regla", () => {
-    const c = detectForzaIncident(
-      forza({ guide_number: "FD123", latest_group: "in_progress", latest_at: haceDias(1) }),
-      undefined,
-      shopify({ created_at: haceDias(18) }),
-      NOW
-    )!;
-    expect(c.category).toBe("demora_entrega");
+  describe("Forza (Honduras) deduce la novedad de sus hitos, no de los 14 dias", () => {
+    // Los 5 hitos de Forza, con la fecha de la ultima vez que paso por cada uno.
+    const hitos = (fechas: { creado?: number; recibido?: number; instal?: number; ruta?: number }, bodega = "") => [
+      { code: "ENTREGADO", group: "delivered" as const, title: "Entregado", description: "", date: null, note: "" },
+      ...([
+        ["En Ruta", fechas.ruta, ""],
+        ["En instalaciones", fechas.instal, bodega],
+        ["Recibido por Forza", fechas.recibido, ""],
+        ["Creado", fechas.creado, "Mireva"],
+      ] as const)
+        .filter(([, d]) => d !== undefined)
+        .map(([title, d, description]) => ({
+          code: title.toUpperCase().replace(/\s+/g, "_"),
+          group: "in_progress" as const,
+          title,
+          description,
+          date: haceDias(d as number),
+          note: "",
+        })),
+    ];
+
+    it("un pedido de 18 dias que va en tiempo ya no es demora", () => {
+      // En Honduras el 10% de las entregas tarda mas de 18 dias.
+      const c = detectForzaIncident(
+        forza({ guide_number: "FD123", latest_group: "in_progress", events: hitos({ creado: 3, recibido: 2, instal: 1.5, ruta: 0.3 }) }),
+        undefined,
+        shopify({ created_at: haceDias(18) }),
+        NOW
+      );
+      expect(c).toBeNull();
+    });
+
+    it("volver a la bodega despues de salir a ruta entra como intento fallido, con la fecha de la falla", () => {
+      const c = detectForzaIncident(
+        forza({ guide_number: "FD124", latest_group: "in_progress", events: hitos({ creado: 9, recibido: 8, ruta: 6, instal: 5 }, "SAN PEDRO SULA") }),
+        undefined,
+        shopify({ name: "#MIRH5000", created_at: haceDias(10) }),
+        NOW
+      )!;
+      expect(c.category).toBe("fallo_entrega");
+      expect(c.detail).toContain("SAN PEDRO SULA");
+      expect(c.last_failure_at).toBe(haceDias(5));
+      // Una demora abierta sobre el mismo envio pasa a la causa real.
+      const demora = { ...(applyDetection(null, c, NOW).patch as Incident), id: 9, category: "demora_entrega" as const };
+      expect(applyDetection(demora, c, NOW).patch.category).toBe("fallo_entrega");
+    });
+
+    it("un pedido cancelado no genera novedad aunque su guia quede abandonada", () => {
+      const c = detectForzaIncident(
+        forza({ guide_number: "FD126", latest_group: "in_progress", events: hitos({ creado: 5 }) }),
+        undefined,
+        shopify({ created_at: haceDias(6), cancelled_at: haceDias(5) }),
+        NOW
+      );
+      expect(c).toBeNull();
+    });
+
+    it("una reprogramada que vuelve a la bodega despues de reprogramarse es reprogramacion fallida", () => {
+      const c = detectForzaIncident(
+        forza({ guide_number: "FD125", latest_group: "in_progress", events: hitos({ creado: 9, ruta: 3, instal: 2 }) }),
+        undefined,
+        shopify({ created_at: haceDias(10) }),
+        NOW
+      )!;
+      const reprogramada = {
+        ...(applyDetection(null, c, NOW).patch as Incident),
+        id: 10,
+        status: "reprogramada" as const,
+        reprogramada_at: haceDias(4),
+        reprogramada_para: NOW.slice(0, 10),
+      };
+      expect(applyDetection(reprogramada, c, NOW).patch.status).toBe("reprog_fallida");
+    });
   });
 
   describe("ciclo de vida de una demora", () => {

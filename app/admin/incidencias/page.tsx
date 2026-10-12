@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { pctResueltas } from "@/lib/incidents-trend";
 import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentCausaStat, type IncidentPeriodTotal, type TrackingEvent } from "@/lib/incidents-types";
-import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
+import { FINANCE_STORES, getCurrencySymbol, getFinanceStore, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
 import { exportXlsx } from "@/lib/export-xlsx";
 import type { ChatLeadSummary } from "@/lib/leads-types";
@@ -93,7 +93,9 @@ const CUENTA_REENVIO: Record<FinanceStoreCode, CuentaReenvio | null> = {
   "mireva-hn": null,
 };
 
-const currency = (n: number) => "₡" + Math.round(Number(n) || 0).toLocaleString("es-CR");
+// En la moneda de la tienda: antes Honduras mostraba sus lempiras como colones.
+const currency = (n: number, store: FinanceStoreCode) =>
+  getCurrencySymbol(store) + Math.round(Number(n) || 0).toLocaleString(getFinanceStore(store).locale);
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString("es-CR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDay = (s: string | null) => (s ? s.slice(0, 10).split("-").reverse().join("/") : "—");
@@ -1082,7 +1084,7 @@ export default function IncidenciasPage() {
                           {CATEGORY_LABELS[i.category]}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-right">{i.cod_amount ? currency(i.cod_amount) : "—"}</td>
+                      <td className="px-3 py-2 text-right">{i.cod_amount ? currency(i.cod_amount, selectedStoreCode) : "—"}</td>
                       <td className="px-3 py-2 text-center">{i.intentos_llamada || 0}</td>
                       <td className="px-3 py-2 text-center"><span className={`tabular-nums ${age.tone}`}>{age.label}</span></td>
                       <td className="px-3 py-2 text-xs">{i.reprogramada_para || "—"}</td>
@@ -1244,7 +1246,7 @@ function DetailModal({
             <div><span className="text-muted-foreground">Telefono:</span> {incident.customer_phone || "—"}</div>
             <div><span className="text-muted-foreground">Guia:</span> <span className="font-mono text-xs">{incident.guide_number || "—"}</span></div>
             <div><span className="text-muted-foreground">Courier:</span> {incident.courier || "—"}</div>
-            <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount) : "—"}</div>
+            <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount, storeCode) : "—"}</div>
             <div className="flex items-baseline gap-1.5">
               <span className="text-muted-foreground">Intentos de entrega:</span>
               <span className="text-base font-bold tabular-nums">

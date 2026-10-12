@@ -53,6 +53,7 @@ Estado actual:
 | `0040_lead_chat_snapshots.sql` | Copia compacta del chat de los leads con carrito (`lead_chat_snapshots`, una fila por lead, se sobreescribe) para poder analizarlos fuera de Icomfly. La llena `/api/leads/chat-snapshots` a mano. Son mensajes de clientes: RLS activa sin politicas, solo service role | Si (08/10/2026) |
 | `0041_kairo_users.sql` | Accesos personales: `kairo_users` (usuario, nombre, hash scrypt, roles, permisos, tiendas, asesora de planilla vinculada, version de sesion, bloqueo por intentos) y `kairo_user_events` (bitacora de altas, cambios, reseteos e ingresos). RLS activa sin politicas, solo service role | Si (12/10/2026) |
 | `0042_kairo_users_email.sql` | Correo opcional en `kairo_users` para entrar con el correo además del usuario corto. En minúscula (CHECK) y único | Si (12/10/2026) |
+| `0043_novedades_hn_limpieza.sql` | Descarta 73 novedades de Honduras de pedidos de enero a marzo cuya guia de Forza quedo en "Creado" (29 con el pedido cancelado). Entraron como demora con la regla de 14 dias de Costa Rica. Deja a proposito otras 76 de pedidos de mas de 60 dias (julio-agosto y paquetes "En instalaciones"), que pueden tener mercaderia para recuperar | Si (12/10/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de
