@@ -684,6 +684,20 @@ export async function recordIncidentEvent(
 
 // Edita el texto de una nota del historial. Restringido a kind "nota": el resto
 // de eventos (deteccion, llamadas, cambios de estado) es bitacora inmutable.
+// Un evento del historial con la novedad a la que pertenece, para validar la
+// tienda antes de tocarlo.
+export async function getIncidentEvent(
+  eventId: number
+): Promise<Pick<IncidentEvent, "id" | "incident_id" | "kind"> | null> {
+  const { data, error } = await getDB()
+    .from("incident_events")
+    .select("id, incident_id, kind")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (error) throw new Error(`getIncidentEvent: ${error.message}`);
+  return (data as Pick<IncidentEvent, "id" | "incident_id" | "kind"> | null) ?? null;
+}
+
 export async function updateIncidentNote(eventId: number, message: string): Promise<void> {
   const { error } = await getDB()
     .from("incident_events")
