@@ -6,6 +6,7 @@ import {
   isZadarmaConfigured,
   ZadarmaError,
 } from "@/lib/zadarma";
+import { vendedoraEfectiva } from "@/lib/identidad";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -26,7 +27,9 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const vendedoraId = Number(req.nextUrl.searchParams.get("vendedora_id"));
+  // Una asesora sin permiso de supervision queda SIEMPRE a su nombre
+  // (lib/identidad.ts): el navegador no puede registrar a nombre de otra.
+  const vendedoraId = vendedoraEfectiva(req.nextUrl.searchParams.get("vendedora_id")) ?? NaN;
   if (!Number.isFinite(vendedoraId) || vendedoraId <= 0) {
     return NextResponse.json({ error: "vendedora_id requerido" }, { status: 400 });
   }

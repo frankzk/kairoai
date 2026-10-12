@@ -42,6 +42,18 @@ export default function SessionGuard() {
 
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const res = await original(input, init);
+      // Contraseña inicial sin cambiar: el servidor no deja hacer nada mas.
+      if (res.status === 403 && !redirecting && window.location.pathname !== "/cuenta") {
+        const pathname = resolvePathname(input);
+        if (pathname?.startsWith("/api/")) {
+          const body = (await res.clone().json().catch(() => null)) as { debe_cambiar_clave?: boolean } | null;
+          if (body?.debe_cambiar_clave) {
+            redirecting = true;
+            window.location.assign("/cuenta");
+          }
+        }
+        return res;
+      }
       if (res.status !== 401 || redirecting) return res;
 
       const pathname = resolvePathname(input);

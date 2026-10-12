@@ -6,6 +6,7 @@ import {
   type FinanceStoreCode,
   type FinanceStorePublic,
 } from "./store-config";
+import { tiendasPermitidas } from "./identidad";
 
 export interface FinanceStoreConfig extends FinanceStorePublic {
   shopDomainEnv: string;
@@ -53,17 +54,42 @@ export function parseFinanceStoreCode(value: unknown): FinanceStoreCode | null {
     : null;
 }
 
+/**
+ * true si quien llama puede trabajar esta tienda. Sin persona (crons, scripts)
+ * no hay restriccion. Ver lib/identidad.ts.
+ */
+export function storeAllowed(code: string): boolean {
+  const permitidas = tiendasPermitidas();
+  return permitidas === null || permitidas.includes(code);
+}
+
 export function getRequiredStoreConfig(value: unknown): FinanceStoreConfig | null {
   const code = parseFinanceStoreCode(value);
-  return code ? getStoreConfig(code) : null;
+  // Una tienda que no es suya se trata igual que una tienda que no existe: la
+  // ruta responde "store requerido" y no toca datos. El middleware ya corta el
+  // caso de ?store= en la URL con un 403 claro; esto cubre la tienda que viaja
+  // en el cuerpo del pedido.
+  return code && storeAllowed(code) ? getStoreConfig(code) : null;
 }
 
 export function getStoreId(value?: string | null): number {
   return getStoreConfig(value).id;
 }
 
+/** Tienda pedida, o la primera permitida si no vino ninguna o no es suya. */
+function tiendaPorDefecto(value: string | null | undefined): FinanceStoreConfig {
+  const code = parseFinanceStoreCode(value);
+  if (code && storeAllowed(code)) return getStoreConfig(code);
+  const permitidas = tiendasPermitidas();
+  if (permitidas === null) return getStoreConfig(value);
+  const primera = FINANCE_STORES.find((s) => permitidas.includes(s.code));
+  // Sin ninguna tienda permitida no hay a que caer: se devuelve la pedida y el
+  // middleware ya habra cortado cualquier ?store= ajeno.
+  return getStoreConfig(primera?.code ?? value);
+}
+
 export function getStoreFromSearchParams(params: URLSearchParams): FinanceStoreConfig {
-  return getStoreConfig(params.get("store"));
+  return tiendaPorDefecto(params.get("store"));
 }
 
 export function getRequiredStoreFromSearchParams(params: URLSearchParams): FinanceStoreConfig | null {
@@ -71,7 +97,7 @@ export function getRequiredStoreFromSearchParams(params: URLSearchParams): Finan
 }
 
 export function getStoreFromBody(body: Record<string, unknown> | null | undefined): FinanceStoreConfig {
-  return getStoreConfig(typeof body?.store === "string" ? body.store : DEFAULT_FINANCE_STORE_CODE);
+  return tiendaPorDefecto(typeof body?.store === "string" ? body.store : DEFAULT_FINANCE_STORE_CODE);
 }
 
 export function getRequiredStoreFromBody(body: unknown): FinanceStoreConfig | null {

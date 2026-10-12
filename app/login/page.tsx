@@ -2,14 +2,20 @@
 
 import { FormEvent, Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { KeyRound, Lock, ShieldCheck, Zap } from "lucide-react";
+import { KeyRound, Lock, ShieldCheck, UserRound, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { rutaInternaSegura } from "@/lib/permisos";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const nextPath = useMemo(() => searchParams.get("next") || "/", [searchParams]);
+  // Solo rutas internas: un ?next= a otro sitio no se sigue.
+  const nextPath = useMemo(() => {
+    const n = searchParams.get("next");
+    return rutaInternaSegura(n) ? n : null;
+  }, [searchParams]);
+  const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -22,7 +28,7 @@ function LoginForm() {
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ usuario, password }),
     });
 
     setLoading(false);
@@ -33,7 +39,10 @@ function LoginForm() {
       return;
     }
 
-    router.replace(nextPath);
+    const body = (await res.json().catch(() => ({}))) as { inicio?: string };
+    // Contraseña inicial: primero a cambiarla. Si no, a donde iba o a su inicio.
+    const destino = body.inicio === "/cuenta" ? "/cuenta" : nextPath ?? body.inicio ?? "/";
+    router.replace(destino);
     router.refresh();
   }
 
@@ -56,7 +65,7 @@ function LoginForm() {
               Acceso interno para operaciones de voz.
             </h1>
             <p className="text-base leading-7 text-muted-foreground">
-              Protege pedidos, llamadas y configuracion de agentes con una sesion simple antes de pasar a usuarios completos.
+              Cada persona entra con su usuario y ve solo las secciones y tiendas que le corresponden.
             </p>
           </div>
 
@@ -84,8 +93,29 @@ function LoginForm() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
+              <label htmlFor="usuario" className="text-sm font-medium text-muted-foreground">
+                Usuario
+              </label>
+              <div className="relative">
+                <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="usuario"
+                  type="text"
+                  value={usuario}
+                  onChange={(event) => setUsuario(event.target.value)}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  className="h-12 pl-10"
+                  placeholder="tu usuario"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
               <label htmlFor="password" className="text-sm font-medium text-muted-foreground">
-                Password
+                Contraseña
               </label>
               <div className="relative">
                 <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -96,7 +126,7 @@ function LoginForm() {
                   onChange={(event) => setPassword(event.target.value)}
                   autoComplete="current-password"
                   className="h-12 pl-10"
-                  placeholder="Ingresa la clave del panel"
+                  placeholder="tu contraseña"
                   required
                 />
               </div>

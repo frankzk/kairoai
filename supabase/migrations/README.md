@@ -51,6 +51,7 @@ Estado actual:
 | `0037_moovin_entregas_revertidas.sql` | Pasa a "Cancelado" 5 guias de Moovin guardadas como entregadas cuando Moovin revirtio la entrega (las liquidaciones de Boxful confirman que no se cobraron). Deja a proposito como entregadas otras 2 con el mismo patron a las que Boxful si les liquido el COD | Si (26/09/2026) |
 | `0039_incidents_source_wyn.sql` | Agrega `wyn` al CHECK de `incidents.source`: la bandeja de Novedades ahora detecta tambien las guias de WYN (MLCR...). Sin esto el primer insert de WYN rompia la corrida completa del cron de incidencias. Solo amplia los valores permitidos | Si (06/10/2026) |
 | `0040_lead_chat_snapshots.sql` | Copia compacta del chat de los leads con carrito (`lead_chat_snapshots`, una fila por lead, se sobreescribe) para poder analizarlos fuera de Icomfly. La llena `/api/leads/chat-snapshots` a mano. Son mensajes de clientes: RLS activa sin politicas, solo service role | Si (08/10/2026) |
+| `0041_kairo_users.sql` | Accesos personales: `kairo_users` (usuario, nombre, hash scrypt, roles, permisos, tiendas, asesora de planilla vinculada, version de sesion, bloqueo por intentos) y `kairo_user_events` (bitacora de altas, cambios, reseteos e ingresos). RLS activa sin politicas, solo service role | Si (12/10/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de

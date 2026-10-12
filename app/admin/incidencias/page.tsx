@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { pctResueltas } from "@/lib/incidents-trend";
 import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentCausaStat, type IncidentPeriodTotal, type TrackingEvent } from "@/lib/incidents-types";
 import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
-import { useSelectedStore } from "@/lib/use-selected-store";
+import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
 import { exportXlsx } from "@/lib/export-xlsx";
 import type { ChatLeadSummary } from "@/lib/leads-types";
 import { reglaReprogramar } from "@/lib/incidents-reprog";
@@ -598,6 +598,7 @@ export default function IncidenciasPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
+  const tiendasPermitidas = useTiendasPermitidas();
   const [search, setSearch] = useState("");
   const [intentosFilter, setIntentosFilter] = useState<IntentosFilter>("todos");
   const [edadFilter, setEdadFilter] = useState<EdadFilter>("todos");
@@ -888,7 +889,7 @@ export default function IncidenciasPage() {
           <div className="flex items-center gap-2">
             <select className="h-9 rounded-md border border-input bg-background px-2 text-sm"
               value={selectedStoreCode} onChange={(e) => setSelectedStoreCode(e.target.value as FinanceStoreCode)} title="Tienda">
-              {FINANCE_STORES.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
+              {tiendasPermitidas.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
             </select>
             <Button variant="outline" size="sm" onClick={() => fetchData()} className="gap-2">
               <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Actualizar</span>

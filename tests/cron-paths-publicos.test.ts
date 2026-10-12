@@ -11,14 +11,15 @@
 // vieja. El sintoma que lo delato fue que todos los pedidos compartian el
 // mismo synced_at, siempre en frontera de 3 horas.
 //
-// AHORA: los crons ya no van en PUBLIC_PATHS. El middleware deja pasar todo
-// /api/cron/* por una sola puerta (sesion o CRON_SECRET, lib/cron-auth.ts), asi
-// que el olvido ya no es posible por construccion. Este test verifica que siga
-// siendo asi.
+// AHORA: el middleware deja pasar todo /api/cron/* por una sola puerta (sesion
+// o CRON_SECRET, lib/cron-auth.ts), definida en la tabla de reglas de
+// lib/permisos.ts. El olvido ya no es posible por construccion. Este test
+// verifica que siga siendo asi.
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { exigenciaDe } from "../lib/permisos";
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -31,16 +32,6 @@ function cronPathsFromVercelJson(): string[] {
     .filter(Boolean);
 }
 
-function middlewareSource(): string {
-  return readFileSync(path.join(ROOT, "middleware.ts"), "utf8");
-}
-
-function publicPathsFromMiddleware(): string[] {
-  const block = middlewareSource().match(/const PUBLIC_PATHS\s*=\s*\[([\s\S]*?)\]/);
-  if (!block) throw new Error("No se encontro PUBLIC_PATHS en middleware.ts");
-  return Array.from(block[1].matchAll(/"([^"]+)"/g)).map((m) => m[1]);
-}
-
 describe("crons y middleware", () => {
   it("hay crons declarados (la prueba no pasa por lista vacia)", () => {
     expect(cronPathsFromVercelJson().length).toBeGreaterThan(5);
@@ -51,15 +42,15 @@ describe("crons y middleware", () => {
     expect(fuera, `Estos crons no pasan por la puerta de crons: ${fuera.join(", ")}`).toEqual([]);
   });
 
-  it("el middleware tiene la puerta de crons y la aplica por prefijo", () => {
-    const src = middlewareSource();
-    expect(src).toContain('const CRON_PREFIX = "/api/cron/"');
-    expect(src).toContain("pathname.startsWith(CRON_PREFIX)");
-    expect(src).toContain("cronAccessAllowed(");
+  it("cada cron cae en la puerta de crons (sesion o CRON_SECRET), no en otra regla", () => {
+    // Desde el 12/10/2026 la puerta es una tabla de reglas (lib/permisos.ts)
+    // que usa el middleware: /api/cron/* tiene su propia regla de tipo "cron".
+    const otra = cronPathsFromVercelJson().filter((p) => exigenciaDe(p).tipo !== "cron");
+    expect(otra, `Crons que no pasan por la puerta de crons: ${otra.join(", ")}`).toEqual([]);
   });
 
-  it("ningun cron sigue en PUBLIC_PATHS: abiertos a cualquiera era el problema", () => {
-    const abiertos = publicPathsFromMiddleware().filter((p) => p.startsWith("/api/cron/"));
+  it("ningun cron es publico: abiertos a cualquiera era el problema", () => {
+    const abiertos = cronPathsFromVercelJson().filter((p) => exigenciaDe(p).tipo === "publico");
     expect(abiertos).toEqual([]);
   });
 

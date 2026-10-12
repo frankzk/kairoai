@@ -78,7 +78,8 @@ import {
 } from "@/lib/store-config";
 import OrderDrawer, { type OrderDrawerTarget } from "@/components/OrderDrawer";
 import ZadarmaWebphone from "@/components/ZadarmaWebphone";
-import { useSelectedStore } from "@/lib/use-selected-store";
+import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
+import { leerYo, tienePermiso } from "@/lib/sesion-cliente";
 import { sanitizeExternalError } from "@/lib/api-errors";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -488,6 +489,14 @@ const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
+  // Las pestañas de plata (Productos, Liquidaciones, Gastos, Cierre) son del
+  // permiso "finanzas". Logistica ve el resto. El servidor lo impone igual; aca
+  // es para no mostrarle pestañas que le responderian "no tienes acceso".
+  const [verFinanzas, setVerFinanzas] = useState(false);
+  useEffect(() => {
+    const yo = leerYo();
+    setVerFinanzas(!yo || tienePermiso(yo, "finanzas"));
+  }, []);
   // Arranca en "Ayer": el ultimo dia completo cerrado es lo que se revisa a diario.
   const [kpiRange, setKpiRange] = useState<KpiRange>("yesterday");
   // Rango custom de KPIs (YYYY-MM-DD, inclusivos). Solo aplica con kpiRange="custom".
@@ -521,6 +530,7 @@ export default function FinancePage() {
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState("");
   const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
+  const tiendasPermitidas = useTiendasPermitidas();
   const [imports, setImports] = useState<SettlementImport[]>([]);
   const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
   // shopifyOrders se mantiene SOLO como contador base para el tab Pedidos
@@ -620,6 +630,11 @@ export default function FinancePage() {
 
       // Cada fuente carga de forma independiente: una llamada lenta no puede
       // bloquear el primer render del dashboard.
+      // Sin permiso de finanzas no se piden costos, gastos, resumen, reclamos
+      // ni liquidaciones: el servidor los negaria igual (403).
+      const yoCarga = leerYo();
+      const conFinanzas = !yoCarga || tienePermiso(yoCarga, "finanzas");
+
       const recentUpdatesMin = new Date(
         Date.now() - FINANCE_SHOPIFY_RECENT_UPDATES_DAYS * 24 * 60 * 60 * 1000
       ).toISOString();
@@ -679,7 +694,7 @@ export default function FinancePage() {
         setLogisticsImports(logisticsJson.imports ?? []);
       })();
 
-      loadJson(
+      if (conFinanzas) loadJson(
         "costos SKU",
         () =>
           fetchWithTimeout(
@@ -693,7 +708,7 @@ export default function FinancePage() {
         },
         { delayMs: 150 }
       );
-      loadJson(
+      if (conFinanzas) loadJson(
         "gastos",
         () =>
           fetchWithTimeout(
@@ -704,7 +719,7 @@ export default function FinancePage() {
         (json) => setExpenses(json.expenses ?? []),
         { delayMs: 300 }
       );
-      loadJson(
+      if (conFinanzas) loadJson(
         "resumen financiero",
         () =>
           fetchWithTimeout(
@@ -753,7 +768,7 @@ export default function FinancePage() {
         },
         { delayMs: 800 }
       );
-      loadJson(
+      if (conFinanzas) loadJson(
         "reclamos",
         () =>
           fetchWithTimeout(
@@ -787,7 +802,7 @@ export default function FinancePage() {
       // archivos y los badges del tab Liquidaciones. Las filas enriquecidas, las
       // alertas de cobro y las anomalias las trae /api/finance/settlements-view
       // (Carril 2 — tab Liquidaciones), asi que aqui ya NO se guardan las filas.
-      void (async () => {
+      if (conFinanzas) void (async () => {
         await delay(1200);
         if (!isCurrentRun()) return;
         const settlementsJson = await safeJson(
@@ -1342,7 +1357,7 @@ export default function FinancePage() {
               aria-label="Tienda"
               className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs font-semibold text-foreground outline-none focus:border-primary sm:h-9 sm:min-w-[190px] sm:flex-none sm:px-3 sm:text-sm"
             >
-              {FINANCE_STORES.map((store) => (
+              {tiendasPermitidas.map((store) => (
                 <option key={store.code} value={store.code}>
                   {store.label}
                 </option>
@@ -1482,21 +1497,29 @@ export default function FinancePage() {
           <TabButton active={tab === "audit"} onClick={() => setTab("audit")} icon={<ShieldAlert />}>
             Auditoría
           </TabButton>
-          <TabButton active={tab === "products"} onClick={() => setTab("products")} icon={<BarChart3 />}>
-            Productos
-          </TabButton>
+          {verFinanzas && (
+            <TabButton active={tab === "products"} onClick={() => setTab("products")} icon={<BarChart3 />}>
+              Productos
+            </TabButton>
+          )}
           <TabButton active={tab === "notes"} onClick={() => setTab("notes")} icon={<StickyNote />}>
             Notas Shopify
           </TabButton>
-          <TabButton active={tab === "settlements"} onClick={() => setTab("settlements")} icon={<ReceiptText />}>
-            Liquidaciones
-          </TabButton>
-          <TabButton active={tab === "expenses"} onClick={() => setTab("expenses")} icon={<ReceiptText />}>
-            Gastos
-          </TabButton>
-          <TabButton active={tab === "monthly"} onClick={() => setTab("monthly")} icon={<FileSpreadsheet />}>
-            Cierre mensual
-          </TabButton>
+          {verFinanzas && (
+            <TabButton active={tab === "settlements"} onClick={() => setTab("settlements")} icon={<ReceiptText />}>
+              Liquidaciones
+            </TabButton>
+          )}
+          {verFinanzas && (
+            <TabButton active={tab === "expenses"} onClick={() => setTab("expenses")} icon={<ReceiptText />}>
+              Gastos
+            </TabButton>
+          )}
+          {verFinanzas && (
+            <TabButton active={tab === "monthly"} onClick={() => setTab("monthly")} icon={<FileSpreadsheet />}>
+              Cierre mensual
+            </TabButton>
+          )}
           <TabButton active={tab === "files"} onClick={() => setTab("files")} icon={<Database />}>
             Logistica Boxful
           </TabButton>

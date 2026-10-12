@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { getProductivity } from "@/lib/leads";
+import { identidadActual } from "@/lib/identidad";
 import { crDateRange, crRange, MAX_CUSTOM_RANGE_DAYS, parseRange, RANGE_LABELS } from "@/lib/leads-metrics";
 
 export const runtime = "nodejs";
@@ -42,7 +43,12 @@ export async function GET(req: NextRequest) {
 
   try {
     const { fromIso, toIso } = bounds;
-    const rows = await getProductivity(store.id, fromIso, toIso);
+    const todas = await getProductivity(store.id, fromIso, toIso);
+    // Una asesora sin permiso de supervision ve solo su propia fila (y los
+    // totales salen de esa fila). Supervision ve a todo el equipo.
+    const yo = identidadActual();
+    const soloPropia = Boolean(yo?.staffId) && !yo!.permisos.includes("leads_equipo");
+    const rows = soloPropia ? todas.filter((r) => r.vendedora_id === yo!.staffId) : todas;
     const totals = rows.reduce(
       (acc, r) => ({
         gestiones: acc.gestiones + r.gestiones,
@@ -58,6 +64,7 @@ export async function GET(req: NextRequest) {
       to: toIso,
       rows,
       totals,
+      solo_propia: soloPropia,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer productividad";

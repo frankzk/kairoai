@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDB } from "@/lib/db";
+import { vendedoraEfectiva } from "@/lib/identidad";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -18,7 +19,9 @@ export const maxDuration = 15;
  * se queda visible como hoy, que es el comportamiento viejo y no una falla.
  */
 export async function GET(req: NextRequest) {
-  const vendedoraId = Number(req.nextUrl.searchParams.get("vendedora_id"));
+  // Una asesora sin permiso de supervision queda SIEMPRE a su nombre
+  // (lib/identidad.ts): el navegador no puede registrar a nombre de otra.
+  const vendedoraId = vendedoraEfectiva(req.nextUrl.searchParams.get("vendedora_id")) ?? NaN;
   if (!Number.isFinite(vendedoraId) || vendedoraId <= 0) {
     return NextResponse.json({ error: "vendedora_id requerido" }, { status: 400 });
   }

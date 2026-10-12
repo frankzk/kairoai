@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Check, Loader2, Undo2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { DISPOSITION_OPTIONS, DISPOSITION_QUICK } from "@/lib/leads-classify";
-import { getVendedoraId, setVendedoraId as persistVendedoraId } from "@/lib/vendedora";
+import { getVendedoraId, setVendedoraId as persistVendedoraId, vendedoraBloqueada } from "@/lib/vendedora";
 
 interface Staff {
   id: number;
@@ -182,6 +182,9 @@ export default function GestionBar({
       <select
         className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
         value={vendedoraId ?? ""}
+        // Una asesora fija (lib/vendedora.ts) no elige: queda a su nombre.
+        disabled={vendedoraBloqueada() !== null}
+        title={vendedoraBloqueada() !== null ? "Tus gestiones quedan a tu nombre" : undefined}
         onChange={(e) => selectVendedora(Number(e.target.value))}
       >
         <option value="" disabled>
