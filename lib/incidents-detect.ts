@@ -4,6 +4,7 @@
 
 import { normalizeMatchKey } from "./order-matching";
 import { classifyMoovinGroup } from "./moovin";
+import { senalForza } from "./forza-novedades";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
 import type { MoovinTrackingRow, ForzaTrackingRow, WynTrackingRow, LogisticsRow } from "./finance-types";
 import type { ShopifyOrderSummary } from "./finance-orders";
@@ -72,6 +73,10 @@ export function mapBoxfulCategory(boxfulStatus: string): IncidentCategory | null
  * dias esta en el 5% mas lento: ya no es lentitud normal, es una senal.
  *
  * Bajarlo a 10 dias dispararia 73 novedades en vez de 46; subirlo a 21, 27.
+ *
+ * Es de Costa Rica (Moovin y WYN). Honduras deduce sus novedades de los hitos de
+ * Forza (lib/forza-novedades.ts): ahi la mitad de las entregas tarda 6,6 dias y
+ * el 10% mas de 18, asi que 14 dias solo daba falsas alarmas.
  */
 export const DEMORA_DIAS_DESDE_PEDIDO = 14;
 
@@ -215,11 +220,15 @@ export function detectForzaIncident(
   const isFailure = tracking.has_incident || group === "failed";
   const isDelivered = group === "delivered";
   const isReturned = group === "returned";
-  const demora =
-    isFailure || isDelivered || isReturned
+  // Forza no informa fallas: se deducen de las fechas de sus hitos (ver
+  // lib/forza-novedades.ts). Reemplaza la demora de 14 dias de Costa Rica, que en
+  // Honduras solo daba falsas alarmas. Un pedido cancelado no tiene nada que
+  // entregar: su guia suele quedar abandonada en "Creado".
+  const senal =
+    isFailure || isDelivered || isReturned || shopify?.cancelled_at
       ? null
-      : motivoDemora(shopify?.created_at, tracking.latest_at, now);
-  if (!isFailure && !isDelivered && !isReturned && !demora) return null;
+      : senalForza(tracking.events, shopify?.created_at, now);
+  if (!isFailure && !isDelivered && !isReturned && !senal) return null;
 
   const guide = tracking.guide_number || row?.guide_number || "";
   const orderName = row?.order_name || shopify?.name || "";
@@ -236,11 +245,11 @@ export function detectForzaIncident(
     customer_phone: row?.customer_phone || shopify?.phone || "",
     courier: row?.courier || "Forza",
     cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
-    category: demora ? "demora_entrega" : isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
-    detail: demora ?? reason,
+    category: senal ? senal.category : isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
+    detail: senal ? senal.detail : reason,
     last_tracking_status: tracking.latest_status || "",
     last_tracking_group: group,
-    last_failure_at: lastFailureDate(tracking.events),
+    last_failure_at: senal ? senal.failureAt : lastFailureDate(tracking.events),
   };
 }
 

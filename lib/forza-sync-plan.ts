@@ -56,9 +56,13 @@ export interface ForzaSyncPlanInput {
  * 1. Nunca leidas, de la mas reciente a la mas vieja: son las que todavia se
  *    pueden gestionar, y en regimen normal son los despachos del dia.
  * 2. Ya leidas sin estado final, de la que lleva mas tiempo sin leerse a la
- *    mas reciente, para que ninguna se quede sin turno. Estas NO tienen limite
- *    de antiguedad: una guia en camino nunca se congela por quedar fuera de una
- *    ventana (le paso a Moovin con los pedidos de mas de 45 dias).
+ *    mas reciente, para que ninguna se quede sin turno. Solo las de pedidos
+ *    vigentes (`orderGuides`: no cancelados, dentro de la ventana de
+ *    descubrimiento). La ventana (90 dias) es mas larga que la de novedades (60,
+ *    ver lib/forza-novedades.ts), asi que ninguna guia que todavia se pueda
+ *    gestionar se queda sin leer. Antes se releian sin limite y la parte de las
+ *    vivas se gastaba en guias de enero que quedaron en "Creado" y nunca se van
+ *    a mover.
  *
  * El reparto evita el hambre que ya sufrio Moovin: con miles de guias nuevas
  * atrasadas, las que ya estaban en camino igual reciben su parte en cada
@@ -75,18 +79,19 @@ export function planForzaSync(input: ForzaSyncPlanInput): string[] {
     if (guide) known.set(guide, t);
   }
 
-  const seen = new Set<string>();
+  const enPedidos = new Set<string>();
   const nuevas: Array<{ guide: string; orderedAt: number }> = [];
   for (const o of input.orderGuides) {
     if (!isForzaGuide(o.guide)) continue;
     const guide = normalizeForzaGuide(o.guide);
-    if (known.has(guide) || seen.has(guide)) continue;
-    seen.add(guide);
-    nuevas.push({ guide, orderedAt: o.orderedAt });
+    if (enPedidos.has(guide)) continue;
+    enPedidos.add(guide);
+    if (!known.has(guide)) nuevas.push({ guide, orderedAt: o.orderedAt });
   }
   nuevas.sort((a, b) => b.orderedAt - a.orderedAt);
 
   const vivas = Array.from(known.entries())
+    .filter(([guide]) => enPedidos.has(guide))
     .filter(([, t]) => t.group !== "delivered" && t.group !== "returned")
     .filter(([, t]) => input.nowMs - t.checkedAt >= input.freshWindowMs)
     .sort((a, b) => a[1].checkedAt - b[1].checkedAt)
