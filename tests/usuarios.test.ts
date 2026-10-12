@@ -54,7 +54,7 @@ describe("validarAcceso", () => {
   const ok = { nombre: "Susan", roles: ["asesora"], permisos: ["leads"], tiendas: ["mireva-cr"], staff_id: 3 };
 
   it("acepta una asesora completa", () => {
-    expect(validarAcceso(ok)).toEqual({ datos: { ...ok, roles: ["asesora"] } });
+    expect(validarAcceso(ok)).toEqual({ datos: { ...ok, email: null, roles: ["asesora"] } });
   });
   it("exige al menos una pantalla y una tienda", () => {
     expect(validarAcceso({ ...ok, permisos: [] })).toHaveProperty("error");

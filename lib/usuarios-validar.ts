@@ -2,10 +2,11 @@
 // en tests/usuarios.test.ts.
 
 import { normalizarPermisos, type Permiso, type Rol } from "./permisos";
-import { normalizarRoles, normalizarTiendas } from "./usuarios";
+import { normalizarEmail, normalizarRoles, normalizarTiendas, problemaDeEmail } from "./usuarios";
 
 export interface DatosAcceso {
   nombre: string;
+  email: string | null;
   roles: Rol[];
   permisos: Permiso[];
   tiendas: string[];
@@ -16,6 +17,10 @@ export interface DatosAcceso {
 export function validarAcceso(body: Record<string, unknown>): { error: string } | { datos: DatosAcceso } {
   const nombre = typeof body.nombre === "string" ? body.nombre.trim() : "";
   if (nombre.length < 2 || nombre.length > 60) return { error: "Escribe el nombre de la persona (2 a 60 caracteres)." };
+
+  const email = normalizarEmail(body.email);
+  const problemaE = problemaDeEmail(email);
+  if (problemaE) return { error: problemaE };
 
   const permisos = normalizarPermisos(body.permisos);
   if (!permisos.length) return { error: "Marca al menos una pantalla a la que tenga acceso." };
@@ -34,5 +39,5 @@ export function validarAcceso(body: Record<string, unknown>): { error: string } 
     return { error: "Para dar acceso a Leads, vincula a la persona con su nombre de la planilla de asesoras." };
   }
 
-  return { datos: { nombre, roles: normalizarRoles(body.roles), permisos, tiendas, staff_id: staffNum } };
+  return { datos: { nombre, email, roles: normalizarRoles(body.roles), permisos, tiendas, staff_id: staffNum } };
 }

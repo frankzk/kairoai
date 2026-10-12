@@ -64,6 +64,29 @@ export function problemaDeUsuario(username: string): string | null {
   return null;
 }
 
+/** Correo para entrar (opcional): en minuscula, sin espacios. Vacio = null. */
+export function normalizarEmail(v: unknown): string | null {
+  const e = typeof v === "string" ? v.trim().toLowerCase() : "";
+  return e || null;
+}
+
+export function problemaDeEmail(email: string | null): string | null {
+  if (email === null) return null;
+  if (email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return "El correo no es válido.";
+  return null;
+}
+
+/**
+ * Lo que se guarda como hash de quien todavia no tiene contraseña (cuenta
+ * creada sin clave: se la pone el dueño desde Usuarios). No es un hash scrypt,
+ * asi que ninguna contraseña coincide.
+ */
+export const SIN_CLAVE = "pendiente";
+
+export function tieneClave(passwordHash: string): boolean {
+  return passwordHash.startsWith("scrypt$");
+}
+
 export const CODIGOS_TIENDA = FINANCE_STORES.map((s) => s.code) as string[];
 
 export function normalizarTiendas(v: unknown): string[] {
@@ -96,6 +119,7 @@ export function trasFallo(intentos: number, ahora: Date): { intentos: number; bl
 export interface UsuarioFila {
   id: number;
   username: string;
+  email: string | null;
   nombre: string;
   password_hash: string;
   roles: string[];
@@ -113,14 +137,17 @@ export interface UsuarioFila {
 }
 
 /** Lo que se muestra en la pantalla de usuarios: nunca el hash. */
-export type UsuarioPublico = Omit<UsuarioFila, "password_hash" | "intentos_fallidos" | "session_version">;
+export type UsuarioPublico = Omit<UsuarioFila, "password_hash" | "intentos_fallidos" | "session_version"> & {
+  /** Todavia no tiene contraseña: el dueño se la pone desde Usuarios. */
+  sin_clave: boolean;
+};
 
 export function aPublico(u: UsuarioFila): UsuarioPublico {
   const resto: Partial<UsuarioFila> = { ...u };
   delete resto.password_hash;
   delete resto.intentos_fallidos;
   delete resto.session_version;
-  return resto as UsuarioPublico;
+  return { ...(resto as Omit<UsuarioPublico, "sin_clave">), sin_clave: !tieneClave(u.password_hash) };
 }
 
 /** La sesion de una persona a partir de su fila. Solo lo que existe hoy. */
@@ -139,8 +166,10 @@ export function claimsDeUsuario(u: UsuarioFila, nowS = Math.floor(Date.now() / 1
 
 const TABLA = "kairo_users";
 
-export async function buscarPorUsuario(username: string): Promise<UsuarioFila | null> {
-  const { data, error } = await getDB().from(TABLA).select("*").eq("username", username).maybeSingle();
+/** Por usuario o, si trae "@", por correo (ya normalizado en minuscula). */
+export async function buscarPorUsuario(identificador: string): Promise<UsuarioFila | null> {
+  const columna = identificador.includes("@") ? "email" : "username";
+  const { data, error } = await getDB().from(TABLA).select("*").eq(columna, identificador).maybeSingle();
   if (error) throw new Error(`buscarPorUsuario: ${error.message}`);
   return (data as UsuarioFila | null) ?? null;
 }
@@ -195,7 +224,7 @@ export type ResultadoIngreso =
   | { ok: false; motivo: "credenciales" | "bloqueado" | "inactivo"; hasta?: string };
 
 /**
- * Valida usuario y contraseña. Mismo mensaje para usuario inexistente y clave
+ * Valida usuario (o correo) y contraseña. Mismo mensaje para usuario inexistente y clave
  * incorrecta, para no revelar que usuarios existen. 5 fallos seguidos bloquean
  * 15 minutos.
  */

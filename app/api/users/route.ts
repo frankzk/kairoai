@@ -44,7 +44,7 @@ export async function GET() {
   }
 }
 
-// POST { username, nombre, clave, roles, permisos, tiendas, staff_id }
+// POST { username, email, nombre, clave, roles, permisos, tiendas, staff_id }
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) return NextResponse.json({ error: "Datos inválidos." }, { status: 400 });
@@ -79,6 +79,9 @@ export async function POST(req: NextRequest) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("kairo_users_staff_key")) {
       return NextResponse.json({ error: "Esa asesora de la planilla ya tiene un usuario." }, { status: 409 });
+    }
+    if (msg.includes("kairo_users_email_key")) {
+      return NextResponse.json({ error: "Ese correo ya lo usa otro usuario." }, { status: 409 });
     }
     console.error("[users POST]", err);
     return NextResponse.json({ error: "No se pudo crear el usuario." }, { status: 500 });

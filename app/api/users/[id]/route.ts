@@ -6,7 +6,7 @@ import { validarAcceso } from "@/lib/usuarios-validar";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// PATCH { nombre, roles, permisos, tiendas, staff_id, activo }
+// PATCH { nombre, email, roles, permisos, tiendas, staff_id, activo }
 // Los cambios de permisos y tiendas se notan en la sesion abierta en menos de
 // 30 s (el middleware revalida contra la base). Desactivar corta la sesion.
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -20,9 +20,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (!u) return NextResponse.json({ error: "Usuario no encontrado." }, { status: 404 });
 
     const patch: Partial<UsuarioFila> = {};
-    if ("nombre" in body || "permisos" in body || "tiendas" in body || "roles" in body || "staff_id" in body) {
+    if (["nombre", "email", "permisos", "tiendas", "roles", "staff_id"].some((k) => k in body)) {
       const v = validarAcceso({
         nombre: body.nombre ?? u.nombre,
+        email: "email" in body ? body.email : u.email,
         roles: body.roles ?? u.roles,
         permisos: body.permisos ?? u.permisos,
         tiendas: body.tiendas ?? u.tiendas,
@@ -48,6 +49,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("kairo_users_staff_key")) {
       return NextResponse.json({ error: "Esa asesora de la planilla ya tiene otro usuario." }, { status: 409 });
+    }
+    if (msg.includes("kairo_users_email_key")) {
+      return NextResponse.json({ error: "Ese correo ya lo usa otro usuario." }, { status: 409 });
     }
     console.error("[users PATCH]", err);
     return NextResponse.json({ error: "No se pudo guardar." }, { status: 500 });

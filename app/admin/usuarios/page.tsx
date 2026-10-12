@@ -17,12 +17,14 @@ import { permisosDeRoles, type Permiso, type Rol } from "@/lib/permisos";
 interface Usuario {
   id: number;
   username: string;
+  email: string | null;
   nombre: string;
   roles: string[];
   permisos: string[];
   tiendas: string[];
   staff_id: number | null;
   activo: boolean;
+  sin_clave: boolean;
   debe_cambiar_clave: boolean;
   bloqueado_hasta: string | null;
   ultimo_ingreso: string | null;
@@ -43,6 +45,7 @@ interface Borrador {
   id: number | null;
   nombre: string;
   username: string;
+  email: string;
   clave: string;
   roles: Rol[];
   permisos: Permiso[];
@@ -50,7 +53,7 @@ interface Borrador {
   staff_id: number | null;
 }
 
-const VACIO: Borrador = { id: null, nombre: "", username: "", clave: "", roles: [], permisos: [], tiendas: [], staff_id: null };
+const VACIO: Borrador = { id: null, nombre: "", username: "", email: "", clave: "", roles: [], permisos: [], tiendas: [], staff_id: null };
 
 const FOCO = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
@@ -139,6 +142,7 @@ export default function UsuariosPage() {
       id: u.id,
       nombre: u.nombre,
       username: u.username,
+      email: u.email ?? "",
       clave: "",
       roles: u.roles as Rol[],
       permisos: u.permisos as Permiso[],
@@ -179,6 +183,7 @@ export default function UsuariosPage() {
     try {
       const datos = {
         nombre: borrador.nombre,
+        email: borrador.email,
         roles: borrador.roles,
         permisos: borrador.permisos,
         tiendas: borrador.tiendas,
@@ -347,7 +352,10 @@ export default function UsuariosPage() {
                   <tr key={u.id} className={`border-b border-border/50 align-top ${u.activo ? "" : "opacity-60"}`}>
                     <td className="px-4 py-3">
                       <div className="font-medium">{u.nombre}</div>
-                      <div className="font-mono text-xs text-muted-foreground">{u.username}</div>
+                      <div className="font-mono text-xs text-muted-foreground">
+                        {u.username}
+                        {u.email ? ` · ${u.email}` : ""}
+                      </div>
                       <div className="mt-1 text-xs text-muted-foreground">
                         {u.roles.map((r) => rolLabel.get(r as Rol) ?? r).join(" + ") || "Sin rol"}
                         {u.staff_id ? ` · Asesora: ${staffPorId.get(u.staff_id)?.name ?? u.staff_id}` : ""}
@@ -366,6 +374,8 @@ export default function UsuariosPage() {
                     <td className="px-4 py-3 text-xs">
                       {!u.activo ? (
                         <Badge variant="muted">Desactivado</Badge>
+                      ) : u.sin_clave ? (
+                        <Badge variant="warning">Sin contraseña: pónsela con “Contraseña”</Badge>
                       ) : bloqueado ? (
                         <Badge variant="destructive">Bloqueado hasta {fmt(u.bloqueado_hasta)}</Badge>
                       ) : u.debe_cambiar_clave ? (
@@ -512,6 +522,17 @@ export default function UsuariosPage() {
                   autoCapitalize="none"
                   spellCheck={false}
                   required
+                />
+              </label>
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <span className="text-muted-foreground">Correo (opcional: también puede entrar con su correo)</span>
+                <Input
+                  type="email"
+                  value={borrador.email}
+                  onChange={(e) => setBorrador({ ...borrador, email: e.target.value.toLowerCase().replace(/\s/g, "") })}
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  placeholder="nombre@gmail.com"
                 />
               </label>
               {borrador.id === null && (

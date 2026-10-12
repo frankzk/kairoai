@@ -94,7 +94,7 @@ function LoginForm() {
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
               <label htmlFor="usuario" className="text-sm font-medium text-muted-foreground">
-                Usuario
+                Usuario o correo
               </label>
               <div className="relative">
                 <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -107,7 +107,7 @@ function LoginForm() {
                   autoCapitalize="none"
                   spellCheck={false}
                   className="h-12 pl-10"
-                  placeholder="tu usuario"
+                  placeholder="tu usuario o tu correo"
                   required
                 />
               </div>
