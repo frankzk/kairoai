@@ -89,8 +89,12 @@ export default function UsuariosPage() {
   const [guardando, setGuardando] = useState(false);
   const [errorForm, setErrorForm] = useState("");
   // Contraseña recien creada o reseteada: se muestra UNA vez para copiarla.
-  const [claveMostrada, setClaveMostrada] = useState<{ nombre: string; usuario: string; clave: string } | null>(null);
+  const [claveMostrada, setClaveMostrada] = useState<{ nombre: string; usuario: string; clave: string; pedirCambio?: boolean } | null>(null);
   const [copiada, setCopiada] = useState(false);
+  // Cambio de contraseña de un trabajador: la escribe el dueño o la genera.
+  const [cambioClave, setCambioClave] = useState<{ u: Usuario; clave: string; pedirCambio: boolean } | null>(null);
+  const [errorClave, setErrorClave] = useState("");
+  const [guardandoClave, setGuardandoClave] = useState(false);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -208,22 +212,35 @@ export default function UsuariosPage() {
     }
   }
 
-  async function resetear(u: Usuario) {
-    const clave = generarClave();
-    if (!window.confirm(`¿Poner una contraseña nueva a ${u.nombre}? Se le cierra la sesión y tendrá que cambiarla al entrar.`)) return;
-    const res = await fetch(`/api/users/${u.id}/clave`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clave }),
-    });
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      window.alert(j.error ?? "No se pudo cambiar la contraseña.");
-      return;
+  function abrirCambioClave(u: Usuario) {
+    setErrorClave("");
+    setCambioClave({ u, clave: generarClave(), pedirCambio: true });
+  }
+
+  async function guardarClave(e: FormEvent) {
+    e.preventDefault();
+    if (!cambioClave) return;
+    setGuardandoClave(true);
+    setErrorClave("");
+    try {
+      const { u, clave, pedirCambio } = cambioClave;
+      const res = await fetch(`/api/users/${u.id}/clave`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clave, pedir_cambio: pedirCambio }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setErrorClave(j.error ?? "No se pudo cambiar la contraseña.");
+        return;
+      }
+      setClaveMostrada({ nombre: u.nombre, usuario: u.username, clave, pedirCambio });
+      setCopiada(false);
+      setCambioClave(null);
+      await cargar();
+    } finally {
+      setGuardandoClave(false);
     }
-    setClaveMostrada({ nombre: u.nombre, usuario: u.username, clave });
-    setCopiada(false);
-    await cargar();
   }
 
   async function cambiarActivo(u: Usuario) {
@@ -279,8 +296,11 @@ export default function UsuariosPage() {
             <ShieldCheck className="h-5 w-5 text-emerald-400" aria-hidden="true" />
             <div className="min-w-0 text-sm">
               <p>
-                Pásale estos datos a <span className="font-semibold">{claveMostrada.nombre}</span>. Al entrar, el sistema le
-                pide cambiar la contraseña. <span className="text-muted-foreground">Se muestra solo esta vez.</span>
+                Pásale estos datos a <span className="font-semibold">{claveMostrada.nombre}</span>.
+                {claveMostrada.pedirCambio === false
+                  ? " Entra directo con esta contraseña."
+                  : " Al entrar, el sistema le pide cambiar la contraseña."}{" "}
+                <span className="text-muted-foreground">Se muestra solo esta vez.</span>
               </p>
               <p className="mt-1 font-mono">
                 Usuario: <span className="font-semibold">{claveMostrada.usuario}</span> · Contraseña:{" "}
@@ -360,7 +380,7 @@ export default function UsuariosPage() {
                         <Button variant="outline" size="sm" onClick={() => editar(u)}>
                           Editar
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => void resetear(u)} className="gap-1.5" title="Poner una contraseña nueva">
+                        <Button variant="ghost" size="sm" onClick={() => abrirCambioClave(u)} className="gap-1.5" title="Cambiarle la contraseña">
                           <KeyRound className="h-3.5 w-3.5" aria-hidden="true" /> Contraseña
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => void cambiarActivo(u)} className="gap-1.5">
@@ -375,6 +395,70 @@ export default function UsuariosPage() {
           </table>
         </CardContent>
       </Card>
+
+      {cambioClave && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-clave"
+          onKeyDown={(e) => e.key === "Escape" && setCambioClave(null)}
+        >
+          <form onSubmit={guardarClave} className="my-16 w-full max-w-md rounded-lg border border-border bg-card p-5 shadow-2xl">
+            <div className="mb-1 flex items-center justify-between">
+              <h2 id="titulo-clave" className="text-base font-semibold">
+                Cambiar contraseña de {cambioClave.u.nombre}
+              </h2>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setCambioClave(null)} aria-label="Cerrar">
+                <X className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </div>
+            <p className="mb-4 text-xs text-muted-foreground">
+              Usuario <span className="font-mono text-foreground">{cambioClave.u.username}</span>. Se le cierra la sesión
+              abierta y, si estaba bloqueada por intentos fallidos, queda desbloqueada.
+            </p>
+            <label className="block space-y-1 text-sm">
+              <span className="text-muted-foreground">Contraseña nueva (mínimo 8 caracteres)</span>
+              <div className="flex gap-2">
+                <Input
+                  className="font-mono"
+                  value={cambioClave.clave}
+                  onChange={(e) => setCambioClave({ ...cambioClave, clave: e.target.value })}
+                  autoFocus
+                  required
+                  minLength={8}
+                />
+                <Button type="button" variant="outline" size="sm" onClick={() => setCambioClave({ ...cambioClave, clave: generarClave() })}>
+                  Generar
+                </Button>
+              </div>
+            </label>
+            <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className={`mt-0.5 ${FOCO}`}
+                checked={cambioClave.pedirCambio}
+                onChange={(e) => setCambioClave({ ...cambioClave, pedirCambio: e.target.checked })}
+              />
+              <span>
+                Que la cambie al entrar
+                <span className="block text-xs text-muted-foreground">
+                  Recomendado: así solo ella la conoce. Desmárcalo si quieres que entre directo con esta.
+                </span>
+              </span>
+            </label>
+            {errorClave && <p className="mt-3 border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">{errorClave}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={() => setCambioClave(null)}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={guardandoClave}>
+                {guardandoClave ? "Guardando..." : "Cambiar contraseña"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {borrador && catalogo && (
         <div
