@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIncident, patchIncident, recordIncidentEvent } from "@/lib/incidents";
 import type { Incident } from "@/lib/incidents-types";
-import { DIAS_SIN_ENTREGA, esDiaSinEntrega } from "@/lib/incidents-reprog";
+import { diasSinEntregaDe, esDiaSinEntrega } from "@/lib/incidents-reprog";
 import { addOrderTag, cancelOrder } from "@/lib/shopify";
 import { FINANCE_STORES, getRequiredStoreFromSearchParams, getShopifyCredentials, getStoreConfig } from "@/lib/stores";
 
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: "Fecha invalida (use YYYY-MM-DD)" }, { status: 400 });
         }
         const proveedor = FINANCE_STORES.find((s) => s.id === incident.store_id)?.logisticsProvider ?? "";
-        if (esDiaSinEntrega(fecha, DIAS_SIN_ENTREGA[proveedor] ?? [])) {
+        if (esDiaSinEntrega(fecha, diasSinEntregaDe(incident.source, proveedor))) {
           return NextResponse.json({ error: "El courier no entrega ese dia: elige otra fecha." }, { status: 400 });
         }
         // "segundo_intento": se reprograma sin haber hablado con el cliente,

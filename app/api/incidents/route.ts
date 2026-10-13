@@ -12,7 +12,12 @@ import {
   listIncidents,
   updateIncident,
 } from "@/lib/incidents";
-import { getForzaTrackingByGuide, getMoovinTrackingByPackage, getWynTrackingByGuide } from "@/lib/finance";
+import {
+  getCargoExpresoTrackingByGuide,
+  getForzaTrackingByGuide,
+  getMoovinTrackingByPackage,
+  getWynTrackingByGuide,
+} from "@/lib/finance";
 import { wynGroupForIncidents } from "@/lib/incidents-detect";
 import { findChatLeadForCustomer } from "@/lib/leads";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
@@ -50,6 +55,10 @@ async function trackingEventsFor(incident: Incident): Promise<TrackingEvent[]> {
     }
     if (incident.source === "forza") {
       const t = await getForzaTrackingByGuide(incident.store_id, incident.guide_number);
+      return (t?.events ?? []) as TrackingEvent[];
+    }
+    if (incident.source === "cargoexpreso") {
+      const t = await getCargoExpresoTrackingByGuide(incident.store_id, incident.guide_number);
       return (t?.events ?? []) as TrackingEvent[];
     }
     if (incident.source === "wyn") {

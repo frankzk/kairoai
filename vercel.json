@@ -10,6 +10,10 @@
       "schedule": "30 * * * *"
     },
     {
+      "path": "/api/cron/cargo-expreso",
+      "schedule": "40 * * * *"
+    },
+    {
       "path": "/api/cron/wyn",
       "schedule": "20,50 * * * *"
     },
@@ -74,6 +78,9 @@
       "maxDuration": 300
     },
     "app/api/cron/forza/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/cargo-expreso/route.ts": {
       "maxDuration": 300
     },
     "app/api/cron/wyn/route.ts": {

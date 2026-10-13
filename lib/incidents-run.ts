@@ -1,9 +1,10 @@
 // Deteccion de novedades (incidencias de reparto): cruza el tracking del courier
-// (Moovin y WYN en CR; Forza en HN) con la logistica importada y los pedidos de Shopify
+// (Moovin y WYN en CR; Forza y Cargo Expreso en HN) con la logistica importada y los pedidos de Shopify
 // (por guia), y arma/actualiza la bandeja. Extraido de la ruta /api/cron/incidencias
 // para poder reutilizarlo: lo llaman tanto la ruta (cron + boton) como el cron de
 // Moovin (encadena la deteccion justo despues de refrescar el tracking).
 import {
+  listCargoExpresoTracking,
   listForzaTracking,
   listLogisticsRows,
   listMoovinTracking,
@@ -14,7 +15,12 @@ import { FINANCE_STORES } from "@/lib/store-config";
 import type { LogisticsRow } from "@/lib/finance-types";
 import { persistedOrderToSummary, type ShopifyOrderSummary } from "@/lib/finance-orders";
 import type { DetectedIncident } from "@/lib/incidents-types";
-import { detectForzaIncident, detectMoovinIncident, detectWynIncident } from "@/lib/incidents-detect";
+import {
+  detectCargoExpresoIncident,
+  detectForzaIncident,
+  detectMoovinIncident,
+  detectWynIncident,
+} from "@/lib/incidents-detect";
 import {
   backfillIncidentContact,
   getIncidentWatermark,
@@ -229,6 +235,21 @@ export async function detectIncidents(full: boolean): Promise<DetectIncidentsRes
       full,
       (since) => listForzaTracking(store.id, { since }),
       (t, row, shopify) => detectForzaIncident(t, row, shopify),
+      bump,
+      (n) => { scanned += n; }
+    );
+  }
+
+  // ----- Cargo Expreso: segundo courier de Honduras (guias BH...-1). Convive
+  // con Forza, asi que tampoco se elige por logisticsProvider: en Costa Rica
+  // courier_shipments no tiene filas de cargoexpreso y sale vacio.
+  for (const store of FINANCE_STORES) {
+    await scanStoreTracking(
+      `cargoexpreso:${store.id}`,
+      store.id,
+      full,
+      (since) => listCargoExpresoTracking(store.id, { since }),
+      (t, row, shopify) => detectCargoExpresoIncident(t, row, shopify),
       bump,
       (n) => { scanned += n; }
     );
