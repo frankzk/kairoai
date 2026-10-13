@@ -18,7 +18,7 @@ import { FINANCE_STORES, getCurrencySymbol, getFinanceStore, type FinanceStoreCo
 import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
 import { exportXlsx } from "@/lib/export-xlsx";
 import type { ChatLeadSummary } from "@/lib/leads-types";
-import { reglaReprogramar } from "@/lib/incidents-reprog";
+import { DIAS_SIN_ENTREGA, esDiaSinEntrega, reglaReprogramar } from "@/lib/incidents-reprog";
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "muted";
 
@@ -1169,8 +1169,11 @@ function DetailModal({
   // Cuando se puede reprogramar y para que fechas: lib/incidents-reprog.ts.
   // Mientras carga el historial del courier no se sabe cuantos intentos hubo,
   // asi que el camino del segundo intento recien se abre cuando llega.
-  const regla = reglaReprogramar(events, trackingEvents.length > 0 ? intentosEntrega : 0);
+  // Dias en que el courier de la tienda no entrega (Forza: domingos).
+  const diasSinEntrega = DIAS_SIN_ENTREGA[FINANCE_STORES.find((s) => s.code === storeCode)?.logisticsProvider ?? ""] ?? [];
+  const regla = reglaReprogramar(events, trackingEvents.length > 0 ? intentosEntrega : 0, new Date(), diasSinEntrega);
   const puedeReprogramar = regla.modo !== null;
+  const fechaSinEntrega = Boolean(reprogFecha) && esDiaSinEntrega(reprogFecha, diasSinEntrega);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [copiedNuevoEnvio, setCopiedNuevoEnvio] = useState(false);
 
@@ -1326,11 +1329,12 @@ function DetailModal({
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <Input type="date" className="h-9 w-auto" value={reprogFecha} onChange={(e) => setReprogFecha(e.target.value)} />
-                  <Button variant="outline" size="sm" disabled={busy || !reprogFecha || reprogFecha === incident.reprogramada_para} className="gap-2"
+                  <Button variant="outline" size="sm" disabled={busy || !reprogFecha || reprogFecha === incident.reprogramada_para || fechaSinEntrega} className="gap-2"
                     onClick={() => onAction("reprogramar", { fecha: reprogFecha })}>
                     <CalendarClock className="h-3.5 w-3.5" /> Actualizar fecha
                   </Button>
                 </div>
+                {fechaSinEntrega && <p className="text-[11px] text-rose-500">El courier no entrega los domingos: elige otro día.</p>}
               </div>
               <Button variant="ghost" size="sm" disabled={busy} onClick={() => setReopened(true)}>
                 Reabrir gestion
@@ -1369,11 +1373,14 @@ function DetailModal({
               <Input type="date" className="h-9 w-auto" value={reprogFecha} disabled={!puedeReprogramar}
                 min={regla.min ?? undefined} max={regla.max ?? undefined}
                 onChange={(e) => setReprogFecha(e.target.value)} />
-              <Button variant="outline" size="sm" disabled={busy || !reprogFecha || !puedeReprogramar} className="gap-2"
+              <Button variant="outline" size="sm" disabled={busy || !reprogFecha || !puedeReprogramar || fechaSinEntrega} className="gap-2"
                 onClick={() => onAction("reprogramar", { fecha: reprogFecha, modo: regla.modo })}>
                 <CalendarClock className="h-3.5 w-3.5" /> Reprogramar
               </Button>
             </div>
+            {fechaSinEntrega && (
+              <p className="text-[11px] text-rose-500">El courier no entrega los domingos: elige otro día.</p>
+            )}
             {!puedeReprogramar && (
               <p className="text-[11px] text-muted-foreground">
                 Registra una llamada con “Contestó” (o 3 “No contestó” en días distintos) para habilitar la reprogramación.

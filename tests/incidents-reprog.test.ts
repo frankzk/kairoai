@@ -9,7 +9,7 @@
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import { reglaReprogramar } from "../lib/incidents-reprog";
+import { DIAS_SIN_ENTREGA, esDiaSinEntrega, reglaReprogramar } from "../lib/incidents-reprog";
 
 // Jueves 08/10/2026, 10:00 hora local.
 const AHORA = new Date(2026, 9, 8, 10, 0, 0);
@@ -76,20 +76,47 @@ describe("reglaReprogramar", () => {
   });
 });
 
+// Forza (Honduras) entrega de lunes a sabado: en 90 dias hubo entre 627 y 852
+// entregas por dia habil y 3 en domingos.
+describe("reglaReprogramar con Forza: nunca un domingo", () => {
+  const FORZA = DIAS_SIN_ENTREGA.forza;
+  const SABADO = new Date(2026, 9, 10, 10, 0, 0);
+  const DOMINGO = new Date(2026, 9, 11, 10, 0, 0);
+
+  it("el segundo intento pedido un sabado sale el lunes", () => {
+    expect(reglaReprogramar([], 1, SABADO, FORZA)).toEqual({ modo: "segundo_intento", min: "2026-10-12", max: null });
+  });
+
+  it("si el cliente contesta un domingo, la primera fecha es el lunes", () => {
+    expect(reglaReprogramar([llamada("contesto", "2026-10-11")], 0, DOMINGO, FORZA).min).toBe("2026-10-12");
+  });
+
+  it("Moovin no tiene esa restriccion", () => {
+    expect(reglaReprogramar([], 1, SABADO).min).toBe("2026-10-11");
+  });
+
+  it("esDiaSinEntrega reconoce el domingo", () => {
+    expect(esDiaSinEntrega("2026-10-11", FORZA)).toBe(true);
+    expect(esDiaSinEntrega("2026-10-12", FORZA)).toBe(false);
+    expect(esDiaSinEntrega("2026-10-11", [])).toBe(false);
+  });
+});
+
 // ── El historial deja la marca "sin contacto" ────────────────────────────────
 
 const patchIncident = vi.fn();
+let tiendaDeLaNovedad = 1;
 vi.mock("@/lib/incidents", () => ({
-  getIncident: async () => ({ id: 7, store_id: 1, status: "pendiente", shopify_order_id: "" }),
+  getIncident: async () => ({ id: 7, store_id: tiendaDeLaNovedad, status: "pendiente", shopify_order_id: "" }),
   patchIncident: (...a: unknown[]) => patchIncident(...a),
   recordIncidentEvent: vi.fn(),
 }));
 vi.mock("@/lib/shopify", () => ({ addOrderTag: vi.fn(), cancelOrder: vi.fn() }));
 
-async function reprogramar(extra: Record<string, unknown>) {
+async function reprogramar(extra: Record<string, unknown>, store = "mireva-cr") {
   const { POST } = await import("../app/api/incidents/actions/route");
   return POST(
-    new NextRequest("http://localhost/api/incidents/actions?store=mireva-cr", {
+    new NextRequest(`http://localhost/api/incidents/actions?store=${store}`, {
       method: "POST",
       body: JSON.stringify({ id: 7, action: "reprogramar", fecha: "2026-10-09", ...extra }),
     })
@@ -100,6 +127,21 @@ describe("accion reprogramar", () => {
   beforeEach(() => {
     patchIncident.mockReset();
     patchIncident.mockResolvedValue({ id: 7 });
+    tiendaDeLaNovedad = 1;
+  });
+
+  it("en Honduras no se puede reprogramar para un domingo: Forza no entrega", async () => {
+    tiendaDeLaNovedad = 2;
+    const domingo = await reprogramar({ modo: "contesto", fecha: "2026-10-11" }, "mireva-hn");
+    expect(domingo.status).toBe(400);
+    expect(patchIncident).not.toHaveBeenCalled();
+    const lunes = await reprogramar({ modo: "contesto", fecha: "2026-10-12" }, "mireva-hn");
+    expect(lunes.status).toBe(200);
+  });
+
+  it("en Costa Rica el domingo sigue permitido", async () => {
+    const res = await reprogramar({ modo: "contesto", fecha: "2026-10-11" });
+    expect(res.status).toBe(200);
   });
 
   it("el segundo intento queda marcado sin contacto en el historial", async () => {

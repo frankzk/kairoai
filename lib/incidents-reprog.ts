@@ -17,6 +17,20 @@ import type { IncidentEvent } from "./incidents-types";
  */
 export type ModoReprog = "contesto" | "segundo_intento" | "finde";
 
+/**
+ * Dias en que el courier no entrega (0 = domingo), para no ofrecerlos al
+ * reprogramar. Forza entrega de lunes a sabado: en 90 dias hubo entre 627 y 852
+ * entregas por cada dia habil y 3 en domingos (medido el 13/10/2026).
+ */
+export const DIAS_SIN_ENTREGA: Record<string, number[]> = { forza: [0] };
+
+/** true si la fecha (YYYY-MM-DD) cae en un dia en que el courier no entrega. */
+export function esDiaSinEntrega(fecha: string, diasSinEntrega: number[]): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fecha);
+  if (!m) return false;
+  return diasSinEntrega.includes(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getDay());
+}
+
 export interface ReglaReprog {
   modo: ModoReprog | null;
   /** Fecha minima del selector (YYYY-MM-DD, hora local). */
@@ -35,21 +49,31 @@ function masDias(d: Date, dias: number): Date {
   return r;
 }
 
+// El primer dia desde `d` en que el courier entrega.
+function primerDiaConEntrega(d: Date, diasSinEntrega: number[]): Date {
+  let r = d;
+  for (let i = 0; i < 7 && diasSinEntrega.includes(r.getDay()); i++) r = masDias(r, 1);
+  return r;
+}
+
 export function reglaReprogramar(
   events: Array<Pick<IncidentEvent, "kind" | "metadata" | "created_at">>,
   intentosEntrega: number,
-  ahora: Date = new Date()
+  ahora: Date = new Date(),
+  diasSinEntrega: number[] = []
 ): ReglaReprog {
   const llamadas = events
     .filter((e) => e.kind === "llamada")
     .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
   const clienteContesto = llamadas[0]?.metadata?.resultado === "contesto";
-  if (clienteContesto) return { modo: "contesto", min: ymd(ahora), max: null };
+  if (clienteContesto) {
+    return { modo: "contesto", min: ymd(primerDiaConEntrega(ahora, diasSinEntrega)), max: null };
+  }
 
   // Antes que la regla de los 3 dias: si queda el intento pagado, no hace falta
   // esperar 3 dias de llamadas ni limitarlo al finde.
   if (intentosEntrega === 1) {
-    return { modo: "segundo_intento", min: ymd(masDias(ahora, 1)), max: null };
+    return { modo: "segundo_intento", min: ymd(primerDiaConEntrega(masDias(ahora, 1), diasSinEntrega)), max: null };
   }
 
   const diasNoContesta = new Set(

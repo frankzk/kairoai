@@ -69,6 +69,29 @@ describe("syncForzaGuides", () => {
     await expect(syncForzaGuides(["FD1"], 2, {}, deps)).rejects.toThrow(/503/);
   });
 
+  // Forza solo guarda la ultima fecha de cada hito: cuando el paquete vuelve a
+  // salir a ruta, el intento fallido anterior ya no aparece en su respuesta.
+  it("al guardar no pierde los intentos fallidos vistos en lecturas anteriores", async () => {
+    const intentoAnterior = {
+      code: "INTENTO_FALLIDO",
+      group: "failed",
+      title: "Intento de entrega fallido",
+      description: "Salio a ruta el 06/10 y volvio a la bodega de Forza (deducido por Kairo)",
+      date: "2026-10-07T15:00:00.000Z",
+      note: "2026-10-06T14:00:00.000Z",
+    };
+    let guardado: Array<{ code: string }> = [];
+    const deps: ForzaSyncDeps = {
+      fetch: async (g) => tracking(g),
+      save: async (rows) => {
+        guardado = rows[0].events;
+      },
+      previous: async () => new Map([["FD1", [intentoAnterior]]]),
+    };
+    await syncForzaGuides(["FD1"], 2, { now: "2026-10-13T12:00:00.000Z" }, deps);
+    expect(guardado.filter((e) => e.code === "INTENTO_FALLIDO")).toEqual([intentoAnterior]);
+  });
+
   it("con el plazo vencido no arranca consultas nuevas", async () => {
     let calls = 0;
     const deps: ForzaSyncDeps = {

@@ -3,7 +3,7 @@
 // ultima vez que el paquete paso por ahi.
 
 import { describe, expect, it } from "vitest";
-import { forzaHitos, senalForza } from "../lib/forza-novedades";
+import { conIntentosFallidos, forzaHitos, intentoFallidoVisible, senalForza } from "../lib/forza-novedades";
 
 const NOW = "2026-10-12T18:00:00.000Z";
 const H = 3_600_000;
@@ -106,5 +106,45 @@ describe("senalForza", () => {
     const e = eventos({ creado: 120, recibido: 100, ruta: 50, instal: 40 });
     const unRato = new Date(Date.parse(NOW) + 5 * H).toISOString();
     expect(senalForza(e, pedidoDe(6), unRato)!.detail).toBe(senalForza(e, pedidoDe(6), NOW)!.detail);
+  });
+});
+
+describe("intentos fallidos de Forza", () => {
+  // Forza solo guarda la ULTIMA fecha de cada hito: Kairo recuerda los intentos.
+  const codigos = (evs: Array<{ code: string }>) => evs.filter((e) => e.code === "INTENTO_FALLIDO");
+  const conCodigo = (evs: ReturnType<typeof eventos>) => evs.map((e) => ({ ...e, code: e.title.toUpperCase(), group: "in_progress", note: "", description: e.description ?? "" }));
+
+  it("salir a ruta y volver a la bodega por mas de un dia es un intento fallido", () => {
+    const evs = conIntentosFallidos(conCodigo(eventos({ creado: 120, recibido: 100, ruta: 50, instal: 40 }, "LA CEIBA")), [], NOW);
+    const intentos = codigos(evs);
+    expect(intentos).toHaveLength(1);
+    expect(intentos[0]).toMatchObject({ group: "failed", date: hace(40), note: hace(50) });
+  });
+
+  it("un paso de menos de un dia por la bodega no cuenta", () => {
+    expect(intentoFallidoVisible(eventos({ creado: 60, recibido: 50, ruta: 20, instal: 8 }), NOW)).toBeNull();
+  });
+
+  it("recuerda el primer intento cuando el paquete vuelve a salir, y suma el segundo", () => {
+    // Lectura 1: volvio a la bodega despues de la primera salida.
+    const lectura1 = conIntentosFallidos(conCodigo(eventos({ creado: 200, recibido: 180, ruta: 100, instal: 90 })), [], NOW);
+    // Lectura 2: salio de nuevo a ruta (Forza ya no muestra la primera salida).
+    const lectura2 = conIntentosFallidos(conCodigo(eventos({ creado: 200, recibido: 180, instal: 90, ruta: 40 })), lectura1, NOW);
+    expect(codigos(lectura2)).toHaveLength(1);
+    // Lectura 3: volvio otra vez a la bodega: segundo intento fallido.
+    const lectura3 = conIntentosFallidos(conCodigo(eventos({ creado: 200, recibido: 180, ruta: 40, instal: 30 })), lectura2, NOW);
+    expect(codigos(lectura3)).toHaveLength(2);
+  });
+
+  it("releer lo mismo no duplica el intento", () => {
+    const e = conCodigo(eventos({ creado: 120, recibido: 100, ruta: 50, instal: 40 }));
+    const una = conIntentosFallidos(e, [], NOW);
+    expect(codigos(conIntentosFallidos(e, una, NOW))).toHaveLength(1);
+  });
+
+  it("si despues se entrega, el intento fallido queda en el historial", () => {
+    const fallo = conIntentosFallidos(conCodigo(eventos({ creado: 200, recibido: 180, ruta: 100, instal: 90 })), [], NOW);
+    const entregado = conIntentosFallidos(conCodigo(eventos({ creado: 200, recibido: 180, instal: 90, ruta: 30, entregado: 20 })), fallo, NOW);
+    expect(codigos(entregado)).toHaveLength(1);
   });
 });
