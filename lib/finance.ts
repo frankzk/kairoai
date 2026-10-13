@@ -1835,6 +1835,25 @@ export async function getWynTrackingByGuide(
 
 // Una fila de tracking de Forza por (store_id, guide_number). Para el detalle de
 // una novedad: trae el historial completo (columna events).
+/** Eventos ya guardados de un lote de guias Forza (para no perder lo visto en lecturas anteriores). */
+export async function getForzaEventsByGuides(
+  storeId: number,
+  guides: string[]
+): Promise<Map<string, ForzaTrackingRow["events"]>> {
+  const out = new Map<string, ForzaTrackingRow["events"]>();
+  if (!guides.length) return out;
+  const { data, error } = await getDB()
+    .from("forza_tracking")
+    .select("guide_number, events")
+    .eq("store_id", storeId)
+    .in("guide_number", guides);
+  if (error) throw new Error(`getForzaEventsByGuides: ${error.message}`);
+  for (const row of (data ?? []) as Array<Pick<ForzaTrackingRow, "guide_number" | "events">>) {
+    out.set(row.guide_number, row.events ?? []);
+  }
+  return out;
+}
+
 export async function getForzaTrackingByGuide(
   storeId: number,
   guideNumber: string

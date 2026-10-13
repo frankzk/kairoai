@@ -1,8 +1,9 @@
 // Consulta a Forza un lote de guias y guarda lo que responde. Lo usan el boton
 // manual "Forza (N)" del tablero y el cron /api/cron/forza.
 import { forEachRateLimited } from "@/lib/concurrency";
-import { upsertForzaTracking } from "@/lib/finance";
+import { getForzaEventsByGuides, upsertForzaTracking } from "@/lib/finance";
 import { fetchForzaTracking, type ForzaTracking } from "@/lib/forza";
+import { conIntentosFallidos } from "@/lib/forza-novedades";
 
 // Espaciado MINIMO entre el ARRANQUE de dos consultas a Forza: es el limite de
 // tasa acordado con el courier y no se toca (<= 1 consulta cada 300 ms).
@@ -33,11 +34,14 @@ export interface ForzaSyncResult {
 export interface ForzaSyncDeps {
   fetch: (guide: string) => Promise<ForzaTracking>;
   save: (rows: ForzaRow[], storeId: number) => Promise<void>;
+  /** Eventos ya guardados de esas guias. Sin esto no se recuerdan los intentos fallidos anteriores. */
+  previous?: (guides: string[], storeId: number) => Promise<Map<string, ForzaRow["events"]>>;
 }
 
 const DEFAULT_DEPS: ForzaSyncDeps = {
   fetch: (guide) => fetchForzaTracking(guide),
   save: (rows, storeId) => upsertForzaTracking(rows, storeId),
+  previous: (guides, storeId) => getForzaEventsByGuides(storeId, guides),
 };
 
 /**
@@ -53,7 +57,7 @@ const DEFAULT_DEPS: ForzaSyncDeps = {
 export async function syncForzaGuides(
   guides: string[],
   storeId: number,
-  opts: { deadlineMs?: number } = {},
+  opts: { deadlineMs?: number; now?: string } = {},
   deps: ForzaSyncDeps = DEFAULT_DEPS
 ): Promise<ForzaSyncResult> {
   const result: ForzaSyncResult = {
@@ -118,10 +122,21 @@ export async function syncForzaGuides(
   );
   result.notStarted = guides.length - started;
 
+  // Forza solo guarda la ultima fecha de cada hito: cuando el paquete vuelve a
+  // salir a ruta, el intento fallido anterior desaparece de su respuesta. Se
+  // suman los ya vistos en lecturas anteriores (ver lib/forza-novedades.ts).
+  const now = opts.now ?? new Date().toISOString();
   for (let i = 0; i < pending.length; i += SAVE_CHUNK) {
     const chunk = pending.slice(i, i + SAVE_CHUNK);
-    await deps.save(chunk, storeId);
-    result.saved += chunk.length;
+    const previos = deps.previous
+      ? await deps.previous(chunk.map((row) => row.guide_number), storeId)
+      : new Map<string, ForzaRow["events"]>();
+    const filas = chunk.map((row) => ({
+      ...row,
+      events: conIntentosFallidos(row.events, previos.get(row.guide_number), now),
+    }));
+    await deps.save(filas, storeId);
+    result.saved += filas.length;
   }
   return result;
 }
