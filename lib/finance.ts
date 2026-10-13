@@ -1,5 +1,6 @@
 import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
+import { isCargoExpresoGuide, normalizeCargoExpresoGuide, type CargoExpresoTracking } from "./cargo-expreso";
 import { normalizeForzaGuide } from "./forza";
 import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
 import { isDeliveryRecheckDue, planMoovinSync } from "./moovin-sync-plan";
@@ -15,6 +16,7 @@ import {
 export * from "./finance-types";
 import type {
   BoxfulFileControl,
+  CargoExpresoTrackingRow,
   PayrollStaff,
   BusinessExpense,
   ExpenseType,
@@ -1833,8 +1835,151 @@ export async function getWynTrackingByGuide(
   return row ? toWynTrackingRow(row) : null;
 }
 
-// Una fila de tracking de Forza por (store_id, guide_number). Para el detalle de
-// una novedad: trae el historial completo (columna events).
+// ---------------------------------------------------------------------------
+// Cargo Expreso (Honduras): courier_shipments con courier_code "cargoexpreso".
+// Ver lib/cargo-expreso.ts.
+
+const CARGO_EXPRESO = "cargoexpreso";
+const COURIER_SHIPMENT_COLUMNS =
+  "store_id,guide_number,normalized_status,raw_status,latest_at,has_incident,incident_reason,raw_payload,checked_at";
+
+export function toCargoExpresoTrackingRow(row: CourierShipmentTrackingRow): CargoExpresoTrackingRow {
+  const raw = row.raw_payload && typeof row.raw_payload === "object" ? row.raw_payload : {};
+  return {
+    store_id: row.store_id,
+    guide_number: row.guide_number,
+    tracking_number: row.guide_number,
+    latest_status: row.raw_status,
+    latest_code: typeof raw.latest_code === "string" ? raw.latest_code : "",
+    latest_group: row.normalized_status,
+    latest_at: row.latest_at,
+    has_incident: row.has_incident,
+    incident_reason: row.incident_reason,
+    delivery_address: typeof raw.delivery_address === "string" ? raw.delivery_address : "",
+    receiver_name: typeof raw.receiver_name === "string" ? raw.receiver_name : "",
+    events: Array.isArray(raw.events) ? (raw.events as CargoExpresoTrackingRow["events"]) : [],
+    checked_at: row.checked_at,
+  };
+}
+
+export async function listCargoExpresoTracking(
+  storeId: number,
+  opts: { since?: string | null } = {}
+): Promise<CargoExpresoTrackingRow[]> {
+  const pageSize = 1000;
+  const all: CargoExpresoTrackingRow[] = [];
+  for (let from = 0; from < 50000; from += pageSize) {
+    let query = getDB()
+      .from("courier_shipments")
+      .select(COURIER_SHIPMENT_COLUMNS)
+      .eq("store_id", storeId)
+      .eq("courier_code", CARGO_EXPRESO)
+      .order("checked_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (opts.since) query = query.gt("checked_at", opts.since);
+    const { data, error } = await query;
+    if (error) throw new Error(`listCargoExpresoTracking: ${error.message}`);
+    const page = (data ?? []) as CourierShipmentTrackingRow[];
+    all.push(...page.map(toCargoExpresoTrackingRow));
+    if (page.length < pageSize) break;
+  }
+  return all;
+}
+
+export async function getCargoExpresoTrackingByGuide(
+  storeId: number,
+  guideNumber: string
+): Promise<CargoExpresoTrackingRow | null> {
+  if (!guideNumber) return null;
+  const { data, error } = await getDB()
+    .from("courier_shipments")
+    .select(COURIER_SHIPMENT_COLUMNS)
+    .eq("store_id", storeId)
+    .eq("courier_code", CARGO_EXPRESO)
+    .eq("guide_number", guideNumber)
+    .limit(1);
+  if (error) throw new Error(`getCargoExpresoTrackingByGuide: ${error.message}`);
+  const row = ((data ?? []) as CourierShipmentTrackingRow[])[0];
+  return row ? toCargoExpresoTrackingRow(row) : null;
+}
+
+export async function upsertCargoExpresoTracking(rows: CargoExpresoTracking[], storeId: number): Promise<void> {
+  if (!rows.length) return;
+  const now = new Date().toISOString();
+  const payload = rows.map((t) => ({
+    store_id: storeId,
+    courier_code: CARGO_EXPRESO,
+    guide_number: t.guideNumber,
+    normalized_status: t.latestGroup,
+    raw_status: t.latestStatus,
+    latest_at: t.latestAt,
+    has_incident: t.hasIncident,
+    incident_reason: t.incidentReason,
+    raw_payload: {
+      latest_code: t.latestCode,
+      delivery_address: t.deliveryAddress,
+      receiver_name: t.receiverName,
+      events: t.events,
+    },
+    checked_at: now,
+    updated_at: now,
+  }));
+  const { error } = await getDB()
+    .from("courier_shipments")
+    .upsert(payload, { onConflict: "store_id,courier_code,guide_number" });
+  if (error) throw new Error(`upsertCargoExpresoTracking: ${error.message}`);
+}
+
+/**
+ * Guias de Cargo Expreso a consultar: las de pedidos no cancelados de los
+ * ultimos `discoveryDays` dias, sin las ya entregadas o devueltas ni las leidas
+ * hace menos de `freshWindowMinutes`. Primero las nunca leidas, despues la que
+ * lleva mas tiempo sin leerse.
+ */
+export async function listCargoExpresoSyncCandidates(
+  storeId: number,
+  opts: { limit: number; freshWindowMinutes: number; discoveryDays: number }
+): Promise<string[]> {
+  const pageSize = 1000;
+  const since = new Date(Date.now() - opts.discoveryDays * 86_400_000).toISOString();
+  const guides = new Set<string>();
+  for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("shopify_orders")
+      .select("tracking_number")
+      .eq("store_id", storeId)
+      .ilike("tracking_number", "BH%")
+      .is("cancelled_at", null)
+      .gte("shopify_created_at", since)
+      .order("id")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listCargoExpresoSyncCandidates(shopify_orders): ${error.message}`);
+    const page = (data ?? []) as Array<{ tracking_number: string | null }>;
+    for (const row of page) {
+      const guide = normalizeCargoExpresoGuide(row.tracking_number);
+      if (isCargoExpresoGuide(guide)) guides.add(guide);
+    }
+    if (page.length < pageSize) break;
+  }
+  if (!guides.size) return [];
+
+  const leidas = new Map<string, { group: string; checkedAt: number }>();
+  for (const row of await listCargoExpresoTracking(storeId)) {
+    const at = Date.parse(row.checked_at);
+    leidas.set(row.guide_number, { group: row.latest_group, checkedAt: Number.isNaN(at) ? 0 : at });
+  }
+  const frescas = Date.now() - opts.freshWindowMinutes * 60_000;
+  return Array.from(guides)
+    .filter((guide) => {
+      const leida = leidas.get(guide);
+      if (!leida) return true;
+      if (leida.group === "delivered" || leida.group === "returned") return false;
+      return leida.checkedAt < frescas;
+    })
+    .sort((a, b) => (leidas.get(a)?.checkedAt ?? 0) - (leidas.get(b)?.checkedAt ?? 0))
+    .slice(0, Math.max(0, opts.limit));
+}
+
 /** Eventos ya guardados de un lote de guias Forza (para no perder lo visto en lecturas anteriores). */
 export async function getForzaEventsByGuides(
   storeId: number,
@@ -1854,6 +1999,8 @@ export async function getForzaEventsByGuides(
   return out;
 }
 
+// Una fila de tracking de Forza por (store_id, guide_number). Para el detalle de
+// una novedad: trae el historial completo (columna events).
 export async function getForzaTrackingByGuide(
   storeId: number,
   guideNumber: string

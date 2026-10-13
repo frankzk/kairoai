@@ -349,6 +349,14 @@ export interface ForzaTrackingRow {
   checked_at: string;
 }
 
+/**
+ * Rastreo de Cargo Expreso (Honduras), guardado en courier_shipments con
+ * courier_code = "cargoexpreso". Misma forma que WYN; los grupos son los de
+ * Moovin y Forza (delivered / failed / returned / in_progress / pending), que
+ * es lo que entiende la deteccion de novedades.
+ */
+export type CargoExpresoTrackingRow = WynTrackingRow;
+
 export interface WynTrackingRow {
   store_id: number;
   guide_number: string;

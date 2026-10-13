@@ -6,7 +6,13 @@ import { normalizeMatchKey } from "./order-matching";
 import { classifyMoovinGroup } from "./moovin";
 import { senalForza } from "./forza-novedades";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
-import type { MoovinTrackingRow, ForzaTrackingRow, WynTrackingRow, LogisticsRow } from "./finance-types";
+import type {
+  CargoExpresoTrackingRow,
+  ForzaTrackingRow,
+  LogisticsRow,
+  MoovinTrackingRow,
+  WynTrackingRow,
+} from "./finance-types";
 import type { ShopifyOrderSummary } from "./finance-orders";
 import type {
   DetectedIncident,
@@ -337,6 +343,78 @@ export function detectWynIncident(
     last_failure_at: lastFailureDate(
       (tracking.events || []).map((ev) => ({ ...ev, group: wynGroupForIncidents(ev.group) }))
     ),
+  };
+}
+
+/**
+ * Causa de un intento fallido de Cargo Expreso por su motivo. Los numerados son
+ * el catalogo del courier; los otros los escribe el repartidor. Vistos en 60
+ * guias de septiembre y octubre: "005 Nadie en casa" (31), "Cliente no llegó a
+ * punto de encuentro." (15), "002 Cliente no quizo recibir" (6), "No Dio
+ * Tiempo" (5), "004 Direccion no corresponde" (3), "003 Cliente no tiene
+ * dinero" (2), "Falla mecánica" (1). Lo que no reconoce cae al mapeo por texto
+ * que comparten Moovin y Forza.
+ */
+export function cargoExpresoCategory(motivo: string): IncidentCategory {
+  const m = (motivo || "").trim().toLowerCase();
+  if (m.startsWith("005") || m.includes("nadie en casa") || m.includes("punto de encuentro")) return "cliente_no_responde";
+  // "No tiene dinero" en contra entrega es no recibir el paquete.
+  if (m.startsWith("002") || m.startsWith("003") || m.includes("no quizo") || m.includes("no quiso") || m.includes("no tiene dinero"))
+    return "cliente_rechaza";
+  if (m.startsWith("004")) return "direccion_incorrecta";
+  return mapMoovinCategory(motivo, "failed");
+}
+
+// Construye una candidata desde el tracking de Cargo Expreso (Honduras, guias
+// BH...-1). A diferencia de Forza, Cargo Expreso informa cada intento con su
+// motivo: la falla es la del courier (ver lib/cargo-expreso.ts). Entrega o
+// devolucion solo cierran una novedad que ya existe; en curso y pasado de
+// tiempo es demora. Ahi alcanzan los umbrales de Costa Rica: de 23 entregas, la
+// mas lenta tardo 4,8 dias desde la recoleccion, y los paquetes que pasaron 7
+// dias o mas sin movimiento terminaron devueltos.
+export function detectCargoExpresoIncident(
+  tracking: CargoExpresoTrackingRow,
+  row?: LogisticsRow,
+  shopify?: ShopifyOrderSummary,
+  now: string = new Date().toISOString()
+): DetectedIncident | null {
+  const group = tracking.latest_group || "";
+  const isFailure = group === "failed";
+  const isDelivered = group === "delivered";
+  const isReturned = group === "returned";
+  // Un pedido cancelado no tiene nada que entregar: un paquete quieto no es demora.
+  const demora =
+    isFailure || isDelivered || isReturned || shopify?.cancelled_at
+      ? null
+      : motivoDemora(shopify?.created_at, tracking.latest_at, now);
+  if (!isFailure && !isDelivered && !isReturned && !demora) return null;
+
+  const guide = tracking.guide_number || row?.guide_number || "";
+  const orderName = row?.order_name || shopify?.name || "";
+  const reason = tracking.incident_reason || tracking.latest_status || "";
+
+  return {
+    store_id: tracking.store_id || row?.store_id || DEFAULT_FINANCE_STORE_ID,
+    incident_key: buildIncidentKey(guide, orderName),
+    source: "cargoexpreso",
+    order_name: orderName,
+    guide_number: guide,
+    shopify_order_id: row?.shopify_order_id || shopify?.id || "",
+    customer_name: row?.customer_name || shopifyCustomerName(shopify) || tracking.receiver_name || "",
+    customer_phone: row?.customer_phone || shopify?.phone || "",
+    courier: row?.courier || "Cargo Expreso",
+    cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
+    category: demora
+      ? "demora_entrega"
+      : isFailure
+        ? cargoExpresoCategory(reason)
+        : isReturned
+          ? "devuelto_origen"
+          : "otro",
+    detail: demora ?? reason,
+    last_tracking_status: tracking.latest_status || "",
+    last_tracking_group: group,
+    last_failure_at: lastFailureDate(tracking.events),
   };
 }
 

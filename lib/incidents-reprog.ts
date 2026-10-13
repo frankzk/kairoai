@@ -19,10 +19,33 @@ export type ModoReprog = "contesto" | "segundo_intento" | "finde";
 
 /**
  * Dias en que el courier no entrega (0 = domingo), para no ofrecerlos al
- * reprogramar. Forza entrega de lunes a sabado: en 90 dias hubo entre 627 y 852
- * entregas por cada dia habil y 3 en domingos (medido el 13/10/2026).
+ * reprogramar. Por courier, no por tienda: en Honduras conviven Forza y Cargo
+ * Expreso. Medido el 13/10/2026:
+ *  - Forza: en 90 dias, entre 627 y 852 entregas por dia habil y 3 en domingos.
+ *  - Cargo Expreso: 86 intentos de entrega en septiembre y octubre, ninguno en
+ *    domingo.
  */
-export const DIAS_SIN_ENTREGA: Record<string, number[]> = { forza: [0] };
+export const DIAS_SIN_ENTREGA: Record<string, number[]> = { forza: [0], cargoexpreso: [0] };
+
+/**
+ * Dias sin entrega para una novedad: los de su courier; si el origen no es un
+ * courier (una novedad manual), los del courier principal de la tienda.
+ */
+export function diasSinEntregaDe(source: string, proveedorTienda: string): number[] {
+  return DIAS_SIN_ENTREGA[source] ?? DIAS_SIN_ENTREGA[proveedorTienda] ?? [];
+}
+
+/**
+ * true cuando el courier ya no va a intentar entregar y hay que cobrar un nuevo
+ * envio. Moovin y Forza hacen dos intentos (el segundo incluido). Cargo Expreso
+ * reintenta solo y sin un numero fijo: de 22 devoluciones de septiembre y
+ * octubre, 3 no tuvieron ningun intento y 3 tuvieron cuatro. Ahi recien se sabe
+ * cuando cancela por devolucion.
+ */
+export function courierYaNoReintenta(source: string, intentosFallidos: number, devuelto: boolean): boolean {
+  if (source === "cargoexpreso") return devuelto;
+  return intentosFallidos >= 2;
+}
 
 /** true si la fecha (YYYY-MM-DD) cae en un dia en que el courier no entrega. */
 export function esDiaSinEntrega(fecha: string, diasSinEntrega: number[]): boolean {

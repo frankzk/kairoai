@@ -18,7 +18,7 @@ import { FINANCE_STORES, getCurrencySymbol, getFinanceStore, type FinanceStoreCo
 import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
 import { exportXlsx } from "@/lib/export-xlsx";
 import type { ChatLeadSummary } from "@/lib/leads-types";
-import { DIAS_SIN_ENTREGA, esDiaSinEntrega, reglaReprogramar } from "@/lib/incidents-reprog";
+import { courierYaNoReintenta, diasSinEntregaDe, esDiaSinEntrega, reglaReprogramar } from "@/lib/incidents-reprog";
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "muted";
 
@@ -80,8 +80,9 @@ const STATUS_COLOR: Record<IncidentStatus, { dot: string; active: string; badge:
 };
 
 // Cuenta para cobrar el nuevo envio por adelantado cuando el courier ya no
-// reintenta (>=2 intentos de entrega fallidos). Es por tienda/pais: CR cobra en
-// colones; HN queda pendiente de definir (su cuenta sera en lempiras).
+// reintenta (ver courierYaNoReintenta en lib/incidents-reprog.ts). Es por
+// tienda/pais: CR cobra en colones; HN queda pendiente de definir (su cuenta
+// sera en lempiras).
 type CuentaReenvio = { banco: string; titular: string; moneda: string; cuenta: string };
 const CUENTA_REENVIO: Record<FinanceStoreCode, CuentaReenvio | null> = {
   "mireva-cr": {
@@ -1169,8 +1170,15 @@ function DetailModal({
   // Cuando se puede reprogramar y para que fechas: lib/incidents-reprog.ts.
   // Mientras carga el historial del courier no se sabe cuantos intentos hubo,
   // asi que el camino del segundo intento recien se abre cuando llega.
-  // Dias en que el courier de la tienda no entrega (Forza: domingos).
-  const diasSinEntrega = DIAS_SIN_ENTREGA[FINANCE_STORES.find((s) => s.code === storeCode)?.logisticsProvider ?? ""] ?? [];
+  // Dias en que el courier de la novedad no entrega (Forza y Cargo Expreso: domingos).
+  const diasSinEntrega = diasSinEntregaDe(
+    incident.source,
+    FINANCE_STORES.find((s) => s.code === storeCode)?.logisticsProvider ?? ""
+  );
+  // Cuando se cobra un nuevo envio: Moovin y Forza despues del 2do intento;
+  // Cargo Expreso cuando devuelve el paquete (lib/incidents-reprog.ts).
+  const devuelto = trackingEvents.some((e) => e.group === "returned");
+  const sinMasReintentos = courierYaNoReintenta(incident.source, intentosEntrega, devuelto);
   const regla = reglaReprogramar(events, trackingEvents.length > 0 ? intentosEntrega : 0, new Date(), diasSinEntrega);
   const puedeReprogramar = regla.modo !== null;
   const fechaSinEntrega = Boolean(reprogFecha) && esDiaSinEntrega(reprogFecha, diasSinEntrega);
@@ -1192,15 +1200,17 @@ function DetailModal({
     }
   };
 
-  // Mensaje para el cliente cuando el courier ya no reintenta (>=2 intentos): se
-  // cobra el nuevo envio por adelantado a la cuenta de la tienda.
+  // Mensaje para el cliente cuando el courier ya no reintenta: se cobra el nuevo
+  // envio por adelantado a la cuenta de la tienda.
   const cuentaReenvio = CUENTA_REENVIO[storeCode];
   const copyNuevoEnvioMsg = async () => {
     if (!cuentaReenvio) return;
     const nombre = (incident.customer_name || "").trim().split(/\s+/)[0] || "";
     const pedido = incident.order_name || incident.guide_number || "tu pedido";
     const msg = [
-      `Buenas${nombre ? ` ${nombre}` : ""}. Tu pedido ${pedido} registró ${intentosEntrega} intentos de entrega sin éxito y el courier ya no realiza más intentos.`,
+      intentosEntrega > 0
+        ? `Buenas${nombre ? ` ${nombre}` : ""}. Tu pedido ${pedido} registró ${intentosEntrega} ${intentosEntrega === 1 ? "intento" : "intentos"} de entrega sin éxito y el courier ya no realiza más intentos.`
+        : `Buenas${nombre ? ` ${nombre}` : ""}. El courier devolvió tu pedido ${pedido} sin poder entregarlo.`,
       ``,
       `Para programar un nuevo envío, te pedimos realizar el pago por adelantado mediante transferencia bancaria a la siguiente cuenta:`,
       ``,
@@ -1260,12 +1270,16 @@ function DetailModal({
           {orderProducts && (
             <div className="text-sm"><span className="text-muted-foreground">Producto:</span> {orderProducts}</div>
           )}
-          {intentosEntrega >= 2 && (
+          {sinMasReintentos && (
             <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
               <p className="text-sm font-medium flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-muted-foreground" />
                 Nuevo envío
-                <Badge variant="warning" className="ml-1">{intentosEntrega} intentos · sin más reintentos</Badge>
+                <Badge variant="warning" className="ml-1">
+                  {devuelto && incident.source === "cargoexpreso"
+                    ? "devuelto por el courier"
+                    : `${intentosEntrega} intentos · sin más reintentos`}
+                </Badge>
               </p>
               {cuentaReenvio ? (
                 <>
