@@ -7,10 +7,10 @@ import { classifyMoovinGroup } from "./moovin";
 import { senalForza } from "./forza-novedades";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
 import type {
-  CargoExpresoTrackingRow,
   ForzaTrackingRow,
   LogisticsRow,
   MoovinTrackingRow,
+  ShipmentTrackingRow,
   WynTrackingRow,
 } from "./finance-types";
 import type { ShopifyOrderSummary } from "./finance-orders";
@@ -365,15 +365,53 @@ export function cargoExpresoCategory(motivo: string): IncidentCategory {
   return mapMoovinCategory(motivo, "failed");
 }
 
-// Construye una candidata desde el tracking de Cargo Expreso (Honduras, guias
-// BH...-1). A diferencia de Forza, Cargo Expreso informa cada intento con su
-// motivo: la falla es la del courier (ver lib/cargo-expreso.ts). Entrega o
-// devolucion solo cierran una novedad que ya existe; en curso y pasado de
-// tiempo es demora. Ahi alcanzan los umbrales de Costa Rica: de 23 entregas, la
-// mas lenta tardo 4,8 dias desde la recoleccion, y los paquetes que pasaron 7
-// dias o mas sin movimiento terminaron devueltos.
-export function detectCargoExpresoIncident(
-  tracking: CargoExpresoTrackingRow,
+/**
+ * Causa de un intento fallido de c807 Xpress. El motivo (error_motivo) viene de
+ * su catalogo y el detalle lo escribe el repartidor; se leen juntos. Vistos en
+ * 44 guias de septiembre: "Direccion incompleta/no contesta" (casi siempre
+ * dice que no contesta), "Reprogramación" (el cliente pidio otro dia), "Punto
+ * de encuentro/No contesta", "Por tiempo", "Cliente rechaza envío", "Numero
+ * equivocado", "Cerrado casa/negocio", "Mal Tiempo (Lluvia)", "Cruce de envío",
+ * "Por Cobertura" y "Devolución".
+ */
+export function c807Category(motivo: string): IncidentCategory {
+  const m = (motivo || "").toLowerCase();
+  if (m.includes("rechaz")) return "cliente_rechaza";
+  if (
+    m.includes("no contesta") ||
+    m.includes("no responde") ||
+    m.includes("equivocado") ||
+    m.includes("cerrado") ||
+    m.includes("punto de encuentro")
+  )
+    return "cliente_no_responde";
+  return mapMoovinCategory(motivo, "failed");
+}
+
+/** Que cambia entre los couriers que Kairo lee de su rastreo publico. */
+interface ShipmentSource {
+  source: "cargoexpreso" | "c807";
+  courier: string;
+  category: (motivo: string) => IncidentCategory;
+}
+
+const CARGO_EXPRESO_SOURCE: ShipmentSource = { source: "cargoexpreso", courier: "Cargo Expreso", category: cargoExpresoCategory };
+const C807_SOURCE: ShipmentSource = { source: "c807", courier: "c807 Xpress", category: c807Category };
+
+// Construye una candidata desde el tracking de Cargo Expreso o c807 Xpress
+// (Honduras). A diferencia de Forza, los dos informan cada intento con su
+// motivo: la falla es la del courier (ver lib/cargo-expreso.ts y lib/c807.ts).
+// Entrega o devolucion solo cierran una novedad que ya existe; en curso y
+// pasado de tiempo es demora. Ahi alcanzan los umbrales de Costa Rica:
+//  - Cargo Expreso: de 23 entregas, la mas lenta tardo 4,8 dias desde la
+//    recoleccion, y los paquetes que pasaron 7 dias o mas sin movimiento
+//    terminaron devueltos.
+//  - c807: de 23 entregas, la mas lenta tardo 8 dias desde la recoleccion, y
+//    el silencio mas largo de un envio que termino fue de 5,9 dias. Tambien
+//    entra como demora la guia que c807 nunca recogio.
+function detectShipmentIncident(
+  cfg: ShipmentSource,
+  tracking: ShipmentTrackingRow,
   row?: LogisticsRow,
   shopify?: ShopifyOrderSummary,
   now: string = new Date().toISOString()
@@ -396,26 +434,46 @@ export function detectCargoExpresoIncident(
   return {
     store_id: tracking.store_id || row?.store_id || DEFAULT_FINANCE_STORE_ID,
     incident_key: buildIncidentKey(guide, orderName),
-    source: "cargoexpreso",
+    source: cfg.source,
     order_name: orderName,
     guide_number: guide,
     shopify_order_id: row?.shopify_order_id || shopify?.id || "",
     customer_name: row?.customer_name || shopifyCustomerName(shopify) || tracking.receiver_name || "",
     customer_phone: row?.customer_phone || shopify?.phone || "",
-    courier: row?.courier || "Cargo Expreso",
+    courier: row?.courier || cfg.courier,
     cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
     category: demora
       ? "demora_entrega"
       : isFailure
-        ? cargoExpresoCategory(reason)
+        ? cfg.category(reason)
         : isReturned
           ? "devuelto_origen"
           : "otro",
-    detail: demora ?? reason,
+    // Una guia que nunca empezo a moverse dice por que (p.ej. "Guía creada,
+    // sin recoger" en c807): es lo primero que hay que preguntar.
+    detail: demora && group === "pending" && tracking.latest_status ? `${demora} (${tracking.latest_status})` : demora ?? reason,
     last_tracking_status: tracking.latest_status || "",
     last_tracking_group: group,
     last_failure_at: lastFailureDate(tracking.events),
   };
+}
+
+export function detectCargoExpresoIncident(
+  tracking: ShipmentTrackingRow,
+  row?: LogisticsRow,
+  shopify?: ShopifyOrderSummary,
+  now?: string
+): DetectedIncident | null {
+  return detectShipmentIncident(CARGO_EXPRESO_SOURCE, tracking, row, shopify, now);
+}
+
+export function detectC807Incident(
+  tracking: ShipmentTrackingRow,
+  row?: LogisticsRow,
+  shopify?: ShopifyOrderSummary,
+  now?: string
+): DetectedIncident | null {
+  return detectShipmentIncident(C807_SOURCE, tracking, row, shopify, now);
 }
 
 // Construye una candidata desde una fila de logistica Boxful. Devuelve null

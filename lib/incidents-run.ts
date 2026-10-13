@@ -1,14 +1,14 @@
 // Deteccion de novedades (incidencias de reparto): cruza el tracking del courier
-// (Moovin y WYN en CR; Forza y Cargo Expreso en HN) con la logistica importada y los pedidos de Shopify
+// (Moovin y WYN en CR; Forza, Cargo Expreso y c807 en HN) con la logistica importada y los pedidos de Shopify
 // (por guia), y arma/actualiza la bandeja. Extraido de la ruta /api/cron/incidencias
 // para poder reutilizarlo: lo llaman tanto la ruta (cron + boton) como el cron de
 // Moovin (encadena la deteccion justo despues de refrescar el tracking).
 import {
-  listCargoExpresoTracking,
   listForzaTracking,
   listLogisticsRows,
   listMoovinTracking,
   listPersistedShopifyOrders,
+  listShipmentTracking,
   listWynTracking,
 } from "@/lib/finance";
 import { FINANCE_STORES } from "@/lib/store-config";
@@ -16,6 +16,7 @@ import type { LogisticsRow } from "@/lib/finance-types";
 import { persistedOrderToSummary, type ShopifyOrderSummary } from "@/lib/finance-orders";
 import type { DetectedIncident } from "@/lib/incidents-types";
 import {
+  detectC807Incident,
   detectCargoExpresoIncident,
   detectForzaIncident,
   detectMoovinIncident,
@@ -240,16 +241,26 @@ export async function detectIncidents(full: boolean): Promise<DetectIncidentsRes
     );
   }
 
-  // ----- Cargo Expreso: segundo courier de Honduras (guias BH...-1). Convive
-  // con Forza, asi que tampoco se elige por logisticsProvider: en Costa Rica
-  // courier_shipments no tiene filas de cargoexpreso y sale vacio.
+  // ----- Cargo Expreso (guias BH...-1) y c807 Xpress (6595-13968-...): los
+  // otros couriers de Honduras. Conviven con Forza, asi que tampoco se eligen
+  // por logisticsProvider: en Costa Rica courier_shipments no tiene sus filas y
+  // sale vacio.
   for (const store of FINANCE_STORES) {
     await scanStoreTracking(
       `cargoexpreso:${store.id}`,
       store.id,
       full,
-      (since) => listCargoExpresoTracking(store.id, { since }),
+      (since) => listShipmentTracking(store.id, "cargoexpreso", { since }),
       (t, row, shopify) => detectCargoExpresoIncident(t, row, shopify),
+      bump,
+      (n) => { scanned += n; }
+    );
+    await scanStoreTracking(
+      `c807:${store.id}`,
+      store.id,
+      full,
+      (since) => listShipmentTracking(store.id, "c807", { since }),
+      (t, row, shopify) => detectC807Incident(t, row, shopify),
       bump,
       (n) => { scanned += n; }
     );
