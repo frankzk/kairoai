@@ -13,9 +13,9 @@ import {
   updateIncident,
 } from "@/lib/incidents";
 import {
-  getCargoExpresoTrackingByGuide,
   getForzaTrackingByGuide,
   getMoovinTrackingByPackage,
+  getShipmentTrackingByGuide,
   getWynTrackingByGuide,
 } from "@/lib/finance";
 import { wynGroupForIncidents } from "@/lib/incidents-detect";
@@ -57,8 +57,8 @@ async function trackingEventsFor(incident: Incident): Promise<TrackingEvent[]> {
       const t = await getForzaTrackingByGuide(incident.store_id, incident.guide_number);
       return (t?.events ?? []) as TrackingEvent[];
     }
-    if (incident.source === "cargoexpreso") {
-      const t = await getCargoExpresoTrackingByGuide(incident.store_id, incident.guide_number);
+    if (incident.source === "cargoexpreso" || incident.source === "c807") {
+      const t = await getShipmentTrackingByGuide(incident.store_id, incident.source, incident.guide_number);
       return (t?.events ?? []) as TrackingEvent[];
     }
     if (incident.source === "wyn") {

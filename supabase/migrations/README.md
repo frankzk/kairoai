@@ -55,6 +55,7 @@ Estado actual:
 | `0042_kairo_users_email.sql` | Correo opcional en `kairo_users` para entrar con el correo además del usuario corto. En minúscula (CHECK) y único | Si (12/10/2026) |
 | `0043_novedades_hn_limpieza.sql` | Descarta 73 novedades de Honduras de pedidos de enero a marzo cuya guia de Forza quedo en "Creado" (29 con el pedido cancelado). Entraron como demora con la regla de 14 dias de Costa Rica. Deja a proposito otras 76 de pedidos de mas de 60 dias (julio-agosto y paquetes "En instalaciones"), que pueden tener mercaderia para recuperar | Si (12/10/2026) |
 | `0044_incidents_source_cargoexpreso.sql` | Agrega `cargoexpreso` al CHECK de `incidents.source`: Novedades de Honduras ahora detecta tambien los intentos fallidos, demoras y devoluciones de las guias de Cargo Expreso (BH...-1). Solo amplia los valores permitidos | Si (13/10/2026) |
+| `0045_incidents_source_c807.sql` | Agrega `c807` al CHECK de `incidents.source`: Novedades de Honduras ahora detecta tambien los intentos fallidos, demoras (incluidas las guias que c807 nunca recogio) y devoluciones de c807 Xpress (guias 6595-13968-...). Solo amplia los valores permitidos | Si (13/10/2026) |
 
 Contexto: la columna `line_items` de `shopify_orders` quedo vacia para filas
 sincronizadas antes de existir — ese tipo de deriva es lo que este esquema de

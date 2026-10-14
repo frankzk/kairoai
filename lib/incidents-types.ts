@@ -2,7 +2,7 @@
 // entre el servidor (lib/incidents.ts, rutas, deteccion) y el cliente (page de
 // incidencias). Sin imports.
 
-export type IncidentSource = "moovin" | "forza" | "wyn" | "cargoexpreso" | "boxful" | "manual";
+export type IncidentSource = "moovin" | "forza" | "wyn" | "cargoexpreso" | "c807" | "boxful" | "manual";
 
 // Estados de gestion. Cada uno tiene un color en la UI (colorimetria).
 export type IncidentStatus =
@@ -161,6 +161,7 @@ const SOURCE_KEYS: Record<IncidentSource, true> = {
   forza: true,
   wyn: true,
   cargoexpreso: true,
+  c807: true,
   boxful: true,
   manual: true,
 };

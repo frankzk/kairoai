@@ -15,33 +15,23 @@
 //   cada D con el mismo motivo (no son otro intento) · X cierre administrativo:
 //   "CANCELADO POR DEVOLUCION" o "COBERTURA" (destino fuera de su zona).
 
+import {
+  armarRastreo,
+  delMasReciente,
+  estadoVigente,
+  fechaHonduras,
+  type ShipmentEvent,
+  type ShipmentTracking,
+} from "./courier-tracking";
+
 const CAEX_TRACKING_ENDPOINT = "https://wshn2.caexlogistics.com/cdvhn/api/Tracking/Get";
 const CAEX_ORIGIN = "https://www2.cargoexpreso.com";
+// Despues de un intento fallido, cualquiera de estos movimientos es volver a
+// salir a reparto: el intento anterior deja de ser la incidencia vigente.
+const SALIDAS = new Set(["E", "A", "T"]);
 
-export type CargoExpresoGroup = "delivered" | "failed" | "returned" | "in_progress" | "pending";
-
-export interface CargoExpresoEvent {
-  code: string;
-  group: CargoExpresoGroup;
-  title: string;
-  description: string;
-  date: string | null;
-  note: string;
-}
-
-export interface CargoExpresoTracking {
-  guideNumber: string;
-  latestStatus: string;
-  latestCode: string;
-  latestGroup: CargoExpresoGroup;
-  latestAt: string | null;
-  hasIncident: boolean;
-  incidentReason: string;
-  deliveryAddress: string;
-  receiverName: string;
-  /** Del mas reciente al mas viejo. */
-  events: CargoExpresoEvent[];
-}
+export type CargoExpresoEvent = ShipmentEvent;
+export type CargoExpresoTracking = ShipmentTracking;
 
 type RawScan = {
   FechaHoraScan?: unknown;
@@ -85,12 +75,6 @@ function esEntrega(motivoTexto: string): boolean {
   return motivoTexto.startsWith("001");
 }
 
-// "2026-10-05 11:23:51" en hora de Honduras (UTC-6, sin horario de verano).
-function fecha(value: string): string | null {
-  const m = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})$/.exec(value);
-  return m ? new Date(`${m[1]}T${m[2]}-06:00`).toISOString() : null;
-}
-
 function aEvento(scan: RawScan): CargoExpresoEvent | null {
   const codigo = texto(scan.EstadoMovimiento).toUpperCase();
   // NO / NC repiten el motivo del intento (D) que registran al lado.
@@ -98,7 +82,7 @@ function aEvento(scan: RawScan): CargoExpresoEvent | null {
   const ruta = texto(scan.NombreRuta);
   const tipo = texto(scan.TipoMovimiento);
   const hub = texto(scan.HUB);
-  const base = { code: codigo, description: ruta, date: fecha(texto(scan.FechaHoraScan)), note: hub };
+  const base = { code: codigo, description: ruta, date: fechaHonduras(texto(scan.FechaHoraScan)), note: hub };
   switch (codigo) {
     case "D": {
       const m = motivo(ruta);
@@ -124,65 +108,20 @@ function aEvento(scan: RawScan): CargoExpresoEvent | null {
   }
 }
 
-/**
- * Estado vigente de la guia.
- * - Entregada: POD 5 o un intento "001 Entregando-Paquete".
- * - Devuelta: "CANCELADO POR DEVOLUCION".
- * - Intento fallido activo: el ultimo intento fallo y el paquete no volvio a
- *   salir a entrega (sigue en bodega esperando gestion).
- * - Si volvio a salir despues de la falla, es un reintento en curso.
- */
-function estadoVigente(eventos: CargoExpresoEvent[], podStatus: string): {
-  group: CargoExpresoGroup;
-  ultimaFalla: CargoExpresoEvent | null;
-} {
-  const cronologico = [...eventos].reverse();
-  if (podStatus === "5" || eventos.some((e) => e.group === "delivered")) return { group: "delivered", ultimaFalla: null };
-  if (eventos.some((e) => e.group === "returned")) return { group: "returned", ultimaFalla: null };
-  let ultimaFalla: CargoExpresoEvent | null = null;
-  let salioDespues = false;
-  for (const e of cronologico) {
-    if (e.group === "failed") {
-      ultimaFalla = e;
-      salioDespues = false;
-    } else if (ultimaFalla && (e.code === "E" || e.code === "A" || e.code === "T")) {
-      salioDespues = true;
-    }
-  }
-  if (ultimaFalla && !salioDespues) return { group: "failed", ultimaFalla };
-  if (eventos.every((e) => e.group === "pending")) return { group: "pending", ultimaFalla: null };
-  return { group: "in_progress", ultimaFalla: null };
-}
-
 /** Interpreta la respuesta de la API. Null si no trae la guia. Exportado para tests. */
 export function parseCargoExpresoResponse(payload: unknown): CargoExpresoTracking | null {
   const tracking = (payload as { tracking?: { resultado?: unknown; datosGuia?: RawGuia } } | null)?.tracking;
   const guia = tracking?.datosGuia;
   if (!tracking?.resultado || !guia) return null;
   const scans = Array.isArray(guia.detalle) ? (guia.detalle as RawScan[]) : [];
-  const eventos = scans
-    .map(aEvento)
-    .filter((e): e is CargoExpresoEvent => e !== null)
-    .sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
-  const { group, ultimaFalla } = estadoVigente(eventos, texto(guia.PODStatus));
-  const latest = eventos[0] ?? null;
-  const latestStatus =
-    group === "delivered" ? "Entregado"
-    : group === "returned" ? "Devuelto"
-    : group === "failed" && ultimaFalla ? ultimaFalla.title
-    : texto(guia.PODStatusDes) || latest?.title || "Sin movimientos";
-  return {
-    guideNumber: normalizeCargoExpresoGuide(texto(guia.NumeroGuia)),
-    latestStatus,
-    latestCode: group === "failed" && ultimaFalla ? ultimaFalla.code : latest?.code ?? "",
-    latestGroup: group,
-    latestAt: (group === "failed" ? ultimaFalla?.date : latest?.date) ?? null,
-    hasIncident: group === "failed",
-    incidentReason: group === "failed" && ultimaFalla ? ultimaFalla.description : "",
+  const eventos = delMasReciente(scans.map(aEvento).filter((e): e is CargoExpresoEvent => e !== null));
+  // POD 5 es la entrega confirmada aunque falte el escaneo "001".
+  const estado = estadoVigente(eventos, SALIDAS, texto(guia.PODStatus) === "5");
+  return armarRastreo(normalizeCargoExpresoGuide(texto(guia.NumeroGuia)), eventos, estado, {
+    enCurso: texto(guia.PODStatusDes),
     deliveryAddress: texto(guia.DestinatarioDireccion),
     receiverName: texto(guia.PODNombre),
-    events: eventos,
-  };
+  });
 }
 
 export async function fetchCargoExpresoTracking(guide: string): Promise<CargoExpresoTracking> {

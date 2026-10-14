@@ -251,8 +251,8 @@ describe("WYN esta conectado de punta a punta", () => {
   });
 
   it("la base acepta source = 'wyn' (sin la migracion, el primer insert rompe todo el cron)", () => {
-    // El CHECK vigente es el de la ultima migracion que lo redefine (0044 sumo cargoexpreso).
-    const sql = readFileSync(path.join(ROOT, "supabase/migrations/0044_incidents_source_cargoexpreso.sql"), "utf8");
+    // El CHECK vigente es el de la ultima migracion que lo redefine (0045 sumo c807).
+    const sql = readFileSync(path.join(ROOT, "supabase/migrations/0045_incidents_source_c807.sql"), "utf8");
     expect(sql).toMatch(/incidents_source_check[\s\S]*'wyn'/);
     for (const source of INCIDENT_SOURCES) expect(sql).toContain(`'${source}'`);
   });

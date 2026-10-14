@@ -1,6 +1,8 @@
 import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
-import { isCargoExpresoGuide, normalizeCargoExpresoGuide, type CargoExpresoTracking } from "./cargo-expreso";
+import { isC807Guide, normalizeC807Guide } from "./c807";
+import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "./cargo-expreso";
+import type { ShipmentTracking } from "./courier-tracking";
 import { normalizeForzaGuide } from "./forza";
 import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
 import { isDeliveryRecheckDue, planMoovinSync } from "./moovin-sync-plan";
@@ -16,7 +18,6 @@ import {
 export * from "./finance-types";
 import type {
   BoxfulFileControl,
-  CargoExpresoTrackingRow,
   PayrollStaff,
   BusinessExpense,
   ExpenseType,
@@ -33,6 +34,7 @@ import type {
   ProfitabilitySummary,
   SettlementImport,
   SettlementRow,
+  ShipmentTrackingRow,
   WynTrackingRow,
 } from "./finance-types";
 
@@ -1836,14 +1838,25 @@ export async function getWynTrackingByGuide(
 }
 
 // ---------------------------------------------------------------------------
-// Cargo Expreso (Honduras): courier_shipments con courier_code "cargoexpreso".
-// Ver lib/cargo-expreso.ts.
+// Couriers de Honduras que Kairo lee de su rastreo publico (Cargo Expreso y
+// c807 Xpress): courier_shipments con su courier_code. Ver
+// lib/courier-tracking.ts, lib/cargo-expreso.ts y lib/c807.ts.
 
-const CARGO_EXPRESO = "cargoexpreso";
+export type ShipmentCourierCode = "cargoexpreso" | "c807";
+
 const COURIER_SHIPMENT_COLUMNS =
   "store_id,guide_number,normalized_status,raw_status,latest_at,has_incident,incident_reason,raw_payload,checked_at";
 
-export function toCargoExpresoTrackingRow(row: CourierShipmentTrackingRow): CargoExpresoTrackingRow {
+/** Como reconocer las guias de cada courier en los pedidos de Shopify. */
+const SHIPMENT_GUIDES: Record<
+  ShipmentCourierCode,
+  { pattern: string; normalize: (v?: string | null) => string; isGuide: (v?: string | null) => boolean }
+> = {
+  cargoexpreso: { pattern: "BH%", normalize: normalizeCargoExpresoGuide, isGuide: isCargoExpresoGuide },
+  c807: { pattern: "%-%-%", normalize: normalizeC807Guide, isGuide: isC807Guide },
+};
+
+export function toShipmentTrackingRow(row: CourierShipmentTrackingRow): ShipmentTrackingRow {
   const raw = row.raw_payload && typeof row.raw_payload === "object" ? row.raw_payload : {};
   return {
     store_id: row.store_id,
@@ -1857,58 +1870,64 @@ export function toCargoExpresoTrackingRow(row: CourierShipmentTrackingRow): Carg
     incident_reason: row.incident_reason,
     delivery_address: typeof raw.delivery_address === "string" ? raw.delivery_address : "",
     receiver_name: typeof raw.receiver_name === "string" ? raw.receiver_name : "",
-    events: Array.isArray(raw.events) ? (raw.events as CargoExpresoTrackingRow["events"]) : [],
+    events: Array.isArray(raw.events) ? (raw.events as ShipmentTrackingRow["events"]) : [],
     checked_at: row.checked_at,
   };
 }
 
-export async function listCargoExpresoTracking(
+export async function listShipmentTracking(
   storeId: number,
+  courierCode: ShipmentCourierCode,
   opts: { since?: string | null } = {}
-): Promise<CargoExpresoTrackingRow[]> {
+): Promise<ShipmentTrackingRow[]> {
   const pageSize = 1000;
-  const all: CargoExpresoTrackingRow[] = [];
+  const all: ShipmentTrackingRow[] = [];
   for (let from = 0; from < 50000; from += pageSize) {
     let query = getDB()
       .from("courier_shipments")
       .select(COURIER_SHIPMENT_COLUMNS)
       .eq("store_id", storeId)
-      .eq("courier_code", CARGO_EXPRESO)
+      .eq("courier_code", courierCode)
       .order("checked_at", { ascending: false })
       .range(from, from + pageSize - 1);
     if (opts.since) query = query.gt("checked_at", opts.since);
     const { data, error } = await query;
-    if (error) throw new Error(`listCargoExpresoTracking: ${error.message}`);
+    if (error) throw new Error(`listShipmentTracking(${courierCode}): ${error.message}`);
     const page = (data ?? []) as CourierShipmentTrackingRow[];
-    all.push(...page.map(toCargoExpresoTrackingRow));
+    all.push(...page.map(toShipmentTrackingRow));
     if (page.length < pageSize) break;
   }
   return all;
 }
 
-export async function getCargoExpresoTrackingByGuide(
+export async function getShipmentTrackingByGuide(
   storeId: number,
+  courierCode: ShipmentCourierCode,
   guideNumber: string
-): Promise<CargoExpresoTrackingRow | null> {
+): Promise<ShipmentTrackingRow | null> {
   if (!guideNumber) return null;
   const { data, error } = await getDB()
     .from("courier_shipments")
     .select(COURIER_SHIPMENT_COLUMNS)
     .eq("store_id", storeId)
-    .eq("courier_code", CARGO_EXPRESO)
+    .eq("courier_code", courierCode)
     .eq("guide_number", guideNumber)
     .limit(1);
-  if (error) throw new Error(`getCargoExpresoTrackingByGuide: ${error.message}`);
+  if (error) throw new Error(`getShipmentTrackingByGuide(${courierCode}): ${error.message}`);
   const row = ((data ?? []) as CourierShipmentTrackingRow[])[0];
-  return row ? toCargoExpresoTrackingRow(row) : null;
+  return row ? toShipmentTrackingRow(row) : null;
 }
 
-export async function upsertCargoExpresoTracking(rows: CargoExpresoTracking[], storeId: number): Promise<void> {
+export async function upsertShipmentTracking(
+  rows: ShipmentTracking[],
+  storeId: number,
+  courierCode: ShipmentCourierCode
+): Promise<void> {
   if (!rows.length) return;
   const now = new Date().toISOString();
   const payload = rows.map((t) => ({
     store_id: storeId,
-    courier_code: CARGO_EXPRESO,
+    courier_code: courierCode,
     guide_number: t.guideNumber,
     normalized_status: t.latestGroup,
     raw_status: t.latestStatus,
@@ -1927,19 +1946,21 @@ export async function upsertCargoExpresoTracking(rows: CargoExpresoTracking[], s
   const { error } = await getDB()
     .from("courier_shipments")
     .upsert(payload, { onConflict: "store_id,courier_code,guide_number" });
-  if (error) throw new Error(`upsertCargoExpresoTracking: ${error.message}`);
+  if (error) throw new Error(`upsertShipmentTracking(${courierCode}): ${error.message}`);
 }
 
 /**
- * Guias de Cargo Expreso a consultar: las de pedidos no cancelados de los
- * ultimos `discoveryDays` dias, sin las ya entregadas o devueltas ni las leidas
- * hace menos de `freshWindowMinutes`. Primero las nunca leidas, despues la que
- * lleva mas tiempo sin leerse.
+ * Guias del courier a consultar: las de pedidos no cancelados de los ultimos
+ * `discoveryDays` dias, sin las ya entregadas o devueltas ni las leidas hace
+ * menos de `freshWindowMinutes`. Primero las nunca leidas, despues la que lleva
+ * mas tiempo sin leerse.
  */
-export async function listCargoExpresoSyncCandidates(
+export async function listShipmentSyncCandidates(
   storeId: number,
+  courierCode: ShipmentCourierCode,
   opts: { limit: number; freshWindowMinutes: number; discoveryDays: number }
 ): Promise<string[]> {
+  const { pattern, normalize, isGuide } = SHIPMENT_GUIDES[courierCode];
   const pageSize = 1000;
   const since = new Date(Date.now() - opts.discoveryDays * 86_400_000).toISOString();
   const guides = new Set<string>();
@@ -1948,23 +1969,23 @@ export async function listCargoExpresoSyncCandidates(
       .from("shopify_orders")
       .select("tracking_number")
       .eq("store_id", storeId)
-      .ilike("tracking_number", "BH%")
+      .ilike("tracking_number", pattern)
       .is("cancelled_at", null)
       .gte("shopify_created_at", since)
       .order("id")
       .range(from, from + pageSize - 1);
-    if (error) throw new Error(`listCargoExpresoSyncCandidates(shopify_orders): ${error.message}`);
+    if (error) throw new Error(`listShipmentSyncCandidates(${courierCode}): ${error.message}`);
     const page = (data ?? []) as Array<{ tracking_number: string | null }>;
     for (const row of page) {
-      const guide = normalizeCargoExpresoGuide(row.tracking_number);
-      if (isCargoExpresoGuide(guide)) guides.add(guide);
+      const guide = normalize(row.tracking_number);
+      if (isGuide(guide)) guides.add(guide);
     }
     if (page.length < pageSize) break;
   }
   if (!guides.size) return [];
 
   const leidas = new Map<string, { group: string; checkedAt: number }>();
-  for (const row of await listCargoExpresoTracking(storeId)) {
+  for (const row of await listShipmentTracking(storeId, courierCode)) {
     const at = Date.parse(row.checked_at);
     leidas.set(row.guide_number, { group: row.latest_group, checkedAt: Number.isNaN(at) ? 0 : at });
   }

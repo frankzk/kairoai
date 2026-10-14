@@ -38,6 +38,7 @@ export const CRON_JOBS: CronJob[] = [
   { name: "moovin", label: "Tracking Moovin", everyMinutes: 60 },
   { name: "forza", label: "Tracking Forza (Honduras)", everyMinutes: 60 },
   { name: "cargo-expreso", label: "Tracking Cargo Expreso (Honduras)", everyMinutes: 60 },
+  { name: "c807", label: "Tracking c807 Xpress (Honduras)", everyMinutes: 60 },
   { name: "wyn", label: "Tracking WYN", everyMinutes: 30 },
   // Agente de voz Retell: sin llamadas desde el 25/08 y nunca programado.
   { name: "retries", label: "Reintentos del agente de voz", everyMinutes: null },

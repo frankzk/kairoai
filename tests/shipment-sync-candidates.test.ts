@@ -1,4 +1,4 @@
-// Que guias de Cargo Expreso consulta cada corrida del cron.
+// Que guias consulta cada corrida de los crons de Cargo Expreso y c807 Xpress.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,7 +29,7 @@ vi.mock("@/lib/db", () => ({
   getDB: () => ({ from: (table: string) => fakeQuery(table) }),
 }));
 
-import { listCargoExpresoSyncCandidates } from "@/lib/finance";
+import { listShipmentSyncCandidates } from "@/lib/finance";
 
 const haceMin = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
 
@@ -49,7 +49,7 @@ function leida(guide: string, min: number, group = "in_progress") {
 
 const OPTS = { limit: 10, freshWindowMinutes: 45, discoveryDays: 90 };
 
-describe("listCargoExpresoSyncCandidates", () => {
+describe("listShipmentSyncCandidates", () => {
   beforeEach(() => {
     tables.shopify_orders = [];
     tables.courier_shipments = [];
@@ -58,7 +58,7 @@ describe("listCargoExpresoSyncCandidates", () => {
   it("primero las nunca leidas, despues la que lleva mas tiempo sin leerse", async () => {
     tables.shopify_orders = ["BH000000001-1", "BH000000002-1", "BH000000003-1"].map((tracking_number) => ({ tracking_number }));
     tables.courier_shipments = [leida("BH000000001-1", 60), leida("BH000000002-1", 300)];
-    expect(await listCargoExpresoSyncCandidates(2, OPTS)).toEqual(["BH000000003-1", "BH000000002-1", "BH000000001-1"]);
+    expect(await listShipmentSyncCandidates(2, "cargoexpreso", OPTS)).toEqual(["BH000000003-1", "BH000000002-1", "BH000000001-1"]);
   });
 
   it("no relee las entregadas, las devueltas ni las leidas hace poco", async () => {
@@ -69,12 +69,22 @@ describe("listCargoExpresoSyncCandidates", () => {
       leida("BH000000003-1", 10, "failed"),
       leida("BH000000004-1", 600, "failed"),
     ];
-    expect(await listCargoExpresoSyncCandidates(2, OPTS)).toEqual(["BH000000004-1"]);
+    expect(await listShipmentSyncCandidates(2, "cargoexpreso", OPTS)).toEqual(["BH000000004-1"]);
   });
 
   it("ignora guias que no son de Cargo Expreso y respeta el tope", async () => {
     tables.shopify_orders = [{ tracking_number: "BH-sin-numero" }, { tracking_number: " bh000000005-1 " }, { tracking_number: "BH000000006-1" }];
-    expect(await listCargoExpresoSyncCandidates(2, { ...OPTS, limit: 1 })).toHaveLength(1);
-    expect(await listCargoExpresoSyncCandidates(2, OPTS)).toEqual(expect.arrayContaining(["BH000000005-1", "BH000000006-1"]));
+    expect(await listShipmentSyncCandidates(2, "cargoexpreso", { ...OPTS, limit: 1 })).toHaveLength(1);
+    expect(await listShipmentSyncCandidates(2, "cargoexpreso", OPTS)).toEqual(expect.arrayContaining(["BH000000005-1", "BH000000006-1"]));
+  });
+
+  it("c807 toma sus guias (cuenta-cliente-fecha) y no las de Cargo Expreso", async () => {
+    tables.shopify_orders = [
+      { tracking_number: "6595-13968-20260928110658" },
+      { tracking_number: "BH000000001-1" },
+      { tracking_number: "FD43326843" },
+    ];
+    expect(await listShipmentSyncCandidates(2, "c807", OPTS)).toEqual(["6595-13968-20260928110658"]);
+    expect(await listShipmentSyncCandidates(2, "cargoexpreso", OPTS)).toEqual(["BH000000001-1"]);
   });
 });

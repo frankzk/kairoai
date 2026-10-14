@@ -12,7 +12,7 @@ import path from "node:path";
 import { applyDetection, cargoExpresoCategory, detectCargoExpresoIncident } from "../lib/incidents-detect";
 import { courierYaNoReintenta, diasSinEntregaDe, esDiaSinEntrega } from "../lib/incidents-reprog";
 import { INCIDENT_SOURCES, type Incident } from "../lib/incidents-types";
-import type { CargoExpresoTrackingRow } from "../lib/finance-types";
+import type { ShipmentTrackingRow } from "../lib/finance-types";
 import type { ShopifyOrderSummary } from "../lib/finance-orders";
 
 const ROOT = path.resolve(__dirname, "..");
@@ -20,7 +20,7 @@ const NOW = "2026-10-13T18:00:00.000Z";
 const DIA = 86_400_000;
 const hace = (dias: number) => new Date(Date.parse(NOW) - dias * DIA).toISOString();
 
-function caex(over: Partial<CargoExpresoTrackingRow> = {}): CargoExpresoTrackingRow {
+function caex(over: Partial<ShipmentTrackingRow> = {}): ShipmentTrackingRow {
   return {
     store_id: 2,
     guide_number: "BH000000001-1",
@@ -206,7 +206,7 @@ describe("Cargo Expreso esta conectado de punta a punta", () => {
 
   it("la corrida de deteccion recorre el rastreo de Cargo Expreso", () => {
     const src = readFileSync(path.join(ROOT, "lib/incidents-run.ts"), "utf8");
-    expect(src).toContain("listCargoExpresoTracking(");
+    expect(src).toContain('listShipmentTracking(store.id, "cargoexpreso"');
     expect(src).toContain("detectCargoExpresoIncident(");
     expect(src).toContain("`cargoexpreso:${store.id}`");
   });

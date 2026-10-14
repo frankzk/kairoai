@@ -14,6 +14,10 @@
       "schedule": "40 * * * *"
     },
     {
+      "path": "/api/cron/c807",
+      "schedule": "50 * * * *"
+    },
+    {
       "path": "/api/cron/wyn",
       "schedule": "20,50 * * * *"
     },
@@ -81,6 +85,9 @@
       "maxDuration": 300
     },
     "app/api/cron/cargo-expreso/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/c807/route.ts": {
       "maxDuration": 300
     },
     "app/api/cron/wyn/route.ts": {
