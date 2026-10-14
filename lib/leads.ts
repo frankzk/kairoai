@@ -3,7 +3,8 @@
 // que el resto de APIs del repo; no hay RLS todavia.
 
 import { getDB } from "./db";
-import { statusBoardStage, statusCategory, statusesForBoard, type BoardStage } from "./leads-classify";
+import { PURCHASE_PROOF_STATUSES, statusBoardStage, statusCategory, statusesForBoard, type BoardStage } from "./leads-classify";
+import { elegirPedidosParecidos, type CandidatoPedido } from "./leads-pedido-parecido";
 import type { ChatLeadSummary, LeadCategory, LeadStateSnapshot, StatusSource } from "./leads-types";
 import {
   decidirDeshacer,
@@ -953,6 +954,50 @@ export async function matchLeadsToShopifyOrders(storeId: number): Promise<number
   });
   if (error) throw new Error(`matchLeadsToShopifyOrders: ${error.message}`);
   return typeof data === "number" ? data : Number(data ?? 0);
+}
+
+/**
+ * Segunda pasada del cruce: leads que compraron con un telefono CASI igual
+ * (un digito distinto) o con otro numero pero el mismo nombre completo y el
+ * mismo producto. La base propone candidatos (RPC leads_order_candidates_near)
+ * y lib/leads-pedido-parecido decide. Como el cruce exacto, la compra gana
+ * sobre los estados manuales salvo los protegidos. Devuelve cuantos movio.
+ */
+export async function matchLeadsToNearbyOrders(storeId: number): Promise<number> {
+  const { data, error } = await getDB().rpc("leads_order_candidates_near", { p_store_id: storeId, p_days: 45 });
+  if (error) throw new Error(`matchLeadsToNearbyOrders: ${error.message}`);
+  const elegidos = elegirPedidosParecidos((data ?? []) as CandidatoPedido[]);
+
+  let movidos = 0;
+  for (const e of elegidos) {
+    const { data: filas, error: updErr } = await getDB()
+      .from("leads")
+      .update({
+        category: "won",
+        status: "pedido_generado",
+        has_order: true,
+        shopify_order_name: e.orderName,
+        auto_reason: e.motivo,
+      })
+      .eq("store_id", storeId)
+      .eq("id", e.leadId)
+      // Solo si nadie lo marco entretanto, y nunca un estado protegido.
+      .eq("has_order", false)
+      .not("status", "in", `(${PURCHASE_PROOF_STATUSES.join(",")})`)
+      .select("id");
+    if (updErr) throw new Error(`matchLeadsToNearbyOrders: ${updErr.message}`);
+    if (!filas?.length) continue;
+    movidos++;
+    await insertLeadCall({
+      lead_id: e.leadId,
+      store_id: storeId,
+      vendedora: null,
+      kind: "system",
+      new_status: "pedido_generado",
+      note: e.motivo,
+    });
+  }
+  return movidos;
 }
 
 // ─── Historial de gestiones de un lead (timeline del drawer) ─────────────────

@@ -69,7 +69,11 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
       address1: [body?.shipping?.address, body?.shipping?.reference].filter(Boolean).join(" - ") || undefined,
       city: body?.shipping?.canton || undefined,
       province: body?.shipping?.province || undefined,
-      country: "Costa Rica",
+      // El pais de la TIENDA. Estaba fijo en "Costa Rica" y los pedidos de
+      // Honduras creados desde el tablero salian con ese pais (44 hasta el
+      // 12/10/2026).
+      country: store.shortLabel,
+      country_code: store.countryCode,
       phone: lead.phone,
     };
 

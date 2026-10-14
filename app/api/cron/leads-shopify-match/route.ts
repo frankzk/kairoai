@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { listConfiguredIcomflyStoreContexts } from "@/lib/icomfly";
-import { matchLeadsToShopifyOrders } from "@/lib/leads";
+import { matchLeadsToNearbyOrders, matchLeadsToShopifyOrders } from "@/lib/leads";
 import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
@@ -12,13 +12,21 @@ export const maxDuration = 60;
 // de Shopify y mueve a Ganados los que ya compraron. Todo el match ocurre en
 // el servidor via RPC (una sola sentencia con indice), sin cargar ordenes en
 // memoria de la app. Publico, como los demas crons.
+//
+// Despues, una segunda pasada para quien compro con un telefono casi igual
+// (un digito mal escrito en el formulario) o con otro numero pero el mismo
+// nombre completo y producto: ver lib/leads-pedido-parecido.ts.
 async function handle() {
   try {
     const targets = listConfiguredIcomflyStoreContexts();
     const results = await Promise.all(
       targets.map((target) =>
         matchLeadsToShopifyOrders(target.store.id)
-          .then((moved) => ({ store: target.store.code, moved }))
+          .then(async (moved) => ({
+            store: target.store.code,
+            moved,
+            parecidos: await matchLeadsToNearbyOrders(target.store.id),
+          }))
           .catch((err) => ({
             store: target.store.code,
             error: err instanceof Error ? err.message : String(err),
