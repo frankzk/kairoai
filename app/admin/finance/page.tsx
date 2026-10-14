@@ -70,6 +70,18 @@ import {
   type WynTrackingResult,
 } from "@/lib/wyn";
 import {
+  SHIPMENT_COURIER_LABELS,
+  buildShipmentTrackingUrl,
+  detectShipmentCourier,
+  normalizeShipmentGuide,
+  resolveShipmentCourier,
+  shipmentGroupToStatus,
+  type ShipmentCourierCode,
+} from "@/lib/shipment-couriers";
+import type { ShipmentTracking } from "@/lib/courier-tracking";
+import type { OrderOpenIncident } from "@/lib/order-open-incident";
+import { INCIDENT_CATEGORY_LABELS, INCIDENT_STATUS_LABELS, type IncidentStatus } from "@/lib/incidents-types";
+import {
   FINANCE_STORES,
   getCurrencySymbol,
   getFinanceStore,
@@ -177,6 +189,12 @@ interface TrackableOrderRow {
   forza_incidents?: number;
   wyn_group?: string;
   wyn_incidents?: number;
+  // Cargo Expreso / c807: ultimo rastreo guardado (ver lib/finance-orders.ts).
+  shipment_courier?: ShipmentCourierCode;
+  shipment_group?: string;
+  shipment_incidents?: number;
+  shipment_status?: string;
+  shipment_at?: string | null;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -338,8 +356,12 @@ const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
 // --- Tabla de pedidos server-side (Carril 2 inc.2) -------------------------
 // Las filas que devuelve /api/finance/orders ya traen las trazas de liquidacion
 // resueltas server-side, asi la tabla no necesita el settlementTraceByKey en
-// memoria.
-type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[] };
+// memoria. open_incident es la novedad abierta del pedido (leida fresca en cada
+// pagina; ausente si la lectura fallo).
+type OrderRowWithTraces = TrackableOrderRow & {
+  traces: SettlementTrace[];
+  open_incident?: OrderOpenIncident | null;
+};
 
 const ORDERS_PAGE_SIZE = 100;
 
@@ -2009,19 +2031,34 @@ function OrdersTab({
         const moovin = row.guide_number ? moovinByPackage.get(row.guide_number) : undefined;
         const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
         const wyn = isWynCourier(row.courier, row.guide_number);
+        const shipment = Boolean(resolveShipmentCourier(row.courier, row.guide_number));
+        const novedad = row.open_incident;
         return {
           Orden: row.order_name || row.shopify_order_name,
           Origen: row.source,
           Guia: row.guide_number,
           Transportadora: normalizeOperationalCourier(row.courier, selectedStore, row.guide_number),
-          "Estado courier": wyn ? getWynGroupLabel(row.wyn_group) : moovin?.latest_status ?? forza?.latest_status ?? "",
+          "Estado courier": wyn
+            ? getWynGroupLabel(row.wyn_group)
+            : shipment
+              ? row.shipment_status ?? ""
+              : moovin?.latest_status ?? forza?.latest_status ?? "",
           "Incidencia courier": wyn
             ? (row.wyn_incidents ?? 0) > 0
               ? "si"
               : ""
-            : moovin?.has_incident || forza?.has_incident
-              ? "si"
-              : "",
+            : shipment
+              ? row.shipment_group === "failed"
+                ? "si"
+                : ""
+              : moovin?.has_incident || forza?.has_incident
+                ? "si"
+                : "",
+          Novedad: novedad
+            ? `${INCIDENT_CATEGORY_LABELS[novedad.category] ?? novedad.category} · ${
+                INCIDENT_STATUS_LABELS[novedad.status] ?? novedad.status
+              }`
+            : "",
           Cliente: row.customer_name,
           Apellido: row.last_name ?? "",
           Celular: row.phone ?? "",
@@ -2517,6 +2554,12 @@ function OrdersTable({
   // Pedido abierto en el drawer de gestion. Se abre con lo que la fila ya
   // tiene; el detalle pesado lo carga el propio drawer.
   const [openOrder, setOpenOrder] = useState<OrderDrawerTarget | null>(null);
+  // "Ver en Novedades" solo para quien puede abrirla; el servidor lo impone igual.
+  const [verNovedades, setVerNovedades] = useState(false);
+  useEffect(() => {
+    const yo = leerYo();
+    setVerNovedades(!yo || tienePermiso(yo, "novedades"));
+  }, []);
   const openDrawer = (row: OrderRowWithTraces) =>
     setOpenOrder({
       order_name: row.order_name || row.shopify_order_name || "",
@@ -2550,6 +2593,7 @@ function OrdersTable({
           const trackingStatus = mergeDispatchIntoTracking(getEffectiveTrackingStatus(row, traces), row.dispatch_view ?? null, row);
           const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
           const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
+          const shipmentCourier = resolveShipmentCourier(displayCourier, row.guide_number);
           const itemsText = (row.package_items ?? []).map((item) => item.title).join(", ");
           return (
             <div key={row.row_key} className="rounded-lg border border-border bg-card p-3">
@@ -2570,6 +2614,7 @@ function OrdersTable({
                 <div className="flex flex-col items-end gap-0.5">
                   <StatusBadge status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
                   <DispatchWho row={row} status={trackingStatus} />
+                  {row.open_incident && <OpenIncidentChip incident={row.open_incident} linkable={verNovedades} />}
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
@@ -2594,6 +2639,14 @@ function OrdersTable({
                     )}
                     {!isWynCourier(displayCourier, row.guide_number) && isForzaCourier(displayCourier, selectedStore) && (
                       <ForzaTrackingButton guide={row.guide_number} cached={forza} />
+                    )}
+                    {shipmentCourier && (
+                      <ShipmentTrackingButton
+                        courier={shipmentCourier}
+                        guide={row.guide_number}
+                        storeCode={selectedStore.code}
+                        row={row}
+                      />
                     )}
                   </>
                 ) : (
@@ -2661,6 +2714,7 @@ function OrdersTable({
             const trackingStatus = mergeDispatchIntoTracking(getEffectiveTrackingStatus(row, traces), row.dispatch_view ?? null, row);
             const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
             const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
+            const shipmentCourier = resolveShipmentCourier(displayCourier, row.guide_number);
             return (
               <tr key={row.row_key} className="border-b border-border/50">
                 <td className="px-2 py-1.5 font-mono text-xs">
@@ -2701,6 +2755,14 @@ function OrdersTable({
                       {!isWynCourier(displayCourier, row.guide_number) && isForzaCourier(displayCourier, selectedStore) && row.guide_number && (
                         <ForzaTrackingButton guide={row.guide_number} cached={forza} />
                       )}
+                      {shipmentCourier && row.guide_number && (
+                        <ShipmentTrackingButton
+                          courier={shipmentCourier}
+                          guide={row.guide_number}
+                          storeCode={selectedStore.code}
+                          row={row}
+                        />
+                      )}
                     </div>
                   ) : (
                     "-"
@@ -2734,6 +2796,7 @@ function OrdersTable({
                       label={getTrackingStatusLabel(row, traces, trackingStatus)}
                     />
                     <DispatchWho row={row} status={trackingStatus} />
+                    {row.open_incident && <OpenIncidentChip incident={row.open_incident} linkable={verNovedades} />}
                   </div>
                 </td>
                 <td className="px-2 py-1.5">
@@ -2793,7 +2856,9 @@ function isMoovinCourier(courier: string | undefined, store?: FinanceStorePublic
 }
 
 function isForzaCourier(courier: string | undefined, store?: FinanceStorePublic): boolean {
-  if (store?.logisticsProvider === "forza") return Boolean(String(courier ?? "").trim());
+  if (store?.logisticsProvider === "forza") {
+    return Boolean(String(courier ?? "").trim()) && !resolveShipmentCourier(courier);
+  }
   return String(courier ?? "").toLowerCase().includes("forza");
 }
 
@@ -2839,6 +2904,10 @@ function normalizeOperationalCourier(
   guide?: string
 ): string {
   if (isWynGuide(String(guide ?? ""))) return "WYN";
+  // Cargo Expreso y c807 se reconocen por la guia (Shopify los rotula
+  // "Transportadora", que en Honduras se leia como Forza).
+  const shipmentCourier = resolveShipmentCourier(rawCompany, guide);
+  if (shipmentCourier) return SHIPMENT_COURIER_LABELS[shipmentCourier];
   const company = String(rawCompany ?? "").trim();
   if (company) return normalizeShopifyCourier(company, store);
   return guide ? getDefaultCourierForStore(store) : "";
@@ -2854,6 +2923,8 @@ function normalizeGuideForStore(guide: string | undefined, store: FinanceStorePu
   const trimmed = String(guide ?? "").trim();
   if (!trimmed) return "";
   if (isWynGuide(trimmed)) return normalizeWynGuide(trimmed);
+  const shipmentCourier = detectShipmentCourier(trimmed);
+  if (shipmentCourier) return normalizeShipmentGuide(shipmentCourier, trimmed);
   return store.logisticsProvider === "forza" ? normalizeForzaGuide(trimmed) : trimmed;
 }
 
@@ -3361,6 +3432,303 @@ function ForzaTrackingButton({
 function buildForzaTrackingUrl(guide: string): string {
   const normalized = normalizeForzaGuide(guide);
   return `https://rastreo.forzadelivery.com/${encodeURIComponent(normalized || guide)}`;
+}
+
+function shipmentGroupClass(group: string | undefined): string {
+  if (group === "delivered") return "text-emerald-300";
+  if (group === "failed" || group === "returned") return "text-red-300";
+  return "text-cyan-300";
+}
+
+/** "hace 11 d" desde el ultimo movimiento; vacio si fue hoy o la fecha no sirve. */
+function daysSinceLabel(iso: string | null | undefined): string {
+  const t = Date.parse(String(iso ?? ""));
+  if (Number.isNaN(t)) return "";
+  const days = Math.floor((Date.now() - t) / 86_400_000);
+  return days >= 1 ? `hace ${days} d` : "";
+}
+
+// Cargo Expreso / c807: como Moovin en Costa Rica, el ultimo estado se ve en la
+// celda y el historial completo se abre en Kairo, sin ir a la pagina del courier.
+function ShipmentTrackingButton({
+  courier,
+  guide,
+  storeCode,
+  row,
+}: {
+  courier: ShipmentCourierCode;
+  guide: string;
+  storeCode: FinanceStoreCode;
+  row: Pick<TrackableOrderRow, "shipment_group" | "shipment_status" | "shipment_at">;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = SHIPMENT_COURIER_LABELS[courier];
+  const final = row.shipment_group === "delivered" || row.shipment_group === "returned";
+  const sinceLabel = final ? "" : daysSinceLabel(row.shipment_at);
+
+  return (
+    <>
+      {row.shipment_status ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title={`Ver seguimiento ${label}`}
+          className="flex max-w-[180px] flex-col items-start text-left"
+        >
+          <span className={`text-[10px] font-medium ${shipmentGroupClass(row.shipment_group)}`}>
+            {row.shipment_group === "failed" ? "⚠ " : ""}
+            {row.shipment_status}
+          </span>
+          {row.shipment_at && (
+            <span className="text-[9px] text-muted-foreground">
+              {formatCourierDate(row.shipment_at, "es-HN")}
+              {sinceLabel ? ` · ${sinceLabel}` : ""}
+            </span>
+          )}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title={`Ver seguimiento ${label}`}
+          className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:border-primary/50"
+        >
+          <Search className="h-3 w-3" /> estado
+        </button>
+      )}
+      {open && (
+        <ShipmentTrackingModal courier={courier} guide={guide} storeCode={storeCode} onClose={() => setOpen(false)} />
+      )}
+    </>
+  );
+}
+
+// Respuesta de /api/finance/shipment-tracking: en vivo, o el historial guardado
+// cuando el courier no contesta (cached + cachedAt).
+type ShipmentTrackingResponse = ShipmentTracking & {
+  ok?: boolean;
+  error?: string;
+  cached?: boolean;
+  cachedAt?: string | null;
+};
+
+function ShipmentTrackingModal({
+  courier,
+  guide,
+  storeCode,
+  onClose,
+}: {
+  courier: ShipmentCourierCode;
+  guide: string;
+  storeCode: FinanceStoreCode;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [data, setData] = useState<ShipmentTrackingResponse | null>(null);
+  const [copied, setCopied] = useState(false);
+  const label = SHIPMENT_COURIER_LABELS[courier];
+  const officialUrl = buildShipmentTrackingUrl(courier, guide);
+
+  useEffect(() => {
+    let cancelled = false;
+    const params = new URLSearchParams({ store: storeCode, guide });
+    fetch(`/api/finance/shipment-tracking?${params.toString()}`, { cache: "no-store" })
+      .then(async (res) => {
+        const json = (await res.json()) as ShipmentTrackingResponse;
+        if (!res.ok || json.error || json.ok === false) {
+          throw new Error(json.error || `${label} no devolvio datos para esta guia.`);
+        }
+        return json;
+      })
+      .then((json) => {
+        if (!cancelled) setData(json);
+      })
+      .catch((requestError: unknown) => {
+        if (!cancelled) {
+          setError(requestError instanceof Error ? requestError.message : `No se pudo consultar ${label}.`);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [guide, storeCode, label]);
+
+  async function copyGuide() {
+    try {
+      await navigator.clipboard.writeText(guide);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Sin permiso de portapapeles: la guia queda visible para copiarla a mano.
+    }
+  }
+
+  const officialLink = (
+    <a
+      href={officialUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex text-[11px] text-primary hover:underline"
+      title={courier === "cargoexpreso" ? "Su pagina pide la guia: copiala con el boton de arriba" : undefined}
+    >
+      Abrir rastreo oficial de {label}
+    </a>
+  );
+
+  return (
+    <ModalOverlay onClose={onClose} labelledBy="shipment-tracking-title">
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 id="shipment-tracking-title" className="text-base font-semibold">
+              Seguimiento {label}
+            </h3>
+            <p className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted-foreground">
+              Guia {guide}
+              <button
+                type="button"
+                onClick={copyGuide}
+                className="font-sans text-[11px] text-primary hover:underline"
+              >
+                {copied ? "Copiada" : "Copiar"}
+              </button>
+            </p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" aria-label="Cerrar" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center gap-2 px-1 py-6 text-sm text-muted-foreground">
+            <RefreshCw className="h-4 w-4 animate-spin" /> Consultando {label}...
+          </div>
+        ) : error ? (
+          <div className="space-y-3">
+            <p className="border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{error}</p>
+            {officialLink}
+          </div>
+        ) : (
+          <>
+            {data?.cached && (
+              <p className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                {label} no respondio ahora. Este es el historial guardado
+                {data.cachedAt ? ` el ${formatCourierDate(data.cachedAt, "es-HN")}` : ""}: puede faltar lo mas reciente.
+              </p>
+            )}
+            <div className="mb-3 border border-border bg-background p-3">
+              <p className="text-[11px] text-muted-foreground">Ultimo estado</p>
+              <p className={`mt-0.5 text-sm font-semibold ${shipmentGroupClass(data?.latestGroup)}`}>
+                {data?.latestGroup === "failed" ? "⚠ " : ""}
+                {data?.latestStatus || "Sin estado"}
+              </p>
+              {data?.incidentReason && data.incidentReason !== data.latestStatus && (
+                <p className="mt-1 text-[11px] text-muted-foreground">{data.incidentReason}</p>
+              )}
+              {data?.latestAt && (
+                <p className="text-[11px] text-muted-foreground">
+                  {formatCourierDate(data.latestAt, "es-HN")}
+                  {data.latestGroup !== "delivered" && data.latestGroup !== "returned" && daysSinceLabel(data.latestAt)
+                    ? ` · ${daysSinceLabel(data.latestAt)}`
+                    : ""}
+                </p>
+              )}
+              {data?.deliveryAddress && (
+                <p className="mt-1 text-[11px] text-muted-foreground">Entrega: {data.deliveryAddress}</p>
+              )}
+              {data?.receiverName && (
+                <p className="text-[11px] text-muted-foreground">Recibio: {data.receiverName}</p>
+              )}
+              <div className="mt-2">{officialLink}</div>
+            </div>
+            <div className="min-h-0 flex-1 space-y-2 overflow-auto">
+              {(data?.events ?? []).map((event, index) => (
+                <div key={`${event.code}-${event.date}-${index}`} className="flex gap-2">
+                  <span
+                    className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                      event.group === "delivered"
+                        ? "bg-emerald-400"
+                        : event.group === "failed" || event.group === "returned"
+                          ? "bg-red-400"
+                          : event.group === "pending"
+                            ? "bg-muted-foreground"
+                            : "bg-cyan-400"
+                    }`}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span className="text-xs font-medium">{event.title}</span>
+                      {event.date && (
+                        <span className="text-[10px] text-muted-foreground">{formatCourierDate(event.date, "es-HN")}</span>
+                      )}
+                    </div>
+                    {event.description && !event.title.includes(event.description) && (
+                      <p className="text-[11px] text-muted-foreground">{event.description}</p>
+                    )}
+                    {event.note && !event.title.includes(event.note) && (
+                      <p className="text-[11px] text-amber-200">{event.note}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {!data?.events?.length && <p className="text-sm text-muted-foreground">Sin eventos de seguimiento.</p>}
+            </div>
+          </>
+        )}
+      </div>
+    </ModalOverlay>
+  );
+}
+
+// Mismos tonos que los estados en Novedades (STATUS_COLOR de
+// app/admin/incidencias/page.tsx).
+const OPEN_INCIDENT_TONE: Record<IncidentStatus, string> = {
+  pendiente: "bg-sky-500/15 text-sky-400",
+  reprogramada: "bg-cyan-500/15 text-cyan-400",
+  reprog_fallida: "bg-orange-500/15 text-orange-400",
+  sin_contestar: "bg-amber-500/15 text-amber-400",
+  no_llamar: "bg-rose-500/15 text-rose-400",
+  resuelta: "bg-emerald-500/15 text-emerald-400",
+  perdida: "bg-slate-500/15 text-slate-300",
+  descartada: "bg-zinc-500/15 text-zinc-300",
+};
+
+// Novedad abierta del pedido: causa y estado de gestion, con enlace a Novedades
+// (filtrada por la guia) para quien puede abrirla.
+function OpenIncidentChip({ incident, linkable }: { incident: OrderOpenIncident; linkable: boolean }) {
+  const category = INCIDENT_CATEGORY_LABELS[incident.category] ?? incident.category;
+  const reprogDay =
+    incident.status === "reprogramada" && incident.reprogramada_para
+      ? incident.reprogramada_para.slice(0, 10).split("-").reverse().slice(0, 2).join("/")
+      : "";
+  const status = `${INCIDENT_STATUS_LABELS[incident.status] ?? incident.status}${reprogDay ? ` para el ${reprogDay}` : ""}`;
+  const title = [`Novedad: ${category}`, status, incident.detail].filter(Boolean).join(" · ");
+  const chip = (
+    <span
+      className={`inline-flex max-w-[170px] flex-col items-start rounded-md px-1.5 py-0.5 text-left text-[10px] leading-tight ${
+        OPEN_INCIDENT_TONE[incident.status] ?? "bg-muted text-muted-foreground"
+      }`}
+    >
+      <span className="max-w-full truncate font-medium">Novedad: {category}</span>
+      <span className="max-w-full truncate opacity-80">{status}</span>
+    </span>
+  );
+  if (!linkable) return <span title={title}>{chip}</span>;
+  return (
+    <a
+      href={`/admin/incidencias?q=${encodeURIComponent(incident.guide_number || incident.order_name)}`}
+      target="_blank"
+      rel="noreferrer"
+      title={`${title} — ver en Novedades`}
+      className="hover:opacity-80"
+    >
+      {chip}
+    </a>
+  );
 }
 
 function formatCourierDate(value: string, locale: string): string {
@@ -9999,7 +10367,7 @@ function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {
 // ahora vive en /api/finance/orders; la tabla pagina server-side.
 
 function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "wyn_group" | "wyn_incidents" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "guide_number">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "wyn_group" | "wyn_incidents" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "shipment_group" | "shipment_incidents" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
   // Una liquidacion cerrada es un hecho TERMINAL: si hay una traza con estado
@@ -10012,6 +10380,7 @@ function getEffectiveTrackingStatus(
   const rawCourierStatus =
     wynGroupToStatus(row.wyn_group) ||
     moovinGroupToStatus(row.moovin_group) ||
+    shipmentGroupToStatus(row.shipment_group) ||
     forzaGroupToStatus(row.forza_group);
   if (settledFinalStatus && rawCourierStatus && !isFinalTrackingStatus(rawCourierStatus)) {
     return settledFinalStatus;
@@ -10038,6 +10407,15 @@ function getEffectiveTrackingStatus(
       return moovinStatus === "en_route" ? "en_route_retry" : "incident";
     }
     return moovinStatus;
+  }
+
+  // Cargo Expreso / c807: mismo criterio que el servidor (lib/finance-orders.ts).
+  const shipmentStatus = shipmentGroupToStatus(row.shipment_group);
+  if (shipmentStatus) {
+    if ((row.shipment_incidents ?? 0) >= 1 && !isFinalTrackingStatus(shipmentStatus)) {
+      return shipmentStatus === "en_route" ? "en_route_retry" : "incident";
+    }
+    return shipmentStatus;
   }
 
   const forzaStatus = forzaGroupToStatus(row.forza_group);
@@ -10124,7 +10502,7 @@ function classifyIncident(
 }
 
 function getTrackingStatusLabel(
-  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "wyn_incidents" | "moovin_incidents" | "moovin_route_attempts" | "forza_incidents">,
+  row: Pick<TrackableOrderRow, "internal_status" | "boxful_status" | "wyn_incidents" | "moovin_incidents" | "moovin_route_attempts" | "forza_incidents" | "shipment_incidents">,
   traces: SettlementTrace[],
   status: string
 ): string {
@@ -10141,7 +10519,7 @@ function getTrackingStatusLabel(
   if (status === "not_delivered" || status === "returned") return "No entregado";
   if (status === "en_route") return row.boxful_status || "En ruta";
   if (status === "en_route_retry") {
-    const retries = Math.max(row.wyn_incidents ?? 0, row.moovin_incidents ?? 0, row.forza_incidents ?? 0, 1);
+    const retries = Math.max(row.wyn_incidents ?? 0, row.moovin_incidents ?? 0, row.forza_incidents ?? 0, row.shipment_incidents ?? 0, 1);
     return retries > 1 ? `Reintento (${retries})` : "Reintento";
   }
   if (status === "incident")

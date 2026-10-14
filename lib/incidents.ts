@@ -4,7 +4,8 @@ import { applyDetection, buildIncidentKey } from "@/lib/incidents-detect";
 import { buildTrend } from "@/lib/incidents-trend";
 
 export * from "./incidents-types";
-import { INCIDENT_CATEGORIES, INCIDENT_STATUSES } from "./incidents-types";
+import { INCIDENT_CATEGORIES, INCIDENT_STATUSES, TERMINAL_STATUSES } from "./incidents-types";
+import type { OrderOpenIncident } from "./order-open-incident";
 import type {
   DetectedIncident,
   Incident,
@@ -504,6 +505,26 @@ export async function listIncidentsByKey(storeId: number): Promise<Map<string, I
     if (page.length < pageSize) break;
   }
   return byKey;
+}
+
+/**
+ * Novedades abiertas de la tienda (sin las resueltas, perdidas ni descartadas),
+ * con lo justo para mostrarlas en la tabla de pedidos. Son unos cientos; se
+ * leen en cada pagina de pedidos para que el estado de gestion salga al dia.
+ */
+export async function listOpenIncidentSummaries(storeId: number): Promise<OrderOpenIncident[]> {
+  const db = getDB();
+  const { data, error } = await fetchAll<OrderOpenIncident>((from, to) =>
+    db
+      .from("incidents")
+      .select("id, source, status, category, detail, reprogramada_para, guide_number, order_name, updated_at")
+      .eq("store_id", storeId)
+      .not("status", "in", `(${TERMINAL_STATUSES.join(",")})`)
+      .order("id")
+      .range(from, to)
+  );
+  if (error) throw new Error(`listOpenIncidentSummaries: ${error.message}`);
+  return data;
 }
 
 // Novedades de Moovin/Forza con nombre o telefono vacio (y que no son gestion

@@ -13,7 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { pctResueltas } from "@/lib/incidents-trend";
-import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentCausaStat, type IncidentPeriodTotal, type TrackingEvent } from "@/lib/incidents-types";
+import { INCIDENT_CATEGORY_LABELS, INCIDENT_STATUS_LABELS, type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentCausaStat, type IncidentPeriodTotal, type TrackingEvent } from "@/lib/incidents-types";
 import { FINANCE_STORES, getCurrencySymbol, getFinanceStore, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
 import { exportXlsx } from "@/lib/export-xlsx";
@@ -23,26 +23,17 @@ import { courierYaNoReintenta, diasSinEntregaDe, esDiaSinEntrega, reglaReprogram
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "muted";
 
 const STATUS_META: Record<IncidentStatus, { label: string; variant: BadgeVariant }> = {
-  pendiente: { label: "Pendiente", variant: "info" },
-  reprogramada: { label: "Reprogramada", variant: "success" },
-  reprog_fallida: { label: "Reprog. fallida", variant: "destructive" },
-  sin_contestar: { label: "Sin contestar", variant: "warning" },
-  no_llamar: { label: "No llamar", variant: "destructive" },
-  resuelta: { label: "Resuelta", variant: "success" },
-  perdida: { label: "Perdida", variant: "muted" },
-  descartada: { label: "Descartada", variant: "outline" },
+  pendiente: { label: INCIDENT_STATUS_LABELS.pendiente, variant: "info" },
+  reprogramada: { label: INCIDENT_STATUS_LABELS.reprogramada, variant: "success" },
+  reprog_fallida: { label: INCIDENT_STATUS_LABELS.reprog_fallida, variant: "destructive" },
+  sin_contestar: { label: INCIDENT_STATUS_LABELS.sin_contestar, variant: "warning" },
+  no_llamar: { label: INCIDENT_STATUS_LABELS.no_llamar, variant: "destructive" },
+  resuelta: { label: INCIDENT_STATUS_LABELS.resuelta, variant: "success" },
+  perdida: { label: INCIDENT_STATUS_LABELS.perdida, variant: "muted" },
+  descartada: { label: INCIDENT_STATUS_LABELS.descartada, variant: "outline" },
 };
 
-const CATEGORY_LABELS: Record<IncidentCategory, string> = {
-  fallo_entrega: "Fallo de entrega",
-  direccion_incorrecta: "Direccion incorrecta",
-  cliente_no_responde: "Cliente no responde",
-  cliente_rechaza: "Cliente rechaza",
-  devuelto_origen: "Devuelto al origen",
-  dano_paquete: "Paquete dañado",
-  demora_entrega: "Demora en entrega",
-  otro: "Otro",
-};
+const CATEGORY_LABELS = INCIDENT_CATEGORY_LABELS;
 
 // Icono (Lucide) por causa, para el ranking del panel de causas.
 const CATEGORY_ICONS: Record<IncidentCategory, LucideIcon> = {
@@ -647,6 +638,13 @@ export default function IncidenciasPage() {
   }, [selectedStoreCode]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Enlace "Ver en Novedades" desde la tabla de pedidos: ?q=<guia> llega con la
+  // busqueda puesta. La tienda ya es la misma (se comparte en localStorage).
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("q");
+    if (q) setSearch(q);
+  }, []);
 
   // Al cambiar cualquier filtro/busqueda, vuelve a mostrar desde el inicio.
   useEffect(() => {

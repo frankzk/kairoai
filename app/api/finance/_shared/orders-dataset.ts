@@ -16,13 +16,16 @@ import {
   listPersistedShopifyOrders,
   listSettlementImports,
   listSettlementRows,
+  listShipmentTracking,
   listWynTracking,
+  type ShipmentCourierCode,
 } from "@/lib/finance";
 import { resolveDispatchState } from "@/lib/dispatch";
 import { normalizeMatchKey } from "@/lib/order-matching";
-import type { IcomflyOrderRecord } from "@/lib/finance-types";
+import type { IcomflyOrderRecord, ShipmentTrackingRow } from "@/lib/finance-types";
 import {
   buildForzaTrackingMap,
+  buildShipmentTrackingMap,
   buildWynTrackingMap,
   buildSettlementTraceMap,
   buildVisibleOrderRows,
@@ -329,20 +332,38 @@ async function writeDatasetCache(store: FinanceStorePublic, data: OrdersDataset)
   }
 }
 
+// Rastreo guardado de Cargo Expreso / c807. Solo enriquece las filas: si la
+// lectura falla, los pedidos se arman igual (sin estado de esos couriers) en vez
+// de tumbar el dataset completo.
+async function listShipmentTrackingSafe(
+  store: FinanceStorePublic,
+  courierCode: ShipmentCourierCode
+): Promise<ShipmentTrackingRow[]> {
+  try {
+    return await listShipmentTracking(store.id, courierCode);
+  } catch (err) {
+    console.warn(`[orders-dataset ${courierCode}] ${store.code}:`, err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
 // Ensambla el dataset crudo->filas trackeables. Mismo orden de operaciones que
 // page.tsx: persistidos->summary, mapas de tracking por guia, traces de
 // liquidacion, y buildVisibleOrderRows.
 async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
-  const [persisted, logisticsRows, moovin, forza, wyn, settlementRows, imports, icomflyOrders] = await Promise.all([
-    listPersistedShopifyOrders(20000, 0, store.id),
-    listLogisticsRows(undefined, store.id),
-    listMoovinTracking(),
-    listForzaTracking(store.id),
-    listWynTracking(store.id),
-    listSettlementRows(undefined, store.id),
-    listSettlementImports(store.id),
-    listIcomflyOrders({ storeId: store.id }),
-  ]);
+  const [persisted, logisticsRows, moovin, forza, wyn, cargoExpreso, c807, settlementRows, imports, icomflyOrders] =
+    await Promise.all([
+      listPersistedShopifyOrders(20000, 0, store.id),
+      listLogisticsRows(undefined, store.id),
+      listMoovinTracking(),
+      listForzaTracking(store.id),
+      listWynTracking(store.id),
+      listShipmentTrackingSafe(store, "cargoexpreso"),
+      listShipmentTrackingSafe(store, "c807"),
+      listSettlementRows(undefined, store.id),
+      listSettlementImports(store.id),
+      listIcomflyOrders({ storeId: store.id }),
+    ]);
 
   const shopifyOrders = persisted.map((order) =>
     persistedOrderToSummary(order as unknown as Record<string, unknown>)
@@ -350,6 +371,7 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   const moovinByPackage = new Map(moovin.map((row) => [row.id_package, row]));
   const forzaByGuide = buildForzaTrackingMap(forza);
   const wynByGuide = buildWynTrackingMap(wyn);
+  const shipmentByGuide = buildShipmentTrackingMap([...cargoExpreso, ...c807]);
   // El trace map se arma sobre filas de liquidacion ENRIQUECIDAS con Shopify
   // (igual que page.tsx: settlementTraceByKey usa matchedSettlementRows), para
   // que las llaves (shopify_order_name resuelto) coincidan con la UI.
@@ -362,7 +384,8 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
     store,
     moovinByPackage,
     forzaByGuide,
-    wynByGuide
+    wynByGuide,
+    shipmentByGuide
   );
 
   // Hito de despacho por fila (iComfly + recoleccion de Moovin), precalculado

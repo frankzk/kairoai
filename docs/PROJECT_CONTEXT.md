@@ -1458,3 +1458,32 @@ filtro/paginación/conteos a SQL:
   seven `delivered`, one `returned`, five `en_route`, eleven `pending`, and three
   `unknown`. Guide `MLCR000131292SD` is the returned shipment and therefore remains
   `No entregado`; it is not included in the seven effective deliveries.
+
+## Cargo Expreso y c807 en la tabla de Pedidos (Honduras)
+
+- Shopify rotula casi todas sus guias como `Transportadora` (54 de 67 de Cargo
+  Expreso y 33 de 44 de c807 al 14/10/2026), y en Honduras eso se leia como Forza:
+  la tabla mostraba `FDBH262231336-1`, el enlace de rastreo de Forza y "En ruta"
+  aunque el paquete llevaba 11 dias sin movimiento y ya tenia una novedad.
+- `lib/shipment-couriers.ts` reconoce el courier por el FORMATO de la guia (como
+  WYN con `MLCR`): `BH...-N` es Cargo Expreso y `NNNN-NNNNN-AAAAMMDDhhmmss` es
+  c807 Xpress; si la guia no lo dice, tambien por el nombre. Esas guias no llevan
+  el prefijo `FD`, no reciben el boton de Forza y no entran en el boton
+  `Forza (N)` ni en el comparativo como Forza.
+- El dataset de pedidos (`app/api/finance/_shared/orders-dataset.ts`) lee el
+  rastreo guardado en `courier_shipments` (`cargoexpreso` / `c807`, que llenan sus
+  crons) y pone en cada fila `shipment_group`, `shipment_status`, `shipment_at` y
+  `shipment_incidents`; el "Estado seguimiento" los usa como los de Moovin/Forza
+  (falla sin volver a salir = incidencia; volvio a salir = reintento). El
+  historial completo no viaja en el dataset: lo trae el modal desde
+  `GET /api/finance/shipment-tracking?store=&guide=`, que consulta en vivo, guarda
+  la lectura y, si el courier no contesta, devuelve lo guardado con su fecha.
+- Cargo Expreso no tiene un enlace de rastreo directo conocido: el modal ofrece
+  copiar la guia y abrir su buscador (`www2.cargoexpreso.com`). c807 si recibe la
+  guia en la URL (`c807xpress.com/tracking/?guia=`).
+- Novedad abierta por pedido: `/api/finance/orders` lee en cada pagina (y en el
+  export) las novedades no terminales de la tienda (`listOpenIncidentSummaries`,
+  unos cientos) y las cruza por guia y, si no, por pedido
+  (`lib/order-open-incident.ts`). Se leen fuera del dataset cacheado para que el
+  estado de gestion salga al dia; si la lectura falla, la tabla sale igual. La
+  etiqueta enlaza a `/admin/incidencias?q=<guia>` para quien tiene `novedades`.

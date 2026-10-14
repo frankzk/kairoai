@@ -166,6 +166,29 @@ const SOURCE_KEYS: Record<IncidentSource, true> = {
   manual: true,
 };
 
+// Nombres que ve la persona. Los comparten Novedades y la tabla de pedidos
+// (que muestra la novedad abierta de cada pedido).
+export const INCIDENT_STATUS_LABELS: Record<IncidentStatus, string> = {
+  pendiente: "Pendiente",
+  reprogramada: "Reprogramada",
+  reprog_fallida: "Reprog. fallida",
+  sin_contestar: "Sin contestar",
+  no_llamar: "No llamar",
+  resuelta: "Resuelta",
+  perdida: "Perdida",
+  descartada: "Descartada",
+};
+export const INCIDENT_CATEGORY_LABELS: Record<IncidentCategory, string> = {
+  fallo_entrega: "Fallo de entrega",
+  direccion_incorrecta: "Direccion incorrecta",
+  cliente_no_responde: "Cliente no responde",
+  cliente_rechaza: "Cliente rechaza",
+  devuelto_origen: "Devuelto al origen",
+  dano_paquete: "Paquete dañado",
+  demora_entrega: "Demora en entrega",
+  otro: "Otro",
+};
+
 export const INCIDENT_STATUSES = Object.keys(STATUS_KEYS) as IncidentStatus[];
 export const INCIDENT_CATEGORIES = Object.keys(CATEGORY_KEYS) as IncidentCategory[];
 export const INCIDENT_SOURCES = Object.keys(SOURCE_KEYS) as IncidentSource[];

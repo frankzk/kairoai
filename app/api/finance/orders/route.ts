@@ -12,6 +12,13 @@ import {
   type TrackableOrderRow,
 } from "@/lib/finance-orders";
 import { mergeDispatchIntoTracking } from "@/lib/dispatch";
+import { listOpenIncidentSummaries } from "@/lib/incidents";
+import {
+  buildOpenIncidentIndex,
+  findOpenIncident,
+  type OpenIncidentIndex,
+  type OrderOpenIncident,
+} from "@/lib/order-open-incident";
 import {
   getOrdersDataset,
   isOrdersDatasetUnavailableError,
@@ -130,8 +137,20 @@ function matchesPeriod(
   return ts >= dayStart - (days - 1) * DAY;
 }
 
-type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[] };
+type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; open_incident: OrderOpenIncident | null };
 type ResolvedRow = { row: TrackableOrderRow; traces: SettlementTrace[]; status: string };
+
+// Novedad abierta de cada fila. Se lee fresca, fuera del dataset cacheado (que
+// tiene hasta una hora): el estado de gestion de una novedad cambia todo el
+// dia. Si la lectura falla, los pedidos salen igual, sin la novedad.
+async function loadOpenIncidentIndex(storeId: number): Promise<OpenIncidentIndex | null> {
+  try {
+    return buildOpenIncidentIndex(await listOpenIncidentSummaries(storeId));
+  } catch (err) {
+    console.warn("[finance/orders novedades]", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
 
 function resolveRows(
   rows: TrackableOrderRow[],
@@ -230,10 +249,13 @@ export async function GET(req: NextRequest) {
   const includeMetadata = params.get("metadata") === "1";
 
   try {
+    // En paralelo con el dataset; no lanza (ver loadOpenIncidentIndex).
+    const openIncidentsPromise = loadOpenIncidentIndex(store.id);
     const { rows, settlementTraceByKey } = await getOrdersDataset(store, [
       "rows",
       "settlementTraceByKey",
     ]);
+    const openIncidents = await openIncidentsPromise;
     const now = new Date();
 
     // 1) Periodo (Vista actual). Se cuenta aparte para la etiqueta "Vista actual".
@@ -269,6 +291,7 @@ export async function GET(req: NextRequest) {
     const attachTraces = (item: { row: TrackableOrderRow; traces: SettlementTrace[] }): RowWithTraces => ({
       ...item.row,
       traces: item.traces,
+      open_incident: openIncidents ? findOpenIncident(openIncidents, item.row) : null,
     });
 
     if (exportAll) {

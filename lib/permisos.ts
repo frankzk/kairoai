@@ -176,6 +176,7 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/finance/moovin-tracking", exige: P(...OPERACION) },
   { ruta: "/api/finance/forza-tracking", exige: P(...OPERACION) },
   { ruta: "/api/finance/wyn-tracking", exige: P(...OPERACION) },
+  { ruta: "/api/finance/shipment-tracking", exige: P(...OPERACION) },
   // La lista de asesoras la necesitan el chat y el detalle de pedido;
   // modificarla es de quien administra personal.
   { ruta: "/api/finance/payroll-staff", metodo: "GET", exige: SES },

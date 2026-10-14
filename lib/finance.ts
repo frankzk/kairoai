@@ -3,6 +3,7 @@ import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
 import { isC807Guide, normalizeC807Guide } from "./c807";
 import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "./cargo-expreso";
 import type { ShipmentTracking } from "./courier-tracking";
+import type { ShipmentCourierCode } from "./shipment-couriers";
 import { normalizeForzaGuide } from "./forza";
 import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
 import { isDeliveryRecheckDue, planMoovinSync } from "./moovin-sync-plan";
@@ -1842,7 +1843,7 @@ export async function getWynTrackingByGuide(
 // c807 Xpress): courier_shipments con su courier_code. Ver
 // lib/courier-tracking.ts, lib/cargo-expreso.ts y lib/c807.ts.
 
-export type ShipmentCourierCode = "cargoexpreso" | "c807";
+export type { ShipmentCourierCode } from "./shipment-couriers";
 
 const COURIER_SHIPMENT_COLUMNS =
   "store_id,guide_number,normalized_status,raw_status,latest_at,has_incident,incident_reason,raw_payload,checked_at";
