@@ -316,6 +316,61 @@ export async function createLeadOrder(
   return { order_id: ord.order.id, name: ord.order.name, total: ord.order.total_price };
 }
 
+// ─── Borrador del cliente -> pedido ─────────────────────────────────────────
+//
+// El cliente llena el formulario y queda un BORRADOR en Shopify con su
+// direccion, productos y precio. Si confirma por WhatsApp pero el pedido no se
+// crea (el boton "Confirmo mi pedido" de Icomfly a veces falla), la asesora lo
+// convierte en pedido sin volver a escribir nada: lo mismo que "Cobrar pago ->
+// Marcar como pendiente" en el admin de Shopify.
+
+export interface ShopifyDraftOrderDetail {
+  id: number;
+  name: string;
+  status: string; // "open" | "invoice_sent" | "completed"
+  order_id: number | null;
+  phone: string | null;
+  total_price: string;
+  currency: string;
+  note: string | null;
+  tags: string;
+  line_items: Array<{ title: string; quantity: number }>;
+  shipping_address: { address1?: string | null; city?: string | null; province?: string | null; phone?: string | null } | null;
+}
+
+export async function getDraftOrder(draftId: string | number, creds?: ShopifyCreds): Promise<ShopifyDraftOrderDetail> {
+  const data = await shopifyFetch<{ draft_order: ShopifyDraftOrderDetail }>(`/draft_orders/${draftId}.json`, {}, creds);
+  return data.draft_order;
+}
+
+/**
+ * Convierte un borrador existente en pedido con pago PENDIENTE (contra
+ * entrega). Antes le agrega la nota y las etiquetas de Kairo para que el
+ * equipo sepa de donde salio.
+ */
+export async function convertirBorradorEnPedido(
+  draftId: string | number,
+  extra: { note: string; tags: string },
+  creds?: ShopifyCreds
+): Promise<{ order_id: number; name: string; total: string }> {
+  await shopifyFetch(
+    `/draft_orders/${draftId}.json`,
+    { method: "PUT", body: JSON.stringify({ draft_order: { id: Number(draftId), note: extra.note, tags: extra.tags } }) },
+    creds
+  );
+  const completed = await shopifyFetch<{ draft_order: { id: number; order_id: number } }>(
+    `/draft_orders/${draftId}/complete.json?payment_pending=true`,
+    { method: "PUT", body: JSON.stringify({}) },
+    creds
+  );
+  const ord = await shopifyFetch<{ order: { id: number; name: string; total_price: string } }>(
+    `/orders/${completed.draft_order.order_id}.json?fields=id,name,total_price`,
+    {},
+    creds
+  );
+  return { order_id: ord.order.id, name: ord.order.name, total: ord.order.total_price };
+}
+
 // ─── HMAC Validation ────────────────────────────────────────────────────────
 
 export function validateShopifyHmac(
