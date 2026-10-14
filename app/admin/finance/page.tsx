@@ -341,7 +341,9 @@ const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
 // memoria.
 type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[] };
 
-const ORDERS_PAGE_SIZE = 100;
+// 50 por pagina: la tabla ya no tiene scroll propio (se baja con la pagina),
+// asi que 100 filas eran una pagina eterna; y es la mitad de datos por carga.
+const ORDERS_PAGE_SIZE = 50;
 
 const EMPTY_TRACKING_COUNTS: Record<OrderTrackingFilter, number> = {
   all: 0,
@@ -564,6 +566,20 @@ export default function FinancePage() {
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
+  // Alto de la barra superior fija. La tabla de pedidos pega sus titulos justo
+  // debajo cuando se baja la pagina (ya no tiene scroll propio).
+  const headerRef = useRef<HTMLElement>(null);
+  const [headerAlto, setHeaderAlto] = useState(0);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const medir = () => setHeaderAlto(el.getBoundingClientRect().height);
+    medir();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const handleOrdersOperationalMetadata = useCallback(
     (storeCode: FinanceStoreCode, metadata: OrdersOperationalMetadata) => {
@@ -1334,8 +1350,8 @@ export default function FinancePage() {
   }, [tab, selectedStoreCode]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-10 border-b border-border/50 bg-card/70 backdrop-blur">
+    <div className="min-h-screen bg-background" style={{ ["--finance-header-h" as string]: `${headerAlto}px` } as React.CSSProperties}>
+      <header ref={headerRef} className="sticky top-0 z-10 border-b border-border/50 bg-card/70 backdrop-blur">
         <div className="container mx-auto flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:gap-4 sm:px-4 sm:py-4">
           <div className="flex min-w-0 items-center gap-1.5 sm:flex-1">
             <Link href="/">
@@ -1975,6 +1991,11 @@ function OrdersTab({
 
   // total = filas que pasan TODOS los filtros (lo que antes era filteredRows.length).
   const totalPages = Math.max(1, Math.ceil(total / ORDERS_PAGE_SIZE));
+  const tablaPedidosRef = useRef<HTMLDivElement>(null);
+  const irAPagina = (destino: number) => {
+    setPage(Math.min(totalPages, Math.max(1, destino)));
+    tablaPedidosRef.current?.scrollIntoView({ block: "start" });
+  };
   const activeTrackingLabel =
     ORDER_TRACKING_FILTERS.find((filter) => filter.value === trackingFilter)?.label ?? "pedidos";
   const activeSettlementLabel =
@@ -2336,6 +2357,13 @@ function OrdersTab({
               </Button>
             </div>
           )}
+          {/* Paginacion tambien ARRIBA: con 50 pedidos y un solo scroll, la de
+              abajo queda lejos. Al cambiar de pagina se vuelve al inicio. */}
+          <div ref={tablaPedidosRef} style={{ scrollMarginTop: "calc(var(--finance-header-h, 0px) + 8px)" }}>
+            {total > ORDERS_PAGE_SIZE && (
+              <PaginadorPedidos page={page} totalPages={totalPages} total={total} loading={tableLoading} onPage={irAPagina} />
+            )}
+          </div>
           {tableError && !hasLoadedOnce ? (
             // Nunca hubo una carga valida: mostramos el estado de error (con el
             // reintento del banner de arriba) en lugar de una tabla vacia que se
@@ -2370,32 +2398,7 @@ function OrdersTab({
           </div>
           )}
           {total > ORDERS_PAGE_SIZE && (
-            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-              <span>
-                Pagina <span className="font-semibold text-foreground">{page}</span> de {totalPages} ·{" "}
-                <span className="font-mono">{total}</span> pedidos
-              </span>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1 || tableLoading}
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
-                >
-                  Anterior
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= totalPages || tableLoading}
-                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                >
-                  Siguiente
-                </Button>
-              </div>
-            </div>
+            <PaginadorPedidos page={page} totalPages={totalPages} total={total} loading={tableLoading} onPage={irAPagina} />
           )}
           {logisticsImports.length > 1 && (
             <div className="border-t border-border pt-3">
@@ -2494,6 +2497,37 @@ function DispatchWho({
     <span className="max-w-[130px] truncate text-[10px] text-muted-foreground" title={`${label}: ${who}`}>
       {label}: {who}
     </span>
+  );
+}
+
+function PaginadorPedidos({
+  page,
+  totalPages,
+  total,
+  loading,
+  onPage,
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  loading: boolean;
+  onPage: (page: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+      <span>
+        Pagina <span className="font-semibold text-foreground">{page}</span> de {totalPages} ·{" "}
+        <span className="font-mono">{total}</span> pedidos
+      </span>
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" disabled={page <= 1 || loading} onClick={() => onPage(page - 1)}>
+          Anterior
+        </Button>
+        <Button type="button" variant="outline" size="sm" disabled={page >= totalPages || loading} onClick={() => onPage(page + 1)}>
+          Siguiente
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -2635,10 +2669,13 @@ function OrdersTable({
         )}
       </div>
 
-      {/* Desktop: tabla completa */}
-      <div className="hidden max-h-[620px] overflow-auto border border-border md:block">
+      {/* Desktop: tabla completa. Sin alto maximo: se baja con la pagina, un
+          solo scroll. En pantallas grandes los titulos quedan pegados bajo la
+          barra superior; en las angostas solo hay scroll horizontal (la tabla
+          mide 1180 px) y los titulos se van con la tabla. */}
+      <div className="hidden border border-border md:block md:overflow-x-auto xl:overflow-visible">
         <table className="w-full min-w-[1180px] text-sm">
-        <thead className="sticky top-0 bg-card">
+        <thead className="sticky z-[5] bg-card" style={{ top: "var(--finance-header-h, 0px)" }}>
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
             <th className="px-2 py-1.5">Orden</th>
             <th className="px-2 py-1.5">Origen</th>
