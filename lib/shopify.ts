@@ -219,7 +219,8 @@ export interface ShopifyOrderAddress {
   city?: string; // canton
   province?: string; // provincia CR
   zip?: string;
-  country?: string; // "Costa Rica"
+  country?: string; // "Costa Rica" u "Honduras": el de la tienda, nunca fijo
+  country_code?: string; // "CR" | "HN"
   phone?: string;
 }
 
