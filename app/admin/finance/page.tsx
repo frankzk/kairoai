@@ -32,7 +32,6 @@ import { normalizeSearchText } from "@/lib/order-matching";
 import {
   DIAS_ULTIMO_INTENTO,
   PLAZOS,
-  SUBETAPAS,
   SUBETAPA_LABEL,
   cuandoVence,
   pedidoDeFila,
@@ -304,6 +303,8 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "not_delivered", label: "No entregados" },
 ];
 
+const TRACKING_LABEL = Object.fromEntries(ORDER_TRACKING_FILTERS.map((f) => [f.value, f.label])) as Record<OrderTrackingFilter, string>;
+
 // Punto de color por estado de seguimiento, alineado con los KPIs de arriba.
 const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   all: "bg-muted-foreground/40",
@@ -321,6 +322,23 @@ const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   not_delivered: "bg-red-400",
 };
 
+// Los filtros de Gestion → Pedidos, agrupados por familia: los chips de un
+// grupo van pegados y la fila envuelve entre grupos, nunca dentro de uno.
+const FASES_SEGUIMIENTO: Array<{ nombre: string; valores: OrderTrackingFilter[] }> = [
+  { nombre: "Antes de salir", valores: ["pending", "despacho_solicitado", "recolectado"] },
+  { nombre: "En camino", valores: ["en_route", "en_route_retry"] },
+  { nombre: "Incidencias", valores: ["incident_solvable", "incident_unsolvable"] },
+  { nombre: "Cierre", valores: ["delivered", "not_delivered", "annulled"] },
+];
+const GRUPOS_LIQUIDACION: Array<{ nombre: string; valores: OrderSettlementFilter[] }> = [
+  { nombre: "Liquidación", valores: ["settled", "unsettled"] },
+  { nombre: "Por revisar", valores: ["unsettled_expected", "to_claim", "duplicate"] },
+];
+const GRUPOS_SUBETAPA: Array<{ nombre: string; valores: Subetapa[] }> = [
+  { nombre: "En la cola", valores: ["sin_llamar", "por_confirmar", "volver_a_contactar", "ultimo_intento"] },
+  { nombre: "Fuera de la cola", valores: ["confirmado", "historico"] },
+];
+
 const PRODUCT_ANALYSIS_FILTERS: Array<{ value: ProductAnalysisFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "no_cost", label: "Sin costo" },
@@ -336,11 +354,13 @@ const UNKNOWN_PRODUCT_LABEL = "Producto sin registrar";
 const ORDER_SETTLEMENT_FILTERS: Array<{ value: OrderSettlementFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "settled", label: "Liquidados" },
-  { value: "unsettled", label: "Sin liquidacion" },
+  { value: "unsettled", label: "Sin liquidación" },
   { value: "unsettled_expected", label: "Falta cuadrar" },
-  { value: "to_claim", label: "Pend. liquidacion" },
+  { value: "to_claim", label: "Pend. liquidación" },
   { value: "duplicate", label: "Duplicados" },
 ];
+
+const SETTLEMENT_LABEL = Object.fromEntries(ORDER_SETTLEMENT_FILTERS.map((f) => [f.value, f.label])) as Record<OrderSettlementFilter, string>;
 
 const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
   { value: "all", label: "Todo" },
@@ -1710,44 +1730,65 @@ function FilterChip({
   active,
   onClick,
   dotClass,
+  todos = false,
 }: {
   label: string;
   count: number;
   active: boolean;
   onClick: () => void;
   dotClass?: string;
+  /** El chip "Todos" de la fila: elegido no filtra nada, asi que no se pinta violeta. */
+  todos?: boolean;
 }) {
-  // Chip compacto de esquina recta (DESIGN.md, chip-dense): la fila se lee
-  // como un bloque. El conteo va como dato en mono, sin pildora propia.
+  // Chip compacto de esquina recta (DESIGN.md, chip-dense). El violeta queda
+  // para un filtro de verdad aplicado: con las filas en "Todos", el unico chip
+  // violeta es lo que esta filtrando. Un conteo en 0 se apaga sin dejar de ser
+  // clickeable; el conteo con pedidos va en blanco papel.
+  const n = Number(count ?? 0);
+  const vacio = !active && n === 0;
+  const estilo = active
+    ? todos
+      ? "z-[1] border-foreground/30 bg-muted text-foreground"
+      : "z-[2] border-primary bg-primary/15 text-violet-200"
+    : "border-border bg-background text-muted-foreground hover:z-[1] hover:border-primary/50 hover:text-foreground";
+  const tonoConteo = active ? (todos ? "text-foreground" : "text-violet-100") : vacio ? "text-muted-foreground/70" : "text-foreground";
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`inline-flex h-[26px] items-center gap-1.5 border px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-        active
-          ? "border-primary bg-primary/10 text-primary"
-          : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
-      }`}
+      className={`relative inline-flex h-[26px] shrink-0 items-center gap-1.5 whitespace-nowrap border px-2 text-xs transition-colors focus-visible:z-[3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${estilo}`}
     >
-      {dotClass && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} aria-hidden="true" />}
+      {dotClass && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass} ${vacio ? "opacity-35" : ""}`} aria-hidden="true" />}
       {label}
-      <span className={`font-mono text-[11px] tabular-nums ${active ? "text-primary" : "text-foreground/75"}`}>
-        {Number(count ?? 0).toLocaleString("es-CR")}
-      </span>
+      <span className={`text-[11px] font-medium tabular-nums ${tonoConteo}`}>{n.toLocaleString("es-CR")}</span>
     </button>
   );
 }
 
-// Una fila de chips con su etiqueta. En celular la fila se desliza de lado; en
-// escritorio envuelve, para que ningun chip quede fuera de vista.
-function FilaFiltros({ etiqueta, children }: { etiqueta: string; children: React.ReactNode }) {
+// Chips de una misma familia, pegados: comparten el borde y se leen como un
+// bloque. La fila envuelve entre grupos, nunca dentro de uno.
+function GrupoChips({ nombre, children }: { nombre?: string; children: React.ReactNode }) {
+  return (
+    <div role="group" aria-label={nombre} className="flex shrink-0 [&>*+*]:-ml-px">
+      {children}
+    </div>
+  );
+}
+
+// Una fila de grupos de chips con su etiqueta. En celular la fila se desliza de
+// lado; en escritorio envuelve entre grupos, para que ningun chip quede oculto.
+function FilaFiltros({ etiqueta, sub = false, children }: { etiqueta: string; sub?: boolean; children: React.ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-start sm:gap-2">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:w-[5.25rem] sm:shrink-0 sm:pt-[6px]">
+      <span
+        className={`text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:shrink-0 sm:pt-[6px] ${
+          sub ? "sm:w-[4.5rem]" : "sm:w-[5.25rem]"
+        }`}
+      >
         {etiqueta}
       </span>
-      <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 [&>button]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+      <div className="-mx-1 flex items-start gap-2 overflow-x-auto px-1 pb-1 [&>*]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:gap-y-1.5 sm:overflow-visible sm:px-0 sm:pb-0">
         {children}
       </div>
     </div>
@@ -2382,71 +2423,112 @@ function OrdersTab({
             </div>
           )}
 
-          <div className={`${showFilters ? "space-y-2" : "hidden"} sm:block sm:space-y-2`}>
+          <div className={`${showFilters ? "space-y-3" : "hidden"} sm:block sm:space-y-2.5`}>
             <div className="sm:hidden">{controlPeriodo}</div>
-            <FilaFiltros etiqueta="Estado">
-              {ORDER_TRACKING_FILTERS.map((filter) => (
-                <FilterChip
-                  key={filter.value}
-                  label={filter.label}
-                  count={trackingCounts[filter.value]}
-                  active={trackingFilter === filter.value}
-                  onClick={() => setTrackingFilter(filter.value)}
-                  dotClass={filter.value === "all" ? undefined : TRACKING_DOT_COLORS[filter.value]}
-                />
-              ))}
-            </FilaFiltros>
-            {/* Pendientes = la cola de confirmacion: que hacer (subetapa) y
-                cuando (plazo), dos filtros independientes. */}
-            {trackingFilter === "pending" && confirmacionCounts && (
-              <FilaFiltros etiqueta="Subetapa">
-                <FilterChip
-                  label="Todas"
-                  count={confirmacionCounts.subetapa.all}
-                  active={subetapaFilter === "all"}
-                  onClick={() => setSubetapaFilter("all")}
-                />
-                {SUBETAPAS.map((s) => (
+            <div className="space-y-1.5">
+              <FilaFiltros etiqueta="Estado">
+                <GrupoChips>
                   <FilterChip
-                    key={s.value}
-                    label={s.label}
-                    count={confirmacionCounts.subetapa[s.value]}
-                    active={subetapaFilter === s.value}
-                    onClick={() => setSubetapaFilter(s.value)}
+                    label="Todos"
+                    todos
+                    count={trackingCounts.all}
+                    active={trackingFilter === "all"}
+                    onClick={() => setTrackingFilter("all")}
                   />
+                </GrupoChips>
+                {FASES_SEGUIMIENTO.map((fase) => (
+                  <GrupoChips key={fase.nombre} nombre={fase.nombre}>
+                    {fase.valores.map((valor) => (
+                      <FilterChip
+                        key={valor}
+                        label={TRACKING_LABEL[valor]}
+                        count={trackingCounts[valor]}
+                        active={trackingFilter === valor}
+                        onClick={() => setTrackingFilter(valor)}
+                        dotClass={TRACKING_DOT_COLORS[valor]}
+                      />
+                    ))}
+                  </GrupoChips>
                 ))}
               </FilaFiltros>
-            )}
-            {trackingFilter === "pending" && confirmacionCounts && (
-              <FilaFiltros etiqueta="Plazo">
-                <FilterChip
-                  label="Todos"
-                  count={confirmacionCounts.plazo.all}
-                  active={plazoFilter === "all"}
-                  onClick={() => setPlazoFilter("all")}
-                />
-                {PLAZOS.map((p) => (
-                  <FilterChip
-                    key={p.value}
-                    label={p.label}
-                    count={confirmacionCounts.plazo[p.value]}
-                    active={plazoFilter === p.value}
-                    onClick={() => setPlazoFilter(p.value)}
-                    dotClass={PLAZO_DOT[p.value]}
-                  />
-                ))}
-              </FilaFiltros>
-            )}
+              {/* Pendientes = la cola de confirmacion: que hacer (subetapa) y
+                  cuando (plazo), dos filtros independientes. Cuelgan de Estado:
+                  arrancan en la columna de los chips, atados por una linea. */}
+              {trackingFilter === "pending" && confirmacionCounts && (
+                <div className="ml-1 space-y-1.5 border-l border-border pl-2.5 sm:ml-[5.75rem] sm:pl-3">
+                  <FilaFiltros etiqueta="Subetapa" sub>
+                    <GrupoChips>
+                      <FilterChip
+                        label="Todas"
+                        todos
+                        count={confirmacionCounts.subetapa.all}
+                        active={subetapaFilter === "all"}
+                        onClick={() => setSubetapaFilter("all")}
+                      />
+                    </GrupoChips>
+                    {GRUPOS_SUBETAPA.map((grupo) => (
+                      <GrupoChips key={grupo.nombre} nombre={grupo.nombre}>
+                        {grupo.valores.map((valor) => (
+                          <FilterChip
+                            key={valor}
+                            label={SUBETAPA_LABEL[valor]}
+                            count={confirmacionCounts.subetapa[valor]}
+                            active={subetapaFilter === valor}
+                            onClick={() => setSubetapaFilter(valor)}
+                          />
+                        ))}
+                      </GrupoChips>
+                    ))}
+                  </FilaFiltros>
+                  <FilaFiltros etiqueta="Plazo" sub>
+                    <GrupoChips>
+                      <FilterChip
+                        label="Todos"
+                        todos
+                        count={confirmacionCounts.plazo.all}
+                        active={plazoFilter === "all"}
+                        onClick={() => setPlazoFilter("all")}
+                      />
+                    </GrupoChips>
+                    <GrupoChips nombre="Plazos">
+                      {PLAZOS.map((p) => (
+                        <FilterChip
+                          key={p.value}
+                          label={p.label}
+                          count={confirmacionCounts.plazo[p.value]}
+                          active={plazoFilter === p.value}
+                          onClick={() => setPlazoFilter(p.value)}
+                          dotClass={PLAZO_DOT[p.value]}
+                        />
+                      ))}
+                    </GrupoChips>
+                  </FilaFiltros>
+                </div>
+              )}
+            </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-              <FilaFiltros etiqueta="Liquidacion">
-                {ORDER_SETTLEMENT_FILTERS.map((filter) => (
+              <FilaFiltros etiqueta="Liquidación">
+                <GrupoChips>
                   <FilterChip
-                    key={filter.value}
-                    label={filter.label}
-                    count={settlementCounts[filter.value]}
-                    active={settlementFilter === filter.value}
-                    onClick={() => setSettlementFilter(filter.value)}
+                    label="Todos"
+                    todos
+                    count={settlementCounts.all}
+                    active={settlementFilter === "all"}
+                    onClick={() => setSettlementFilter("all")}
                   />
+                </GrupoChips>
+                {GRUPOS_LIQUIDACION.map((grupo) => (
+                  <GrupoChips key={grupo.nombre} nombre={grupo.nombre}>
+                    {grupo.valores.map((valor) => (
+                      <FilterChip
+                        key={valor}
+                        label={SETTLEMENT_LABEL[valor]}
+                        count={settlementCounts[valor]}
+                        active={settlementFilter === valor}
+                        onClick={() => setSettlementFilter(valor)}
+                      />
+                    ))}
+                  </GrupoChips>
                 ))}
                 {hayFiltros && (
                   <button
