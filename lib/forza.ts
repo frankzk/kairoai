@@ -417,12 +417,17 @@ function isCaptchaResponse(raw: string): boolean {
   return lower.includes("recaptcha") || lower.includes("captcha") || lower.includes("no soy un robot");
 }
 
-function classifyForzaGroup(status: string): ForzaGroup {
+// Lo negativo se mira ANTES que "entregado": "No entregado" y "Devuelto,
+// entregado a remitente" contienen la palabra, y con el orden anterior se
+// contaban como entregas.
+export function classifyForzaGroup(status: string): ForzaGroup {
   const lower = status.toLowerCase();
-  if (lower.includes("entregado")) return "delivered";
   if (lower.includes("reproceso")) return "in_progress";
-  if (lower.includes("devuelto") || lower.includes("retorno") || lower.includes("retornado")) return "returned";
-  if (lower.includes("fall") || lower.includes("incid") || lower.includes("no entreg")) return "failed";
+  if (lower.includes("devuelto") || lower.includes("devoluc") || lower.includes("retorno") || lower.includes("retornado")) {
+    return "returned";
+  }
+  if (lower.includes("no entreg") || lower.includes("fall") || lower.includes("incid")) return "failed";
+  if (lower.includes("entregado")) return "delivered";
   return "in_progress";
 }
 
