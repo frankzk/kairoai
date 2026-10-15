@@ -719,7 +719,7 @@ export function buildVisibleOrderRows(
       moovin_route_attempts: moovinHit ? countMoovinRouteAttempts(moovinHit.events) : undefined,
       forza_group: deriveForzaGroup(forzaHit),
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
-      wyn_group: deriveForzaGroup(wynHit),
+      wyn_group: latestGroupOf(wynHit),
       wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
@@ -783,7 +783,7 @@ export function buildVisibleOrderRows(
       moovin_route_attempts: moovinHit ? countMoovinRouteAttempts(moovinHit.events) : undefined,
       forza_group: deriveForzaGroup(forzaHit),
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
-      wyn_group: deriveForzaGroup(wynHit),
+      wyn_group: latestGroupOf(wynHit),
       wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
       order_name: order.name,
       customer_name: order.customer_name,
@@ -1236,9 +1236,34 @@ export function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
   return row.latest_group ?? "";
 }
 
+// Forza registra la DEVOLUCION a la bodega de Mireva como "Entregado", pero sin
+// nombre de quien recibe: una entrega real dice "Entregado: Mario". Medido el
+// 15/10 en Honduras, de 5 095 "Entregado" 2 112 venian sin nombre. Esos tardan
+// 10,7 dias de mediana contra 3,1; 1 655 son de clientes fuera de Tegucigalpa
+// cuyo ultimo tramo fue "En Ruta: TEGUCIGALPA" (el paquete volvio), y casi
+// todos pasan por un "En instalaciones" sin ciudad. Contarlos como entregas
+// dejo a Honduras con 0 no entregados desde julio y 89,6% de entrega efectiva.
+export function esDevolucionForza(row: Pick<ForzaTrackingRow, "latest_group" | "events"> | undefined): boolean {
+  if (!row || row.latest_group !== "delivered") return false;
+  const entregas = (row.events ?? [])
+    .filter((e) => String(e.title ?? "").trim().toLowerCase() === "entregado")
+    .sort((a, b) => Date.parse(String(b.date ?? "")) - Date.parse(String(a.date ?? "")));
+  const ultima = entregas[0];
+  return Boolean(ultima) && !String(ultima.description ?? "").trim();
+}
+
+// Se reclasifica al leer, como Moovin y WYN: una guia en estado final no se
+// vuelve a consultar, asi que lo ya guardado no se corregiria solo.
 export function deriveForzaGroup(row: ForzaTrackingRow | undefined): string {
   if (!row) return "";
+  if (esDevolucionForza(row)) return "returned";
   return row.latest_group ?? "";
+}
+
+// WYN guarda su grupo ya reclasificado (toWynTrackingRow); no lleva la regla de
+// Forza.
+function latestGroupOf(row: { latest_group?: string | null } | undefined): string {
+  return row?.latest_group ?? "";
 }
 
 export function isShopifyCancelled(row: ShopifyCancelledSource): boolean {
