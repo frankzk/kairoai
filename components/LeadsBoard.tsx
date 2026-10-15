@@ -220,6 +220,13 @@ const SEGMENT_VARIANT: Record<LeadSegment, BadgeVariant> = {
 const ANILLO_FOCO =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
+// Los campos de fecha lo llevan con :focus-within. El boton del calendario de
+// un <input type="date"> es una parada de Tab propia, pero ahi el campo no
+// cumple :focus ni :focus-visible (el foco esta DENTRO, en el icono): con el
+// anillo de arriba, el foco desaparecia justo en esa parada. Medido en Chromium.
+const ANILLO_FOCO_CAMPO =
+  "focus-within:outline-none focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background";
+
 /**
  * Chip de filtro: esquina RECTA.
  *
@@ -1113,7 +1120,7 @@ export default function LeadsBoard() {
                     setInteractionFrom(next);
                     if (next && interactionTo && next > interactionTo) setInteractionTo(next);
                   }}
-                  className={`h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground ${ANILLO_FOCO}`}
+                  className={`h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground ${ANILLO_FOCO_CAMPO}`}
                 />
               </label>
               {/* El guion es lo que hace leer los dos campos como UN rango.
@@ -1131,7 +1138,7 @@ export default function LeadsBoard() {
                     setInteractionTo(next);
                     if (next && interactionFrom && next < interactionFrom) setInteractionFrom(next);
                   }}
-                  className={`h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground ${ANILLO_FOCO}`}
+                  className={`h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground ${ANILLO_FOCO_CAMPO}`}
                 />
               </label>
               {hasInteractionRange && (
