@@ -23,6 +23,10 @@
     --border: 216 34% 17%;
     --input: 216 34% 17%;
     --ring: 263 70% 50%;
+    /* Superficie de seleccion: el violeta de marca al 10% sobre el fondo, pero
+       OPACA, para que una tarjeta elegida y el panel que abre se lean como una
+       sola pieza (la tarjeta tapa la linea del panel con este mismo color). */
+    --seleccion: 247 57% 9.3%;
     --radius: 0.5rem;
   }
 }

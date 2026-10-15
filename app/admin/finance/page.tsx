@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   ArrowUp,
   BarChart3,
+  Bell,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -21,9 +22,9 @@ import {
   ReceiptText,
   RefreshCw,
   Search,
+  ShieldAlert,
   StickyNote,
   Trash2,
-  ShieldAlert,
   Truck,
   Upload,
   X,
@@ -1493,16 +1494,58 @@ export default function FinancePage() {
                 </div>
               )}
             </div>
-            <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              <span>
-                {operationalKpis.win.rangeLabel} · {operationalKpis.win.compareLabel}
-              </span>
-              {operationalKpis.win.maturing && (
-                <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-amber-200">
-                  tasas en maduración
+            <div className="flex items-center gap-3">
+              <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                <span>
+                  {operationalKpis.win.rangeLabel} · {operationalKpis.win.compareLabel}
                 </span>
-              )}
-            </p>
+                {operationalKpis.win.maturing && (
+                  <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-amber-200">
+                    tasas en maduración
+                  </span>
+                )}
+              </p>
+              {/* Los conteos llegan con la primera pagina operativa. Reintentos e
+                  incidencias vienen de trackingCounts; Por reclamar, Falta
+                  cuadrar y Anomalias de settlementCounts. */}
+              <MenuAlertas
+                cargando={operationalCountsLoading}
+                items={[
+                  {
+                    label: "Reintentos",
+                    valor: alertCounts.trackingCounts.en_route_retry,
+                    tono: "bad",
+                    detalle: "En ruta, con un nuevo intento de entrega.",
+                  },
+                  {
+                    label: "Incidencias",
+                    valor: alertCounts.trackingCounts.incident_solvable + alertCounts.trackingCounts.incident_unsolvable,
+                    tono: "bad",
+                    detalle: "Solucionables y no solucionables.",
+                  },
+                  {
+                    label: "Por reclamar",
+                    valor: alertCounts.settlementCounts.to_claim,
+                    tono: "warn",
+                    detalle: "Entregados que el courier todavía no liquidó.",
+                  },
+                  {
+                    // Sin liquidacion PERO con movimiento real (entregado / no
+                    // entregado / devuelto): la brecha financiera real.
+                    label: "Falta cuadrar",
+                    valor: alertCounts.settlementCounts.unsettled_expected,
+                    tono: "warn",
+                    detalle: "Con movimiento real y sin liquidación.",
+                  },
+                  {
+                    label: "Anomalías",
+                    valor: alertCounts.settlementCounts.to_claim + alertCounts.settlementCounts.duplicate,
+                    tono: "warn",
+                    detalle: "Por reclamar más liquidaciones duplicadas.",
+                  },
+                ]}
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4 xl:grid-cols-7">
@@ -1522,29 +1565,6 @@ export default function FinancePage() {
             )}
           </div>
 
-          <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Alertas</span>
-            {/* Los conteos llegan con la primera pagina operativa. Reintentos e
-                incidencias vienen de trackingCounts; Por reclamar de
-                settlementCounts.to_claim. */}
-            <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
-              <AlertStat label="Reintentos" value={operationalCountsLoading ? "..." : formatInt(alertCounts.trackingCounts.en_route_retry)} tone="bad" />
-              <AlertStat label="Incidencias" value={operationalCountsLoading ? "..." : formatInt(alertCounts.trackingCounts.incident_solvable + alertCounts.trackingCounts.incident_unsolvable)} tone="bad" />
-              <AlertStat label="Por reclamar" value={operationalCountsLoading ? "..." : formatInt(alertCounts.settlementCounts.to_claim)} tone="warn" />
-              {/* Falta cuadrar: sin liquidacion PERO con movimiento real
-                  (entregado/no entregado/devuelto). Excluye anulados sin
-                  despacho; es la brecha financiera real, no el 934 mecanico. */}
-              <AlertStat label="Falta cuadrar" value={operationalCountsLoading ? "..." : formatInt(alertCounts.settlementCounts.unsettled_expected)} tone="warn" />
-              <AlertStat
-                label="Anomalías"
-                // Equivale al calculo previo en cliente (liquidationAlertRows +
-                // doubleSettlementAnomalies): entregados sin liquidar (to_claim) +
-                // liquidaciones duplicadas (duplicate).
-                value={operationalCountsLoading ? "..." : formatInt(alertCounts.settlementCounts.to_claim + alertCounts.settlementCounts.duplicate)}
-                tone="warn"
-              />
-            </div>
-          </div>
         </section>
 
         <div className="flex gap-2 overflow-x-auto border-b border-border">
@@ -1770,11 +1790,69 @@ function FilterChip({
   );
 }
 
+// Tarjeta de estado, el filtro principal de Pedidos. Como los filtros de estado
+// del dashboard de Stripe: la etiqueta arriba y el conteo grande abajo, para
+// leer la operacion de un vistazo antes de elegir. Es el mini-stat del sistema
+// hecho seleccionable: esquina recta, pegadas por fase. Elegida pasa a la
+// superficie de seleccion; si abre la cola (Pendientes), su borde de abajo toma
+// el color del panel y la tarjeta se une a el como una pestaña a su contenido.
+function TarjetaEstado({
+  label,
+  count,
+  active,
+  onClick,
+  dotClass,
+  todos = false,
+  abre = false,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+  dotClass?: string;
+  todos?: boolean;
+  /** Elegida, abre el panel de abajo (la cola de Pendientes). */
+  abre?: boolean;
+}) {
+  const n = Number(count ?? 0);
+  const estilo = active
+    ? todos
+      ? "z-[1] border-foreground/30 bg-muted"
+      : `z-[2] border-primary/70 bg-seleccion ${abre ? "border-b-seleccion" : ""}`
+    : "border-border bg-background hover:z-[1] hover:border-primary/50 hover:bg-muted/40";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      aria-expanded={abre ? active : undefined}
+      className={`relative flex shrink-0 grow flex-col items-start gap-0.5 border px-2.5 py-1.5 text-left transition-colors focus-visible:z-[3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${estilo}`}
+    >
+      <span
+        className={`flex items-center gap-1 whitespace-nowrap text-xs ${
+          active ? (todos ? "text-foreground" : "text-violet-200") : "text-muted-foreground"
+        }`}
+      >
+        {dotClass && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} aria-hidden="true" />}
+        {label}
+      </span>
+      <span
+        className={`text-base font-semibold leading-5 tabular-nums ${
+          active && !todos ? "text-violet-50" : n === 0 ? "text-muted-foreground" : "text-foreground"
+        }`}
+      >
+        {n.toLocaleString("es-CR")}
+      </span>
+    </button>
+  );
+}
+
 // Chips de una misma familia, pegados: comparten el borde y se leen como un
 // bloque. La fila envuelve entre grupos, nunca dentro de uno.
-function GrupoChips({ nombre, children }: { nombre?: string; children: React.ReactNode }) {
+function GrupoChips({ nombre, crece, children }: { nombre?: string; crece?: number; children: React.ReactNode }) {
+  // `crece`: el grupo se estira para llenar la fila, en proporcion a sus chips.
   return (
-    <div role="group" aria-label={nombre} className="flex shrink-0 [&>*+*]:-ml-px">
+    <div role="group" aria-label={nombre} className="flex shrink-0 [&>*+*]:-ml-px" style={crece ? { flexGrow: crece } : undefined}>
       {children}
     </div>
   );
@@ -2434,10 +2512,13 @@ function OrdersTab({
 
           <div className={`${showFilters ? "space-y-3" : "hidden"} sm:block sm:space-y-2.5`}>
             <div className="sm:hidden">{controlPeriodo}</div>
-            <div className="space-y-1.5">
-              <FilaFiltros etiqueta="Estado">
-                <GrupoChips>
-                  <FilterChip
+            <div>
+              {/* Estado: una sola fila de tarjetas, en orden de fase. Sin
+                  etiqueta de fila: cada tarjeta dice lo que es. Si no entra
+                  (pantallas angostas) se desliza de lado, nunca envuelve. */}
+              <div role="group" aria-label="Estado" className="flex gap-1.5 overflow-x-auto">
+                <GrupoChips crece={1}>
+                  <TarjetaEstado
                     label="Todos"
                     todos
                     count={trackingCounts.all}
@@ -2446,25 +2527,27 @@ function OrdersTab({
                   />
                 </GrupoChips>
                 {FASES_SEGUIMIENTO.map((fase) => (
-                  <GrupoChips key={fase.nombre} nombre={fase.nombre}>
+                  <GrupoChips key={fase.nombre} nombre={fase.nombre} crece={fase.valores.length}>
                     {fase.valores.map((valor) => (
-                      <FilterChip
+                      <TarjetaEstado
                         key={valor}
                         label={TRACKING_LABEL[valor]}
                         count={trackingCounts[valor]}
                         active={trackingFilter === valor}
                         onClick={() => setTrackingFilter(valor)}
                         dotClass={TRACKING_DOT_COLORS[valor]}
+                        abre={valor === "pending" && !!confirmacionCounts}
                       />
                     ))}
                   </GrupoChips>
                 ))}
-              </FilaFiltros>
+              </div>
               {/* Pendientes = la cola de confirmacion: que hacer (subetapa) y
-                  cuando (plazo), dos filtros independientes. Cuelgan de Estado:
-                  arrancan en la columna de los chips, atados por una linea. */}
+                  cuando (plazo), dos filtros independientes. Viven en un panel
+                  que SALE de la tarjeta Pendientes: el panel sube 1px y la
+                  tarjeta, que se pinta encima, tapa su linea con el mismo color. */}
               {trackingFilter === "pending" && confirmacionCounts && (
-                <div className="ml-1 space-y-1.5 border-l border-border pl-2.5 sm:ml-[5.75rem] sm:pl-3">
+                <div className="-mt-px space-y-1.5 border border-border bg-seleccion px-3 py-2.5">
                   <FilaFiltros etiqueta="Subetapa" sub>
                     <GrupoChips>
                       <FilterChip
@@ -9217,26 +9300,82 @@ function CourierPerformanceModal({
   );
 }
 
-function AlertStat({
-  label,
-  value,
-  tone = "muted",
+// Las alertas de la operacion, a un clic. Eran una fila fija de cinco cifras,
+// la mayoria cronicas (miles de "por reclamar" y "falta cuadrar"), que empujaba
+// la tabla hacia abajo en cada visita. Ahora es un boton chico en la linea del
+// periodo: el punto rojo avisa si hay reintentos o incidencias, que son las que
+// piden accion hoy, y el detalle se abre encima sin mover nada.
+function MenuAlertas({
+  items,
+  cargando,
 }: {
-  label: string;
-  value: string;
-  tone?: "warn" | "bad" | "muted";
+  items: Array<{ label: string; valor: number; tono: "bad" | "warn"; detalle: string }>;
+  cargando: boolean;
 }) {
-  const cls =
-    tone === "bad"
-      ? "border-red-500/40 text-red-200"
-      : tone === "warn"
-        ? "border-amber-500/40 text-amber-200"
-        : "border-border text-muted-foreground";
+  const [abierto, setAbierto] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!abierto) return;
+    const fuera = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setAbierto(false);
+    };
+    const tecla = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAbierto(false);
+    };
+    document.addEventListener("mousedown", fuera);
+    document.addEventListener("keydown", tecla);
+    return () => {
+      document.removeEventListener("mousedown", fuera);
+      document.removeEventListener("keydown", tecla);
+    };
+  }, [abierto]);
+  const urgentes = cargando ? 0 : items.filter((i) => i.tono === "bad").reduce((t, i) => t + i.valor, 0);
   return (
-    <span className={`inline-flex items-center justify-between gap-1.5 rounded-md border bg-card px-2 py-1 text-[11px] ${cls}`}>
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-semibold text-foreground">{value}</span>
-    </span>
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-expanded={abierto}
+        aria-controls="panel-alertas"
+        aria-label={urgentes > 0 ? `Alertas: ${urgentes.toLocaleString("es-CR")} reintentos o incidencias` : "Alertas"}
+        onClick={() => setAbierto((v) => !v)}
+        className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+          abierto ? "border-primary/60 bg-seleccion text-foreground" : "border-border bg-card text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <Bell className="h-3.5 w-3.5" aria-hidden="true" />
+        Alertas
+        {urgentes > 0 && <span className="h-1.5 w-1.5 rounded-full bg-red-400" aria-hidden="true" />}
+        <ChevronDown className={`h-3 w-3 transition-transform ${abierto ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      {abierto && (
+        <div
+          id="panel-alertas"
+          role="region"
+          aria-label="Alertas de la operación"
+          className="absolute right-0 top-full z-40 mt-1.5 w-72 rounded-lg border border-border bg-card shadow-[0_25px_50px_-12px_rgb(0_0_0/0.25)]"
+        >
+          <ul className="divide-y divide-border">
+            {items.map((i) => (
+              <li key={i.label} className="flex items-start gap-2.5 px-3 py-2">
+                <span
+                  className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${i.tono === "bad" ? "bg-red-400" : "bg-amber-400"}`}
+                  aria-hidden="true"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-xs font-medium text-foreground">{i.label}</span>
+                    <span className="text-sm font-semibold tabular-nums text-foreground">
+                      {cargando ? "…" : i.valor.toLocaleString("es-CR")}
+                    </span>
+                  </div>
+                  <p className="text-[11px] leading-4 text-muted-foreground">{i.detalle}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
