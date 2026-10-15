@@ -13,6 +13,16 @@ import {
 } from "@/lib/finance-orders";
 import { mergeDispatchIntoTracking } from "@/lib/dispatch";
 import {
+  estadoConfirmacion,
+  PLAZOS,
+  SUBETAPAS,
+  type EstadoConfirmacion,
+  type Plazo,
+  type Subetapa,
+  pedidoDeFila,
+} from "@/lib/confirmacion";
+import { leerConfigConfirmacion, listConfirmacionEvents } from "@/lib/order-events-db";
+import {
   getOrdersDataset,
   isOrdersDatasetUnavailableError,
   type OrdersDataset,
@@ -130,7 +140,7 @@ function matchesPeriod(
   return ts >= dayStart - (days - 1) * DAY;
 }
 
-type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[] };
+type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion };
 type ResolvedRow = { row: TrackableOrderRow; traces: SettlementTrace[]; status: string };
 
 function resolveRows(
@@ -166,6 +176,60 @@ function countTracking(rows: ResolvedRow[]): Record<TrackingFilter, number> {
     counts[getTrackingFilterFromStatus(item.status, item.row)] += 1;
   }
   return counts;
+}
+
+function parseSubetapa(value: string | null): Subetapa | "all" {
+  return SUBETAPAS.some((s) => s.value === value) ? (value as Subetapa) : "all";
+}
+function parsePlazo(value: string | null): Plazo | "all" {
+  return PLAZOS.some((p) => p.value === value) ? (value as Plazo) : "all";
+}
+
+/**
+ * Cola de confirmacion (lib/confirmacion.ts) de los pedidos PENDIENTES: la
+ * subetapa y el plazo de cada uno, con su bitacora. Los conteos son por
+ * faceta: los de subetapa respetan el plazo elegido y viceversa, para que cada
+ * chip diga cuantos quedan si se lo toca.
+ */
+async function aplicarConfirmacion(
+  items: ResolvedRow[],
+  store: { id: number; code: string },
+  subetapa: Subetapa | "all",
+  plazo: Plazo | "all",
+  ahora: Date
+) {
+  const [eventos, config] = await Promise.all([listConfirmacionEvents(store.id), leerConfigConfirmacion(store.id, store.code)]);
+  const estados = new Map<string, EstadoConfirmacion>();
+  for (const item of items) {
+    const clave = String(item.row.shopify_order_name || item.row.order_name || "").trim().toUpperCase();
+    estados.set(
+      item.row.row_key,
+      estadoConfirmacion(
+        pedidoDeFila(item.row),
+        eventos.get(clave) ?? [],
+        config,
+        ahora
+      )
+    );
+  }
+  const subetapas = Object.fromEntries([["all", 0], ...SUBETAPAS.map((s) => [s.value, 0])]) as Record<Subetapa | "all", number>;
+  const plazos = Object.fromEntries([["all", 0], ...PLAZOS.map((p) => [p.value, 0])]) as Record<Plazo | "all", number>;
+  for (const item of items) {
+    const e = estados.get(item.row.row_key)!;
+    if (plazo === "all" || e.plazo === plazo) {
+      subetapas.all += 1;
+      subetapas[e.subetapa] += 1;
+    }
+    if (subetapa === "all" || e.subetapa === subetapa) {
+      plazos.all += 1;
+      if (e.plazo) plazos[e.plazo] += 1;
+    }
+  }
+  const filtrados = items.filter((item) => {
+    const e = estados.get(item.row.row_key)!;
+    return (subetapa === "all" || e.subetapa === subetapa) && (plazo === "all" || e.plazo === plazo);
+  });
+  return { estados, filtrados, counts: { subetapa: subetapas, plazo: plazos } };
 }
 
 function countSettlements(rows: ResolvedRow[]): Record<SettlementFilter, number> {
@@ -217,6 +281,8 @@ export async function GET(req: NextRequest) {
   const q = (params.get("q") || "").trim();
   const trackingFilter = parseTrackingFilter(params.get("status"));
   const settlementFilter = parseSettlementFilter(params.get("settlement"));
+  const subetapaFilter = parseSubetapa(params.get("subetapa"));
+  const plazoFilter = parsePlazo(params.get("plazo"));
   const period = parsePeriod(params.get("period"));
   const month = (params.get("month") || "").trim();
   const startDate = (params.get("start") || "").trim();
@@ -253,10 +319,15 @@ export async function GET(req: NextRequest) {
     const trackingCounts = countTracking(withMeta);
 
     // 3) Filtro de estado -> sobre este conjunto se miden los settlementCounts.
-    const trackingFiltered =
+    const porEstado =
       trackingFilter === "all"
         ? withMeta
         : withMeta.filter((item) => getTrackingFilterFromStatus(item.status, item.row) === trackingFilter);
+
+    // 3b) Pendientes: cola de confirmacion (subetapa + plazo).
+    const confirmacion =
+      trackingFilter === "pending" ? await aplicarConfirmacion(porEstado, store, subetapaFilter, plazoFilter, now) : null;
+    const trackingFiltered = confirmacion ? confirmacion.filtrados : porEstado;
 
     const settlementCounts = countSettlements(trackingFiltered);
 
@@ -266,10 +337,10 @@ export async function GET(req: NextRequest) {
     );
 
     const total = finalFiltered.length;
-    const attachTraces = (item: { row: TrackableOrderRow; traces: SettlementTrace[] }): RowWithTraces => ({
-      ...item.row,
-      traces: item.traces,
-    });
+    const attachTraces = (item: { row: TrackableOrderRow; traces: SettlementTrace[] }): RowWithTraces => {
+      const estado = confirmacion?.estados.get(item.row.row_key);
+      return { ...item.row, traces: item.traces, ...(estado ? { confirmacion: estado } : {}) };
+    };
 
     if (exportAll) {
       // Export: todas las filas filtradas (con trazas para reconstruir las
@@ -307,6 +378,7 @@ export async function GET(req: NextRequest) {
       searchedCount: searchedRows.length,
       trackingCounts,
       settlementCounts,
+      ...(confirmacion ? { confirmacionCounts: confirmacion.counts } : {}),
       ...(enRouteGuides ? { enRouteGuides } : {}),
       ...(operationalMetadata ? { operationalMetadata } : {}),
     });

@@ -30,6 +30,18 @@ import {
 } from "lucide-react";
 import { normalizeSearchText } from "@/lib/order-matching";
 import {
+  DIAS_ULTIMO_INTENTO,
+  PLAZOS,
+  SUBETAPAS,
+  SUBETAPA_LABEL,
+  cuandoVence,
+  pedidoDeFila,
+  tzDeTienda,
+  type EstadoConfirmacion,
+  type Plazo,
+  type Subetapa,
+} from "@/lib/confirmacion";
+import {
   getPreparedAt,
   type CourierKairoStatus,
   type CourierPerformanceReport,
@@ -340,7 +352,14 @@ const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
 // Las filas que devuelve /api/finance/orders ya traen las trazas de liquidacion
 // resueltas server-side, asi la tabla no necesita el settlementTraceByKey en
 // memoria.
-type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[] };
+type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion };
+type ConfirmacionCounts = { subetapa: Record<Subetapa | "all", number>; plazo: Record<Plazo | "all", number> };
+
+// Cola de confirmacion de los pendientes (lib/confirmacion.ts): el color dice
+// cuan urgente es. Solo una promesa rota es roja.
+const PLAZO_DOT: Record<Plazo, string> = { vencidos: "bg-rose-500", hoy: "bg-amber-400", proximos: "bg-cyan-400" };
+const PLAZO_TEXTO: Record<Plazo, string> = { vencidos: "text-rose-300", hoy: "text-amber-300", proximos: "text-cyan-300" };
+const PLAZO_LABEL: Record<Plazo, string> = Object.fromEntries(PLAZOS.map((p) => [p.value, p.label])) as Record<Plazo, string>;
 
 // 50 por pagina: la tabla ya no tiene scroll propio (se baja con la pagina),
 // asi que 100 filas eran una pagina eterna; y es la mitad de datos por carga.
@@ -1781,6 +1800,10 @@ function OrdersTab({
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
   const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>("all");
+  // Sub-filtros de Pendientes (cola de confirmacion).
+  const [subetapaFilter, setSubetapaFilter] = useState<Subetapa | "all">("all");
+  const [plazoFilter, setPlazoFilter] = useState<Plazo | "all">("all");
+  const [confirmacionCounts, setConfirmacionCounts] = useState<ConfirmacionCounts | null>(null);
   const [settlementFilter, setSettlementFilter] = useState<OrderSettlementFilter>("all");
   // En mobile los filtros (periodo/estado/liquidacion) se colapsan detras de un
   // boton para no saturar la vista; en desktop siempre se muestran.
@@ -1833,7 +1856,16 @@ function OrdersTab({
   // Cualquier cambio de filtro vuelve a la primera pagina.
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, trackingFilter, settlementFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code]);
+  }, [debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code]);
+
+  // La subetapa y el plazo son solo de Pendientes: al salir de ahi se limpian.
+  useEffect(() => {
+    if (trackingFilter !== "pending") {
+      setSubetapaFilter("all");
+      setPlazoFilter("all");
+      setConfirmacionCounts(null);
+    }
+  }, [trackingFilter]);
 
   // Al cambiar de tienda limpiamos el ultimo resultado valido: mantenerlo entre
   // tiendas rompe el aislamiento (mostrar pedidos de otra tienda mientras carga
@@ -1868,10 +1900,14 @@ function OrdersTab({
       if (debouncedSearch) params.set("q", debouncedSearch);
       if (trackingFilter !== "all") params.set("status", trackingFilter);
       if (settlementFilter !== "all") params.set("settlement", settlementFilter);
+      if (trackingFilter === "pending") {
+        if (subetapaFilter !== "all") params.set("subetapa", subetapaFilter);
+        if (plazoFilter !== "all") params.set("plazo", plazoFilter);
+      }
       for (const [key, value] of Object.entries(extra)) params.set(key, value);
       return params.toString();
     },
-    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter]
+    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter]
   );
 
   useEffect(() => {
@@ -1897,6 +1933,7 @@ function OrdersTab({
         setSearchedCount(Number(json.searchedCount ?? 0));
         setTrackingCounts((json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS);
         setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
+        setConfirmacionCounts((json.confirmacionCounts as ConfirmacionCounts | undefined) ?? null);
         setHasLoadedOnce(true);
         if (json.operationalMetadata) {
           const metadata = json.operationalMetadata as OrdersOperationalMetadata;
@@ -2003,11 +2040,14 @@ function OrdersTab({
 
   // total = filas que pasan TODOS los filtros (lo que antes era filteredRows.length).
   const totalPages = Math.max(1, Math.ceil(total / ORDERS_PAGE_SIZE));
-  const hayFiltros = periodMode !== "all" || trackingFilter !== "all" || settlementFilter !== "all";
+  const hayFiltros =
+    periodMode !== "all" || trackingFilter !== "all" || settlementFilter !== "all" || subetapaFilter !== "all" || plazoFilter !== "all";
   const limpiarFiltros = () => {
     setPeriodMode("all");
     setTrackingFilter("all");
     setSettlementFilter("all");
+    setSubetapaFilter("all");
+    setPlazoFilter("all");
   };
   const boxfulSinMatch = latestLogisticsImport?.unmatched_rows ?? 0;
   const tooltipShopify = `Shopify es la base del seguimiento: ${(shopifyCoverage?.count ?? shopifyOrderCount).toLocaleString("es-CR")} pedidos${
@@ -2356,6 +2396,47 @@ function OrdersTab({
                 />
               ))}
             </FilaFiltros>
+            {/* Pendientes = la cola de confirmacion: que hacer (subetapa) y
+                cuando (plazo), dos filtros independientes. */}
+            {trackingFilter === "pending" && confirmacionCounts && (
+              <FilaFiltros etiqueta="Subetapa">
+                <FilterChip
+                  label="Todas"
+                  count={confirmacionCounts.subetapa.all}
+                  active={subetapaFilter === "all"}
+                  onClick={() => setSubetapaFilter("all")}
+                />
+                {SUBETAPAS.map((s) => (
+                  <FilterChip
+                    key={s.value}
+                    label={s.label}
+                    count={confirmacionCounts.subetapa[s.value]}
+                    active={subetapaFilter === s.value}
+                    onClick={() => setSubetapaFilter(s.value)}
+                  />
+                ))}
+              </FilaFiltros>
+            )}
+            {trackingFilter === "pending" && confirmacionCounts && (
+              <FilaFiltros etiqueta="Plazo">
+                <FilterChip
+                  label="Todos"
+                  count={confirmacionCounts.plazo.all}
+                  active={plazoFilter === "all"}
+                  onClick={() => setPlazoFilter("all")}
+                />
+                {PLAZOS.map((p) => (
+                  <FilterChip
+                    key={p.value}
+                    label={p.label}
+                    count={confirmacionCounts.plazo[p.value]}
+                    active={plazoFilter === p.value}
+                    onClick={() => setPlazoFilter(p.value)}
+                    dotClass={PLAZO_DOT[p.value]}
+                  />
+                ))}
+              </FilaFiltros>
+            )}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
               <FilaFiltros etiqueta="Liquidacion">
                 {ORDER_SETTLEMENT_FILTERS.map((filter) => (
@@ -2454,6 +2535,7 @@ function OrdersTab({
             moovinByPackage={moovinByPackage}
             forzaByGuide={forzaByGuide}
             loading={tableLoading}
+            onGestion={() => setRefreshKey((key) => key + 1)}
             emptyLabel={
               orderSearch
                 ? "No encontramos pedidos con ese codigo y estado."
@@ -2571,6 +2653,34 @@ function DispatchWho({
   );
 }
 
+// La cola de confirmacion de un pedido pendiente, debajo de su estado: que
+// toca (subetapa), cuando (plazo con su fecha) y cuanto se lo trabajo.
+function LineaConfirmacion({ c, tz }: { c: EstadoConfirmacion; tz: string }) {
+  const cuando = cuandoVence(c.vence, tz);
+  const conDias = c.diasGestion > 0 && c.subetapa !== "confirmado";
+  return (
+    <div className="mt-1 text-[11px] leading-4">
+      <div className="text-foreground/85">{SUBETAPA_LABEL[c.subetapa]}</div>
+      {(c.plazo || conDias) && (
+        <div className="whitespace-nowrap">
+          {c.plazo && (
+            <span className={PLAZO_TEXTO[c.plazo]}>
+              {PLAZO_LABEL[c.plazo]}
+              {cuando ? ` ${cuando}` : ""}
+            </span>
+          )}
+          {c.plazo && conDias && <span className="text-muted-foreground"> · </span>}
+          {conDias && (
+            <span className="text-muted-foreground" title="Días distintos con al menos un intento">
+              {c.diasGestion}/{DIAS_ULTIMO_INTENTO} días
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PaginadorPedidos({
   page,
   totalPages,
@@ -2609,6 +2719,7 @@ function OrdersTable({
   forzaByGuide,
   loading = false,
   emptyLabel = "No hay pedidos para mostrar.",
+  onGestion,
 }: {
   selectedStore: FinanceStorePublic;
   // Filas server-side: ya traen las trazas de liquidacion resueltas (Carril 2
@@ -2618,7 +2729,10 @@ function OrdersTable({
   forzaByGuide: Map<string, ForzaTrackingRow>;
   loading?: boolean;
   emptyLabel?: string;
+  /** La ficha guardo una gestion: la tabla se relee para mover el pedido de subetapa. */
+  onGestion?: () => void;
 }) {
+  const tz = tzDeTienda(selectedStore.code);
   // Pedido abierto en el drawer de gestion. Se abre con lo que la fila ya
   // tiene; el detalle pesado lo carga el propio drawer.
   const [openOrder, setOpenOrder] = useState<OrderDrawerTarget | null>(null);
@@ -2631,6 +2745,8 @@ function OrdersTable({
       cod_amount: Number(row.cod_amount || 0),
       created_at: row.shopify_created_at ?? null,
       items_summary: (row.package_items ?? []).map((item) => item.title).join(", "),
+      pedido_confirmacion: row.confirmacion ? pedidoDeFila(row) : null,
+      confirmacion: row.confirmacion ?? null,
     });
 
   return (
@@ -2645,6 +2761,7 @@ function OrdersTable({
           storeCode={selectedStore.code}
           currencySymbol={getCurrencySymbol(selectedStore.code)}
           onClose={() => setOpenOrder(null)}
+          onRegistrado={onGestion}
         />
       )}
 
@@ -2675,6 +2792,7 @@ function OrdersTable({
                 <div className="flex flex-col items-end gap-0.5">
                   <StatusBadge status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
                   <DispatchWho row={row} status={trackingStatus} />
+                  {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
@@ -2842,6 +2960,7 @@ function OrdersTable({
                       label={getTrackingStatusLabel(row, traces, trackingStatus)}
                     />
                     <DispatchWho row={row} status={trackingStatus} />
+                    {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
                   </div>
                 </td>
                 <td className="px-2 py-1.5">

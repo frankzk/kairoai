@@ -19,6 +19,7 @@ import {
   CalendarClock,
   CheckCircle2,
   History,
+  Hourglass,
   Info,
   Loader2,
   MessageSquare,
@@ -29,6 +30,7 @@ import {
   Plus,
   RefreshCw,
   Voicemail,
+  Wallet,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -42,10 +44,27 @@ import type { ChatLeadSummary } from "@/lib/leads-types";
 import type { CustomerOrder, CustomerSummary } from "@/lib/customer-history";
 import type { OrderAlert } from "@/lib/order-risk";
 import {
+  ORDER_EVENT_CANALES,
   ORDER_EVENT_OUTCOME_LABEL,
   type OrderEvent,
+  type OrderEventCanal,
   type OrderEventKind,
 } from "@/lib/order-events";
+import {
+  DIAS_ULTIMO_INTENTO,
+  PLAZOS,
+  SUBETAPA_LABEL,
+  configDeTienda,
+  cuandoVence,
+  estadoConfirmacion,
+  fechaLocal,
+  requiereFechaPactada,
+  tzDeTienda,
+  type ConfigConfirmacion,
+  type EstadoConfirmacion,
+  type Plazo,
+  type PedidoConfirmacion,
+} from "@/lib/confirmacion";
 
 export interface OrderDrawerTarget {
   order_name: string;
@@ -55,6 +74,10 @@ export interface OrderDrawerTarget {
   cod_amount: number;
   created_at: string | null;
   items_summary: string;
+  /** Solo si es un pendiente: con esto la ficha calcula la cola igual que la tabla. */
+  pedido_confirmacion?: PedidoConfirmacion | null;
+  /** Lo que la tabla ya calculo: se muestra al instante, antes de cargar la bitacora. */
+  confirmacion?: EstadoConfirmacion | null;
 }
 
 interface DetailResponse {
@@ -63,6 +86,7 @@ interface DetailResponse {
   alerts?: OrderAlert[];
   events?: OrderEvent[];
   chat_lead?: ChatLeadSummary | null;
+  confirmacion_config?: ConfigConfirmacion;
   error?: string;
 }
 
@@ -82,18 +106,20 @@ type ActionButton = {
   tone?: string;
 };
 
-// Resultado de la llamada: lo que paso al marcar.
+// Resultado del intento: lo que paso al marcar o escribir. "No contestó" y
+// "Se deja mensaje" lo devuelven a la cola en 2 horas habiles.
 const CALL_BUTTONS: ActionButton[] = [
   { outcome: "contesto", label: "Contestó", icon: Phone, iconTone: "text-emerald-500" },
-  { outcome: "no_contesta", label: "No contesta", icon: PhoneOff, iconTone: "text-rose-500" },
-  { outcome: "buzon", label: "Buzón", icon: Voicemail, iconTone: "text-muted-foreground" },
+  { outcome: "no_contesta", label: "No contestó", icon: PhoneOff, iconTone: "text-rose-500" },
+  { outcome: "buzon", label: "Se deja mensaje", icon: Voicemail, iconTone: "text-muted-foreground" },
   { outcome: "numero_malo", label: "Número malo", icon: Ban, iconTone: "text-muted-foreground" },
 ];
 
-// Resultado del contacto: a que se comprometio el cliente.
+// A que se comprometio el cliente. Los dos acuerdos piden la fecha pactada.
 const RESULT_BUTTONS: ActionButton[] = [
-  { outcome: "confirmado", label: "Confirmó el pedido", icon: CheckCircle2, iconTone: "text-emerald-500" },
-  { outcome: "reagendar", label: "Reagendar", icon: CalendarClock, iconTone: "text-muted-foreground" },
+  { outcome: "confirmado", label: "Confirmó", icon: CheckCircle2, iconTone: "text-emerald-500" },
+  { outcome: "reagendar", label: "Volver a contactar", icon: CalendarClock, iconTone: "text-cyan-400" },
+  { outcome: "pendiente_abono", label: "Pendiente de abono", icon: Wallet, iconTone: "text-amber-400" },
 ];
 
 // Decision sobre el despacho: cierra la gestion.
@@ -111,6 +137,13 @@ const DECISION_BUTTONS: ActionButton[] = [
     tone: "border-amber-500/50 text-amber-400 hover:bg-amber-500/10",
   },
   {
+    // Se agoto la gestion. No anula: eso lo decide una persona.
+    outcome: "ultimo_intento",
+    label: "Último intento",
+    icon: Hourglass,
+    tone: "border-orange-500/50 text-orange-400 hover:bg-orange-500/10",
+  },
+  {
     outcome: "anular",
     label: "Anular pedido",
     icon: Ban,
@@ -123,6 +156,32 @@ const KIND_LABEL: Record<OrderEventKind, string> = {
   nota: "Nota",
   decision: "Decisión",
 };
+
+const CANAL_LABEL: Record<string, string> = Object.fromEntries(ORDER_EVENT_CANALES.map((c) => [c.value, c.label]));
+const PLAZO_LABEL: Record<Plazo, string> = Object.fromEntries(PLAZOS.map((p) => [p.value, p.label])) as Record<Plazo, string>;
+const PLAZO_TEXTO: Record<Plazo, string> = { vencidos: "text-rose-300", hoy: "text-amber-300", proximos: "text-cyan-300" };
+
+// Que dice la cola de este pedido, en una frase.
+function fraseVence(c: EstadoConfirmacion, tz: string): string {
+  const v = c.vence;
+  if (!v) return "";
+  if (v.tipo === "nunca") return "primera llamada pendiente";
+  const cuando = cuandoVence(v, tz);
+  if (v.tipo === "pactada") return `pactado para el ${cuando}`;
+  if (v.tipo === "recordatorio") return `volver a llamar desde ${cuando}`;
+  return `vuelve el ${cuando}`;
+}
+
+// Lo que agrega un evento a su resultado: el canal y la fecha que dejo.
+function detalleEvento(e: OrderEvent, tz: string): string {
+  return [
+    e.canal ? CANAL_LABEL[e.canal] ?? e.canal : "",
+    e.fecha_pactada ? `pactado ${cuandoVence({ tipo: "pactada", fecha: e.fecha_pactada }, tz)}` : "",
+    e.recordatorio_at ? `recordatorio ${cuandoVence({ tipo: "recordatorio", fecha: e.recordatorio_at }, tz)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 
 function money(value: number, symbol: string): string {
   return `${symbol}${Math.round(Number(value) || 0).toLocaleString("es-CR")}`;
@@ -195,11 +254,14 @@ export default function OrderDrawer({
   storeCode,
   currencySymbol,
   onClose,
+  onRegistrado,
 }: {
   target: OrderDrawerTarget;
   storeCode: string;
   currencySymbol: string;
   onClose: () => void;
+  /** Tras cada gestion guardada: la tabla de atras se pone al dia. */
+  onRegistrado?: () => void;
 }) {
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -208,6 +270,11 @@ export default function OrderDrawer({
   const [vendedoraId, setVendedoraId] = useState<number | null>(null);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
+  const [canal, setCanal] = useState<Exclude<OrderEventCanal, "">>("llamada");
+  // Acuerdo que espera su fecha pactada antes de guardarse.
+  const [pactando, setPactando] = useState<string | null>(null);
+  const [fechaPactada, setFechaPactada] = useState("");
+  const tz = tzDeTienda(storeCode);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -270,7 +337,7 @@ export default function OrderDrawer({
     if (id !== null) persistVendedoraId(id);
   };
 
-  async function registrar(kind: OrderEventKind, outcome: string, message = "") {
+  async function registrar(kind: OrderEventKind, outcome: string, message = "", fecha = "") {
     setSaving(outcome || kind);
     setError("");
     try {
@@ -283,6 +350,8 @@ export default function OrderDrawer({
           kind,
           outcome,
           message,
+          canal: kind === "contacto" ? canal : "",
+          fecha_pactada: fecha || undefined,
           staff_id: vendedoraId,
           staff_name: staff.find((s) => s.id === vendedoraId)?.name ?? "",
         }),
@@ -295,6 +364,8 @@ export default function OrderDrawer({
       if (body.event) {
         setDetail((cur) => ({ ...(cur ?? {}), events: [body.event as OrderEvent, ...(cur?.events ?? [])] }));
         if (kind === "nota") setNote("");
+        setPactando(null);
+        onRegistrado?.();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo registrar la gestión");
@@ -305,6 +376,25 @@ export default function OrderDrawer({
 
   const alerts = detail?.alerts ?? [];
   const events = detail?.events ?? [];
+  const hoy = fechaLocal(new Date(), tz);
+  // La cola del pedido, recalculada con la bitacora: lo que se registra aca se
+  // ve al instante. Mientras carga, lo que ya calculo la tabla.
+  const cola: EstadoConfirmacion | null = !target.pedido_confirmacion
+    ? null
+    : detail?.events
+      ? estadoConfirmacion(
+          target.pedido_confirmacion,
+          detail.events.map((e) => ({
+            kind: e.kind,
+            outcome: e.outcome ?? "",
+            created_at: e.created_at,
+            fecha_pactada: e.fecha_pactada ?? null,
+            recordatorio_at: e.recordatorio_at ?? null,
+          })),
+          detail.confirmacion_config ?? configDeTienda(storeCode, null),
+          new Date()
+        )
+      : target.confirmacion ?? null;
   const summary = detail?.summary;
   const otherOrders = (detail?.orders ?? []).filter(
     (o) => o.name.trim().toUpperCase() !== target.order_name.trim().toUpperCase()
@@ -318,9 +408,18 @@ export default function OrderDrawer({
         key={b.outcome}
         variant="outline"
         size="sm"
-        className={`gap-2 ${b.tone ?? ""}`}
+        className={`gap-2 ${b.tone ?? ""} ${pactando === b.outcome ? "border-violet-500 bg-violet-500/10" : ""}`}
         disabled={saving !== null}
-        onClick={() => registrar(kind, b.outcome)}
+        aria-pressed={pactando === b.outcome || undefined}
+        onClick={() => {
+          // Un acuerdo no se guarda sin la fecha pactada: primero se elige.
+          if (kind === "contacto" && requiereFechaPactada(b.outcome)) {
+            setPactando(pactando === b.outcome ? null : b.outcome);
+            setFechaPactada((f) => (f && f >= hoy ? f : ""));
+            return;
+          }
+          registrar(kind, b.outcome);
+        }}
       >
         {saving === b.outcome ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -493,13 +592,72 @@ export default function OrderDrawer({
                 </select>
               </ActionRow>
 
+              {cola && (
+                <ActionRow label="Cola">
+                  <div className="flex min-h-9 flex-wrap items-center gap-x-1.5 text-xs" data-testid="cola-pedido">
+                    <span className="font-medium">{SUBETAPA_LABEL[cola.subetapa]}</span>
+                    {cola.plazo && (
+                      <span className={PLAZO_TEXTO[cola.plazo]}>
+                        · {PLAZO_LABEL[cola.plazo]}, {fraseVence(cola, tz)}
+                      </span>
+                    )}
+                    <span className="text-muted-foreground">
+                      · {cola.diasGestion}/{DIAS_ULTIMO_INTENTO} días de gestión
+                    </span>
+                  </div>
+                </ActionRow>
+              )}
+
               <div className="space-y-2">
-                <ActionRow label="Llamada">
+                {/* Por donde se intento: queda en cada intento de la bitacora. */}
+                <ActionRow label="Canal">
+                  <div role="radiogroup" aria-label="Canal del intento" className="inline-flex rounded-md border border-input">
+                    {ORDER_EVENT_CANALES.map((c) => (
+                      <button
+                        key={c.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={canal === c.value}
+                        onClick={() => setCanal(c.value)}
+                        className={`h-9 px-3 text-sm first:rounded-l-md last:rounded-r-md ${
+                          canal === c.value ? "bg-violet-500/15 font-medium text-violet-200" : "text-muted-foreground hover:bg-muted/50"
+                        }`}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                </ActionRow>
+                <ActionRow label="Intento">
                   {CALL_BUTTONS.map((b) => renderAction(b, "contacto"))}
                 </ActionRow>
                 <ActionRow label="Resultado">
                   {RESULT_BUTTONS.map((b) => renderAction(b, "contacto"))}
                 </ActionRow>
+                {pactando && (
+                  <ActionRow label="Fecha">
+                    <input
+                      type="date"
+                      min={hoy}
+                      value={fechaPactada}
+                      onChange={(e) => setFechaPactada(e.target.value)}
+                      aria-label="Fecha pactada con el cliente"
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                    />
+                    <Button
+                      size="sm"
+                      className="gap-2"
+                      disabled={!fechaPactada || fechaPactada < hoy || saving !== null}
+                      onClick={() => registrar("contacto", pactando, "", fechaPactada)}
+                    >
+                      {saving === pactando && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      Guardar
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setPactando(null)}>
+                      Cancelar
+                    </Button>
+                  </ActionRow>
+                )}
                 <ActionRow label="Decisión">
                   {DECISION_BUTTONS.map((b) => renderAction(b, "decision"))}
                 </ActionRow>
@@ -560,7 +718,9 @@ export default function OrderDrawer({
                         </span>
                         <span className="font-medium">{KIND_LABEL[e.kind] ?? e.kind}</span>
                         <span className="flex-1 text-muted-foreground">
-                          {e.message || (e.outcome ? ORDER_EVENT_OUTCOME_LABEL[e.outcome] ?? e.outcome : "")}
+                          {e.outcome ? ORDER_EVENT_OUTCOME_LABEL[e.outcome] ?? e.outcome : ""}
+                          {e.outcome && detalleEvento(e, tz) ? ` · ${detalleEvento(e, tz)}` : ""}
+                          {e.outcome && e.message ? ` — ${e.message}` : e.message}
                         </span>
                         {e.staff_name && (
                           <span className="whitespace-nowrap text-muted-foreground">{e.staff_name}</span>
