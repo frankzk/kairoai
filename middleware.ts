@@ -1,65 +1,123 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
+import { HEADER_USUARIO, identidadAHeader, leerSesion, opcionesCookie, SESSION_COOKIE, type SesionClaims } from "@/lib/auth";
+import { cronAccessAllowed } from "@/lib/cron-auth";
+import { cumple, esEstatico, exigenciaDe, inicioDe } from "@/lib/permisos";
+import { aplicarEstado, consultarEstado } from "@/lib/sesion-revalidar";
+import { COOKIE_YO, yoACookie } from "@/lib/sesion-cliente";
 
-const PUBLIC_PATHS = [
-  "/login",
-  "/api/auth/login",
-  "/api/auth/logout",
-  "/api/shopify/auth",
-  "/api/shopify/auth/callback",
-  "/api/shopify/webhook",
-  "/api/retell/llm",
-  "/api/retell/webhook",
-  // Notificaciones de la centralita Zadarma: se autentican con la firma HMAC
-  // del propio evento, no con la cookie de sesion.
-  "/api/zadarma/webhook",
-  "/api/cron/retries",
-  "/api/cron/moovin",
-  "/api/cron/wyn",
-  "/api/cron/shopify-refresh",
-  "/api/cron/shopify-recent",
-  "/api/cron/shopify-recheck-stale",
-  "/api/cron/finance-index",
-  "/api/cron/incidencias",
-  "/api/cron/icomfly",
-  "/api/cron/leads",
-  "/api/cron/leads-reclassify",
-  "/api/cron/leads-inbound",
-  "/api/cron/leads-shopify-match",
-];
+// LA PUERTA. Cada pedido a la app pasa por aca:
+//   1. Que exige la ruta (lib/permisos.ts): publico, cron, sesion o permiso.
+//   2. Quien es: la cookie firmada, revalidada contra la base (desactivada,
+//      permisos o tiendas cambiados, contraseña reseteada -> se nota en <30 s).
+//   3. Si puede: el permiso de la ruta y, si pide ?store=, que esa tienda sea
+//      suya.
+//   4. Le pasa la identidad a la ruta en un header interno, borrando antes el
+//      que haya mandado el navegador (nadie puede hacerse pasar por otro).
+//
+// Las rutas que reciben la tienda en el CUERPO del pedido la validan en
+// lib/stores.ts con esta misma identidad.
 
-function isPublicPath(pathname: string): boolean {
-  return (
-    PUBLIC_PATHS.includes(pathname) ||
-    pathname.startsWith("/_next/") ||
-    pathname.startsWith("/favicon") ||
-    pathname.includes(".")
-  );
+const PERMITIDO_SI_DEBE_CAMBIAR = ["/cuenta", "/api/auth/", "/api/health/crons"];
+
+function esApi(pathname: string): boolean {
+  return pathname.startsWith("/api/");
+}
+
+function siguiente(req: NextRequest, claims: SesionClaims | null): NextResponse {
+  const h = new Headers(req.headers);
+  h.delete(HEADER_USUARIO);
+  if (claims) h.set(HEADER_USUARIO, identidadAHeader(claims));
+  const res = NextResponse.next({ request: { headers: h } });
+  // En cada PAGINA, la cookie legible con quien es (ver lib/sesion-cliente.ts).
+  if (claims && !esApi(req.nextUrl.pathname)) {
+    res.cookies.set({
+      name: COOKIE_YO,
+      value: yoACookie({ id: claims.u, nombre: claims.n, permisos: claims.p, tiendas: claims.s, staffId: claims.st, debeCambiar: claims.mc }),
+      httpOnly: false,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 12,
+    });
+  }
+  return res;
+}
+
+function sinSesion(req: NextRequest, limpiarCookie: boolean): NextResponse {
+  const { pathname, search } = req.nextUrl;
+  let res: NextResponse;
+  if (esApi(pathname)) {
+    res = NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  } else {
+    const login = new URL("/login", req.url);
+    if (pathname !== "/") login.searchParams.set("next", pathname + search);
+    res = NextResponse.redirect(login);
+  }
+  if (limpiarCookie) res.cookies.set({ ...opcionesCookie(0), value: "" });
+  return res;
+}
+
+async function sesionVigente(req: NextRequest): Promise<{ claims: SesionClaims | null; habiaCookie: boolean }> {
+  const cookie = req.cookies.get(SESSION_COOKIE)?.value;
+  const firmada = await leerSesion(cookie);
+  if (!firmada) return { claims: null, habiaCookie: Boolean(cookie) };
+  // El admin de la contraseña compartida no tiene fila: vale lo firmado.
+  if (firmada.u === 0) return { claims: firmada, habiaCookie: true };
+  return {
+    claims: aplicarEstado(firmada, await consultarEstado(firmada.u, Date.now(), fetch, firmada.sv)),
+    habiaCookie: true,
+  };
 }
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  const authenticated = await isAuthenticated(req);
+  if (esEstatico(pathname)) return NextResponse.next();
 
-  if (pathname === "/login" && authenticated) {
-    return NextResponse.redirect(new URL("/", req.url));
-  }
+  const exige = exigenciaDe(pathname, req.method);
 
-  if (isPublicPath(pathname)) {
-    return NextResponse.next();
-  }
-
-  if (!authenticated) {
-    if (pathname.startsWith("/api/")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (exige.tipo === "publico") {
+    if (pathname === "/login") {
+      const { claims } = await sesionVigente(req);
+      if (claims) return NextResponse.redirect(new URL(claims.mc ? "/cuenta" : inicioDe(claims.p), req.url));
     }
-
-    const loginUrl = new URL("/login", req.url);
-    loginUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(loginUrl);
+    return siguiente(req, null);
   }
 
-  return NextResponse.next();
+  const { claims, habiaCookie } = await sesionVigente(req);
+
+  if (exige.tipo === "cron") {
+    const allowed = cronAccessAllowed({
+      authenticated: Boolean(claims),
+      authorization: req.headers.get("authorization"),
+      secret: process.env.CRON_SECRET,
+    });
+    return allowed ? siguiente(req, claims) : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!claims) return sinSesion(req, habiaCookie);
+
+  // Contraseña inicial puesta por otra persona: primero la cambia.
+  if (claims.mc && !PERMITIDO_SI_DEBE_CAMBIAR.some((p) => pathname === p || pathname.startsWith(p))) {
+    return esApi(pathname)
+      ? NextResponse.json({ error: "Primero cambia tu contraseña.", debe_cambiar_clave: true }, { status: 403 })
+      : NextResponse.redirect(new URL("/cuenta", req.url));
+  }
+
+  if (!cumple(exige, claims.p)) {
+    if (esApi(pathname)) {
+      return NextResponse.json({ error: "No tienes acceso a esta sección." }, { status: 403 });
+    }
+    const inicio = inicioDe(claims.p);
+    return NextResponse.redirect(new URL(inicio === pathname ? "/cuenta" : inicio, req.url));
+  }
+
+  // La tienda que se pide tiene que ser una de las suyas.
+  const store = req.nextUrl.searchParams.get("store");
+  if (store && esApi(pathname) && !claims.s.includes(store.trim().toLowerCase())) {
+    return NextResponse.json({ error: "No tienes acceso a esa tienda." }, { status: 403 });
+  }
+
+  return siguiente(req, claims);
 }
 
 export const config = {

@@ -2,7 +2,7 @@
 // entre el servidor (lib/incidents.ts, rutas, deteccion) y el cliente (page de
 // incidencias). Sin imports.
 
-export type IncidentSource = "moovin" | "forza" | "boxful" | "manual";
+export type IncidentSource = "moovin" | "forza" | "wyn" | "cargoexpreso" | "c807" | "boxful" | "manual";
 
 // Estados de gestion. Cada uno tiene un color en la UI (colorimetria).
 export type IncidentStatus =
@@ -23,6 +23,9 @@ export type IncidentCategory =
   | "cliente_rechaza"
   | "devuelto_origen"
   | "dano_paquete"
+  // El courier nunca reporto una falla, pero el envio lleva demasiado tiempo sin
+  // entregarse ni devolverse (ver DEMORA_* en lib/incidents-detect.ts).
+  | "demora_entrega"
   | "otro";
 
 export type IncidentEventKind =
@@ -122,6 +125,50 @@ export interface DetectedIncident {
 
 // Estados terminales: la deteccion automatica no los reabre.
 export const TERMINAL_STATUSES: IncidentStatus[] = ["resuelta", "perdida", "descartada"];
+
+// Listas de valores en tiempo de ejecucion, EXHAUSTIVAS por construccion: un
+// Record<Tipo, true> obliga a TypeScript a tener TODAS las claves, asi que
+// agregar un estado o una causa al tipo rompe el build aca en vez de fallar en
+// produccion.
+//
+// POR QUE EXISTE: cada lugar tenia su propia lista escrita a mano. Al agregar
+// reprog_fallida y demora_entrega quedaron atras la API (/api/incidents
+// rechazaba esos valores con 400: no se podia poner "Reprog. fallida" desde el
+// detalle ni la causa "Demora en entrega") y el conteo por causa del servidor.
+// La pantalla no fallaba porque sus listas si son Record<...> tipados.
+const STATUS_KEYS: Record<IncidentStatus, true> = {
+  pendiente: true,
+  reprogramada: true,
+  reprog_fallida: true,
+  sin_contestar: true,
+  no_llamar: true,
+  resuelta: true,
+  perdida: true,
+  descartada: true,
+};
+const CATEGORY_KEYS: Record<IncidentCategory, true> = {
+  fallo_entrega: true,
+  direccion_incorrecta: true,
+  cliente_no_responde: true,
+  cliente_rechaza: true,
+  devuelto_origen: true,
+  dano_paquete: true,
+  demora_entrega: true,
+  otro: true,
+};
+const SOURCE_KEYS: Record<IncidentSource, true> = {
+  moovin: true,
+  forza: true,
+  wyn: true,
+  cargoexpreso: true,
+  c807: true,
+  boxful: true,
+  manual: true,
+};
+
+export const INCIDENT_STATUSES = Object.keys(STATUS_KEYS) as IncidentStatus[];
+export const INCIDENT_CATEGORIES = Object.keys(CATEGORY_KEYS) as IncidentCategory[];
+export const INCIDENT_SOURCES = Object.keys(SOURCE_KEYS) as IncidentSource[];
 
 // Estadistica temporal de flujo de novedades. No es el snapshot por estado (esos
 // son los chips de la cabecera), sino cuantas se movieron en cada ventana de tiempo.

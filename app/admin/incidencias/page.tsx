@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import Link from "next/link";
 import {
   Activity, AlertTriangle, ArrowLeft, Ban, CalendarClock, Check, ChevronDown, ChevronsUpDown, ChevronUp, Copy,
-  Download, HelpCircle, History, MapPin, MessageSquare, PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Undo2, X,
+  Download, HelpCircle, History, MapPin, MessageSquare, PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Timer, Undo2, X,
   type LucideIcon,
 } from "lucide-react";
 import LeadChatPanel from "@/components/LeadChatPanel";
@@ -14,10 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { pctResueltas } from "@/lib/incidents-trend";
 import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentCausaStat, type IncidentPeriodTotal, type TrackingEvent } from "@/lib/incidents-types";
-import { FINANCE_STORES, type FinanceStoreCode } from "@/lib/store-config";
-import { useSelectedStore } from "@/lib/use-selected-store";
+import { FINANCE_STORES, getCurrencySymbol, getFinanceStore, type FinanceStoreCode } from "@/lib/store-config";
+import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
 import { exportXlsx } from "@/lib/export-xlsx";
 import type { ChatLeadSummary } from "@/lib/leads-types";
+import { courierYaNoReintenta, diasSinEntregaDe, esDiaSinEntrega, reglaReprogramar, reintentaSolo } from "@/lib/incidents-reprog";
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "muted";
 
@@ -39,6 +40,7 @@ const CATEGORY_LABELS: Record<IncidentCategory, string> = {
   cliente_rechaza: "Cliente rechaza",
   devuelto_origen: "Devuelto al origen",
   dano_paquete: "Paquete dañado",
+  demora_entrega: "Demora en entrega",
   otro: "Otro",
 };
 
@@ -50,6 +52,7 @@ const CATEGORY_ICONS: Record<IncidentCategory, LucideIcon> = {
   cliente_rechaza: Ban,
   devuelto_origen: Undo2,
   dano_paquete: AlertTriangle,
+  demora_entrega: Timer,
   otro: HelpCircle,
 };
 
@@ -77,8 +80,9 @@ const STATUS_COLOR: Record<IncidentStatus, { dot: string; active: string; badge:
 };
 
 // Cuenta para cobrar el nuevo envio por adelantado cuando el courier ya no
-// reintenta (>=2 intentos de entrega fallidos). Es por tienda/pais: CR cobra en
-// colones; HN queda pendiente de definir (su cuenta sera en lempiras).
+// reintenta (ver courierYaNoReintenta en lib/incidents-reprog.ts). Es por
+// tienda/pais: CR cobra en colones; HN queda pendiente de definir (su cuenta
+// sera en lempiras).
 type CuentaReenvio = { banco: string; titular: string; moneda: string; cuenta: string };
 const CUENTA_REENVIO: Record<FinanceStoreCode, CuentaReenvio | null> = {
   "mireva-cr": {
@@ -90,7 +94,9 @@ const CUENTA_REENVIO: Record<FinanceStoreCode, CuentaReenvio | null> = {
   "mireva-hn": null,
 };
 
-const currency = (n: number) => "₡" + Math.round(Number(n) || 0).toLocaleString("es-CR");
+// En la moneda de la tienda: antes Honduras mostraba sus lempiras como colones.
+const currency = (n: number, store: FinanceStoreCode) =>
+  getCurrencySymbol(store) + Math.round(Number(n) || 0).toLocaleString(getFinanceStore(store).locale);
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString("es-CR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDay = (s: string | null) => (s ? s.slice(0, 10).split("-").reverse().join("/") : "—");
@@ -595,6 +601,7 @@ export default function IncidenciasPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
+  const tiendasPermitidas = useTiendasPermitidas();
   const [search, setSearch] = useState("");
   const [intentosFilter, setIntentosFilter] = useState<IntentosFilter>("todos");
   const [edadFilter, setEdadFilter] = useState<EdadFilter>("todos");
@@ -885,7 +892,7 @@ export default function IncidenciasPage() {
           <div className="flex items-center gap-2">
             <select className="h-9 rounded-md border border-input bg-background px-2 text-sm"
               value={selectedStoreCode} onChange={(e) => setSelectedStoreCode(e.target.value as FinanceStoreCode)} title="Tienda">
-              {FINANCE_STORES.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
+              {tiendasPermitidas.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
             </select>
             <Button variant="outline" size="sm" onClick={() => fetchData()} className="gap-2">
               <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Actualizar</span>
@@ -1078,7 +1085,7 @@ export default function IncidenciasPage() {
                           {CATEGORY_LABELS[i.category]}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-right">{i.cod_amount ? currency(i.cod_amount) : "—"}</td>
+                      <td className="px-3 py-2 text-right">{i.cod_amount ? currency(i.cod_amount, selectedStoreCode) : "—"}</td>
                       <td className="px-3 py-2 text-center">{i.intentos_llamada || 0}</td>
                       <td className="px-3 py-2 text-center"><span className={`tabular-nums ${age.tone}`}>{age.label}</span></td>
                       <td className="px-3 py-2 text-xs">{i.reprogramada_para || "—"}</td>
@@ -1160,37 +1167,21 @@ function DetailModal({
   const showResultView = incident.status === "reprogramada" && !reopened;
   const intentosEntrega = trackingEvents.filter((e) => e.group === "failed").length;
   const trackingOrdenado = [...trackingEvents].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  // Reprogramar requiere que la ultima llamada haya sido "contesto"; o, como
-  // excepcion, 3 "no contesto" en dias distintos (ahi se agenda al finde porque
-  // Moovin no hace un 3er intento de entrega).
-  const ultimaLlamada = [...events]
-    .filter((e) => e.kind === "llamada")
-    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0];
-  const clienteContesto = ultimaLlamada?.metadata?.resultado === "contesto";
-  const diasNoContesta = new Set(
-    events
-      .filter((e) => e.kind === "llamada" && e.metadata?.resultado === "no_contesto")
-      .map((e) => (e.created_at || "").slice(0, 10))
-      .filter(Boolean)
-  ).size;
-  const tresNoContesta = diasNoContesta >= 3;
-  const puedeReprogramar = clienteContesto || tresNoContesta;
-  const soloFinde = !clienteContesto && tresNoContesta;
-  // Proximo viernes y sabado (dias consecutivos): limitan el date picker cuando
-  // se agenda al finde tras 3 intentos sin contestar.
-  const ymd = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const hoyYMD = ymd(new Date());
-  const proxViernes = (() => {
-    const d = new Date();
-    d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7));
-    return ymd(d);
-  })();
-  const proxSabado = (() => {
-    const d = new Date(`${proxViernes}T00:00:00`);
-    d.setDate(d.getDate() + 1);
-    return ymd(d);
-  })();
+  // Cuando se puede reprogramar y para que fechas: lib/incidents-reprog.ts.
+  // Mientras carga el historial del courier no se sabe cuantos intentos hubo,
+  // asi que el camino del segundo intento recien se abre cuando llega.
+  // Dias en que el courier de la novedad no entrega (los de Honduras: domingos).
+  const diasSinEntrega = diasSinEntregaDe(
+    incident.source,
+    FINANCE_STORES.find((s) => s.code === storeCode)?.logisticsProvider ?? ""
+  );
+  // Cuando se cobra un nuevo envio: Moovin y Forza despues del 2do intento;
+  // Cargo Expreso y c807 cuando devuelven el paquete (lib/incidents-reprog.ts).
+  const devuelto = trackingEvents.some((e) => e.group === "returned");
+  const sinMasReintentos = courierYaNoReintenta(incident.source, intentosEntrega, devuelto);
+  const regla = reglaReprogramar(events, trackingEvents.length > 0 ? intentosEntrega : 0, new Date(), diasSinEntrega);
+  const puedeReprogramar = regla.modo !== null;
+  const fechaSinEntrega = Boolean(reprogFecha) && esDiaSinEntrega(reprogFecha, diasSinEntrega);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [copiedNuevoEnvio, setCopiedNuevoEnvio] = useState(false);
 
@@ -1209,15 +1200,17 @@ function DetailModal({
     }
   };
 
-  // Mensaje para el cliente cuando el courier ya no reintenta (>=2 intentos): se
-  // cobra el nuevo envio por adelantado a la cuenta de la tienda.
+  // Mensaje para el cliente cuando el courier ya no reintenta: se cobra el nuevo
+  // envio por adelantado a la cuenta de la tienda.
   const cuentaReenvio = CUENTA_REENVIO[storeCode];
   const copyNuevoEnvioMsg = async () => {
     if (!cuentaReenvio) return;
     const nombre = (incident.customer_name || "").trim().split(/\s+/)[0] || "";
     const pedido = incident.order_name || incident.guide_number || "tu pedido";
     const msg = [
-      `Buenas${nombre ? ` ${nombre}` : ""}. Tu pedido ${pedido} registró ${intentosEntrega} intentos de entrega sin éxito y el courier ya no realiza más intentos.`,
+      intentosEntrega > 0
+        ? `Buenas${nombre ? ` ${nombre}` : ""}. Tu pedido ${pedido} registró ${intentosEntrega} ${intentosEntrega === 1 ? "intento" : "intentos"} de entrega sin éxito y el courier ya no realiza más intentos.`
+        : `Buenas${nombre ? ` ${nombre}` : ""}. El courier devolvió tu pedido ${pedido} sin poder entregarlo.`,
       ``,
       `Para programar un nuevo envío, te pedimos realizar el pago por adelantado mediante transferencia bancaria a la siguiente cuenta:`,
       ``,
@@ -1266,7 +1259,7 @@ function DetailModal({
             <div><span className="text-muted-foreground">Telefono:</span> {incident.customer_phone || "—"}</div>
             <div><span className="text-muted-foreground">Guia:</span> <span className="font-mono text-xs">{incident.guide_number || "—"}</span></div>
             <div><span className="text-muted-foreground">Courier:</span> {incident.courier || "—"}</div>
-            <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount) : "—"}</div>
+            <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount, storeCode) : "—"}</div>
             <div className="flex items-baseline gap-1.5">
               <span className="text-muted-foreground">Intentos de entrega:</span>
               <span className="text-base font-bold tabular-nums">
@@ -1277,12 +1270,16 @@ function DetailModal({
           {orderProducts && (
             <div className="text-sm"><span className="text-muted-foreground">Producto:</span> {orderProducts}</div>
           )}
-          {intentosEntrega >= 2 && (
+          {sinMasReintentos && (
             <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
               <p className="text-sm font-medium flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-muted-foreground" />
                 Nuevo envío
-                <Badge variant="warning" className="ml-1">{intentosEntrega} intentos · sin más reintentos</Badge>
+                <Badge variant="warning" className="ml-1">
+                  {devuelto && reintentaSolo(incident.source)
+                    ? "devuelto por el courier"
+                    : `${intentosEntrega} intentos · sin más reintentos`}
+                </Badge>
               </p>
               {cuentaReenvio ? (
                 <>
@@ -1346,11 +1343,12 @@ function DetailModal({
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <Input type="date" className="h-9 w-auto" value={reprogFecha} onChange={(e) => setReprogFecha(e.target.value)} />
-                  <Button variant="outline" size="sm" disabled={busy || !reprogFecha || reprogFecha === incident.reprogramada_para} className="gap-2"
+                  <Button variant="outline" size="sm" disabled={busy || !reprogFecha || reprogFecha === incident.reprogramada_para || fechaSinEntrega} className="gap-2"
                     onClick={() => onAction("reprogramar", { fecha: reprogFecha })}>
                     <CalendarClock className="h-3.5 w-3.5" /> Actualizar fecha
                   </Button>
                 </div>
+                {fechaSinEntrega && <p className="text-[11px] text-rose-500">El courier no entrega los domingos: elige otro día.</p>}
               </div>
               <Button variant="ghost" size="sm" disabled={busy} onClick={() => setReopened(true)}>
                 Reabrir gestion
@@ -1387,19 +1385,28 @@ function DetailModal({
             <div className="flex flex-wrap gap-2 items-center">
               <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Reprogramar</span>
               <Input type="date" className="h-9 w-auto" value={reprogFecha} disabled={!puedeReprogramar}
-                min={soloFinde ? proxViernes : hoyYMD} max={soloFinde ? proxSabado : undefined}
+                min={regla.min ?? undefined} max={regla.max ?? undefined}
                 onChange={(e) => setReprogFecha(e.target.value)} />
-              <Button variant="outline" size="sm" disabled={busy || !reprogFecha || !puedeReprogramar} className="gap-2"
-                onClick={() => onAction("reprogramar", { fecha: reprogFecha })}>
+              <Button variant="outline" size="sm" disabled={busy || !reprogFecha || !puedeReprogramar || fechaSinEntrega} className="gap-2"
+                onClick={() => onAction("reprogramar", { fecha: reprogFecha, modo: regla.modo })}>
                 <CalendarClock className="h-3.5 w-3.5" /> Reprogramar
               </Button>
             </div>
+            {fechaSinEntrega && (
+              <p className="text-[11px] text-rose-500">El courier no entrega los domingos: elige otro día.</p>
+            )}
             {!puedeReprogramar && (
               <p className="text-[11px] text-muted-foreground">
                 Registra una llamada con “Contestó” (o 3 “No contestó” en días distintos) para habilitar la reprogramación.
               </p>
             )}
-            {soloFinde && (
+            {regla.modo === "segundo_intento" && (
+              <p className="text-[11px] text-muted-foreground">
+                El courier registra un solo intento fallido: el segundo ya está pagado. Se puede reprogramar aunque el
+                cliente no conteste (queda marcada como “sin contacto”).
+              </p>
+            )}
+            {regla.modo === "finde" && (
               <p className="text-[11px] text-muted-foreground">
                 Sin contestar (3 intentos): solo se puede agendar el próximo viernes o sábado.
               </p>

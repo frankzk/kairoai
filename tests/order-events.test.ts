@@ -7,13 +7,13 @@ import { isValidOrderEvent, ORDER_EVENT_OUTCOME_LABEL } from "../lib/order-event
 
 describe("isValidOrderEvent", () => {
   it("acepta los resultados de un intento de contacto", () => {
-    for (const outcome of ["contesto", "no_contesta", "buzon", "numero_malo", "confirmado", "reagendar"]) {
+    for (const outcome of ["contesto", "no_contesta", "buzon", "numero_malo", "confirmado", "reagendar", "pendiente_abono"]) {
       expect(isValidOrderEvent("contacto", outcome)).toBe(true);
     }
   });
 
   it("acepta las decisiones", () => {
-    for (const outcome of ["autorizar_despacho", "retener", "anular"]) {
+    for (const outcome of ["autorizar_despacho", "retener", "anular", "ultimo_intento"]) {
       expect(isValidOrderEvent("decision", outcome)).toBe(true);
     }
   });
@@ -38,7 +38,7 @@ describe("isValidOrderEvent", () => {
 
   it("toda opcion valida tiene etiqueta en la UI", () => {
     const conEtiqueta = ["contesto", "no_contesta", "buzon", "numero_malo", "confirmado",
-      "reagendar", "autorizar_despacho", "retener", "anular"];
+      "reagendar", "pendiente_abono", "autorizar_despacho", "retener", "anular", "ultimo_intento"];
     for (const outcome of conEtiqueta) {
       expect(ORDER_EVENT_OUTCOME_LABEL[outcome]).toBeTruthy();
     }

@@ -3,12 +3,15 @@ import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { emptyCustomerOrders, loadCustomerOrdersByPhone } from "@/lib/customer-orders-db";
 import { findChatLeadForCustomer } from "@/lib/leads";
-import { createOrderEvent, listOrderEvents } from "@/lib/order-events-db";
+import { createOrderEvent, leerConfigConfirmacion, listOrderEvents } from "@/lib/order-events-db";
 import {
+  isValidCanal,
   isValidOrderEvent,
   type OrderEventKind,
   type OrderEventOutcome,
 } from "@/lib/order-events";
+import { configDeTienda, problemaFechaPactada, recordatorioPara, requiereFechaPactada, tzDeTienda } from "@/lib/confirmacion";
+import { identidadActual, vendedoraEfectiva } from "@/lib/identidad";
 import { orderAlerts, riskInputFromHistory } from "@/lib/order-risk";
 
 export const runtime = "nodejs";
@@ -38,7 +41,7 @@ export async function GET(req: NextRequest) {
   try {
     // Cada pieza es best-effort: que falle el chat no puede dejar sin alertas
     // a la asesora, que es lo que de verdad necesita para decidir.
-    const [history, events, chatLead] = await Promise.all([
+    const [history, events, chatLead, confirmacionConfig] = await Promise.all([
       phone
         ? loadCustomerOrdersByPhone({
             storeId: store.id,
@@ -54,6 +57,8 @@ export async function GET(req: NextRequest) {
         phone,
         orderName,
       }).catch(() => null),
+      // Con esto la ficha calcula la cola igual que la tabla (lib/confirmacion.ts).
+      leerConfigConfirmacion(store.id, store.code).catch(() => configDeTienda(store.code, null)),
     ]);
 
     const alerts = orderAlerts(
@@ -73,6 +78,7 @@ export async function GET(req: NextRequest) {
       alerts,
       events,
       chat_lead: chatLead,
+      confirmacion_config: confirmacionConfig,
     });
   } catch (err) {
     const message = toFriendlyErrorMessage(err, "Error al abrir el pedido");
@@ -99,6 +105,8 @@ export async function POST(req: NextRequest) {
       message?: string;
       staff_id?: number | null;
       staff_name?: string;
+      canal?: string;
+      fecha_pactada?: string;
     };
 
     const orderName = (body.order_name ?? "").trim();
@@ -118,6 +126,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "La nota necesita texto" }, { status: 400 });
     }
 
+    // Cola de confirmacion: canal del intento, fecha pactada y recordatorio.
+    const ahora = new Date();
+    const tz = tzDeTienda(store.code);
+    const canal = kind === "contacto" ? (body.canal ?? "llamada").trim() : "";
+    if (!isValidCanal(canal)) {
+      return NextResponse.json({ error: `Canal invalido: "${canal}"` }, { status: 400 });
+    }
+    let fechaPactada: string | null = null;
+    if (requiereFechaPactada(outcome)) {
+      const problema = problemaFechaPactada(body.fecha_pactada, ahora, tz);
+      if (problema) return NextResponse.json({ error: problema }, { status: 400 });
+      fechaPactada = String(body.fecha_pactada);
+    }
+
+    // Una asesora sin supervision queda SIEMPRE a su nombre (lib/identidad.ts).
+    const pedida = body.staff_id ?? null;
+    const staffId = vendedoraEfectiva(pedida);
+    const staffName = staffId !== null && staffId !== pedida ? identidadActual()?.nombre ?? "" : body.staff_name ?? "";
+
     const event = await createOrderEvent({
       storeId: store.id,
       orderName,
@@ -125,8 +152,11 @@ export async function POST(req: NextRequest) {
       kind: kind as OrderEventKind,
       outcome: outcome as OrderEventOutcome,
       message: body.message ?? "",
-      staffId: body.staff_id ?? null,
-      staffName: body.staff_name ?? "",
+      staffId,
+      staffName,
+      canal,
+      fechaPactada,
+      recordatorioAt: recordatorioPara(outcome, ahora, tz),
     });
 
     return NextResponse.json({ event });

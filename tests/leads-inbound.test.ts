@@ -106,3 +106,17 @@ describe("el link de producto NO asciende el lead", () => {
     expect(hasProductLink("https://mireva.cr/products/collagen-plus Tengo una consulta")).toBe(true);
   });
 });
+
+// El cron estuvo apagado del 29/08 al 07/10 sin que nada lo avisara, y el
+// tablero mostraba como "Solo saludó" a casi todos los leads nuevos. Si alguien
+// lo vuelve a sacar de vercel.json, que sea a proposito y cambiando este test.
+describe("leads-inbound esta programado", () => {
+  it("vercel.json lo corre", async () => {
+    const { readFileSync } = await import("node:fs");
+    const path = await import("node:path");
+    const config = JSON.parse(readFileSync(path.resolve(__dirname, "..", "vercel.json"), "utf8")) as {
+      crons?: Array<{ path?: string }>;
+    };
+    expect((config.crons ?? []).map((c) => c.path)).toContain("/api/cron/leads-inbound");
+  });
+});

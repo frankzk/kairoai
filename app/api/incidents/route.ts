@@ -12,21 +12,25 @@ import {
   listIncidents,
   updateIncident,
 } from "@/lib/incidents";
-import { getForzaTrackingByGuide, getMoovinTrackingByPackage } from "@/lib/finance";
+import {
+  getForzaTrackingByGuide,
+  getMoovinTrackingByPackage,
+  getShipmentTrackingByGuide,
+  getWynTrackingByGuide,
+} from "@/lib/finance";
+import { wynGroupForIncidents } from "@/lib/incidents-detect";
 import { findChatLeadForCustomer } from "@/lib/leads";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import type { Incident, IncidentCategory, IncidentSource, IncidentStatus, TrackingEvent } from "@/lib/incidents-types";
+import { INCIDENT_CATEGORIES, INCIDENT_SOURCES, INCIDENT_STATUSES } from "@/lib/incidents-types";
 
 export const runtime = "nodejs";
 
-const STATUSES = new Set([
-  "pendiente", "reprogramada", "sin_contestar", "no_llamar", "resuelta", "perdida", "descartada",
-]);
-const CATEGORIES = new Set([
-  "fallo_entrega", "direccion_incorrecta", "cliente_no_responde", "cliente_rechaza",
-  "devuelto_origen", "dano_paquete", "otro",
-]);
-const SOURCES = new Set(["moovin", "forza", "boxful", "manual"]);
+// Salen de las listas exhaustivas de incidents-types: una lista escrita aca a
+// mano se quedo sin reprog_fallida ni demora_entrega y los rechazaba con 400.
+const STATUSES = new Set<string>(INCIDENT_STATUSES);
+const CATEGORIES = new Set<string>(INCIDENT_CATEGORIES);
+const SOURCES = new Set<string>(INCIDENT_SOURCES);
 
 function asStatus(v: string | null): IncidentStatus | undefined {
   return v && STATUSES.has(v) ? (v as IncidentStatus) : undefined;
@@ -38,8 +42,8 @@ function asSource(v: string | null): IncidentSource | undefined {
   return v && SOURCES.has(v) ? (v as IncidentSource) : undefined;
 }
 
-// El historial de tracking del courier vive en moovin_tracking / forza_tracking
-// (columna events JSONB), no en la tabla incidents. Se trae por la guia para el
+// El historial de tracking del courier vive en moovin_tracking / forza_tracking /
+// courier_shipments (WYN) (columna events JSONB), no en la tabla incidents. Se trae por la guia para el
 // detalle. Es complementario: si la tabla falta o la consulta falla, se devuelve
 // vacio para no romper el detalle de la novedad.
 async function trackingEventsFor(incident: Incident): Promise<TrackingEvent[]> {
@@ -52,6 +56,16 @@ async function trackingEventsFor(incident: Incident): Promise<TrackingEvent[]> {
     if (incident.source === "forza") {
       const t = await getForzaTrackingByGuide(incident.store_id, incident.guide_number);
       return (t?.events ?? []) as TrackingEvent[];
+    }
+    if (incident.source === "cargoexpreso" || incident.source === "c807") {
+      const t = await getShipmentTrackingByGuide(incident.store_id, incident.source, incident.guide_number);
+      return (t?.events ?? []) as TrackingEvent[];
+    }
+    if (incident.source === "wyn") {
+      // El detalle cuenta los intentos fallidos por group "failed"; WYN los
+      // marca "incident", asi que se traducen igual que en la deteccion.
+      const t = await getWynTrackingByGuide(incident.store_id, incident.guide_number);
+      return (t?.events ?? []).map((ev) => ({ ...ev, group: wynGroupForIncidents(ev.group) }));
     }
   } catch {
     // tracking complementario: ignorar y devolver vacio.

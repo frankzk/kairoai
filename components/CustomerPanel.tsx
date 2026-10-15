@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Check, Copy, MapPin, Package, ShoppingCart } from "lucide-react";
+import { AlertTriangle, Check, Copy, Loader2, MapPin, Package, ShoppingCart } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { getVendedoraId } from "@/lib/vendedora";
 import LeadHistory from "@/components/LeadHistory";
 import GestionBar from "@/components/GestionBar";
 import {
@@ -111,6 +113,38 @@ export default function CustomerPanel({
   const [loading, setLoading] = useState(true);
   const [carts, setCarts] = useState<CartRow[]>([]);
   const [cartsUnavailable, setCartsUnavailable] = useState<string | null>(null);
+  // Generar el pedido desde el borrador: primero se confirma en la tarjeta.
+  const [confirmando, setConfirmando] = useState<string | null>(null);
+  const [generando, setGenerando] = useState<string | null>(null);
+  const [avisoCarrito, setAvisoCarrito] = useState<{ id: string; ok: boolean; texto: string } | null>(null);
+
+  async function generarPedido(cart: CartRow) {
+    const vendedoraId = getVendedoraId();
+    if (!vendedoraId) {
+      setAvisoCarrito({ id: cart.id, ok: false, texto: "Selecciona quién eres (asesora) antes de generar el pedido." });
+      return;
+    }
+    setGenerando(cart.id);
+    setAvisoCarrito(null);
+    try {
+      const res = await fetch(`/api/leads/${leadId}/carts/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store, draft_id: cart.id.replace(/^draft-/, ""), vendedora_id: vendedoraId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAvisoCarrito({ id: cart.id, ok: false, texto: data.error ?? "No se pudo generar el pedido." });
+        return;
+      }
+      setCarts((prev) => prev.filter((c) => c.id !== cart.id));
+      setAvisoCarrito({ id: cart.id, ok: true, texto: `Pedido ${data.order_name} generado desde ${cart.name}.` });
+      onGestionDone();
+    } finally {
+      setGenerando(null);
+      setConfirmando(null);
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -309,6 +343,12 @@ export default function CustomerPanel({
         {cartsUnavailable && (
           <p className="mb-1.5 text-[11px] text-amber-300">{cartsUnavailable}</p>
         )}
+        {avisoCarrito?.ok && (
+          <p role="status" className="mb-1.5 flex items-center gap-1 text-[11px] text-emerald-300">
+            <Check className="h-3 w-3 shrink-0" />
+            {avisoCarrito.texto}
+          </p>
+        )}
         {carts.length === 0 ? (
           <p className="text-xs text-muted-foreground">Sin carritos abiertos.</p>
         ) : (
@@ -345,6 +385,49 @@ export default function CustomerPanel({
                     </span>
                     <CopyButton value={cart.checkout_url} label="Copiar link de pago" />
                   </div>
+                )}
+                {/* El cliente confirmo pero el pedido no se creo: se genera
+                    desde SU borrador, con su direccion y precio. */}
+                {cart.source === "draft_order" &&
+                  (confirmando === cart.id ? (
+                    <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2">
+                      <p className="text-[11px]">
+                        Se crea un pedido contra entrega de {fmtMoney(cart.total, cart.currency)} con los datos del
+                        borrador {cart.name}. Va a despacho.
+                      </p>
+                      <div className="mt-1.5 flex gap-1.5">
+                        <Button size="sm" className="h-7 text-xs" disabled={generando === cart.id} onClick={() => generarPedido(cart)}>
+                          {generando === cart.id && <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden="true" />}
+                          Generar pedido
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          disabled={generando === cart.id}
+                          onClick={() => setConfirmando(null)}
+                        >
+                          Cancelar
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 h-7 w-full text-xs"
+                      onClick={() => {
+                        setAvisoCarrito(null);
+                        setConfirmando(cart.id);
+                      }}
+                    >
+                      Generar pedido desde este borrador
+                    </Button>
+                  ))}
+                {avisoCarrito && !avisoCarrito.ok && avisoCarrito.id === cart.id && (
+                  <p role="alert" className="mt-1.5 text-[11px] text-red-300">
+                    {avisoCarrito.texto}
+                  </p>
                 )}
               </div>
             ))}

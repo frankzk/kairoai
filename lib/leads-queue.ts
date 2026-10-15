@@ -101,11 +101,31 @@ export function isFollowupDue(lead: QueueLead, nowMs: number): boolean {
  */
 export const STALE_FOLLOWUP_DAYS = 7;
 
+/**
+ * En que punto esta un recontacto agendado, con la regla de la cola:
+ *   futuro  -> todavia no toca.
+ *   vencido -> toco y sigue vigente: va arriba en Hoy.
+ *   viejo   -> vencio hace mas de STALE_FOLLOWUP_DAYS: ya no sube.
+ *
+ * Una sola funcion para la cola, el contador rojo y el badge de la tarjeta.
+ * Cuando cada uno decidia por su cuenta, el contador decia 213 vencidos en
+ * Costa Rica y la cola subia 7.
+ */
+export type FollowupState = "futuro" | "vencido" | "viejo";
+
+export function followupStateAt(
+  iso: string | null | undefined,
+  nowMs: number
+): FollowupState | null {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(t)) return null;
+  if (t > nowMs) return "futuro";
+  return nowMs - t <= STALE_FOLLOWUP_DAYS * 86_400_000 ? "vencido" : "viejo";
+}
+
 /** Vencido y todavia vigente: es un reintento que vale la pena hacer hoy. */
 export function isFollowupActionable(lead: QueueLead, nowMs: number): boolean {
-  const t = followupMs(lead);
-  if (t == null || t > nowMs) return false;
-  return nowMs - t <= STALE_FOLLOWUP_DAYS * 86_400_000;
+  return followupStateAt(lead.next_followup_at, nowMs) === "vencido";
 }
 
 /**
@@ -246,6 +266,26 @@ export function groupQueueByBand<T extends QueueLead>(
     else groups.push({ band, leads: [lead] });
   }
   return groups;
+}
+
+/**
+ * Los recontactos vencidos que la cola de Hoy sube a su banda. Es lo que
+ * cuenta el banner rojo y el pill del tab.
+ *
+ * Antes el contador contaba TODO lo que tuviera fecha pasada —incluidos
+ * recontactos de hace un mes y leads que ya compraron— y decia "están primero
+ * en Hoy". Medido el 04/10/2026: el contador decia 213 en Costa Rica y 200 en
+ * Honduras; la cola subia 7 y 19. El aviso exageraba 30 veces y la frase era
+ * falsa para 387 leads.
+ *
+ * Ahora el contador ES la banda: se calcula con la misma cola que la pinta,
+ * asi que no pueden volver a diferir.
+ */
+export function vencidosEnCola<T extends QueueLead>(leads: T[], now: Date): T[] {
+  const nowMs = now.getTime();
+  return buildWorkQueue(leads, now).filter(
+    (l) => queueBand(l, nowMs) === "recontacto_vencido"
+  );
 }
 
 export function buildWorkQueue<T extends QueueLead>(leads: T[], now: Date): T[] {

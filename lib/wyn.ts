@@ -242,3 +242,70 @@ function asText(value: unknown): string {
   return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
 }
 
+
+/**
+ * Veredicto de una corrida del cron de WYN para la salud de procesos.
+ *
+ * Que la ruta responda 200 no alcanza. El 06/10/2026 WYN dejo de contestar: las
+ * 12 guias de cada corrida daban "no respondio dentro de 10 segundos", no se
+ * guardaba nada, y la salud igual decia ok porque solo miraba el bloqueo
+ * (401/403/429). Sin rastreo no hay novedades de WYN, asi que una corrida que
+ * no pudo leer NINGUNA guia es una corrida mala. Si lee al menos una, es buena:
+ * que algunas fallen es lo normal con esta pagina.
+ */
+export function wynRunVerdict(summary: {
+  candidates: number;
+  checked: number;
+  blocked: boolean;
+  errors: Array<{ error: string }>;
+}): { ok: boolean; error?: string } {
+  if (summary.blocked) {
+    return { ok: false, error: `WYN bloqueo la consulta: ${summary.errors[0]?.error ?? "sin detalle"}` };
+  }
+  if (summary.candidates > 0 && summary.checked === 0) {
+    return {
+      ok: false,
+      error: `WYN no respondio ninguna de las ${summary.candidates} guias: ${summary.errors[0]?.error ?? "sin detalle"}`,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * El historial guardado de una guia (courier_shipments) en la forma que devuelve
+ * fetchWynTracking, para mostrarlo cuando WYN no contesta en vivo.
+ *
+ * POR QUE: la ventana "Seguimiento WYN" solo consultaba en vivo. Desde el
+ * 06/10/2026 WYN no le responde al servidor ("no respondio dentro de 10
+ * segundos") y la ventana quedaba vacia, aunque las 518 guias de WYN tenian su
+ * historial completo guardado de consultas anteriores. Un historial de hace un
+ * dia, con su fecha a la vista, sirve; una ventana vacia no.
+ */
+export function wynResultFromCache(row: {
+  guide_number: string;
+  tracking_number: string;
+  latest_status: string;
+  latest_code: string;
+  latest_group: string;
+  latest_at: string | null;
+  has_incident: boolean;
+  incident_reason: string;
+  delivery_address: string;
+  receiver_name: string;
+  events: CourierTrackingEvent[];
+}): WynTrackingResult {
+  return {
+    guideNumber: row.guide_number,
+    trackingNumber: row.tracking_number || row.guide_number,
+    latestStatus: row.latest_status,
+    latestCode: row.latest_code,
+    latestGroup: row.latest_group as CourierNormalizedStatus,
+    latestAt: row.latest_at,
+    hasIncident: row.has_incident,
+    incidentReason: row.incident_reason,
+    deliveryAddress: row.delivery_address,
+    receiverName: row.receiver_name,
+    events: row.events ?? [],
+    raw: {},
+  };
+}

@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 import { listWynSyncCandidates, upsertWynTracking } from "@/lib/finance";
 import type { WynTrackingRow } from "@/lib/finance-types";
 import { getStoreConfig } from "@/lib/stores";
-import { fetchWynTracking, type WynTrackingResult } from "@/lib/wyn";
+import { fetchWynTracking, wynRunVerdict, type WynTrackingResult } from "@/lib/wyn";
+import { withCronRun } from "@/lib/cron-runs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -28,12 +29,6 @@ type RunSummary = {
   unknown: number;
   errors: Array<{ guide: string; error: string }>;
 };
-
-function isAuthorized(request: NextRequest): boolean {
-  const expected = process.env.CRON_SECRET;
-  if (!expected) return true;
-  return request.headers.get("authorization") === `Bearer ${expected}`;
-}
 
 function toCacheRow(result: WynTrackingResult): Omit<WynTrackingRow, "checked_at" | "store_id"> {
   return {
@@ -122,22 +117,24 @@ async function run(): Promise<RunSummary> {
   return summary;
 }
 
-async function handler(request: NextRequest): Promise<NextResponse> {
-  if (!isAuthorized(request)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+async function handler(): Promise<NextResponse> {
   try {
     const summary = await run();
-    return NextResponse.json({ ok: !summary.blocked, store: STORE_CODE, ...summary });
+    const verdict = wynRunVerdict(summary);
+    return NextResponse.json({ ...verdict, store: STORE_CODE, ...summary });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo actualizar WYN.";
     return NextResponse.json({ ok: false, store: STORE_CODE, error: message }, { status: 500 });
   }
 }
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
-  return handler(request);
+async function handleGet(): Promise<NextResponse> {
+  return handler();
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
-  return handler(request);
+async function handlePost(): Promise<NextResponse> {
+  return handler();
 }
+
+export const GET = withCronRun("wyn", handleGet);
+export const POST = withCronRun("wyn", handlePost);

@@ -4,6 +4,7 @@ import { normalizePhone, phoneConfigForStore } from "@/lib/phone-cr";
 import { getLead } from "@/lib/leads";
 import { getAgentById, getOrderPhone } from "@/lib/zadarma-calls";
 import { isZadarmaConfigured, requestCallback, ZadarmaError } from "@/lib/zadarma";
+import { vendedoraEfectiva } from "@/lib/identidad";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -39,7 +40,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "store requerido: usa mireva-cr o mireva-hn" }, { status: 400 });
   }
 
-  const vendedoraId = Number(body?.vendedora_id);
+  // Una asesora sin permiso de supervision queda SIEMPRE a su nombre
+  // (lib/identidad.ts): el navegador no puede registrar a nombre de otra.
+  const vendedoraId = vendedoraEfectiva(body?.vendedora_id) ?? NaN;
   if (!Number.isFinite(vendedoraId) || vendedoraId <= 0) {
     return NextResponse.json(
       { error: "Selecciona quién eres (asesora) antes de llamar." },

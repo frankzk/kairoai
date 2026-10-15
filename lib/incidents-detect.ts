@@ -4,8 +4,15 @@
 
 import { normalizeMatchKey } from "./order-matching";
 import { classifyMoovinGroup } from "./moovin";
+import { senalForza } from "./forza-novedades";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
-import type { MoovinTrackingRow, ForzaTrackingRow, LogisticsRow } from "./finance-types";
+import type {
+  ForzaTrackingRow,
+  LogisticsRow,
+  MoovinTrackingRow,
+  ShipmentTrackingRow,
+  WynTrackingRow,
+} from "./finance-types";
 import type { ShopifyOrderSummary } from "./finance-orders";
 import type {
   DetectedIncident,
@@ -62,6 +69,70 @@ export function mapBoxfulCategory(boxfulStatus: string): IncidentCategory | null
   return null;
 }
 
+/**
+ * Dias desde el pedido, sin entrega ni devolucion, a partir de los cuales el
+ * envio entra a la bandeja como demora.
+ *
+ * DE DONDE SALE EL 14: es el p95 del tiempo real de entrega. Sobre las 3.865
+ * entregas de los ultimos 90 dias en Costa Rica (medido el 15/09), la mitad se
+ * entrego en 3,9 dias, el 90% en 10,4 y el 95% en 13,4. Un envio que pasa de 14
+ * dias esta en el 5% mas lento: ya no es lentitud normal, es una senal.
+ *
+ * Bajarlo a 10 dias dispararia 73 novedades en vez de 46; subirlo a 21, 27.
+ *
+ * Es de Costa Rica (Moovin y WYN). Honduras deduce sus novedades de los hitos de
+ * Forza (lib/forza-novedades.ts): ahi la mitad de las entregas tarda 6,6 dias y
+ * el 10% mas de 18, asi que 14 dias solo daba falsas alarmas.
+ */
+export const DEMORA_DIAS_DESDE_PEDIDO = 14;
+
+/**
+ * Dias sin NINGUN evento nuevo del courier a partir de los cuales el envio entra
+ * como demora, aunque el pedido sea reciente. Un envio joven pero mudo tambien
+ * esta atascado: el peor caso medido llevaba 111 dias sin un solo evento.
+ */
+export const DEMORA_DIAS_SIN_MOVIMIENTO = 7;
+
+const DIA_MS = 86_400_000;
+
+/** Dias transcurridos desde `iso` hasta `nowMs`; null si la fecha no sirve. */
+function diasDesde(iso: string | null | undefined, nowMs: number): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const dias = (nowMs - t) / DIA_MS;
+  return dias >= 0 ? dias : null;
+}
+
+/**
+ * Motivo por el que un envio EN CURSO (sin falla reportada) ya se paso de
+ * tiempo, o null si todavia esta dentro de lo razonable.
+ *
+ * Dos senales independientes, porque fallan por motivos distintos: el pedido
+ * viejo detecta al que nunca llego, y el silencio del courier al que se perdio
+ * en el camino aunque el pedido sea reciente. Cualquiera de las dos alcanza.
+ */
+export function motivoDemora(
+  orderCreatedAt: string | null | undefined,
+  lastMovementAt: string | null | undefined,
+  now: string = new Date().toISOString()
+): string | null {
+  const nowMs = Date.parse(now);
+  if (Number.isNaN(nowMs)) return null;
+
+  const diasPedido = diasDesde(orderCreatedAt, nowMs);
+  if (diasPedido !== null && diasPedido >= DEMORA_DIAS_DESDE_PEDIDO) {
+    return `Sin entregar tras ${Math.floor(diasPedido)} dias desde el pedido`;
+  }
+
+  const diasSinMovimiento = diasDesde(lastMovementAt, nowMs);
+  if (diasSinMovimiento !== null && diasSinMovimiento >= DEMORA_DIAS_SIN_MOVIMIENTO) {
+    return `Sin movimiento del courier hace ${Math.floor(diasSinMovimiento)} dias`;
+  }
+
+  return null;
+}
+
 // Fecha del evento de FALLA mas reciente (group "failed"). Sirve para saber si
 // una reprogramada volvio a fallar DESPUES de reprogramarse. Devuelve null si no
 // hay eventos de falla con fecha.
@@ -84,7 +155,8 @@ export function detectMoovinIncident(
   tracking: MoovinTrackingRow,
   row?: LogisticsRow,
   storeId: number = DEFAULT_FINANCE_STORE_ID,
-  shopify?: ShopifyOrderSummary
+  shopify?: ShopifyOrderSummary,
+  now: string = new Date().toISOString()
 ): DetectedIncident | null {
   // Reinterpreta el grupo con el clasificador vigente. Las filas de
   // moovin_tracking guardadas ANTES de mapear un codigo (p.ej. los codigos de
@@ -103,7 +175,14 @@ export function detectMoovinIncident(
   const isFailure = tracking.has_incident || group === "failed";
   const isDelivered = group === "delivered";
   const isReturned = group === "returned";
-  if (!isFailure && !isDelivered && !isReturned) return null;
+  // Envio EN CURSO que ya se paso de tiempo: entra como novedad de demora. Sin
+  // esto un paquete que nunca falla se queda "en ruta" para siempre y no lo
+  // persigue nadie (habia pedidos de julio en ruta en septiembre).
+  const demora =
+    isFailure || isDelivered || isReturned
+      ? null
+      : motivoDemora(shopify?.created_at, tracking.latest_at, now);
+  if (!isFailure && !isDelivered && !isReturned && !demora) return null;
 
   const guide = tracking.id_package || row?.guide_number || "";
   // Datos de cliente/pedido por prioridad: 1) logistica importada, 2) pedido de
@@ -123,8 +202,10 @@ export function detectMoovinIncident(
     customer_phone: row?.customer_phone || shopify?.phone || "",
     courier: row?.courier || "Moovin",
     cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
-    category: isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
-    detail: reason,
+    category: demora ? "demora_entrega" : isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
+    // En una demora el estado del courier ya va en last_tracking_status; el
+    // detalle lleva el motivo, que es lo que el operador necesita leer.
+    detail: demora ?? reason,
     last_tracking_status: tracking.latest_status || "",
     last_tracking_group: group,
     last_failure_at: lastFailureDate(tracking.events),
@@ -138,13 +219,22 @@ export function detectMoovinIncident(
 export function detectForzaIncident(
   tracking: ForzaTrackingRow,
   row?: LogisticsRow,
-  shopify?: ShopifyOrderSummary
+  shopify?: ShopifyOrderSummary,
+  now: string = new Date().toISOString()
 ): DetectedIncident | null {
   const group = tracking.latest_group || "";
   const isFailure = tracking.has_incident || group === "failed";
   const isDelivered = group === "delivered";
   const isReturned = group === "returned";
-  if (!isFailure && !isDelivered && !isReturned) return null;
+  // Forza no informa fallas: se deducen de las fechas de sus hitos (ver
+  // lib/forza-novedades.ts). Reemplaza la demora de 14 dias de Costa Rica, que en
+  // Honduras solo daba falsas alarmas. Un pedido cancelado no tiene nada que
+  // entregar: su guia suele quedar abandonada en "Creado".
+  const senal =
+    isFailure || isDelivered || isReturned || shopify?.cancelled_at
+      ? null
+      : senalForza(tracking.events, shopify?.created_at, now);
+  if (!isFailure && !isDelivered && !isReturned && !senal) return null;
 
   const guide = tracking.guide_number || row?.guide_number || "";
   const orderName = row?.order_name || shopify?.name || "";
@@ -161,12 +251,229 @@ export function detectForzaIncident(
     customer_phone: row?.customer_phone || shopify?.phone || "",
     courier: row?.courier || "Forza",
     cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
-    category: isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
-    detail: reason,
+    category: senal ? senal.category : isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
+    detail: senal ? senal.detail : reason,
+    last_tracking_status: tracking.latest_status || "",
+    last_tracking_group: group,
+    last_failure_at: senal ? senal.failureAt : lastFailureDate(tracking.events),
+  };
+}
+
+// Causa de una falla de WYN por el CODIGO del evento, que es univoco (ver
+// WYN_EVENT_GROUPS en lib/wyn.ts). El texto no alcanza: "Domicilio de entrega
+// incorrecto" no dice "direccion" y caeria en fallo_entrega. Un codigo que no
+// esta aca cae al mapeo por texto que comparten Moovin y Forza.
+const WYN_CATEGORY_BY_CODE: Record<string, IncidentCategory> = {
+  "LM-6": "fallo_entrega", // Zona de entrega intransitable
+  "LM-7": "cliente_no_responde", // Destinatario ausente
+  "LM-8": "cliente_rechaza", // Llego a domicilio y se rechazo el paquete
+  "LM-9": "direccion_incorrecta", // Domicilio de entrega incorrecto
+  "LM-10": "fallo_entrega", // Persona no autorizada para recibir
+  "AV-2": "fallo_entrega", // En investigacion
+};
+
+/**
+ * Traduce el grupo de WYN al vocabulario que entiende applyDetection, que es
+ * el de Moovin: "failed" (falla activa), "delivered" y "returned" (cierres).
+ *
+ * WYN habla distinto y por eso no se puede pasar tal cual:
+ *   - su falla activa se llama "incident", no "failed";
+ *   - "not_delivered" (siniestrado / robado) y "cancelled" son cierres sin
+ *     entrega, igual que una devolucion: la novedad abierta pasa a Perdida;
+ *   - has_incident NO sirve como senal de falla, porque WYN lo marca tambien en
+ *     las devueltas (isWynIncidentGroup). Usarlo crearia 205 novedades de
+ *     envios que ya volvieron hace meses.
+ * Cualquier otro grupo (en_route, pending, unknown) es envio en curso.
+ */
+export function wynGroupForIncidents(group: string): string {
+  if (group === "incident") return "failed";
+  if (group === "delivered") return "delivered";
+  if (group === "returned" || group === "not_delivered" || group === "cancelled") return "returned";
+  return group || "";
+}
+
+// Construye una candidata desde el tracking de WYN (Costa Rica, guias MLCR...).
+// Misma semantica que Moovin y Forza: falla = novedad activa; entrega o
+// devolucion solo sirven para cerrar una novedad que ya existe; en curso y
+// pasado de tiempo = demora.
+export function detectWynIncident(
+  tracking: WynTrackingRow,
+  row?: LogisticsRow,
+  shopify?: ShopifyOrderSummary,
+  now: string = new Date().toISOString()
+): DetectedIncident | null {
+  const group = wynGroupForIncidents(tracking.latest_group || "");
+  const isFailure = group === "failed";
+  const isDelivered = group === "delivered";
+  const isReturned = group === "returned";
+  const demora =
+    isFailure || isDelivered || isReturned
+      ? null
+      : motivoDemora(shopify?.created_at, tracking.latest_at, now);
+  if (!isFailure && !isDelivered && !isReturned && !demora) return null;
+
+  const guide = tracking.guide_number || row?.guide_number || "";
+  const orderName = row?.order_name || shopify?.name || "";
+  const reason = tracking.incident_reason || tracking.latest_status || "";
+  const code = String(tracking.latest_code || "").trim().toUpperCase();
+  const category: IncidentCategory = demora
+    ? "demora_entrega"
+    : isFailure
+      ? WYN_CATEGORY_BY_CODE[code] ?? mapMoovinCategory(reason, group)
+      : isReturned
+        ? "devuelto_origen"
+        : "otro";
+
+  return {
+    store_id: tracking.store_id || row?.store_id || DEFAULT_FINANCE_STORE_ID,
+    incident_key: buildIncidentKey(guide, orderName),
+    source: "wyn",
+    order_name: orderName,
+    guide_number: guide,
+    shopify_order_id: row?.shopify_order_id || shopify?.id || "",
+    customer_name: row?.customer_name || shopifyCustomerName(shopify) || tracking.receiver_name || "",
+    customer_phone: row?.customer_phone || shopify?.phone || "",
+    courier: row?.courier || "WYN",
+    cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
+    category,
+    detail: demora ?? reason,
+    last_tracking_status: tracking.latest_status || "",
+    last_tracking_group: group,
+    // Los eventos de WYN marcan la falla como "incident", no "failed".
+    last_failure_at: lastFailureDate(
+      (tracking.events || []).map((ev) => ({ ...ev, group: wynGroupForIncidents(ev.group) }))
+    ),
+  };
+}
+
+/**
+ * Causa de un intento fallido de Cargo Expreso por su motivo. Los numerados son
+ * el catalogo del courier; los otros los escribe el repartidor. Vistos en 60
+ * guias de septiembre y octubre: "005 Nadie en casa" (31), "Cliente no llegó a
+ * punto de encuentro." (15), "002 Cliente no quizo recibir" (6), "No Dio
+ * Tiempo" (5), "004 Direccion no corresponde" (3), "003 Cliente no tiene
+ * dinero" (2), "Falla mecánica" (1). Lo que no reconoce cae al mapeo por texto
+ * que comparten Moovin y Forza.
+ */
+export function cargoExpresoCategory(motivo: string): IncidentCategory {
+  const m = (motivo || "").trim().toLowerCase();
+  if (m.startsWith("005") || m.includes("nadie en casa") || m.includes("punto de encuentro")) return "cliente_no_responde";
+  // "No tiene dinero" en contra entrega es no recibir el paquete.
+  if (m.startsWith("002") || m.startsWith("003") || m.includes("no quizo") || m.includes("no quiso") || m.includes("no tiene dinero"))
+    return "cliente_rechaza";
+  if (m.startsWith("004")) return "direccion_incorrecta";
+  return mapMoovinCategory(motivo, "failed");
+}
+
+/**
+ * Causa de un intento fallido de c807 Xpress. El motivo (error_motivo) viene de
+ * su catalogo y el detalle lo escribe el repartidor; se leen juntos. Vistos en
+ * 44 guias de septiembre: "Direccion incompleta/no contesta" (casi siempre
+ * dice que no contesta), "Reprogramación" (el cliente pidio otro dia), "Punto
+ * de encuentro/No contesta", "Por tiempo", "Cliente rechaza envío", "Numero
+ * equivocado", "Cerrado casa/negocio", "Mal Tiempo (Lluvia)", "Cruce de envío",
+ * "Por Cobertura" y "Devolución".
+ */
+export function c807Category(motivo: string): IncidentCategory {
+  const m = (motivo || "").toLowerCase();
+  if (m.includes("rechaz")) return "cliente_rechaza";
+  if (
+    m.includes("no contesta") ||
+    m.includes("no responde") ||
+    m.includes("equivocado") ||
+    m.includes("cerrado") ||
+    m.includes("punto de encuentro")
+  )
+    return "cliente_no_responde";
+  return mapMoovinCategory(motivo, "failed");
+}
+
+/** Que cambia entre los couriers que Kairo lee de su rastreo publico. */
+interface ShipmentSource {
+  source: "cargoexpreso" | "c807";
+  courier: string;
+  category: (motivo: string) => IncidentCategory;
+}
+
+const CARGO_EXPRESO_SOURCE: ShipmentSource = { source: "cargoexpreso", courier: "Cargo Expreso", category: cargoExpresoCategory };
+const C807_SOURCE: ShipmentSource = { source: "c807", courier: "c807 Xpress", category: c807Category };
+
+// Construye una candidata desde el tracking de Cargo Expreso o c807 Xpress
+// (Honduras). A diferencia de Forza, los dos informan cada intento con su
+// motivo: la falla es la del courier (ver lib/cargo-expreso.ts y lib/c807.ts).
+// Entrega o devolucion solo cierran una novedad que ya existe; en curso y
+// pasado de tiempo es demora. Ahi alcanzan los umbrales de Costa Rica:
+//  - Cargo Expreso: de 23 entregas, la mas lenta tardo 4,8 dias desde la
+//    recoleccion, y los paquetes que pasaron 7 dias o mas sin movimiento
+//    terminaron devueltos.
+//  - c807: de 23 entregas, la mas lenta tardo 8 dias desde la recoleccion, y
+//    el silencio mas largo de un envio que termino fue de 5,9 dias. Tambien
+//    entra como demora la guia que c807 nunca recogio.
+function detectShipmentIncident(
+  cfg: ShipmentSource,
+  tracking: ShipmentTrackingRow,
+  row?: LogisticsRow,
+  shopify?: ShopifyOrderSummary,
+  now: string = new Date().toISOString()
+): DetectedIncident | null {
+  const group = tracking.latest_group || "";
+  const isFailure = group === "failed";
+  const isDelivered = group === "delivered";
+  const isReturned = group === "returned";
+  // Un pedido cancelado no tiene nada que entregar: un paquete quieto no es demora.
+  const demora =
+    isFailure || isDelivered || isReturned || shopify?.cancelled_at
+      ? null
+      : motivoDemora(shopify?.created_at, tracking.latest_at, now);
+  if (!isFailure && !isDelivered && !isReturned && !demora) return null;
+
+  const guide = tracking.guide_number || row?.guide_number || "";
+  const orderName = row?.order_name || shopify?.name || "";
+  const reason = tracking.incident_reason || tracking.latest_status || "";
+
+  return {
+    store_id: tracking.store_id || row?.store_id || DEFAULT_FINANCE_STORE_ID,
+    incident_key: buildIncidentKey(guide, orderName),
+    source: cfg.source,
+    order_name: orderName,
+    guide_number: guide,
+    shopify_order_id: row?.shopify_order_id || shopify?.id || "",
+    customer_name: row?.customer_name || shopifyCustomerName(shopify) || tracking.receiver_name || "",
+    customer_phone: row?.customer_phone || shopify?.phone || "",
+    courier: row?.courier || cfg.courier,
+    cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
+    category: demora
+      ? "demora_entrega"
+      : isFailure
+        ? cfg.category(reason)
+        : isReturned
+          ? "devuelto_origen"
+          : "otro",
+    // Una guia que nunca empezo a moverse dice por que (p.ej. "Guía creada,
+    // sin recoger" en c807): es lo primero que hay que preguntar.
+    detail: demora && group === "pending" && tracking.latest_status ? `${demora} (${tracking.latest_status})` : demora ?? reason,
     last_tracking_status: tracking.latest_status || "",
     last_tracking_group: group,
     last_failure_at: lastFailureDate(tracking.events),
   };
+}
+
+export function detectCargoExpresoIncident(
+  tracking: ShipmentTrackingRow,
+  row?: LogisticsRow,
+  shopify?: ShopifyOrderSummary,
+  now?: string
+): DetectedIncident | null {
+  return detectShipmentIncident(CARGO_EXPRESO_SOURCE, tracking, row, shopify, now);
+}
+
+export function detectC807Incident(
+  tracking: ShipmentTrackingRow,
+  row?: LogisticsRow,
+  shopify?: ShopifyOrderSummary,
+  now?: string
+): DetectedIncident | null {
+  return detectShipmentIncident(C807_SOURCE, tracking, row, shopify, now);
 }
 
 // Construye una candidata desde una fila de logistica Boxful. Devuelve null
@@ -276,7 +583,10 @@ export function applyDetection(
         kind: "detectada",
         from_status: "",
         to_status: "pendiente",
-        message: `Novedad detectada automaticamente (${candidate.source})`,
+        message:
+          candidate.category === "demora_entrega"
+            ? `Demora detectada automaticamente (${candidate.source}): ${candidate.detail}`
+            : `Novedad detectada automaticamente (${candidate.source})`,
         result: "info",
       },
     };
@@ -300,6 +610,18 @@ export function applyDetection(
   // Son 2.105 de 2.302 novedades: si igual se reescriben, la corrida completa
   // toca casi toda la tabla para nada.
   if (TERMINAL_STATUSES.includes(existing.status)) return refrescoDeSnapshot(existing, patch);
+
+  // Una demora que DESPUES falla de verdad se reclasifica con la causa real: la
+  // novedad nacio porque el paquete no se movia, y ahora el courier dijo por
+  // que. Solo pisa la causa si sigue siendo la que puso la deteccion
+  // ("demora_entrega"); si el operador ya la cambio, se respeta.
+  if (
+    existing.category === "demora_entrega" &&
+    candidate.category !== "demora_entrega" &&
+    candidate.category !== "otro"
+  ) {
+    patch.category = candidate.category;
+  }
 
   // --- No terminales: el estado se reconcilia con el outcome del courier. ---
   // Entrega confirmada -> Resuelta.

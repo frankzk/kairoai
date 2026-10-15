@@ -311,6 +311,7 @@ export function normalizeMessage(raw: Record<string, unknown>): ConversationMess
     mediaKind: mediaUrl ? msgMediaKind(raw) : undefined,
     mediaUrl: mediaUrl ?? undefined,
     caption: pickString(raw, ["caption"]) || undefined,
+    sender: pickString(raw, ["sender_type", "from"]).toLowerCase() || undefined,
     template: pickStringOrNull(
       (raw.metadata ?? {}) as Record<string, unknown>,
       ["templateName", "template_name"]

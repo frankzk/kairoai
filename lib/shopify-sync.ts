@@ -14,7 +14,44 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * El token de administrador de Shopify SOLO viaja al Admin API de la propia
+ * tienda.
+ *
+ * POR QUE EXISTE: fetchShopifyPage recibe URLs que vienen de afuera, no solo
+ * las que arma el servidor. El cron publico /api/cron/shopify-refresh (sin
+ * secreto) tomaba `?next_url=` de la query y la usaba tal cual, asi que
+ * `?store=mireva-cr&next_url=https://otro-sitio/` hacia que el servidor le
+ * mandara a ese sitio el header X-Shopify-Access-Token: el token completo de
+ * la tienda (pedidos, clientes, datos personales). Y lo que ese sitio
+ * respondiera se guardaba como pedidos. El sync manual de finanzas tenia el
+ * mismo camino, con sesion.
+ *
+ * Se valida aca, en el unico lugar donde sale el token con una URL ajena, y no
+ * en cada ruta: asi cualquier camino nuevo que traiga una URL queda cubierto.
+ * Las URLs legitimas (las que arma el servidor y el cursor de paginacion que
+ * devuelve Shopify en el header Link) son todas https://<tienda>/admin/api/...
+ */
+export function isShopifyAdminUrl(url: string, store: FinanceStoreConfig): boolean {
+  const { shop } = getShopifyCredentials(store);
+  if (!shop) return false;
+  let target: URL;
+  let shopHost: string;
+  try {
+    target = new URL(url);
+    shopHost = new URL(`https://${shop}`).host;
+  } catch {
+    return false;
+  }
+  // Se compara el host ya parseado: una URL como
+  // https://tienda.myshopify.com@otro-sitio/ tiene host "otro-sitio".
+  return target.protocol === "https:" && target.host === shopHost && target.pathname.startsWith("/admin/api/");
+}
+
 export async function fetchShopifyPage(url: string, store: FinanceStoreConfig): Promise<Response> {
+  if (!isShopifyAdminUrl(url, store)) {
+    throw new Error("URL rechazada: el token de Shopify solo se envia al Admin API de la tienda.");
+  }
   const { token } = getShopifyCredentials(store);
   const doFetch = () =>
     fetch(url, {

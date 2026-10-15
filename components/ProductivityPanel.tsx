@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { CalendarRange, RefreshCw, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { RANGE_LABELS, type RangeKey } from "@/lib/leads-metrics";
+import { localDateKey, RANGE_LABELS, type RangeKey } from "@/lib/leads-metrics";
 
 interface Row {
   vendedora_id: number;
@@ -28,6 +28,12 @@ function conv(pedidos: number, gestiones: number): string {
 
 export default function ProductivityPanel({ store }: { store: string }) {
   const [range, setRange] = useState<RangeKey>("hoy");
+  // Rango a mano (dias locales, inclusivos). Si hay alguna fecha, manda sobre
+  // los botones: los botones se apagan y la consulta va con from/to.
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const custom = Boolean(fromDate || toDate);
+  const today = localDateKey(new Date()) ?? undefined;
   const [rows, setRows] = useState<Row[]>([]);
   const [totals, setTotals] = useState<Totals | null>(null);
   const [loading, setLoading] = useState(false);
@@ -37,7 +43,14 @@ export default function ProductivityPanel({ store }: { store: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/leads/productivity?store=${store}&range=${range}`);
+      const params = new URLSearchParams({ store });
+      if (custom) {
+        if (fromDate) params.set("from", fromDate);
+        if (toDate) params.set("to", toDate);
+      } else {
+        params.set("range", range);
+      }
+      const res = await fetch(`/api/leads/productivity?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error al cargar productividad");
       setRows(data.rows ?? []);
@@ -49,7 +62,7 @@ export default function ProductivityPanel({ store }: { store: string }) {
     } finally {
       setLoading(false);
     }
-  }, [store, range]);
+  }, [store, range, custom, fromDate, toDate]);
 
   useEffect(() => {
     load();
@@ -64,14 +77,72 @@ export default function ProductivityPanel({ store }: { store: string }) {
             {RANGES.map((r) => (
               <button
                 key={r}
-                onClick={() => setRange(r)}
+                onClick={() => {
+                  setRange(r);
+                  setFromDate("");
+                  setToDate("");
+                }}
+                aria-pressed={!custom && range === r}
                 className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
-                  range === r ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-accent"
+                  !custom && range === r ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-accent"
                 }`}
               >
                 {RANGE_LABELS[r]}
               </button>
             ))}
+          </div>
+          <div
+            className={`flex flex-wrap items-center gap-2 rounded-md border px-2 py-0.5 ${
+              custom ? "border-primary" : "border-input"
+            }`}
+          >
+            <CalendarRange className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span>Desde</span>
+              <input
+                type="date"
+                aria-label="Productividad: fecha inicial"
+                value={fromDate}
+                max={toDate || today}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setFromDate(next);
+                  if (next && toDate && next > toDate) setToDate(next);
+                }}
+                className="h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+              />
+            </label>
+            <span className="text-muted-foreground/50" aria-hidden="true">—</span>
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span>Hasta</span>
+              <input
+                type="date"
+                aria-label="Productividad: fecha final"
+                value={toDate}
+                min={fromDate || undefined}
+                max={today}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setToDate(next);
+                  if (next && fromDate && next < fromDate) setFromDate(next);
+                }}
+                className="h-7 w-[132px] rounded border border-input bg-card px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+              />
+            </label>
+            {custom && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFromDate("");
+                  setToDate("");
+                }}
+                aria-label="Quitar rango de fechas"
+                title="Quitar rango"
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
           <button
             onClick={load}

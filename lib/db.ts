@@ -50,10 +50,30 @@ function conJitter(ms: number): number {
   return ms + Math.floor(Math.random() * (ms * 0.25));
 }
 
+/**
+ * Toda consulta a Supabase va SIN la cache de datos de Next.js.
+ *
+ * POR QUE: Next 14 guarda en su Data Cache las respuestas de `fetch` hechas en
+ * el servidor, y supabase-js lee con `fetch` GET. En Vercel esa cache dura para
+ * siempre y sobrevive a los deploys. `export const dynamic = "force-dynamic"` en
+ * la ruta NO alcanza: se probo contra un Supabase falso (3 llamadas a
+ * /api/health/crons, 1 sola consulta a la base, las 3 con la misma respuesta).
+ *
+ * Asi se vio el 06/10/2026: la tira de salud decia "12 procesos atrasados, sin
+ * actualizar hace 5 h" mientras cron_runs mostraba corridas de hace minutos.
+ * Leia una foto de la tabla tomada horas antes y la comparaba contra la hora
+ * real. Cualquier otra lectura con URL fija tenia el mismo riesgo.
+ *
+ * Nada en esta app quiere esa cache sobre la base: lo que se cachea, se cachea
+ * a proposito en tablas propias (finance_dataset_cache).
+ */
+export const SUPABASE_FETCH_CACHE: RequestCache = "no-store";
+
 export async function supabaseFetchWithReadRetry(
   input: RequestInfo | URL,
-  init?: RequestInit
+  rawInit?: RequestInit
 ): Promise<Response> {
+  const init: RequestInit = { ...rawInit, cache: SUPABASE_FETCH_CACHE };
   const method =
     (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
   const canRetry = method === "GET" || method === "HEAD";

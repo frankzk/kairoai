@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, Save, RotateCcw, RefreshCw, Phone, ToggleLeft, ToggleRight, ShoppingCart } from "lucide-react";
+import { ArrowLeft, KeyRound, Save, RotateCcw, RefreshCw, Phone, ToggleLeft, ToggleRight, ShoppingCart } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ZadarmaStatusCard from "@/components/ZadarmaStatusCard";
 import type { AgentSettings } from "@/lib/db";
+import { leerYo, tienePermiso } from "@/lib/sesion-cliente";
 
 const DEFAULTS: AgentSettings = {
   max_retries: 3,
@@ -28,6 +29,8 @@ function fmtMin(m: number) {
 }
 
 export default function SettingsPage() {
+  const [puedeUsuarios, setPuedeUsuarios] = useState(false);
+  useEffect(() => setPuedeUsuarios(tienePermiso(leerYo(), "usuarios")), []);
   const [settings, setSettings] = useState<AgentSettings>(DEFAULTS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -104,6 +107,24 @@ export default function SettingsPage() {
       </header>
 
       <main className="container mx-auto px-4 py-6 max-w-lg space-y-6">
+        {/* Accesos del equipo: desde aca el dueño cambia la contraseña de
+            cualquier trabajador cuando le falla. Solo con permiso "usuarios". */}
+        {puedeUsuarios && (
+          <Card>
+            <CardContent className="flex items-center gap-3 p-4">
+              <KeyRound className="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
+              <div className="min-w-0 text-sm">
+                <p className="font-medium">Usuarios y contraseñas</p>
+                <p className="text-xs text-muted-foreground">
+                  Crear usuarios, darles accesos y cambiarle la contraseña a cualquier trabajador.
+                </p>
+              </div>
+              <Link href="/admin/usuarios" className="ml-auto">
+                <Button variant="outline" size="sm">Abrir</Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
         {loading ? (
           <div className="h-64 rounded-lg border border-border bg-card animate-pulse" />
         ) : (

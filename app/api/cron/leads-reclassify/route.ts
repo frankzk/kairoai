@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { listConfiguredIcomflyStoreContexts } from "@/lib/icomfly";
 import { reclassifyStage } from "@/lib/leads-sync";
+import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
+// Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
+export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 // Cron: afina el bucket "Por cerrar" leyendo el chat, en LOTES. Cada corrida
@@ -33,10 +36,13 @@ async function handle() {
   }
 }
 
-export async function GET() {
+async function handleGet() {
   return handle();
 }
 
-export async function POST() {
+async function handlePost() {
   return handle();
 }
+
+export const GET = withCronRun("leads-reclassify", handleGet);
+export const POST = withCronRun("leads-reclassify", handlePost);

@@ -1,17 +1,28 @@
 // Identidad de la asesora en el navegador.
 //
-// Kairo todavia entra con una sola contraseña de admin (no hay Supabase Auth),
-// asi que "quien soy" se resuelve con el selector de asesora que ya usan el
-// composer, la barra de gestion y el panel de crear pedido. La clave vivia
-// duplicada en cada uno; aqui queda en un solo lugar y, sobre todo, avisa a
-// quien escuche: el telefono web necesita saber en el acto que cambio la
-// asesora para registrarse con SU extension de la centralita.
+// Desde el 12/10/2026 cada persona entra con su usuario. Si es una ASESORA (su
+// usuario esta vinculado a la planilla) y no supervisa, la asesora queda FIJA:
+// getVendedoraId devuelve siempre la suya y no se puede cambiar. El servidor lo
+// impone igual (lib/identidad.ts); esto es para que la pantalla lo muestre.
+//
+// Supervision (y el admin) siguen eligiendo con el selector de siempre, que se
+// recuerda aca y avisa a quien escuche: el telefono web necesita saber en el
+// acto que cambio la asesora para registrarse con SU extension.
+
+import { asesoraFija, leerYo } from "./sesion-cliente";
 
 export const VENDEDORA_KEY = "kairo:leads-vendedora";
+
+/** La asesora fija de quien esta usando la app, o null si puede elegir. */
+export function vendedoraBloqueada(): number | null {
+  return asesoraFija(leerYo());
+}
 export const VENDEDORA_EVENT = "kairo:vendedora-change";
 
 export function getVendedoraId(): number | null {
   if (typeof window === "undefined") return null;
+  const fija = vendedoraBloqueada();
+  if (fija) return fija;
   try {
     const raw = Number(window.localStorage.getItem(VENDEDORA_KEY));
     return Number.isFinite(raw) && raw > 0 ? raw : null;
@@ -23,6 +34,8 @@ export function getVendedoraId(): number | null {
 /** Guarda la asesora activa y notifica a los componentes de la pestaña. */
 export function setVendedoraId(id: number): void {
   if (typeof window === "undefined") return;
+  // Una asesora fija no puede pasar a ser otra.
+  if (vendedoraBloqueada()) return;
   try {
     window.localStorage.setItem(VENDEDORA_KEY, String(id));
   } catch {

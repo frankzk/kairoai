@@ -6,6 +6,18 @@
       "schedule": "0 * * * *"
     },
     {
+      "path": "/api/cron/forza",
+      "schedule": "30 * * * *"
+    },
+    {
+      "path": "/api/cron/cargo-expreso",
+      "schedule": "40 * * * *"
+    },
+    {
+      "path": "/api/cron/c807",
+      "schedule": "50 * * * *"
+    },
+    {
       "path": "/api/cron/wyn",
       "schedule": "20,50 * * * *"
     },
@@ -42,6 +54,10 @@
       "schedule": "2,12,22,32,42,52 * * * *"
     },
     {
+      "path": "/api/cron/leads-inbound",
+      "schedule": "7,17,27,37,47,57 * * * *"
+    },
+    {
       "path": "/api/cron/leads-shopify-match",
       "schedule": "7 * * * *"
     }
@@ -63,6 +79,15 @@
       "maxDuration": 25
     },
     "app/api/cron/moovin/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/forza/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/cargo-expreso/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/c807/route.ts": {
       "maxDuration": 300
     },
     "app/api/cron/wyn/route.ts": {

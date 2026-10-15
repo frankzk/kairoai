@@ -2,9 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { FINANCE_STORES, getStoreConfig } from "@/lib/stores";
 import { runShopifyRefresh, windowStart } from "@/lib/shopify-refresh-run";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
+import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
+export const dynamic = "force-dynamic";
+// 300 y no 60: despues del presupuesto de paginado viene la reconstruccion de la
+// cache de Finanzas, y con 60 s Vercel cortaba la corrida a la mitad (ver
+// tests/cron-tiempo-limite.test.ts).
+export const maxDuration = 300;
 
 // Ventana corta y CRON cada 10 min: un pedido nuevo entra al tablero solo,
 // sin que nadie apriete "Sync Shopify". Antes el unico camino era la barrida
@@ -18,7 +24,7 @@ const WINDOW_MINUTES = Number(process.env.SHOPIFY_RECENT_WINDOW_MIN ?? 30);
 const TIME_BUDGET_MS = 40_000;
 const MAX_PAGES_PER_STORE = 4;
 
-export async function GET(req: NextRequest) {
+async function handleGet(req: NextRequest) {
   const startedAt = Date.now();
   const minutesParam = Number(req.nextUrl.searchParams.get("minutes"));
   const minutes = Number.isFinite(minutesParam) && minutesParam > 0 ? minutesParam : WINDOW_MINUTES;
@@ -55,3 +61,5 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ ok: true, window_minutes: minutes, results });
 }
+
+export const GET = withCronRun("shopify-recent", handleGet);

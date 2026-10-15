@@ -15,6 +15,12 @@ export interface RateLimitedOptions {
   concurrency: number;
   /** Milisegundos minimos entre el ARRANQUE de dos consultas. */
   minIntervalMs: number;
+  /**
+   * Si devuelve true no se arrancan mas consultas; las que estan en vuelo
+   * terminan. Sirve para cortar a tiempo antes del maxDuration de la funcion
+   * cuando el proveedor anda lento.
+   */
+  shouldStop?: () => boolean;
 }
 
 /**
@@ -46,6 +52,7 @@ export async function forEachRateLimited<T>(
   let cursor = 0;
   const run = async (): Promise<void> => {
     for (;;) {
+      if (opts.shouldStop?.()) return;
       const index = cursor++;
       if (index >= items.length) return;
       await reserveSlot();

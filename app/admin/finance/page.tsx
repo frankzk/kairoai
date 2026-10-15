@@ -10,6 +10,7 @@ import {
   ArrowUp,
   BarChart3,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Database,
   Download,
@@ -28,6 +29,17 @@ import {
   X,
 } from "lucide-react";
 import { normalizeSearchText } from "@/lib/order-matching";
+import {
+  DIAS_ULTIMO_INTENTO,
+  PLAZOS,
+  SUBETAPA_LABEL,
+  cuandoVence,
+  pedidoDeFila,
+  tzDeTienda,
+  type EstadoConfirmacion,
+  type Plazo,
+  type Subetapa,
+} from "@/lib/confirmacion";
 import {
   getPreparedAt,
   type CourierKairoStatus,
@@ -78,7 +90,8 @@ import {
 } from "@/lib/store-config";
 import OrderDrawer, { type OrderDrawerTarget } from "@/components/OrderDrawer";
 import ZadarmaWebphone from "@/components/ZadarmaWebphone";
-import { useSelectedStore } from "@/lib/use-selected-store";
+import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
+import { leerYo, tienePermiso } from "@/lib/sesion-cliente";
 import { sanitizeExternalError } from "@/lib/api-errors";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -290,6 +303,8 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "not_delivered", label: "No entregados" },
 ];
 
+const TRACKING_LABEL = Object.fromEntries(ORDER_TRACKING_FILTERS.map((f) => [f.value, f.label])) as Record<OrderTrackingFilter, string>;
+
 // Punto de color por estado de seguimiento, alineado con los KPIs de arriba.
 const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   all: "bg-muted-foreground/40",
@@ -307,6 +322,23 @@ const TRACKING_DOT_COLORS: Record<OrderTrackingFilter, string> = {
   not_delivered: "bg-red-400",
 };
 
+// Los filtros de Gestion → Pedidos, agrupados por familia: los chips de un
+// grupo van pegados y la fila envuelve entre grupos, nunca dentro de uno.
+const FASES_SEGUIMIENTO: Array<{ nombre: string; valores: OrderTrackingFilter[] }> = [
+  { nombre: "Antes de salir", valores: ["pending", "despacho_solicitado", "recolectado"] },
+  { nombre: "En camino", valores: ["en_route", "en_route_retry"] },
+  { nombre: "Incidencias", valores: ["incident_solvable", "incident_unsolvable"] },
+  { nombre: "Cierre", valores: ["delivered", "not_delivered", "annulled"] },
+];
+const GRUPOS_LIQUIDACION: Array<{ nombre: string; valores: OrderSettlementFilter[] }> = [
+  { nombre: "Liquidación", valores: ["settled", "unsettled"] },
+  { nombre: "Por revisar", valores: ["unsettled_expected", "to_claim", "duplicate"] },
+];
+const GRUPOS_SUBETAPA: Array<{ nombre: string; valores: Subetapa[] }> = [
+  { nombre: "En la cola", valores: ["sin_llamar", "por_confirmar", "volver_a_contactar", "ultimo_intento"] },
+  { nombre: "Fuera de la cola", valores: ["confirmado", "historico"] },
+];
+
 const PRODUCT_ANALYSIS_FILTERS: Array<{ value: ProductAnalysisFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "no_cost", label: "Sin costo" },
@@ -322,11 +354,13 @@ const UNKNOWN_PRODUCT_LABEL = "Producto sin registrar";
 const ORDER_SETTLEMENT_FILTERS: Array<{ value: OrderSettlementFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "settled", label: "Liquidados" },
-  { value: "unsettled", label: "Sin liquidacion" },
+  { value: "unsettled", label: "Sin liquidación" },
   { value: "unsettled_expected", label: "Falta cuadrar" },
-  { value: "to_claim", label: "Pend. liquidacion" },
+  { value: "to_claim", label: "Pend. liquidación" },
   { value: "duplicate", label: "Duplicados" },
 ];
+
+const SETTLEMENT_LABEL = Object.fromEntries(ORDER_SETTLEMENT_FILTERS.map((f) => [f.value, f.label])) as Record<OrderSettlementFilter, string>;
 
 const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
   { value: "all", label: "Todo" },
@@ -338,9 +372,18 @@ const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
 // Las filas que devuelve /api/finance/orders ya traen las trazas de liquidacion
 // resueltas server-side, asi la tabla no necesita el settlementTraceByKey en
 // memoria.
-type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[] };
+type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion };
+type ConfirmacionCounts = { subetapa: Record<Subetapa | "all", number>; plazo: Record<Plazo | "all", number> };
 
-const ORDERS_PAGE_SIZE = 100;
+// Cola de confirmacion de los pendientes (lib/confirmacion.ts): el color dice
+// cuan urgente es. Solo una promesa rota es roja.
+const PLAZO_DOT: Record<Plazo, string> = { vencidos: "bg-rose-500", hoy: "bg-amber-400", proximos: "bg-cyan-400" };
+const PLAZO_TEXTO: Record<Plazo, string> = { vencidos: "text-rose-300", hoy: "text-amber-300", proximos: "text-cyan-300" };
+const PLAZO_LABEL: Record<Plazo, string> = Object.fromEntries(PLAZOS.map((p) => [p.value, p.label])) as Record<Plazo, string>;
+
+// 50 por pagina: la tabla ya no tiene scroll propio (se baja con la pagina),
+// asi que 100 filas eran una pagina eterna; y es la mitad de datos por carga.
+const ORDERS_PAGE_SIZE = 50;
 
 const EMPTY_TRACKING_COUNTS: Record<OrderTrackingFilter, number> = {
   all: 0,
@@ -488,6 +531,14 @@ const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
+  // Las pestañas de plata (Productos, Liquidaciones, Gastos, Cierre) son del
+  // permiso "finanzas". Logistica ve el resto. El servidor lo impone igual; aca
+  // es para no mostrarle pestañas que le responderian "no tienes acceso".
+  const [verFinanzas, setVerFinanzas] = useState(false);
+  useEffect(() => {
+    const yo = leerYo();
+    setVerFinanzas(!yo || tienePermiso(yo, "finanzas"));
+  }, []);
   // Arranca en "Ayer": el ultimo dia completo cerrado es lo que se revisa a diario.
   const [kpiRange, setKpiRange] = useState<KpiRange>("yesterday");
   // Rango custom de KPIs (YYYY-MM-DD, inclusivos). Solo aplica con kpiRange="custom".
@@ -521,6 +572,7 @@ export default function FinancePage() {
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState("");
   const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
+  const tiendasPermitidas = useTiendasPermitidas();
   const [imports, setImports] = useState<SettlementImport[]>([]);
   const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
   // shopifyOrders se mantiene SOLO como contador base para el tab Pedidos
@@ -554,6 +606,20 @@ export default function FinancePage() {
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
+  // Alto de la barra superior fija. La tabla de pedidos pega sus titulos justo
+  // debajo cuando se baja la pagina (ya no tiene scroll propio).
+  const headerRef = useRef<HTMLElement>(null);
+  const [headerAlto, setHeaderAlto] = useState(0);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const medir = () => setHeaderAlto(el.getBoundingClientRect().height);
+    medir();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const handleOrdersOperationalMetadata = useCallback(
     (storeCode: FinanceStoreCode, metadata: OrdersOperationalMetadata) => {
@@ -620,6 +686,11 @@ export default function FinancePage() {
 
       // Cada fuente carga de forma independiente: una llamada lenta no puede
       // bloquear el primer render del dashboard.
+      // Sin permiso de finanzas no se piden costos, gastos, resumen, reclamos
+      // ni liquidaciones: el servidor los negaria igual (403).
+      const yoCarga = leerYo();
+      const conFinanzas = !yoCarga || tienePermiso(yoCarga, "finanzas");
+
       const recentUpdatesMin = new Date(
         Date.now() - FINANCE_SHOPIFY_RECENT_UPDATES_DAYS * 24 * 60 * 60 * 1000
       ).toISOString();
@@ -679,7 +750,7 @@ export default function FinancePage() {
         setLogisticsImports(logisticsJson.imports ?? []);
       })();
 
-      loadJson(
+      if (conFinanzas) loadJson(
         "costos SKU",
         () =>
           fetchWithTimeout(
@@ -693,7 +764,7 @@ export default function FinancePage() {
         },
         { delayMs: 150 }
       );
-      loadJson(
+      if (conFinanzas) loadJson(
         "gastos",
         () =>
           fetchWithTimeout(
@@ -704,7 +775,7 @@ export default function FinancePage() {
         (json) => setExpenses(json.expenses ?? []),
         { delayMs: 300 }
       );
-      loadJson(
+      if (conFinanzas) loadJson(
         "resumen financiero",
         () =>
           fetchWithTimeout(
@@ -753,7 +824,7 @@ export default function FinancePage() {
         },
         { delayMs: 800 }
       );
-      loadJson(
+      if (conFinanzas) loadJson(
         "reclamos",
         () =>
           fetchWithTimeout(
@@ -787,7 +858,7 @@ export default function FinancePage() {
       // archivos y los badges del tab Liquidaciones. Las filas enriquecidas, las
       // alertas de cobro y las anomalias las trae /api/finance/settlements-view
       // (Carril 2 — tab Liquidaciones), asi que aqui ya NO se guardan las filas.
-      void (async () => {
+      if (conFinanzas) void (async () => {
         await delay(1200);
         if (!isCurrentRun()) return;
         const settlementsJson = await safeJson(
@@ -1319,8 +1390,8 @@ export default function FinancePage() {
   }, [tab, selectedStoreCode]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-10 border-b border-border/50 bg-card/70 backdrop-blur">
+    <div className="min-h-screen bg-background" style={{ ["--finance-header-h" as string]: `${headerAlto}px` } as React.CSSProperties}>
+      <header ref={headerRef} className="sticky top-0 z-10 border-b border-border/50 bg-card/70 backdrop-blur">
         <div className="container mx-auto flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:gap-4 sm:px-4 sm:py-4">
           <div className="flex min-w-0 items-center gap-1.5 sm:flex-1">
             <Link href="/">
@@ -1342,7 +1413,7 @@ export default function FinancePage() {
               aria-label="Tienda"
               className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs font-semibold text-foreground outline-none focus:border-primary sm:h-9 sm:min-w-[190px] sm:flex-none sm:px-3 sm:text-sm"
             >
-              {FINANCE_STORES.map((store) => (
+              {tiendasPermitidas.map((store) => (
                 <option key={store.code} value={store.code}>
                   {store.label}
                 </option>
@@ -1482,21 +1553,29 @@ export default function FinancePage() {
           <TabButton active={tab === "audit"} onClick={() => setTab("audit")} icon={<ShieldAlert />}>
             Auditoría
           </TabButton>
-          <TabButton active={tab === "products"} onClick={() => setTab("products")} icon={<BarChart3 />}>
-            Productos
-          </TabButton>
+          {verFinanzas && (
+            <TabButton active={tab === "products"} onClick={() => setTab("products")} icon={<BarChart3 />}>
+              Productos
+            </TabButton>
+          )}
           <TabButton active={tab === "notes"} onClick={() => setTab("notes")} icon={<StickyNote />}>
             Notas Shopify
           </TabButton>
-          <TabButton active={tab === "settlements"} onClick={() => setTab("settlements")} icon={<ReceiptText />}>
-            Liquidaciones
-          </TabButton>
-          <TabButton active={tab === "expenses"} onClick={() => setTab("expenses")} icon={<ReceiptText />}>
-            Gastos
-          </TabButton>
-          <TabButton active={tab === "monthly"} onClick={() => setTab("monthly")} icon={<FileSpreadsheet />}>
-            Cierre mensual
-          </TabButton>
+          {verFinanzas && (
+            <TabButton active={tab === "settlements"} onClick={() => setTab("settlements")} icon={<ReceiptText />}>
+              Liquidaciones
+            </TabButton>
+          )}
+          {verFinanzas && (
+            <TabButton active={tab === "expenses"} onClick={() => setTab("expenses")} icon={<ReceiptText />}>
+              Gastos
+            </TabButton>
+          )}
+          {verFinanzas && (
+            <TabButton active={tab === "monthly"} onClick={() => setTab("monthly")} icon={<FileSpreadsheet />}>
+              Cierre mensual
+            </TabButton>
+          )}
           <TabButton active={tab === "files"} onClick={() => setTab("files")} icon={<Database />}>
             Logistica Boxful
           </TabButton>
@@ -1651,33 +1730,68 @@ function FilterChip({
   active,
   onClick,
   dotClass,
+  todos = false,
 }: {
   label: string;
   count: number;
   active: boolean;
   onClick: () => void;
   dotClass?: string;
+  /** El chip "Todos" de la fila: elegido no filtra nada, asi que no se pinta violeta. */
+  todos?: boolean;
 }) {
+  // Chip compacto de esquina recta (DESIGN.md, chip-dense). El violeta queda
+  // para un filtro de verdad aplicado: con las filas en "Todos", el unico chip
+  // violeta es lo que esta filtrando. Un conteo en 0 se apaga sin dejar de ser
+  // clickeable; el conteo con pedidos va en blanco papel.
+  const n = Number(count ?? 0);
+  const vacio = !active && n === 0;
+  const estilo = active
+    ? todos
+      ? "z-[1] border-foreground/30 bg-muted text-foreground"
+      : "z-[2] border-primary bg-primary/15 text-violet-200"
+    : "border-border bg-background text-muted-foreground hover:z-[1] hover:border-primary/50 hover:text-foreground";
+  const tonoConteo = active ? (todos ? "text-foreground" : "text-violet-100") : vacio ? "text-muted-foreground/70" : "text-foreground";
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-        active
-          ? "border-primary bg-primary/10 text-primary"
-          : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
-      }`}
+      aria-pressed={active}
+      className={`relative inline-flex h-[26px] shrink-0 items-center gap-1.5 whitespace-nowrap border px-2 text-xs transition-colors focus-visible:z-[3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${estilo}`}
     >
-      {dotClass && <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />}
+      {dotClass && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass} ${vacio ? "opacity-35" : ""}`} aria-hidden="true" />}
       {label}
+      <span className={`text-[11px] font-medium tabular-nums ${tonoConteo}`}>{n.toLocaleString("es-CR")}</span>
+    </button>
+  );
+}
+
+// Chips de una misma familia, pegados: comparten el borde y se leen como un
+// bloque. La fila envuelve entre grupos, nunca dentro de uno.
+function GrupoChips({ nombre, children }: { nombre?: string; children: React.ReactNode }) {
+  return (
+    <div role="group" aria-label={nombre} className="flex shrink-0 [&>*+*]:-ml-px">
+      {children}
+    </div>
+  );
+}
+
+// Una fila de grupos de chips con su etiqueta. En celular la fila se desliza de
+// lado; en escritorio envuelve entre grupos, para que ningun chip quede oculto.
+function FilaFiltros({ etiqueta, sub = false, children }: { etiqueta: string; sub?: boolean; children: React.ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-start sm:gap-2">
       <span
-        className={`min-w-[1.25rem] rounded-full px-1 text-center font-mono text-[10px] leading-4 ${
-          active ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+        className={`text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:shrink-0 sm:pt-[6px] ${
+          sub ? "sm:w-[4.5rem]" : "sm:w-[5.25rem]"
         }`}
       >
-        {count}
+        {etiqueta}
       </span>
-    </button>
+      <div className="-mx-1 flex items-start gap-2 overflow-x-auto px-1 pb-1 [&>*]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:gap-y-1.5 sm:overflow-visible sm:px-0 sm:pb-0">
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -1727,6 +1841,10 @@ function OrdersTab({
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
   const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>("all");
+  // Sub-filtros de Pendientes (cola de confirmacion).
+  const [subetapaFilter, setSubetapaFilter] = useState<Subetapa | "all">("all");
+  const [plazoFilter, setPlazoFilter] = useState<Plazo | "all">("all");
+  const [confirmacionCounts, setConfirmacionCounts] = useState<ConfirmacionCounts | null>(null);
   const [settlementFilter, setSettlementFilter] = useState<OrderSettlementFilter>("all");
   // En mobile los filtros (periodo/estado/liquidacion) se colapsan detras de un
   // boton para no saturar la vista; en desktop siempre se muestran.
@@ -1743,7 +1861,6 @@ function OrdersTab({
   const [refreshKey, setRefreshKey] = useState(0);
   const [serverRows, setServerRows] = useState<OrderRowWithTraces[]>([]);
   const [total, setTotal] = useState(0);
-  const [periodCount, setPeriodCount] = useState(0);
   const [searchedCount, setSearchedCount] = useState(0);
   const [trackingCounts, setTrackingCounts] = useState<Record<OrderTrackingFilter, number>>(EMPTY_TRACKING_COUNTS);
   const [settlementCounts, setSettlementCounts] = useState<Record<OrderSettlementFilter, number>>(
@@ -1780,7 +1897,16 @@ function OrdersTab({
   // Cualquier cambio de filtro vuelve a la primera pagina.
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, trackingFilter, settlementFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code]);
+  }, [debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code]);
+
+  // La subetapa y el plazo son solo de Pendientes: al salir de ahi se limpian.
+  useEffect(() => {
+    if (trackingFilter !== "pending") {
+      setSubetapaFilter("all");
+      setPlazoFilter("all");
+      setConfirmacionCounts(null);
+    }
+  }, [trackingFilter]);
 
   // Al cambiar de tienda limpiamos el ultimo resultado valido: mantenerlo entre
   // tiendas rompe el aislamiento (mostrar pedidos de otra tienda mientras carga
@@ -1789,7 +1915,6 @@ function OrdersTab({
   useEffect(() => {
     setServerRows([]);
     setTotal(0);
-    setPeriodCount(0);
     setSearchedCount(0);
     setTrackingCounts(EMPTY_TRACKING_COUNTS);
     setSettlementCounts(EMPTY_SETTLEMENT_COUNTS);
@@ -1816,10 +1941,14 @@ function OrdersTab({
       if (debouncedSearch) params.set("q", debouncedSearch);
       if (trackingFilter !== "all") params.set("status", trackingFilter);
       if (settlementFilter !== "all") params.set("settlement", settlementFilter);
+      if (trackingFilter === "pending") {
+        if (subetapaFilter !== "all") params.set("subetapa", subetapaFilter);
+        if (plazoFilter !== "all") params.set("plazo", plazoFilter);
+      }
       for (const [key, value] of Object.entries(extra)) params.set(key, value);
       return params.toString();
     },
-    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter]
+    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter]
   );
 
   useEffect(() => {
@@ -1842,10 +1971,10 @@ function OrdersTab({
         if (!res.ok) throw new Error(json.error ?? "No se pudieron cargar los pedidos");
         setServerRows(Array.isArray(json.rows) ? (json.rows as OrderRowWithTraces[]) : []);
         setTotal(Number(json.total ?? 0));
-        setPeriodCount(Number(json.periodCount ?? 0));
         setSearchedCount(Number(json.searchedCount ?? 0));
         setTrackingCounts((json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS);
         setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
+        setConfirmacionCounts((json.confirmacionCounts as ConfirmacionCounts | undefined) ?? null);
         setHasLoadedOnce(true);
         if (json.operationalMetadata) {
           const metadata = json.operationalMetadata as OrdersOperationalMetadata;
@@ -1952,6 +2081,85 @@ function OrdersTab({
 
   // total = filas que pasan TODOS los filtros (lo que antes era filteredRows.length).
   const totalPages = Math.max(1, Math.ceil(total / ORDERS_PAGE_SIZE));
+  const hayFiltros =
+    periodMode !== "all" || trackingFilter !== "all" || settlementFilter !== "all" || subetapaFilter !== "all" || plazoFilter !== "all";
+  const limpiarFiltros = () => {
+    setPeriodMode("all");
+    setTrackingFilter("all");
+    setSettlementFilter("all");
+    setSubetapaFilter("all");
+    setPlazoFilter("all");
+  };
+  const boxfulSinMatch = latestLogisticsImport?.unmatched_rows ?? 0;
+  const tooltipShopify = `Shopify es la base del seguimiento: ${(shopifyCoverage?.count ?? shopifyOrderCount).toLocaleString("es-CR")} pedidos${
+    shopifyCoverage?.oldest ? ` desde ${formatDate(shopifyCoverage.oldest.slice(0, 10))}` : ""
+  }. Boxful y liquidaciones actualizan seguimiento y cobros.`;
+  const tooltipBoxful = latestLogisticsImport
+    ? `Ultimo Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match, ${latestLogisticsImport.unmatched_rows} sin match.`
+    : "Todavia no hay un archivo de Boxful importado.";
+  const conteoPedidos = (
+    <span className="whitespace-nowrap text-xs text-muted-foreground">
+      <span className="font-mono text-sm font-semibold tabular-nums text-foreground">{total.toLocaleString("es-CR")}</span>{" "}
+      {orderSearch ? `de ${searchedCount.toLocaleString("es-CR")}` : "pedidos"}
+    </span>
+  );
+  const controlPeriodo = (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <div role="group" aria-label="Periodo" className="inline-flex h-8 overflow-hidden rounded-md border border-border">
+        {ORDER_PERIOD_MODES.map((mode, index) => (
+          <button
+            key={mode.value}
+            type="button"
+            aria-pressed={periodMode === mode.value}
+            onClick={() => setPeriodMode(mode.value)}
+            className={`px-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
+              index > 0 ? "border-l border-border" : ""
+            } ${periodMode === mode.value ? "bg-primary/10 text-primary" : "bg-card text-muted-foreground hover:text-foreground"}`}
+          >
+            {mode.label}
+          </button>
+        ))}
+      </div>
+      {periodMode === "month" && (
+        <select
+          value={selectedOrderMonth}
+          onChange={(event) => setSelectedOrderMonth(event.target.value)}
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label="Mes"
+        >
+          {orderMonthOptions.map((month) => (
+            <option key={month} value={month}>
+              {formatMonthLabel(month)}
+            </option>
+          ))}
+        </select>
+      )}
+      {periodMode === "range" && (
+        <div className="flex items-center gap-1">
+          <Input
+            type="date"
+            value={rangeStart}
+            onChange={(event) => setRangeStart(event.target.value)}
+            className="h-8 w-[138px] px-2 text-xs"
+            aria-label="Desde"
+          />
+          <span className="text-xs text-muted-foreground">a</span>
+          <Input
+            type="date"
+            value={rangeEnd}
+            onChange={(event) => setRangeEnd(event.target.value)}
+            className="h-8 w-[138px] px-2 text-xs"
+            aria-label="Hasta"
+          />
+        </div>
+      )}
+    </div>
+  );
+  const tablaPedidosRef = useRef<HTMLDivElement>(null);
+  const irAPagina = (destino: number) => {
+    setPage(Math.min(totalPages, Math.max(1, destino)));
+    tablaPedidosRef.current?.scrollIntoView({ block: "start" });
+  };
   const activeTrackingLabel =
     ORDER_TRACKING_FILTERS.find((filter) => filter.value === trackingFilter)?.label ?? "pedidos";
   const activeSettlementLabel =
@@ -2039,72 +2247,162 @@ function OrdersTab({
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="gap-2 space-y-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-          <div className="space-y-1">
-            <CardTitle className="text-base">Seguimiento de pedidos</CardTitle>
-            <p className="hidden text-xs text-muted-foreground sm:block">
-              Shopify es la base; Boxful y liquidaciones actualizan seguimiento y cobros.
-            </p>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="w-full justify-center gap-2 sm:hidden"
-              onClick={() => setShowActions((value) => !value)}
-              aria-expanded={showActions}
+        {/* Cabecera compacta en 3 filas: (1) buscar + periodo + acciones,
+            (2) estado, (3) liquidacion + conteo + paginas. El titulo visible
+            repetia la pestaña "Pedidos" y queda para lectores de pantalla; la
+            cobertura de Shopify y de Boxful vive en el tooltip de su boton.
+            Al cambiar de pagina se vuelve aca (scrollMarginTop = barra fija). */}
+        <CardContent
+          ref={tablaPedidosRef}
+          className="space-y-2 p-3 sm:p-4"
+          style={{ scrollMarginTop: "calc(var(--finance-header-h, 0px) + 8px)" }}
+        >
+          <h2 className="sr-only">Seguimiento de pedidos</h2>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="flex h-8 w-full items-center gap-2 rounded-md border border-input bg-background px-2.5 focus-within:ring-2 focus-within:ring-ring sm:w-auto sm:min-w-[220px] sm:flex-1">
+              <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <input
+                value={orderSearch}
+                onChange={(event) => setOrderSearch(event.target.value)}
+                placeholder="Buscar pedido: #MCRC11566, 11566, guia o cliente"
+                aria-label="Buscar pedido"
+                className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              />
+              {orderSearch && (
+                <button
+                  type="button"
+                  aria-label="Limpiar busqueda"
+                  onClick={() => setOrderSearch("")}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="hidden sm:block">{controlPeriodo}</div>
+
+            {/* Celular: conteo, filtros, exportar y acciones en una linea. */}
+            <div className="flex items-center gap-2 sm:hidden">
+              {tableLoading && <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-label="Actualizando" />}
+              {conteoPedidos}
+              <div className="ml-auto flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 px-2.5 text-xs"
+                  onClick={() => setShowFilters((value) => !value)}
+                  aria-expanded={showFilters}
+                >
+                  Filtros {showFilters ? "▴" : "▾"}
+                  {hayFiltros && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2.5"
+                  disabled={exporting || !total}
+                  onClick={handleExport}
+                  aria-label={`Exportar ${total} pedidos`}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs"
+                  onClick={() => setShowActions((value) => !value)}
+                  aria-expanded={showActions}
+                >
+                  Acciones {showActions ? "▴" : "▾"}
+                </Button>
+              </div>
+            </div>
+
+            <div
+              className={`${showActions ? "flex" : "hidden"} flex-col gap-2 [&>button]:w-full sm:ml-auto sm:flex sm:flex-row sm:items-center sm:gap-1.5 sm:[&>button]:w-auto`}
             >
-              Acciones {showActions ? "▴" : "▾"}
-            </Button>
-            <div className={`flex-col gap-2 [&>button]:w-full ${showActions ? "flex" : "hidden"} sm:flex sm:flex-row sm:flex-wrap sm:gap-2 sm:[&>button]:w-auto`}>
-            {selectedStore.logisticsProvider === "moovin" && enRouteMoovinGuides.length > 0 && (
+              {selectedStore.logisticsProvider === "moovin" && enRouteMoovinGuides.length > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={moovinSyncing}
+                  onClick={updateMoovinStatuses}
+                  className="h-8 gap-1.5 px-2.5 text-xs"
+                  title="Consultar a Moovin el estado de las guias en ruta"
+                >
+                  {moovinSyncing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                  {moovinSyncing ? "Actualizando..." : `Moovin (${enRouteMoovinGuides.length})`}
+                </Button>
+              )}
+              {selectedStore.logisticsProvider === "forza" && enRouteForzaGuides.length > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={forzaSyncing}
+                  onClick={updateForzaStatuses}
+                  className="h-8 gap-1.5 px-2.5 text-xs"
+                  title="Consultar a Forza el estado de las guias en ruta"
+                >
+                  {forzaSyncing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                  {forzaSyncing ? "Actualizando..." : `Forza (${enRouteForzaGuides.length})`}
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={moovinSyncing}
-                onClick={updateMoovinStatuses}
-                className="gap-2"
+                disabled={syncingShopify}
+                onClick={onSyncShopify}
+                className="h-8 gap-1.5 px-2.5 text-xs"
+                title={tooltipShopify}
+                aria-label="Sync Shopify"
               >
-                {moovinSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                {moovinSyncing ? "Actualizando..." : `Moovin (${enRouteMoovinGuides.length})`}
+                {syncingShopify ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
+                <span className="sm:hidden xl:inline">{syncingShopify ? "Sincronizando..." : "Sync Shopify"}</span>
               </Button>
-            )}
-            {selectedStore.logisticsProvider === "forza" && enRouteForzaGuides.length > 0 && (
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={forzaSyncing}
-                onClick={updateForzaStatuses}
-                className="gap-2"
+                className="hidden h-8 gap-1.5 px-2.5 text-xs sm:inline-flex"
+                disabled={exporting || !total}
+                onClick={handleExport}
+                title={`Exportar ${total} pedidos a Excel`}
+                aria-label={`Exportar ${total} pedidos`}
               >
-                {forzaSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                {forzaSyncing ? "Actualizando..." : `Forza (${enRouteForzaGuides.length})`}
+                <Download className="h-3.5 w-3.5" />
+                <span className="hidden xl:inline">{exporting ? "Exportando..." : "Exportar"}</span>
               </Button>
-            )}
-            <Button type="button" variant="outline" size="sm" disabled={syncingShopify} onClick={onSyncShopify} className="gap-2">
-              <Database className="h-4 w-4" />
-              {syncingShopify ? "Sincronizando..." : "Sync Shopify"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={importingLogistics}
-              onClick={() => {
-                setLogisticsModalError("");
-                setIsLogisticsModalOpen(true);
-              }}
-              className="gap-2"
-            >
-              {importingLogistics ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              {importingLogistics ? "Importando..." : "Importar Boxful"}
-            </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={importingLogistics}
+                onClick={() => {
+                  setLogisticsModalError("");
+                  setIsLogisticsModalOpen(true);
+                }}
+                className="h-8 gap-1.5 px-2.5 text-xs"
+                title={tooltipBoxful}
+              >
+                {importingLogistics ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                {importingLogistics ? "Importando..." : "Importar Boxful"}
+                {boxfulSinMatch > 0 && (
+                  <span className="rounded-sm bg-amber-400/25 px-1 font-mono text-[10px] tabular-nums text-amber-100">
+                    {boxfulSinMatch}
+                    <span className="sr-only"> filas del ultimo Boxful sin match</span>
+                  </span>
+                )}
+              </Button>
             </div>
           </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
+
           {(syncMessage || moovinMessage || forzaMessage) && (
             <div className="space-y-1 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               {syncMessage && (
@@ -2125,172 +2423,159 @@ function OrdersTab({
             </div>
           )}
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 sm:flex-1">
-              <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <input
-                value={orderSearch}
-                onChange={(event) => setOrderSearch(event.target.value)}
-                placeholder="Buscar pedido: #MCRC11566, 11566, guia o cliente"
-                className="h-9 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-              />
-              {orderSearch && (
-                <button
-                  type="button"
-                  aria-label="Limpiar busqueda"
-                  onClick={() => setOrderSearch("")}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-            <div className="flex items-center justify-between gap-3 sm:justify-end">
-              {tableLoading && (
-                <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Actualizando...
-                </span>
-              )}
-              <span className="whitespace-nowrap text-xs text-muted-foreground">
-                <span className="font-mono text-sm font-semibold text-foreground">{total}</span>{" "}
-                {orderSearch ? `de ${searchedCount}` : "pedidos"}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="gap-1.5 sm:hidden"
-                onClick={() => setShowFilters((value) => !value)}
-                aria-expanded={showFilters}
-              >
-                Filtros {showFilters ? "▴" : "▾"}
-                {(periodMode !== "all" || trackingFilter !== "all" || settlementFilter !== "all") && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                )}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                disabled={exporting || !total}
-                onClick={handleExport}
-              >
-                <Download className="h-4 w-4" /> <span className="hidden sm:inline">{exporting ? "Exportando..." : `Exportar (${total})`}</span><span className="sm:hidden">{exporting ? "..." : total}</span>
-              </Button>
-            </div>
-          </div>
-
-          <div className={`space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3 ${showFilters ? "" : "hidden"} sm:block`}>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="w-[4.5rem] shrink-0 text-xs font-medium text-muted-foreground">Periodo</span>
-              <div className="inline-flex overflow-hidden rounded-md border border-border">
-                {ORDER_PERIOD_MODES.map((mode, index) => (
-                  <button
-                    key={mode.value}
-                    type="button"
-                    onClick={() => setPeriodMode(mode.value)}
-                    className={`px-3 py-1 text-sm transition-colors ${index > 0 ? "border-l border-border" : ""} ${
-                      periodMode === mode.value
-                        ? "bg-primary/10 text-primary"
-                        : "bg-card text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {mode.label}
-                  </button>
+          <div className={`${showFilters ? "space-y-3" : "hidden"} sm:block sm:space-y-2.5`}>
+            <div className="sm:hidden">{controlPeriodo}</div>
+            <div className="space-y-1.5">
+              <FilaFiltros etiqueta="Estado">
+                <GrupoChips>
+                  <FilterChip
+                    label="Todos"
+                    todos
+                    count={trackingCounts.all}
+                    active={trackingFilter === "all"}
+                    onClick={() => setTrackingFilter("all")}
+                  />
+                </GrupoChips>
+                {FASES_SEGUIMIENTO.map((fase) => (
+                  <GrupoChips key={fase.nombre} nombre={fase.nombre}>
+                    {fase.valores.map((valor) => (
+                      <FilterChip
+                        key={valor}
+                        label={TRACKING_LABEL[valor]}
+                        count={trackingCounts[valor]}
+                        active={trackingFilter === valor}
+                        onClick={() => setTrackingFilter(valor)}
+                        dotClass={TRACKING_DOT_COLORS[valor]}
+                      />
+                    ))}
+                  </GrupoChips>
                 ))}
-              </div>
-              {periodMode === "month" && (
-                <select
-                  value={selectedOrderMonth}
-                  onChange={(event) => setSelectedOrderMonth(event.target.value)}
-                  className="h-8 rounded-md border border-input bg-background px-2 text-sm outline-none"
-                  aria-label="Mes"
-                >
-                  {orderMonthOptions.map((month) => (
-                    <option key={month} value={month}>
-                      {formatMonthLabel(month)}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {periodMode === "range" && (
-                <div className="flex items-center gap-1.5">
-                  <Input
-                    type="date"
-                    value={rangeStart}
-                    onChange={(event) => setRangeStart(event.target.value)}
-                    className="h-8 w-[150px]"
-                    aria-label="Desde"
-                  />
-                  <span className="text-xs text-muted-foreground">a</span>
-                  <Input
-                    type="date"
-                    value={rangeEnd}
-                    onChange={(event) => setRangeEnd(event.target.value)}
-                    className="h-8 w-[150px]"
-                    aria-label="Hasta"
-                  />
+              </FilaFiltros>
+              {/* Pendientes = la cola de confirmacion: que hacer (subetapa) y
+                  cuando (plazo), dos filtros independientes. Cuelgan de Estado:
+                  arrancan en la columna de los chips, atados por una linea. */}
+              {trackingFilter === "pending" && confirmacionCounts && (
+                <div className="ml-1 space-y-1.5 border-l border-border pl-2.5 sm:ml-[5.75rem] sm:pl-3">
+                  <FilaFiltros etiqueta="Subetapa" sub>
+                    <GrupoChips>
+                      <FilterChip
+                        label="Todas"
+                        todos
+                        count={confirmacionCounts.subetapa.all}
+                        active={subetapaFilter === "all"}
+                        onClick={() => setSubetapaFilter("all")}
+                      />
+                    </GrupoChips>
+                    {GRUPOS_SUBETAPA.map((grupo) => (
+                      <GrupoChips key={grupo.nombre} nombre={grupo.nombre}>
+                        {grupo.valores.map((valor) => (
+                          <FilterChip
+                            key={valor}
+                            label={SUBETAPA_LABEL[valor]}
+                            count={confirmacionCounts.subetapa[valor]}
+                            active={subetapaFilter === valor}
+                            onClick={() => setSubetapaFilter(valor)}
+                          />
+                        ))}
+                      </GrupoChips>
+                    ))}
+                  </FilaFiltros>
+                  <FilaFiltros etiqueta="Plazo" sub>
+                    <GrupoChips>
+                      <FilterChip
+                        label="Todos"
+                        todos
+                        count={confirmacionCounts.plazo.all}
+                        active={plazoFilter === "all"}
+                        onClick={() => setPlazoFilter("all")}
+                      />
+                    </GrupoChips>
+                    <GrupoChips nombre="Plazos">
+                      {PLAZOS.map((p) => (
+                        <FilterChip
+                          key={p.value}
+                          label={p.label}
+                          count={confirmacionCounts.plazo[p.value]}
+                          active={plazoFilter === p.value}
+                          onClick={() => setPlazoFilter(p.value)}
+                          dotClass={PLAZO_DOT[p.value]}
+                        />
+                      ))}
+                    </GrupoChips>
+                  </FilaFiltros>
                 </div>
               )}
-              <span className="ml-auto text-xs text-muted-foreground">
-                Vista actual{" "}
-                <span className="font-mono text-sm font-semibold text-foreground">{periodCount}</span>
-              </span>
             </div>
-
-            <div className="h-px bg-border/60" />
-
-            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground sm:w-[4.5rem] sm:shrink-0">Estado</span>
-              <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [&>button]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
-                {ORDER_TRACKING_FILTERS.map((filter) => (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+              <FilaFiltros etiqueta="Liquidación">
+                <GrupoChips>
                   <FilterChip
-                    key={filter.value}
-                    label={filter.label}
-                    count={trackingCounts[filter.value]}
-                    active={trackingFilter === filter.value}
-                    onClick={() => setTrackingFilter(filter.value)}
-                    dotClass={filter.value === "all" ? undefined : TRACKING_DOT_COLORS[filter.value]}
+                    label="Todos"
+                    todos
+                    count={settlementCounts.all}
+                    active={settlementFilter === "all"}
+                    onClick={() => setSettlementFilter("all")}
                   />
+                </GrupoChips>
+                {GRUPOS_LIQUIDACION.map((grupo) => (
+                  <GrupoChips key={grupo.nombre} nombre={grupo.nombre}>
+                    {grupo.valores.map((valor) => (
+                      <FilterChip
+                        key={valor}
+                        label={SETTLEMENT_LABEL[valor]}
+                        count={settlementCounts[valor]}
+                        active={settlementFilter === valor}
+                        onClick={() => setSettlementFilter(valor)}
+                      />
+                    ))}
+                  </GrupoChips>
                 ))}
-              </div>
-            </div>
-
-            <div className="h-px bg-border/60" />
-
-            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground sm:w-[4.5rem] sm:shrink-0">Liquidacion</span>
-              <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1 [&>button]:shrink-0 sm:mx-0 sm:flex-1 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
-                {ORDER_SETTLEMENT_FILTERS.map((filter) => (
-                  <FilterChip
-                    key={filter.value}
-                    label={filter.label}
-                    count={settlementCounts[filter.value]}
-                    active={settlementFilter === filter.value}
-                    onClick={() => setSettlementFilter(filter.value)}
-                  />
-                ))}
-                {settlementFilter !== "all" && (
+                {hayFiltros && (
                   <button
                     type="button"
-                    onClick={() => setSettlementFilter("all")}
-                    className="ml-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                    onClick={limpiarFiltros}
+                    className="h-[26px] px-1.5 text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    Limpiar
+                    Limpiar filtros
                   </button>
+                )}
+              </FilaFiltros>
+              <div className="hidden min-h-[26px] shrink-0 items-center gap-2.5 sm:flex">
+                {tableLoading && (
+                  <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground">
+                    <RefreshCw className="h-3 w-3 animate-spin" /> Actualizando...
+                  </span>
+                )}
+                {conteoPedidos}
+                {totalPages > 1 && (
+                  <div role="group" aria-label="Paginas" className="flex items-center">
+                    <button
+                      type="button"
+                      aria-label="Pagina anterior"
+                      disabled={page <= 1 || tableLoading}
+                      onClick={() => irAPagina(page - 1)}
+                      className="inline-flex h-[26px] w-[26px] items-center justify-center border border-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="px-2 font-mono text-xs tabular-nums">
+                      <span className="text-foreground">{page}</span>
+                      <span className="text-muted-foreground">/{totalPages}</span>
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Pagina siguiente"
+                      disabled={page >= totalPages || tableLoading}
+                      onClick={() => irAPagina(page + 1)}
+                      className="inline-flex h-[26px] w-[26px] items-center justify-center border border-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
           </div>
-
-          <p className="text-[11px] text-muted-foreground">
-            Base Shopify: {shopifyCoverage?.count ?? shopifyOrderCount} pedidos
-            {shopifyCoverage?.oldest ? ` desde ${formatDate(shopifyCoverage.oldest.slice(0, 10))}` : ""}
-            {latestLogisticsImport
-              ? ` · Boxful: ${latestLogisticsImport.total_rows} filas, ${latestLogisticsImport.matched_rows} match, ${latestLogisticsImport.unmatched_rows} sin match`
-              : " · Sin Boxful importado"}
-          </p>
           {tableError && (
             <div className="flex flex-col gap-2 border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-red-200 sm:flex-row sm:items-center sm:justify-between">
               <span>
@@ -2332,6 +2617,7 @@ function OrdersTab({
             moovinByPackage={moovinByPackage}
             forzaByGuide={forzaByGuide}
             loading={tableLoading}
+            onGestion={() => setRefreshKey((key) => key + 1)}
             emptyLabel={
               orderSearch
                 ? "No encontramos pedidos con ese codigo y estado."
@@ -2347,32 +2633,7 @@ function OrdersTab({
           </div>
           )}
           {total > ORDERS_PAGE_SIZE && (
-            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-              <span>
-                Pagina <span className="font-semibold text-foreground">{page}</span> de {totalPages} ·{" "}
-                <span className="font-mono">{total}</span> pedidos
-              </span>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1 || tableLoading}
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
-                >
-                  Anterior
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= totalPages || tableLoading}
-                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                >
-                  Siguiente
-                </Button>
-              </div>
-            </div>
+            <PaginadorPedidos page={page} totalPages={totalPages} total={total} loading={tableLoading} onPage={irAPagina} />
           )}
           {logisticsImports.length > 1 && (
             <div className="border-t border-border pt-3">
@@ -2474,6 +2735,65 @@ function DispatchWho({
   );
 }
 
+// La cola de confirmacion de un pedido pendiente, debajo de su estado: que
+// toca (subetapa), cuando (plazo con su fecha) y cuanto se lo trabajo.
+function LineaConfirmacion({ c, tz }: { c: EstadoConfirmacion; tz: string }) {
+  const cuando = cuandoVence(c.vence, tz);
+  const conDias = c.diasGestion > 0 && c.subetapa !== "confirmado";
+  return (
+    <div className="mt-1 text-[11px] leading-4">
+      <div className="text-foreground/85">{SUBETAPA_LABEL[c.subetapa]}</div>
+      {(c.plazo || conDias) && (
+        <div className="whitespace-nowrap">
+          {c.plazo && (
+            <span className={PLAZO_TEXTO[c.plazo]}>
+              {PLAZO_LABEL[c.plazo]}
+              {cuando ? ` ${cuando}` : ""}
+            </span>
+          )}
+          {c.plazo && conDias && <span className="text-muted-foreground"> · </span>}
+          {conDias && (
+            <span className="text-muted-foreground" title="Días distintos con al menos un intento">
+              {c.diasGestion}/{DIAS_ULTIMO_INTENTO} días
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PaginadorPedidos({
+  page,
+  totalPages,
+  total,
+  loading,
+  onPage,
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  loading: boolean;
+  onPage: (page: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+      <span>
+        Pagina <span className="font-semibold text-foreground">{page}</span> de {totalPages} ·{" "}
+        <span className="font-mono">{total}</span> pedidos
+      </span>
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" disabled={page <= 1 || loading} onClick={() => onPage(page - 1)}>
+          Anterior
+        </Button>
+        <Button type="button" variant="outline" size="sm" disabled={page >= totalPages || loading} onClick={() => onPage(page + 1)}>
+          Siguiente
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function OrdersTable({
   selectedStore,
   rows,
@@ -2481,6 +2801,7 @@ function OrdersTable({
   forzaByGuide,
   loading = false,
   emptyLabel = "No hay pedidos para mostrar.",
+  onGestion,
 }: {
   selectedStore: FinanceStorePublic;
   // Filas server-side: ya traen las trazas de liquidacion resueltas (Carril 2
@@ -2490,7 +2811,10 @@ function OrdersTable({
   forzaByGuide: Map<string, ForzaTrackingRow>;
   loading?: boolean;
   emptyLabel?: string;
+  /** La ficha guardo una gestion: la tabla se relee para mover el pedido de subetapa. */
+  onGestion?: () => void;
 }) {
+  const tz = tzDeTienda(selectedStore.code);
   // Pedido abierto en el drawer de gestion. Se abre con lo que la fila ya
   // tiene; el detalle pesado lo carga el propio drawer.
   const [openOrder, setOpenOrder] = useState<OrderDrawerTarget | null>(null);
@@ -2503,6 +2827,8 @@ function OrdersTable({
       cod_amount: Number(row.cod_amount || 0),
       created_at: row.shopify_created_at ?? null,
       items_summary: (row.package_items ?? []).map((item) => item.title).join(", "),
+      pedido_confirmacion: row.confirmacion ? pedidoDeFila(row) : null,
+      confirmacion: row.confirmacion ?? null,
     });
 
   return (
@@ -2517,6 +2843,7 @@ function OrdersTable({
           storeCode={selectedStore.code}
           currencySymbol={getCurrencySymbol(selectedStore.code)}
           onClose={() => setOpenOrder(null)}
+          onRegistrado={onGestion}
         />
       )}
 
@@ -2547,6 +2874,7 @@ function OrdersTable({
                 <div className="flex flex-col items-end gap-0.5">
                   <StatusBadge status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
                   <DispatchWho row={row} status={trackingStatus} />
+                  {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
@@ -2612,10 +2940,13 @@ function OrdersTable({
         )}
       </div>
 
-      {/* Desktop: tabla completa */}
-      <div className="hidden max-h-[620px] overflow-auto border border-border md:block">
+      {/* Desktop: tabla completa. Sin alto maximo: se baja con la pagina, un
+          solo scroll. En pantallas grandes los titulos quedan pegados bajo la
+          barra superior; en las angostas solo hay scroll horizontal (la tabla
+          mide 1180 px) y los titulos se van con la tabla. */}
+      <div className="hidden border border-border md:block md:overflow-x-auto xl:overflow-visible">
         <table className="w-full min-w-[1180px] text-sm">
-        <thead className="sticky top-0 bg-card">
+        <thead className="sticky z-[5] bg-card" style={{ top: "var(--finance-header-h, 0px)" }}>
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
             <th className="px-2 py-1.5">Orden</th>
             <th className="px-2 py-1.5">Origen</th>
@@ -2711,6 +3042,7 @@ function OrdersTable({
                       label={getTrackingStatusLabel(row, traces, trackingStatus)}
                     />
                     <DispatchWho row={row} status={trackingStatus} />
+                    {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
                   </div>
                 </td>
                 <td className="px-2 py-1.5">
@@ -3136,6 +3468,10 @@ function WynTrackingButton({
   );
 }
 
+// Respuesta de /api/finance/wyn-tracking: en vivo, o el historial guardado
+// cuando WYN no contesta (cached + cachedAt).
+type WynTrackingCached = WynTrackingResult & { cached?: boolean; cachedAt?: string | null };
+
 function WynTrackingModal({
   guide,
   storeCode,
@@ -3147,14 +3483,14 @@ function WynTrackingModal({
 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [data, setData] = useState<WynTrackingResult | null>(null);
+  const [data, setData] = useState<WynTrackingCached | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const params = new URLSearchParams({ store: storeCode, guide: normalizeWynGuide(guide) });
     fetch(`/api/finance/wyn-tracking?${params.toString()}`, { cache: "no-store" })
       .then(async (res) => {
-        const json = (await res.json()) as WynTrackingResult & { error?: string; ok?: boolean };
+        const json = (await res.json()) as WynTrackingCached & { error?: string; ok?: boolean };
         if (!res.ok || json.error || json.ok === false) {
           throw new Error(json.error || "WYN no devolvio datos para esta guia.");
         }
@@ -3214,6 +3550,12 @@ function WynTrackingModal({
           </div>
         ) : (
           <>
+            {data?.cached && (
+              <p className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                WYN no respondio ahora. Este es el historial guardado
+                {data.cachedAt ? ` el ${formatCourierDate(data.cachedAt, "es-CR")}` : ""}: puede faltar lo mas reciente.
+              </p>
+            )}
             <div className="mb-3 border border-border bg-background p-3">
               <p className="text-[11px] text-muted-foreground">Ultimo estado</p>
               <p className={`mt-0.5 text-sm font-semibold ${groupClass}`}>{data?.latestStatus || "Sin estado"}</p>

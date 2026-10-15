@@ -1,6 +1,11 @@
 import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
+import { isC807Guide, normalizeC807Guide } from "./c807";
+import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "./cargo-expreso";
+import type { ShipmentTracking } from "./courier-tracking";
 import { normalizeForzaGuide } from "./forza";
+import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
+import { isDeliveryRecheckDue, planMoovinSync } from "./moovin-sync-plan";
 import { normalizeMatchKey } from "./order-matching";
 import {
   deriveWynGroup,
@@ -29,6 +34,7 @@ import type {
   ProfitabilitySummary,
   SettlementImport,
   SettlementRow,
+  ShipmentTrackingRow,
   WynTrackingRow,
 } from "./finance-types";
 
@@ -1472,28 +1478,39 @@ export async function listMoovinSyncCandidates(
   }
 
   // 2) Excluir terminales en cache (entregado/devuelto) y los frescos. La misma
-  // pasada anota CUANDO se leyo por ultima vez cada guia viva: es lo que ordena
-  // la cola mas abajo.
+  // pasada anota CUANDO se leyo por ultima vez cada guia viva, que es lo que
+  // ordena la cola, y que entregas tienen pendiente la segunda lectura (ver
+  // lib/moovin-sync-plan.ts).
   const terminal = new Set<string>();
   const lastCheckedAt = new Map<string, number>();
+  const rechecks: Array<{ guide: string; deliveredAt: number }> = [];
+  const nowMs = Date.now();
+  const toMs = (value: string | null) => {
+    const at = Date.parse(String(value ?? ""));
+    return Number.isNaN(at) ? 0 : at;
+  };
   for (let from = 0; from < 50000; from += pageSize) {
     const { data, error } = await getDB()
       .from("moovin_tracking")
-      .select("id_package, latest_group, checked_at")
+      .select("id_package, latest_group, latest_at, checked_at")
       .range(from, from + pageSize - 1);
     if (error) break;
     const page = (data ?? []) as Array<{
       id_package: string;
       latest_group: string | null;
+      latest_at: string | null;
       checked_at: string | null;
     }>;
     for (const row of page) {
       if (row.latest_group === "delivered" || row.latest_group === "returned") {
         terminal.add(row.id_package);
+        const tracked = { group: row.latest_group, deliveredAt: toMs(row.latest_at), checkedAt: toMs(row.checked_at) };
+        if (isDeliveryRecheckDue(tracked, nowMs)) {
+          rechecks.push({ guide: row.id_package, deliveredAt: tracked.deliveredAt });
+        }
         continue;
       }
-      const at = Date.parse(String(row.checked_at ?? ""));
-      lastCheckedAt.set(row.id_package, Number.isNaN(at) ? 0 : at);
+      lastCheckedAt.set(row.id_package, toMs(row.checked_at));
     }
     if (page.length < pageSize) break;
   }
@@ -1517,11 +1534,85 @@ export async function listMoovinSyncCandidates(
     seen.add(guide);
     pending.push({ guide, checkedAt: lastCheckedAt.get(guide) ?? 0 });
   }
-  pending.sort((a, b) => a.checkedAt - b.checkedAt);
 
-  return pending.slice(0, limit).map(({ guide }) => {
+  // Solo se puede releer lo que tiene nombre para la consulta a Moovin.
+  const dueRechecks = rechecks.filter((r) => byGuide.has(r.guide) && !fresh.has(r.guide));
+
+  return planMoovinSync({ live: pending, rechecks: dueRechecks, limit }).map((guide) => {
     const names = byGuide.get(guide) as { lastName: string; fullName: string };
     return { idPackage: guide, lastName: names.lastName, fullName: names.fullName };
+  });
+}
+
+/**
+ * Guias de Forza a consultar en una corrida del cron de Honduras, ya ordenadas
+ * (ver planForzaSync).
+ *
+ * Dos fuentes:
+ * - Las guias Forza (FD...) de pedidos de Shopify de los ultimos
+ *   `discoveryDays` dias. El Excel de logistica de HN no se carga desde junio,
+ *   asi que Shopify es la unica fuente de guias nuevas.
+ * - Todo forza_tracking de la tienda, para re-leer lo que sigue en camino sin
+ *   importar la antiguedad del pedido.
+ *
+ * Solo lee columnas chicas y paginado: corre cada hora contra la misma base que
+ * dio 503 en septiembre.
+ */
+export async function listForzaSyncCandidates(
+  storeId: number,
+  opts: { limit: number; freshWindowMinutes: number; discoveryDays: number; nowMs?: number }
+): Promise<string[]> {
+  const nowMs = opts.nowMs ?? Date.now();
+  const pageSize = 1000;
+  const since = new Date(nowMs - opts.discoveryDays * 86_400_000).toISOString();
+
+  const orderGuides: ForzaOrderGuide[] = [];
+  for (let from = 0; from < 100000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("shopify_orders")
+      .select("tracking_number, shopify_created_at")
+      .eq("store_id", storeId)
+      .ilike("tracking_number", "FD%")
+      .is("cancelled_at", null)
+      .gte("shopify_created_at", since)
+      .order("id")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listForzaSyncCandidates(shopify_orders): ${error.message}`);
+    const page = (data ?? []) as Array<{ tracking_number: string | null; shopify_created_at: string | null }>;
+    for (const row of page) {
+      const orderedAt = Date.parse(String(row.shopify_created_at ?? ""));
+      orderGuides.push({ guide: row.tracking_number ?? "", orderedAt: Number.isNaN(orderedAt) ? 0 : orderedAt });
+    }
+    if (page.length < pageSize) break;
+  }
+
+  const tracked: ForzaTrackedGuide[] = [];
+  for (let from = 0; from < 200000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("forza_tracking")
+      .select("guide_number, latest_group, checked_at")
+      .eq("store_id", storeId)
+      .order("guide_number")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listForzaSyncCandidates(forza_tracking): ${error.message}`);
+    const page = (data ?? []) as Array<{ guide_number: string; latest_group: string | null; checked_at: string | null }>;
+    for (const row of page) {
+      const checkedAt = Date.parse(String(row.checked_at ?? ""));
+      tracked.push({
+        guide: row.guide_number,
+        group: row.latest_group ?? "",
+        checkedAt: Number.isNaN(checkedAt) ? 0 : checkedAt,
+      });
+    }
+    if (page.length < pageSize) break;
+  }
+
+  return planForzaSync({
+    orderGuides,
+    tracked,
+    nowMs,
+    limit: opts.limit,
+    freshWindowMs: opts.freshWindowMinutes * 60_000,
   });
 }
 
@@ -1744,6 +1835,189 @@ export async function getWynTrackingByGuide(
   if (error) throw new Error(`getWynTrackingByGuide: ${error.message}`);
   const row = ((data ?? []) as CourierShipmentTrackingRow[])[0];
   return row ? toWynTrackingRow(row) : null;
+}
+
+// ---------------------------------------------------------------------------
+// Couriers de Honduras que Kairo lee de su rastreo publico (Cargo Expreso y
+// c807 Xpress): courier_shipments con su courier_code. Ver
+// lib/courier-tracking.ts, lib/cargo-expreso.ts y lib/c807.ts.
+
+export type ShipmentCourierCode = "cargoexpreso" | "c807";
+
+const COURIER_SHIPMENT_COLUMNS =
+  "store_id,guide_number,normalized_status,raw_status,latest_at,has_incident,incident_reason,raw_payload,checked_at";
+
+/** Como reconocer las guias de cada courier en los pedidos de Shopify. */
+const SHIPMENT_GUIDES: Record<
+  ShipmentCourierCode,
+  { pattern: string; normalize: (v?: string | null) => string; isGuide: (v?: string | null) => boolean }
+> = {
+  cargoexpreso: { pattern: "BH%", normalize: normalizeCargoExpresoGuide, isGuide: isCargoExpresoGuide },
+  c807: { pattern: "%-%-%", normalize: normalizeC807Guide, isGuide: isC807Guide },
+};
+
+export function toShipmentTrackingRow(row: CourierShipmentTrackingRow): ShipmentTrackingRow {
+  const raw = row.raw_payload && typeof row.raw_payload === "object" ? row.raw_payload : {};
+  return {
+    store_id: row.store_id,
+    guide_number: row.guide_number,
+    tracking_number: row.guide_number,
+    latest_status: row.raw_status,
+    latest_code: typeof raw.latest_code === "string" ? raw.latest_code : "",
+    latest_group: row.normalized_status,
+    latest_at: row.latest_at,
+    has_incident: row.has_incident,
+    incident_reason: row.incident_reason,
+    delivery_address: typeof raw.delivery_address === "string" ? raw.delivery_address : "",
+    receiver_name: typeof raw.receiver_name === "string" ? raw.receiver_name : "",
+    events: Array.isArray(raw.events) ? (raw.events as ShipmentTrackingRow["events"]) : [],
+    checked_at: row.checked_at,
+  };
+}
+
+export async function listShipmentTracking(
+  storeId: number,
+  courierCode: ShipmentCourierCode,
+  opts: { since?: string | null } = {}
+): Promise<ShipmentTrackingRow[]> {
+  const pageSize = 1000;
+  const all: ShipmentTrackingRow[] = [];
+  for (let from = 0; from < 50000; from += pageSize) {
+    let query = getDB()
+      .from("courier_shipments")
+      .select(COURIER_SHIPMENT_COLUMNS)
+      .eq("store_id", storeId)
+      .eq("courier_code", courierCode)
+      .order("checked_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (opts.since) query = query.gt("checked_at", opts.since);
+    const { data, error } = await query;
+    if (error) throw new Error(`listShipmentTracking(${courierCode}): ${error.message}`);
+    const page = (data ?? []) as CourierShipmentTrackingRow[];
+    all.push(...page.map(toShipmentTrackingRow));
+    if (page.length < pageSize) break;
+  }
+  return all;
+}
+
+export async function getShipmentTrackingByGuide(
+  storeId: number,
+  courierCode: ShipmentCourierCode,
+  guideNumber: string
+): Promise<ShipmentTrackingRow | null> {
+  if (!guideNumber) return null;
+  const { data, error } = await getDB()
+    .from("courier_shipments")
+    .select(COURIER_SHIPMENT_COLUMNS)
+    .eq("store_id", storeId)
+    .eq("courier_code", courierCode)
+    .eq("guide_number", guideNumber)
+    .limit(1);
+  if (error) throw new Error(`getShipmentTrackingByGuide(${courierCode}): ${error.message}`);
+  const row = ((data ?? []) as CourierShipmentTrackingRow[])[0];
+  return row ? toShipmentTrackingRow(row) : null;
+}
+
+export async function upsertShipmentTracking(
+  rows: ShipmentTracking[],
+  storeId: number,
+  courierCode: ShipmentCourierCode
+): Promise<void> {
+  if (!rows.length) return;
+  const now = new Date().toISOString();
+  const payload = rows.map((t) => ({
+    store_id: storeId,
+    courier_code: courierCode,
+    guide_number: t.guideNumber,
+    normalized_status: t.latestGroup,
+    raw_status: t.latestStatus,
+    latest_at: t.latestAt,
+    has_incident: t.hasIncident,
+    incident_reason: t.incidentReason,
+    raw_payload: {
+      latest_code: t.latestCode,
+      delivery_address: t.deliveryAddress,
+      receiver_name: t.receiverName,
+      events: t.events,
+    },
+    checked_at: now,
+    updated_at: now,
+  }));
+  const { error } = await getDB()
+    .from("courier_shipments")
+    .upsert(payload, { onConflict: "store_id,courier_code,guide_number" });
+  if (error) throw new Error(`upsertShipmentTracking(${courierCode}): ${error.message}`);
+}
+
+/**
+ * Guias del courier a consultar: las de pedidos no cancelados de los ultimos
+ * `discoveryDays` dias, sin las ya entregadas o devueltas ni las leidas hace
+ * menos de `freshWindowMinutes`. Primero las nunca leidas, despues la que lleva
+ * mas tiempo sin leerse.
+ */
+export async function listShipmentSyncCandidates(
+  storeId: number,
+  courierCode: ShipmentCourierCode,
+  opts: { limit: number; freshWindowMinutes: number; discoveryDays: number }
+): Promise<string[]> {
+  const { pattern, normalize, isGuide } = SHIPMENT_GUIDES[courierCode];
+  const pageSize = 1000;
+  const since = new Date(Date.now() - opts.discoveryDays * 86_400_000).toISOString();
+  const guides = new Set<string>();
+  for (let from = 0; from < 50000; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("shopify_orders")
+      .select("tracking_number")
+      .eq("store_id", storeId)
+      .ilike("tracking_number", pattern)
+      .is("cancelled_at", null)
+      .gte("shopify_created_at", since)
+      .order("id")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listShipmentSyncCandidates(${courierCode}): ${error.message}`);
+    const page = (data ?? []) as Array<{ tracking_number: string | null }>;
+    for (const row of page) {
+      const guide = normalize(row.tracking_number);
+      if (isGuide(guide)) guides.add(guide);
+    }
+    if (page.length < pageSize) break;
+  }
+  if (!guides.size) return [];
+
+  const leidas = new Map<string, { group: string; checkedAt: number }>();
+  for (const row of await listShipmentTracking(storeId, courierCode)) {
+    const at = Date.parse(row.checked_at);
+    leidas.set(row.guide_number, { group: row.latest_group, checkedAt: Number.isNaN(at) ? 0 : at });
+  }
+  const frescas = Date.now() - opts.freshWindowMinutes * 60_000;
+  return Array.from(guides)
+    .filter((guide) => {
+      const leida = leidas.get(guide);
+      if (!leida) return true;
+      if (leida.group === "delivered" || leida.group === "returned") return false;
+      return leida.checkedAt < frescas;
+    })
+    .sort((a, b) => (leidas.get(a)?.checkedAt ?? 0) - (leidas.get(b)?.checkedAt ?? 0))
+    .slice(0, Math.max(0, opts.limit));
+}
+
+/** Eventos ya guardados de un lote de guias Forza (para no perder lo visto en lecturas anteriores). */
+export async function getForzaEventsByGuides(
+  storeId: number,
+  guides: string[]
+): Promise<Map<string, ForzaTrackingRow["events"]>> {
+  const out = new Map<string, ForzaTrackingRow["events"]>();
+  if (!guides.length) return out;
+  const { data, error } = await getDB()
+    .from("forza_tracking")
+    .select("guide_number, events")
+    .eq("store_id", storeId)
+    .in("guide_number", guides);
+  if (error) throw new Error(`getForzaEventsByGuides: ${error.message}`);
+  for (const row of (data ?? []) as Array<Pick<ForzaTrackingRow, "guide_number" | "events">>) {
+    out.set(row.guide_number, row.events ?? []);
+  }
+  return out;
 }
 
 // Una fila de tracking de Forza por (store_id, guide_number). Para el detalle de

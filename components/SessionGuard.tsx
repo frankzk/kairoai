@@ -14,7 +14,12 @@ import { useEffect } from "react";
 const LOGIN_PATH = "/login";
 // El login responde 401 con "Password incorrecto": ese error es del formulario
 // y no debe disparar una redireccion.
-const IGNORED_PATHS = ["/api/auth/login", "/api/auth/logout"];
+//
+// La salud de los crons la consulta un componente en SEGUNDO PLANO cada 5
+// minutos. Si la sesion vence, ese chequeo no puede mandar al login a alguien
+// que esta escribiendo un WhatsApp: perderia el borrador por algo que no hizo.
+// La redireccion la dispara la siguiente accion real de la persona.
+const IGNORED_PATHS = ["/api/auth/login", "/api/auth/logout", "/api/health/crons"];
 
 function resolvePathname(input: RequestInfo | URL): string | null {
   try {
@@ -37,6 +42,18 @@ export default function SessionGuard() {
 
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const res = await original(input, init);
+      // Contraseña inicial sin cambiar: el servidor no deja hacer nada mas.
+      if (res.status === 403 && !redirecting && window.location.pathname !== "/cuenta") {
+        const pathname = resolvePathname(input);
+        if (pathname?.startsWith("/api/")) {
+          const body = (await res.clone().json().catch(() => null)) as { debe_cambiar_clave?: boolean } | null;
+          if (body?.debe_cambiar_clave) {
+            redirecting = true;
+            window.location.assign("/cuenta");
+          }
+        }
+        return res;
+      }
       if (res.status !== 401 || redirecting) return res;
 
       const pathname = resolvePathname(input);

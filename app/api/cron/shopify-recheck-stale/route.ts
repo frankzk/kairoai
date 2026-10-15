@@ -9,9 +9,15 @@ import {
   sleep,
 } from "@/lib/shopify-sync";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
+import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
+export const dynamic = "force-dynamic";
+// 300 y no 60: despues del presupuesto de paginado viene la reconstruccion de la
+// cache de Finanzas, y con 60 s Vercel cortaba la corrida a la mitad (ver
+// tests/cron-tiempo-limite.test.ts).
+export const maxDuration = 300;
 
 // Shopify permite pedir por lista de ids junto con limit=250.
 const CHUNK = 250;
@@ -25,7 +31,7 @@ const DEFAULT_MIN_AGE_DAYS = 2;
 // por id exacto contra Shopify con status=any. Si en Shopify ya se anularon,
 // trae cancelled_at y el pedido pasa a Anulado solo, sin inventar reglas nuevas.
 // El refresh incremental por updated_at no los cubre pasada su ventana.
-export async function GET(req: NextRequest) {
+async function handleGet(req: NextRequest) {
   const startedAt = Date.now();
   const storeFilter = req.nextUrl.searchParams.get("store");
   const limitParam = Number(req.nextUrl.searchParams.get("limit"));
@@ -110,3 +116,5 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ ok: true, results });
 }
+
+export const GET = withCronRun("shopify-recheck-stale", handleGet);

@@ -49,6 +49,8 @@ export interface ConversationMessage {
   mediaUrl?: string;
   caption?: string;
   template?: string;
+  /** Quien lo escribio segun Icomfly (sender_type crudo: customer, bot, admin...). */
+  sender?: string;
 }
 
 /** Datos mínimos para reutilizar el chat de un lead en otros módulos. */

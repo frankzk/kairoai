@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FINANCE_STORES, getStoreConfig } from "@/lib/stores";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
+import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
 // Armar el dataset de una tienda en frio (Micro) puede tardar; con varias tiendas
@@ -38,6 +39,8 @@ async function run(storeFilter: string | null) {
   return NextResponse.json({ ok: true, results });
 }
 
-export async function GET(req: NextRequest) {
+async function handleGet(req: NextRequest) {
   return run(req.nextUrl.searchParams.get("store"));
 }
+
+export const GET = withCronRun("finance-index", handleGet);

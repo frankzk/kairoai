@@ -8,7 +8,7 @@ import { ProductPicker } from "@/components/ProductPicker";
 import { Badge } from "@/components/ui/badge";
 import type { ShopifyProductOption } from "@/app/api/shopify/products/route";
 import { getCurrencySymbol, getStoreRegions } from "@/lib/store-config";
-import { getVendedoraId, setVendedoraId as persistVendedoraId } from "@/lib/vendedora";
+import { getVendedoraId, setVendedoraId as persistVendedoraId, vendedoraBloqueada } from "@/lib/vendedora";
 
 const norm = (s: string) =>
   s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
@@ -254,6 +254,9 @@ export default function CreateOrderPanel({
           <select
             className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={vendedoraId ?? ""}
+            // Una asesora fija (lib/vendedora.ts) no elige: queda a su nombre.
+            disabled={vendedoraBloqueada() !== null}
+            title={vendedoraBloqueada() !== null ? "Tus gestiones quedan a tu nombre" : undefined}
             onChange={(e) => selectVendedora(Number(e.target.value))}
           >
             <option value="" disabled>

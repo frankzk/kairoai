@@ -349,6 +349,15 @@ export interface ForzaTrackingRow {
   checked_at: string;
 }
 
+/**
+ * Rastreo de los couriers de Honduras que Kairo lee de su pagina publica
+ * (Cargo Expreso y c807 Xpress), guardado en courier_shipments con su
+ * courier_code. Misma forma que WYN; los grupos son los de Moovin y Forza
+ * (delivered / failed / returned / in_progress / pending), que es lo que
+ * entiende la deteccion de novedades.
+ */
+export type ShipmentTrackingRow = WynTrackingRow;
+
 export interface WynTrackingRow {
   store_id: number;
   guide_number: string;
