@@ -17,6 +17,7 @@ import {
   listSettlementImports,
   listSettlementRows,
   listWynTracking,
+  listShipmentTracking,
 } from "@/lib/finance";
 import { resolveDispatchState } from "@/lib/dispatch";
 import { normalizeMatchKey } from "@/lib/order-matching";
@@ -333,12 +334,21 @@ async function writeDatasetCache(store: FinanceStorePublic, data: OrdersDataset)
 // page.tsx: persistidos->summary, mapas de tracking por guia, traces de
 // liquidacion, y buildVisibleOrderRows.
 async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
-  const [persisted, logisticsRows, moovin, forza, wyn, settlementRows, imports, icomflyOrders] = await Promise.all([
+  // c807 Xpress / Cargo Expreso: best-effort. Si su tabla falla, el dataset se
+  // arma igual y esos pedidos quedan como antes (en reparto).
+  const envio = (code: "c807" | "cargoexpreso") =>
+    listShipmentTracking(store.id, code).catch((err) => {
+      console.warn(`[orders-dataset] rastreo ${code}:`, err);
+      return [];
+    });
+  const [persisted, logisticsRows, moovin, forza, wyn, c807, cargo, settlementRows, imports, icomflyOrders] = await Promise.all([
     listPersistedShopifyOrders(20000, 0, store.id),
     listLogisticsRows(undefined, store.id),
     listMoovinTracking(),
     listForzaTracking(store.id),
     listWynTracking(store.id),
+    envio("c807"),
+    envio("cargoexpreso"),
     listSettlementRows(undefined, store.id),
     listSettlementImports(store.id),
     listIcomflyOrders({ storeId: store.id }),
@@ -350,6 +360,7 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   const moovinByPackage = new Map(moovin.map((row) => [row.id_package, row]));
   const forzaByGuide = buildForzaTrackingMap(forza);
   const wynByGuide = buildWynTrackingMap(wyn);
+  const envioByGuide = new Map([...c807, ...cargo].map((row) => [row.guide_number, row]));
   // El trace map se arma sobre filas de liquidacion ENRIQUECIDAS con Shopify
   // (igual que page.tsx: settlementTraceByKey usa matchedSettlementRows), para
   // que las llaves (shopify_order_name resuelto) coincidan con la UI.
@@ -362,7 +373,8 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
     store,
     moovinByPackage,
     forzaByGuide,
-    wynByGuide
+    wynByGuide,
+    envioByGuide
   );
 
   // Hito de despacho por fila (iComfly + recoleccion de Moovin), precalculado

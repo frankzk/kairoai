@@ -190,6 +190,8 @@ interface TrackableOrderRow {
   forza_incidents?: number;
   wyn_group?: string;
   wyn_incidents?: number;
+  envio_group?: string;
+  envio_incidents?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -10457,7 +10459,7 @@ function matchesOrderSearch(row: TrackableOrderRow, query: string): boolean {
 // ahora vive en /api/finance/orders; la tabla pagina server-side.
 
 function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "wyn_group" | "wyn_incidents" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "guide_number">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "wyn_group" | "wyn_incidents" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "envio_group" | "envio_incidents" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
   // Una liquidacion cerrada es un hecho TERMINAL: si hay una traza con estado
@@ -10470,7 +10472,8 @@ function getEffectiveTrackingStatus(
   const rawCourierStatus =
     wynGroupToStatus(row.wyn_group) ||
     moovinGroupToStatus(row.moovin_group) ||
-    forzaGroupToStatus(row.forza_group);
+    forzaGroupToStatus(row.forza_group) ||
+    forzaGroupToStatus(row.envio_group);
   if (settledFinalStatus && rawCourierStatus && !isFinalTrackingStatus(rawCourierStatus)) {
     return settledFinalStatus;
   }
@@ -10504,6 +10507,16 @@ function getEffectiveTrackingStatus(
       return forzaStatus === "en_route" ? "en_route_retry" : "incident";
     }
     return forzaStatus;
+  }
+
+  // c807 Xpress y Cargo Expreso (Honduras): Kairo los rastrea en
+  // courier_shipments con los mismos grupos que Forza.
+  const envioStatus = forzaGroupToStatus(row.envio_group);
+  if (envioStatus) {
+    if ((row.envio_incidents ?? 0) >= 1 && !isFinalTrackingStatus(envioStatus)) {
+      return envioStatus === "en_route" ? "en_route_retry" : "incident";
+    }
+    return envioStatus;
   }
 
   if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
