@@ -10,6 +10,7 @@ target_fingerprint: "sha256:4a8b9c1861eb59a6860ca27146d159db73c4aa926dd41c3627ac
 target_path: /home/user/kairoai/components/LeadsBoard.tsx
 timestamp: 2026-09-12T15-53-16Z
 slug: components-leadsboard-tsx
+closed: true
 ---
 Method: dual-agent (A: revisión de diseño · B: evidencia determinista)
 
