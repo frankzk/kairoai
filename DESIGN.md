@@ -27,6 +27,7 @@ colors:
   status-info: "#67e8f9"
   status-info-strong: "#22d3ee"
   status-critical: "#f43f5e"
+  seleccion: "hsl(247 57% 9.3%)"
 typography:
   display:
     fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -200,6 +201,7 @@ La paleta de estado. No es decoración: es el canal principal por el que la pant
 - **Gris Estructura** (`{colors.border}`): borde, campo y realce a la vez. Es el mismo valor para los tres: la estructura del sistema es una sola línea de 1px repetida miles de veces.
 - **Blanco Papel** (`{colors.foreground}`): el texto que se lee.
 - **Gris Secundario** (`{colors.muted-foreground}`): etiquetas, unidades, ayudas contextuales. Todo lo que acompaña al dato sin ser el dato.
+- **Noche Seleccionada** (`{colors.seleccion}`): el violeta de marca al 10% sobre el fondo, pero **opaco**. Es la superficie de lo elegido que abre algo debajo: la tarjeta de estado y el panel que despliega se pintan con el mismo color, y así la tarjeta puede tapar la línea del panel y leerse como una pestaña unida a su contenido. Con alfa, la línea se transparentaría.
 
 ### Named Rules
 
@@ -309,6 +311,11 @@ Las barras de progreso también son redondas, por la misma razón formal: son la
 
 ### Mini-Stat (componente firma)
 El bloque de KPI del sistema: rectángulo cuadrado con borde de 1px, fondo del lienzo, 12px de padding. Etiqueta de 12px en gris secundario arriba, valor de 18px en peso 600 abajo. Se usan en filas de tres a cinco y son la forma canónica de contestar "cómo vamos" antes de entrar al detalle. Su esquina recta es lo que permite alinearlos en cuadrícula sin que se vean como tarjetas sueltas.
+
+### Tarjeta de Estado
+El Mini-Stat hecho filtro: la fila de estados de Gestión → Pedidos, al estilo de los filtros de estado del dashboard de Stripe. Etiqueta de 12px con su punto de color arriba, conteo de 16px en peso 600 abajo, 10px por 6px de padding, esquina recta. Pegadas por fase (comparten el borde) y estiradas para llenar la fila; si no entran, la fila se desliza de lado y nunca envuelve, porque una tarjeta que baja de línea se confunde con lo que hay debajo.
+
+Elegida pasa a borde violeta y fondo `{colors.seleccion}`. "Todos" elegido va en gris claro: no filtra nada, y el violeta queda para lo que de verdad filtra. Si la tarjeta abre un panel (Pendientes abre su cola, Subetapa y Plazo), el panel sube 1px y la tarjeta pinta su borde de abajo del color del panel: la pestaña y su contenido son una sola pieza.
 
 ### Status Badge (componente firma)
 Píldora completamente redonda, 10px por 2px de padding, 12px en peso 600. El fondo es el color de estado al 15-20% de alfa y el texto el mismo color en su versión clara. Es el vehículo principal por el que la aplicación comunica estado, y su forma redonda —única en el sistema— lo hace identificable antes de leerlo.
