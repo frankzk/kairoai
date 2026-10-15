@@ -303,6 +303,10 @@ const ORDER_TRACKING_FILTERS: Array<{ value: OrderTrackingFilter; label: string 
   { value: "not_delivered", label: "No entregados" },
 ];
 
+// Pedidos abre en Pendientes: la cola de confirmacion es lo que el equipo
+// trabaja todo el dia. "Restablecer" vuelve a esta vista.
+const ESTADO_INICIAL: OrderTrackingFilter = "pending";
+
 const TRACKING_LABEL = Object.fromEntries(ORDER_TRACKING_FILTERS.map((f) => [f.value, f.label])) as Record<OrderTrackingFilter, string>;
 
 // Punto de color por estado de seguimiento, alineado con los KPIs de arriba.
@@ -1840,7 +1844,7 @@ function OrdersTab({
   const [selectedOrderMonth, setSelectedOrderMonth] = useState("");
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
-  const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>("all");
+  const [trackingFilter, setTrackingFilter] = useState<OrderTrackingFilter>(ESTADO_INICIAL);
   // Sub-filtros de Pendientes (cola de confirmacion).
   const [subetapaFilter, setSubetapaFilter] = useState<Subetapa | "all">("all");
   const [plazoFilter, setPlazoFilter] = useState<Plazo | "all">("all");
@@ -2081,11 +2085,16 @@ function OrdersTab({
 
   // total = filas que pasan TODOS los filtros (lo que antes era filteredRows.length).
   const totalPages = Math.max(1, Math.ceil(total / ORDERS_PAGE_SIZE));
+  // La vista se aparta de la inicial (Pendientes, sin mas filtros).
   const hayFiltros =
-    periodMode !== "all" || trackingFilter !== "all" || settlementFilter !== "all" || subetapaFilter !== "all" || plazoFilter !== "all";
+    periodMode !== "all" ||
+    trackingFilter !== ESTADO_INICIAL ||
+    settlementFilter !== "all" ||
+    subetapaFilter !== "all" ||
+    plazoFilter !== "all";
   const limpiarFiltros = () => {
     setPeriodMode("all");
-    setTrackingFilter("all");
+    setTrackingFilter(ESTADO_INICIAL);
     setSettlementFilter("all");
     setSubetapaFilter("all");
     setPlazoFilter("all");
@@ -2534,9 +2543,10 @@ function OrdersTab({
                   <button
                     type="button"
                     onClick={limpiarFiltros}
+                    title="Vuelve a Pendientes, sin otros filtros"
                     className="h-[26px] px-1.5 text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    Limpiar filtros
+                    Restablecer
                   </button>
                 )}
               </FilaFiltros>
