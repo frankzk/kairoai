@@ -16,10 +16,13 @@ import type {
   SettlementOrderItem,
   SettlementRow,
   WynTrackingRow,
+  ShipmentTrackingRow,
 } from "@/lib/finance-types";
 import { mergeDispatchIntoTracking } from "@/lib/dispatch";
 import { isWynGuide, isWynIncidentCode, normalizeWynGuide } from "@/lib/wyn";
 import { matchesStatusKeyword } from "@/lib/courier-adapters";
+import { isC807Guide, normalizeC807Guide } from "@/lib/c807";
+import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "@/lib/cargo-expreso";
 import {
   buildShopifyMatchIndex,
   extractExternalOrderCodesFromText,
@@ -89,6 +92,9 @@ export interface TrackableOrderRow {
   forza_incidents?: number;
   wyn_group?: string;
   wyn_incidents?: number;
+  /** c807 Xpress / Cargo Expreso (courier_shipments): grupo y fallos de entrega. */
+  envio_group?: string;
+  envio_incidents?: number;
   order_name: string;
   customer_name: string;
   last_name?: string;
@@ -254,6 +260,10 @@ function normalizeOperationalCourier(
   guide?: string
 ): string {
   if (isWynGuide(guide)) return "WYN";
+  // La guia dice quien lleva el paquete: en Shopify varias de c807 y Cargo
+  // Expreso venian marcadas como Forza.
+  if (isC807Guide(guide)) return "c807 Xpress";
+  if (isCargoExpresoGuide(guide)) return "Cargo Expreso";
   const company = String(rawCompany ?? "").trim();
   if (company) return normalizeShopifyCourier(company, store);
   return guide ? getDefaultCourierForStore(store) : "";
@@ -269,6 +279,11 @@ function normalizeGuideForStore(guide: string | undefined, store: FinanceStorePu
   const trimmed = String(guide ?? "").trim();
   if (!trimmed) return "";
   if (isWynGuide(trimmed)) return normalizeWynGuide(trimmed);
+  // c807 Xpress y Cargo Expreso tambien llevan envios de Honduras. Antes se les
+  // anteponia el "FD" de Forza (6595-13968-... -> FD6595-...) y no cruzaban con
+  // su rastreo.
+  if (isC807Guide(trimmed)) return normalizeC807Guide(trimmed);
+  if (isCargoExpresoGuide(trimmed)) return normalizeCargoExpresoGuide(trimmed);
   return store.logisticsProvider === "forza" ? normalizeForzaGuide(trimmed) : trimmed;
 }
 
@@ -685,8 +700,18 @@ export function buildVisibleOrderRows(
   selectedStore: FinanceStorePublic,
   moovinByPackage: Map<string, MoovinTrackingRow>,
   forzaByGuide: Map<string, ForzaTrackingRow>,
-  wynByGuide: Map<string, WynTrackingRow> = new Map()
+  wynByGuide: Map<string, WynTrackingRow> = new Map(),
+  envioByGuide: Map<string, ShipmentTrackingRow> = new Map()
 ): TrackableOrderRow[] {
+  // Rastreo de c807 Xpress / Cargo Expreso por guia (ya normalizada).
+  const envioDe = (guide: string): Pick<TrackableOrderRow, "envio_group" | "envio_incidents"> => {
+    const hit = guide && (isC807Guide(guide) || isCargoExpresoGuide(guide)) ? envioByGuide.get(guide) : undefined;
+    if (!hit) return {};
+    return {
+      envio_group: hit.latest_group ?? "",
+      envio_incidents: (hit.events ?? []).filter((e) => e.group === "failed").length,
+    };
+  };
   const shopifyByMatchKey = buildShopifyMatchIndex(shopifyOrders);
   const logisticsDisplayRows = logisticsRows.map((row): TrackableOrderRow => {
     const shopify = findShopifyOrderForRow(row, shopifyByMatchKey);
@@ -721,6 +746,7 @@ export function buildVisibleOrderRows(
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       wyn_group: latestGroupOf(wynHit),
       wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
+      ...envioDe(guideNumber),
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
       phone: shopify?.phone || row.customer_phone || null,
@@ -785,6 +811,7 @@ export function buildVisibleOrderRows(
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       wyn_group: latestGroupOf(wynHit),
       wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
+      ...envioDe(shopifyGuide),
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
@@ -916,7 +943,7 @@ export function getSettlementTracesForLogisticsRow(
 // ---------------------------------------------------------------------------
 
 export function getEffectiveTrackingStatus(
-  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "wyn_group" | "wyn_incidents" | "guide_number">,
+  row: Pick<TrackableOrderRow, "source" | "boxful_status" | "internal_status" | "shopify_cancelled_at" | "shopify_financial_status" | "moovin_group" | "moovin_incidents" | "forza_group" | "forza_incidents" | "wyn_group" | "wyn_incidents" | "envio_group" | "envio_incidents" | "guide_number">,
   traces: SettlementTrace[]
 ): string {
   // Una liquidacion cerrada es un hecho TERMINAL: si hay una traza de liquidacion
@@ -930,7 +957,8 @@ export function getEffectiveTrackingStatus(
   const rawCourierStatus =
     wynGroupToStatus(row.wyn_group) ||
     moovinGroupToStatus(row.moovin_group) ||
-    forzaGroupToStatus(row.forza_group);
+    forzaGroupToStatus(row.forza_group) ||
+    forzaGroupToStatus(row.envio_group);
   if (settledFinalStatus && rawCourierStatus && !isFinalTrackingStatus(rawCourierStatus)) {
     return settledFinalStatus;
   }
@@ -964,6 +992,16 @@ export function getEffectiveTrackingStatus(
       return forzaStatus === "en_route" ? "en_route_retry" : "incident";
     }
     return forzaStatus;
+  }
+
+  // c807 Xpress y Cargo Expreso (Honduras): Kairo los rastrea en
+  // courier_shipments con los mismos grupos que Forza.
+  const envioStatus = forzaGroupToStatus(row.envio_group);
+  if (envioStatus) {
+    if ((row.envio_incidents ?? 0) >= 1 && !isFinalTrackingStatus(envioStatus)) {
+      return envioStatus === "en_route" ? "en_route_retry" : "incident";
+    }
+    return envioStatus;
   }
 
   if (isFinalTrackingStatus(row.internal_status)) return row.internal_status;
