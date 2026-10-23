@@ -4,7 +4,7 @@
 
 import { normalizeMatchKey } from "./order-matching";
 import { classifyMoovinGroup } from "./moovin";
-import { senalForza } from "./forza-novedades";
+import { forzaPedidoVencido, senalForza } from "./forza-novedades";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
 import type {
   ForzaTrackingRow,
@@ -212,6 +212,41 @@ export function detectMoovinIncident(
   };
 }
 
+/**
+ * Causa de un intento fallido de Forza. Manda el motivo de su "Incidencia en
+ * ruta"; la nota de su call center ("Forza: ...", ver lib/forza-historial.ts)
+ * solo si el motivo no dice nada. Motivos vistos en 150 guias (23/10/2026):
+ * "Destinatario no localizado" (44), "Destinatario rechaza paquete" (25), "No
+ * hay nadie en destino" (23), "Destinatario solicita otra fecha de entrega"
+ * (18), "Incidencias operativas" (18), "Tiempo en inventario excedido en Exc"
+ * (9: no lo retiro del Express Center), "Datos de direccion de entrega
+ * incorrectos" (6).
+ */
+export function forzaCategory(reason: string): IncidentCategory {
+  const [motivo, nota = ""] = (reason || "").split(" · Forza: ");
+  return causaForza(motivo) ?? causaForza(nota) ?? "fallo_entrega";
+}
+
+function causaForza(texto: string): IncidentCategory | null {
+  const t = texto.toLowerCase();
+  if (!t.trim()) return null;
+  if (t.includes("tiempo en inventario") || t.includes("no se presento a recoger")) return "cliente_no_responde";
+  if (t.includes("rechaz") || t.includes("no cuenta con el dinero")) return "cliente_rechaza";
+  if (t.includes("direcci") || t.includes("residencia")) return "direccion_incorrecta";
+  if (
+    t.includes("no localizado") ||
+    t.includes("nadie") ||
+    t.includes("no responde") ||
+    t.includes("no contesta") ||
+    t.includes("fuera de servicio") ||
+    t.includes("invalido") ||
+    t.includes("inválido") ||
+    t.includes("equivocado")
+  )
+    return "cliente_no_responde";
+  return null;
+}
+
 // Construye una candidata desde el tracking de Forza (Honduras). Misma semantica
 // que Moovin: failed/has_incident = novedad activa; delivered permite auto-resolver.
 // El tracking de Forza ya viene particionado por tienda (store_id) y la guia es
@@ -223,13 +258,20 @@ export function detectForzaIncident(
   now: string = new Date().toISOString()
 ): DetectedIncident | null {
   const group = tracking.latest_group || "";
+  // Guia anulada en Forza: no hay envio que gestionar.
+  if (group === "cancelled") return null;
   const isFailure = tracking.has_incident || group === "failed";
   const isDelivered = group === "delivered";
   const isReturned = group === "returned";
-  // Forza no informa fallas: se deducen de las fechas de sus hitos (ver
-  // lib/forza-novedades.ts). Reemplaza la demora de 14 dias de Costa Rica, que en
-  // Honduras solo daba falsas alarmas. Un pedido cancelado no tiene nada que
-  // entregar: su guia suele quedar abandonada en "Creado".
+  // Un intento fallido de un pedido de mas de 60 dias no abre novedad: ya no hay
+  // venta que salvar (paso con 73 demoras de enero a marzo).
+  if (isFailure && forzaPedidoVencido(tracking.events, shopify?.created_at, now)) return null;
+  // Las fallas vienen del historial de Forza, con su motivo (lib/forza-historial.ts).
+  // Lo que no es falla se deduce de las fechas de sus hitos (lib/forza-novedades.ts):
+  // demoras y, en guias leidas sin historial, intentos probables. Reemplaza la
+  // demora de 14 dias de Costa Rica, que en Honduras solo daba falsas alarmas.
+  // Un pedido cancelado no tiene nada que entregar: su guia suele quedar
+  // abandonada en "Creado".
   const senal =
     isFailure || isDelivered || isReturned || shopify?.cancelled_at
       ? null
@@ -251,7 +293,7 @@ export function detectForzaIncident(
     customer_phone: row?.customer_phone || shopify?.phone || "",
     courier: row?.courier || "Forza",
     cod_amount: Number(row?.cod_amount ?? 0) || Number(shopify?.total_price ?? 0),
-    category: senal ? senal.category : isFailure || isReturned ? mapMoovinCategory(reason, group) : "otro",
+    category: senal ? senal.category : isFailure ? forzaCategory(reason) : isReturned ? "devuelto_origen" : "otro",
     detail: senal ? senal.detail : reason,
     last_tracking_status: tracking.latest_status || "",
     last_tracking_group: group,

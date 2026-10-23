@@ -28,11 +28,15 @@ export interface ForzaOrderGuide {
 /** Guia ya presente en forza_tracking. */
 export interface ForzaTrackedGuide {
   guide: string;
-  /** latest_group guardado: "delivered" y "returned" son finales. */
+  /** latest_group guardado: "delivered", "returned" y "cancelled" son finales. */
   group: string;
   /** checked_at, epoch ms (0 si no se sabe). */
   checkedAt: number;
+  /** Leida con el historial completo de Forza (migracion 0048). */
+  historial?: boolean;
 }
+
+const FINALES = new Set(["delivered", "returned", "cancelled"]);
 
 export interface ForzaSyncPlanInput {
   orderGuides: ForzaOrderGuide[];
@@ -64,6 +68,12 @@ export interface ForzaSyncPlanInput {
  *    vivas se gastaba en guias de enero que quedaron en "Creado" y nunca se van
  *    a mover.
  *
+ * 3. Con lo que sobra, las cerradas que se leyeron antes de que Kairo leyera el
+ *    historial completo de Forza (sin `historial`), de la del pedido mas
+ *    reciente a la mas vieja: una sola vez cada una, para que el estado
+ *    (entregada o devuelta: Forza mostraba la devolucion como "Entregado") y los
+ *    intentos de entrega queden bien tambien en las que ya no se mueven.
+ *
  * El reparto evita el hambre que ya sufrio Moovin: con miles de guias nuevas
  * atrasadas, las que ya estaban en camino igual reciben su parte en cada
  * corrida.
@@ -79,20 +89,20 @@ export function planForzaSync(input: ForzaSyncPlanInput): string[] {
     if (guide) known.set(guide, t);
   }
 
-  const enPedidos = new Set<string>();
+  const enPedidos = new Map<string, number>();
   const nuevas: Array<{ guide: string; orderedAt: number }> = [];
   for (const o of input.orderGuides) {
     if (!isForzaGuide(o.guide)) continue;
     const guide = normalizeForzaGuide(o.guide);
     if (enPedidos.has(guide)) continue;
-    enPedidos.add(guide);
+    enPedidos.set(guide, o.orderedAt);
     if (!known.has(guide)) nuevas.push({ guide, orderedAt: o.orderedAt });
   }
   nuevas.sort((a, b) => b.orderedAt - a.orderedAt);
 
   const vivas = Array.from(known.entries())
     .filter(([guide]) => enPedidos.has(guide))
-    .filter(([, t]) => t.group !== "delivered" && t.group !== "returned")
+    .filter(([, t]) => !FINALES.has(t.group))
     .filter(([, t]) => input.nowMs - t.checkedAt >= input.freshWindowMs)
     .sort((a, b) => a[1].checkedAt - b[1].checkedAt)
     .map(([guide]) => guide);
@@ -101,5 +111,16 @@ export function planForzaSync(input: ForzaSyncPlanInput): string[] {
   const tomarNuevas = Math.min(nuevas.length, limit - vivasGarantizadas);
   const tomarVivas = Math.min(vivas.length, limit - tomarNuevas);
 
-  return [...nuevas.slice(0, tomarNuevas).map((n) => n.guide), ...vivas.slice(0, tomarVivas)];
+  const sinHistorial = Array.from(known.entries())
+    .filter(([guide, t]) => enPedidos.has(guide) && FINALES.has(t.group) && !t.historial)
+    .filter(([, t]) => input.nowMs - t.checkedAt >= input.freshWindowMs)
+    .sort((a, b) => (enPedidos.get(b[0]) ?? 0) - (enPedidos.get(a[0]) ?? 0))
+    .map(([guide]) => guide);
+  const tomarSinHistorial = Math.min(sinHistorial.length, limit - tomarNuevas - tomarVivas);
+
+  return [
+    ...nuevas.slice(0, tomarNuevas).map((n) => n.guide),
+    ...vivas.slice(0, tomarVivas),
+    ...sinHistorial.slice(0, tomarSinHistorial),
+  ];
 }

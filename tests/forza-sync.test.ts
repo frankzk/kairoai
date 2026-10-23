@@ -17,6 +17,7 @@ function tracking(guide: string, over: Partial<ForzaTracking> = {}): ForzaTracki
     has_incident: false,
     incident_reason: "",
     events: [],
+    historial: false,
     ...over,
   };
 }

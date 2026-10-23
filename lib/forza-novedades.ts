@@ -52,7 +52,7 @@ export interface ForzaHitos {
   bodega: string;
 }
 
-type HitoEvent = { title?: string | null; description?: string | null; date?: string | null };
+type HitoEvent = { code?: string | null; title?: string | null; description?: string | null; date?: string | null };
 
 // "En instalaciones" y "EN_INSTALACIONES" -> "ENINSTALACIONES".
 function clave(texto: string): string {
@@ -63,19 +63,31 @@ function clave(texto: string): string {
     .replace(/[^A-Z]/g, "");
 }
 
+// Los 5 hitos de la consulta vieja, por titulo; y las etapas del historial
+// completo (lib/forza-historial.ts), por codigo: estar en una bodega, en transito
+// entre bodegas o de vuelta para reproceso cuenta como "En instalaciones", como
+// lo resume la propia linea de tiempo de Forza.
 const HITO_POR_CLAVE: Record<string, keyof Omit<ForzaHitos, "bodega">> = {
   CREADO: "creado",
   RECIBIDOPORFORZA: "recibido",
   ENINSTALACIONES: "instalaciones",
+  ENINVENTARIO: "instalaciones",
+  ENTRANSITO: "instalaciones",
+  ENESCALA: "instalaciones",
+  RETORNADOPARAREPROCESO: "instalaciones",
+  TRASLADOEXPRESSCENTER: "instalaciones",
+  ENEXPRESSCENTER: "instalaciones",
   ENRUTA: "ruta",
   ENTREGADO: "entregado",
+  DEVUELTO: "entregado",
+  ANULADO: "entregado",
 };
 
 /** Fecha (epoch ms) de cada hito alcanzado. Un hito sin fecha todavia no paso. */
 export function forzaHitos(events: HitoEvent[] | null | undefined): ForzaHitos {
   const hitos: ForzaHitos = { creado: null, recibido: null, instalaciones: null, ruta: null, entregado: null, bodega: "" };
   for (const ev of events ?? []) {
-    const hito = HITO_POR_CLAVE[clave(String(ev.title ?? ""))];
+    const hito = HITO_POR_CLAVE[clave(String(ev.code ?? ""))] ?? HITO_POR_CLAVE[clave(String(ev.title ?? ""))];
     const at = Date.parse(String(ev.date ?? ""));
     if (!hito || Number.isNaN(at)) continue;
     if (hitos[hito] === null || at > (hitos[hito] as number)) {
@@ -100,6 +112,21 @@ function dia(ms: number): string {
 }
 
 /**
+ * El pedido (o, si no hay pedido, la guia) tiene mas de
+ * FORZA_DIAS_MAXIMOS_DEL_PEDIDO dias: ya no abre novedades.
+ */
+export function forzaPedidoVencido(
+  events: HitoEvent[] | null | undefined,
+  orderCreatedAt: string | null | undefined,
+  now: string
+): boolean {
+  const nowMs = Date.parse(now);
+  const pedido = Date.parse(String(orderCreatedAt ?? ""));
+  const inicio = Number.isNaN(pedido) ? forzaHitos(events).creado : pedido;
+  return !Number.isNaN(nowMs) && inicio !== null && nowMs - inicio > FORZA_DIAS_MAXIMOS_DEL_PEDIDO * DIA_MS;
+}
+
+/**
  * La novedad que se deduce de los hitos, o null si el envio va en tiempo.
  *
  * El detalle usa fechas y no "lleva N dias": se reescribe en cada deteccion y
@@ -115,9 +142,7 @@ export function senalForza(
   const h = forzaHitos(events);
   if (h.entregado !== null) return null;
 
-  const pedido = Date.parse(String(orderCreatedAt ?? ""));
-  const inicio = Number.isNaN(pedido) ? h.creado : pedido;
-  if (inicio !== null && nowMs - inicio > FORZA_DIAS_MAXIMOS_DEL_PEDIDO * DIA_MS) return null;
+  if (forzaPedidoVencido(events, orderCreatedAt, now)) return null;
 
   const enBodega = h.bodega ? ` en ${h.bodega}` : "";
 

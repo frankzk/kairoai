@@ -1590,18 +1590,24 @@ export async function listForzaSyncCandidates(
   for (let from = 0; from < 200000; from += pageSize) {
     const { data, error } = await getDB()
       .from("forza_tracking")
-      .select("guide_number, latest_group, checked_at")
+      .select("guide_number, latest_group, checked_at, historial")
       .eq("store_id", storeId)
       .order("guide_number")
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`listForzaSyncCandidates(forza_tracking): ${error.message}`);
-    const page = (data ?? []) as Array<{ guide_number: string; latest_group: string | null; checked_at: string | null }>;
+    const page = (data ?? []) as Array<{
+      guide_number: string;
+      latest_group: string | null;
+      checked_at: string | null;
+      historial: boolean | null;
+    }>;
     for (const row of page) {
       const checkedAt = Date.parse(String(row.checked_at ?? ""));
       tracked.push({
         guide: row.guide_number,
         group: row.latest_group ?? "",
         checkedAt: Number.isNaN(checkedAt) ? 0 : checkedAt,
+        historial: Boolean(row.historial),
       });
     }
     if (page.length < pageSize) break;

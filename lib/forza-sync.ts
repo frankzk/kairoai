@@ -112,6 +112,7 @@ export async function syncForzaGuides(
         delivery_address: tracking.delivery_address,
         receiver_name: tracking.receiver_name,
         events: tracking.events,
+        historial: tracking.historial,
       });
     },
     {
@@ -122,9 +123,11 @@ export async function syncForzaGuides(
   );
   result.notStarted = guides.length - started;
 
-  // Forza solo guarda la ultima fecha de cada hito: cuando el paquete vuelve a
-  // salir a ruta, el intento fallido anterior desaparece de su respuesta. Se
-  // suman los ya vistos en lecturas anteriores (ver lib/forza-novedades.ts).
+  // Con los 5 hitos de la consulta vieja, Forza solo guarda la ultima fecha de
+  // cada uno: cuando el paquete vuelve a salir a ruta, el intento fallido
+  // anterior desaparece. Se suman los deducidos en lecturas anteriores (ver
+  // lib/forza-novedades.ts). Con el historial completo los intentos son los
+  // reales y los deducidos se descartan.
   const now = opts.now ?? new Date().toISOString();
   for (let i = 0; i < pending.length; i += SAVE_CHUNK) {
     const chunk = pending.slice(i, i + SAVE_CHUNK);
@@ -133,7 +136,7 @@ export async function syncForzaGuides(
       : new Map<string, ForzaRow["events"]>();
     const filas = chunk.map((row) => ({
       ...row,
-      events: conIntentosFallidos(row.events, previos.get(row.guide_number), now),
+      events: row.historial ? row.events : conIntentosFallidos(row.events, previos.get(row.guide_number), now),
     }));
     await deps.save(filas, storeId);
     result.saved += filas.length;

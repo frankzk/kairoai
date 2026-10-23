@@ -20,7 +20,6 @@ import type {
 } from "@/lib/finance-types";
 import { mergeDispatchIntoTracking } from "@/lib/dispatch";
 import { isWynGuide, isWynIncidentCode, normalizeWynGuide } from "@/lib/wyn";
-import { matchesStatusKeyword } from "@/lib/courier-adapters";
 import { isC807Guide, normalizeC807Guide } from "@/lib/c807";
 import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "@/lib/cargo-expreso";
 import {
@@ -1182,6 +1181,8 @@ export function forzaGroupToStatus(group: string | undefined): string {
       return "delivered";
     case "returned":
       return "not_delivered";
+    case "cancelled":
+      return "annulled";
     case "failed":
       return "incident";
     case "in_progress":
@@ -1235,17 +1236,13 @@ export function countMoovinRouteAttempts(events: MoovinTrackingRow["events"] | u
   }).length;
 }
 
+// Intentos de entrega fallidos: los eventos en grupo "failed". Con el
+// historial completo es uno por salida a ruta sin entrega (la "Incidencia
+// Validada" que le sigue no es otro intento, ver lib/forza-historial.ts); con
+// los 5 hitos, los que Kairo dedujo (INTENTO_FALLIDO).
 export function countForzaIncidents(events: ForzaTrackingRow["events"] | undefined): number {
   if (!events?.length) return 0;
-  return events.filter((event) =>
-    // Con includes() a secas, "no entreg" aparecia dentro de "destiNO ENTREGado"
-    // y convertia un hito de transito en incidencia (ver matchesStatusKeyword).
-    matchesStatusKeyword(`${event.code ?? ""} ${event.title ?? ""} ${event.description ?? ""}`, [
-      "fall",
-      "incid",
-      "no entreg",
-    ])
-  ).length;
+  return events.filter((event) => event.group === "failed").length;
 }
 
 /**
@@ -1281,8 +1278,11 @@ export function deriveMoovinGroup(row: MoovinTrackingRow | undefined): string {
 // cuyo ultimo tramo fue "En Ruta: TEGUCIGALPA" (el paquete volvio), y casi
 // todos pasan por un "En instalaciones" sin ciudad. Contarlos como entregas
 // dejo a Honduras con 0 no entregados desde julio y 89,6% de entrega efectiva.
-export function esDevolucionForza(row: Pick<ForzaTrackingRow, "latest_group" | "events"> | undefined): boolean {
-  if (!row || row.latest_group !== "delivered") return false;
+// Solo para lo leido con los 5 hitos: el historial completo trae "Devuelto".
+export function esDevolucionForza(
+  row: Pick<ForzaTrackingRow, "latest_group" | "events" | "historial"> | undefined
+): boolean {
+  if (!row || row.historial || row.latest_group !== "delivered") return false;
   const entregas = (row.events ?? [])
     .filter((e) => String(e.title ?? "").trim().toLowerCase() === "entregado")
     .sort((a, b) => Date.parse(String(b.date ?? "")) - Date.parse(String(a.date ?? "")));
