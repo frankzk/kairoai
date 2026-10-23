@@ -1275,6 +1275,26 @@ export async function upsertIcomflyOrders(
   if (error) throw new Error(`upsertIcomflyOrders: ${error.message}`);
 }
 
+/**
+ * Guarda el pedido de iComfly completo (migracion 0050). Best-effort: lo llama
+ * el sync DESPUES de guardar el despacho, y si falla solo se anota.
+ */
+export async function upsertIcomflyOrderPayloads(
+  rows: Array<{ store_id: number; icomfly_order_id: string; payload: Record<string, unknown> }>
+): Promise<void> {
+  const LOTE = 100;
+  const syncedAt = new Date().toISOString();
+  for (let i = 0; i < rows.length; i += LOTE) {
+    const { error } = await getDB()
+      .from("icomfly_order_payloads")
+      .upsert(
+        rows.slice(i, i + LOTE).map((row) => ({ ...row, synced_at: syncedAt })),
+        { onConflict: "store_id,icomfly_order_id" }
+      );
+    if (error) throw new Error(`upsertIcomflyOrderPayloads: ${error.message}`);
+  }
+}
+
 export async function listIcomflyAgents(storeId?: number): Promise<IcomflyAgentRecord[]> {
   let query = getDB().from("icomfly_agents").select("*").order("name");
   if (storeId != null) query = query.eq("store_id", storeId);

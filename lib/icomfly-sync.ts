@@ -2,6 +2,7 @@
 // dashboard (/api/icomfly/sync) y el cron (/api/cron/icomfly). Server-only.
 
 import {
+  upsertIcomflyOrderPayloads,
   upsertIcomflyOrders,
   upsertIcomflyAgents,
   listPayrollStaff,
@@ -19,6 +20,7 @@ import {
   type DispatchState,
 } from "@/lib/dispatch";
 import type { FinanceStoreCode } from "@/lib/store-config";
+import { filasDePayload, type IcomflyPayloadRow } from "@/lib/icomfly-payloads";
 
 const DEFAULT_MAX_PAGES = 5;
 const MAX_MAX_PAGES = 20;
@@ -98,12 +100,15 @@ export async function runIcomflySync(opts: {
 
   // ── Pedidos con atribucion ─────────────────────────────────────────────────
   const allOrders: NormalizedIcomflyOrder[] = [];
+  // El pedido completo de cada pagina, para icomfly_order_payloads.
+  const payloads: IcomflyPayloadRow[] = [];
   let pagesFetched = 0;
   let hasMore = false;
   let page = startPage;
   for (let i = 0; i < maxPages; i++) {
     const res = await listOrdersWithAttribution({ storeId, externalStoreId, page, limit: PAGE_LIMIT });
     allOrders.push(...res.orders);
+    payloads.push(...filasDePayload(storeId, res.orders, res.raw));
     pagesFetched += 1;
     hasMore = res.hasMore;
     if (!res.hasMore) break;
@@ -123,6 +128,12 @@ export async function runIcomflySync(opts: {
     .map((o) => buildIcomflyOrderRow(o, { staff: staffLikes, boxfulDispatched, now }));
 
   await upsertIcomflyOrders(rows as Array<Omit<IcomflyOrderRecord, "synced_at">>);
+
+  // Despues del despacho y best-effort: si la tabla nueva falla, el sync de
+  // siempre no se entera.
+  await upsertIcomflyOrderPayloads(payloads).catch((err) =>
+    console.warn("[icomfly-sync] pedido completo no guardado:", err instanceof Error ? err.message : err)
+  );
 
   return {
     synced: rows.length,
