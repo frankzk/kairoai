@@ -346,6 +346,8 @@ export interface ForzaTrackingRow {
   delivery_address: string;
   receiver_name: string;
   events: Array<{ code: string; group: string; title: string; description: string; date: string | null; note: string }>;
+  /** Eventos del historial completo de Forza (migracion 0048); false = los 5 hitos de antes. */
+  historial?: boolean;
   checked_at: string;
 }
 

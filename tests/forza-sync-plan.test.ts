@@ -57,7 +57,7 @@ describe("planForzaSync", () => {
         { guide: "FD1000002", orderedAt: NOW - D },
         { guide: "6595-13968-20260922106513", orderedAt: NOW - D },
       ],
-      tracked: [{ guide: "FD1000002", group: "delivered", checkedAt: NOW - 5 * D }],
+      tracked: [{ guide: "FD1000002", group: "delivered", checkedAt: NOW - 5 * D, historial: true }],
     });
     expect(plan).toEqual(["FD1000001"]);
   });
@@ -67,13 +67,38 @@ describe("planForzaSync", () => {
       { guide: "FD2000001", group: "in_progress", checkedAt: NOW - 2 * H },
       // Congelada desde el 27/07: mientras el pedido siga vigente, entra.
       { guide: "FD2000002", group: "in_progress", checkedAt: NOW - 60 * D },
-      { guide: "FD2000003", group: "delivered", checkedAt: NOW - 60 * D },
-      { guide: "FD2000004", group: "returned", checkedAt: NOW - 60 * D },
+      { guide: "FD2000003", group: "delivered", checkedAt: NOW - 60 * D, historial: true },
+      { guide: "FD2000004", group: "returned", checkedAt: NOW - 60 * D, historial: true },
       { guide: "FD2000005", group: "failed", checkedAt: NOW - 10 * MIN },
       { guide: "FD2000006", group: "failed", checkedAt: NOW - 3 * D },
     ];
     const plan = planForzaSync({ ...base, orderGuides: pedidosDe(tracked), tracked });
     expect(plan).toEqual(["FD2000002", "FD2000006", "FD2000001"]);
+  });
+
+  // Forza mostraba la devolucion como "Entregado" en sus 5 hitos: las cerradas
+  // leidas asi se releen una vez con el historial completo.
+  it("con lo que sobra, relee una vez las cerradas leidas sin historial, del pedido mas reciente al mas viejo", () => {
+    const tracked: ForzaTrackedGuide[] = [
+      { guide: "FD5000001", group: "delivered", checkedAt: NOW - 5 * D },
+      { guide: "FD5000002", group: "returned", checkedAt: NOW - 5 * D },
+      { guide: "FD5000003", group: "delivered", checkedAt: NOW - 5 * D, historial: true },
+      { guide: "FD5000004", group: "in_progress", checkedAt: NOW - 2 * D },
+    ];
+    const plan = planForzaSync({
+      ...base,
+      limit: 3,
+      orderGuides: [
+        { guide: "FD5000001", orderedAt: NOW - 40 * D },
+        { guide: "FD5000002", orderedAt: NOW - 10 * D },
+        { guide: "FD5000003", orderedAt: NOW - 5 * D },
+        { guide: "FD5000004", orderedAt: NOW - 3 * D },
+        { guide: "FD5000005", orderedAt: NOW - 1 * D },
+      ],
+      tracked,
+    });
+    // Primero la nueva y la viva; despues la cerrada sin historial del pedido mas reciente.
+    expect(plan).toEqual(["FD5000005", "FD5000004", "FD5000002"]);
   });
 
   it("no relee guias de pedidos cancelados o fuera de la ventana", () => {

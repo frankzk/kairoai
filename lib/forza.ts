@@ -1,8 +1,10 @@
+import { fechaForza, interpretarHistorialForza, type ForzaHistorial } from "./forza-historial";
+
 const FORZA_HN_API_URL = "https://portal.portal.forzadelivery.com/fdHN/Home.aspx/API";
 const FORZA_PUBLIC_API_URL = "https://rastreo.forzadelivery.com/fd2/Home.aspx/API";
 const FORZA_TRACKING_BASE = "https://rastreo.forzadelivery.com";
 
-export type ForzaGroup = "delivered" | "failed" | "returned" | "in_progress";
+export type ForzaGroup = "delivered" | "failed" | "returned" | "cancelled" | "in_progress";
 
 export interface ForzaEvent {
   code: string;
@@ -27,6 +29,12 @@ export interface ForzaTracking {
   has_incident: boolean;
   incident_reason: string;
   events: ForzaEvent[];
+  /**
+   * true si los eventos son el historial completo de Forza (con incidencias y
+   * devoluciones, ver lib/forza-historial.ts); false si son los 5 hitos de la
+   * consulta vieja, de donde Kairo tiene que deducir los intentos fallidos.
+   */
+  historial: boolean;
   error?: string;
   raw?: string;
 }
@@ -71,6 +79,7 @@ export async function fetchForzaTracking(
     has_incident: false,
     incident_reason: "",
     events: [],
+    historial: false,
   };
 
   if (!guideNumber) {
@@ -124,6 +133,30 @@ export async function fetchForzaTracking(
           continue;
         }
 
+        // Historial completo (GetNewDeliveryTracking): el estado, el intento
+        // fallido vigente y su motivo salen de lib/forza-historial.ts.
+        if (detail.historial) {
+          const h = detail.historial;
+          const ultimo = h.events[0] ?? null;
+          return {
+            ...base,
+            ok: res.ok,
+            http_status: res.status,
+            latest_status: ESTADO_DEL_HISTORIAL[h.group] ?? ultimo?.title ?? null,
+            latest_status_code: (h.ultimaFalla ?? ultimo)?.code ?? null,
+            latest_group: h.group,
+            // La fecha de la novedad es la del intento, no la del ultimo movimiento.
+            latest_at: (h.ultimaFalla ?? ultimo)?.date ?? null,
+            delivery_address: detail.deliveryAddress,
+            receiver_name: detail.receiverName,
+            has_incident: h.group === "failed",
+            incident_reason: h.motivo,
+            events: h.events,
+            historial: true,
+            ...(options.includeRaw ? { raw: text.slice(0, 20000) } : {}),
+          };
+        }
+
         const latest = detail.events[0] ?? null;
         const latestStatus = latest?.title ?? detail.latestStatus ?? null;
         if (!latestStatus && !detail.events.length) {
@@ -158,6 +191,14 @@ export async function fetchForzaTracking(
 
   return { ...base, error: lastError || "No se pudo interpretar la respuesta de Forza" };
 }
+
+// Lo que se muestra como estado de la guia; en curso, el ultimo movimiento.
+const ESTADO_DEL_HISTORIAL: Partial<Record<ForzaGroup, string>> = {
+  delivered: "Entregado",
+  returned: "Devuelto",
+  cancelled: "Anulado",
+  failed: "Intento de entrega fallido",
+};
 
 function buildForzaRequestVariants(guideNumber: string): ForzaRequestVariant[] {
   return [
@@ -195,6 +236,7 @@ function parseForzaResponse(raw: string): {
   deliveryAddress: string;
   receiverName: string;
   events: ForzaEvent[];
+  historial?: ForzaHistorial | null;
   error?: string;
 } | null {
   const parsed = safeJsonParse(raw);
@@ -218,7 +260,11 @@ function parseForzaResponse(raw: string): {
     "TrackingEvents",
   ]);
 
-  if (resultCode && resultCode !== 200 && !statusRows.length) {
+  // GetNewDeliveryTracking responde IdResult 202 con el historial en
+  // order.milestones; antes no se reconocia y se caia a la consulta vieja.
+  const historial = interpretarHistorialForza(asRecord(objectRecord.order)?.milestones);
+
+  if (resultCode && resultCode !== 200 && !statusRows.length && !historial) {
     return {
       latestStatus: "",
       deliveryEta: null,
@@ -259,6 +305,7 @@ function parseForzaResponse(raw: string): {
         .map((value) => String(value ?? "").trim())
         .filter(Boolean)
         .join(", "),
+    historial,
     receiverName:
       readString(objectRecord, ["ReceiverName", "receiverName", "Receiver", "receiver", "Consignee", "consignee"]) ||
       readStringPath(objectRecord, ["order", "customer", "fullname"]) ||
@@ -437,25 +484,12 @@ function computeForzaIncident(events: ForzaEvent[]): { active: boolean; reason: 
   return { active: true, reason: latest.description || latest.title };
 }
 
+// Forza manda la hora de Honduras sin zona (o con una "Z" falsa): ver fechaForza.
 function normalizeForzaDate(value: unknown): string | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
+  const honduras = fechaForza(raw);
+  if (honduras) return honduras;
   const parsed = new Date(raw);
-  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-
-  const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?$/i);
-  if (!match) return raw;
-  const [, first, second, year, hour = "0", minute = "0", secondPart = "0", meridian = ""] = match;
-  let month = Number(first);
-  let day = Number(second);
-  if (month > 12 && day <= 12) {
-    month = Number(second);
-    day = Number(first);
-  }
-  let hours = Number(hour);
-  const upperMeridian = meridian.toUpperCase();
-  if (upperMeridian === "PM" && hours < 12) hours += 12;
-  if (upperMeridian === "AM" && hours === 12) hours = 0;
-  const date = new Date(Number(year), month - 1, day, hours, Number(minute), Number(secondPart));
-  return Number.isNaN(date.getTime()) ? raw : date.toISOString();
+  return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString();
 }
