@@ -101,6 +101,20 @@ describe("planForzaSync", () => {
     expect(plan).toEqual(["FD5000005", "FD5000004", "FD5000002"]);
   });
 
+  it("aunque las en camino llenen el cupo, las cerradas sin historial tienen su parte", () => {
+    const enCamino = vivas(20);
+    const cerradas: ForzaTrackedGuide[] = Array.from({ length: 10 }, (_, i) => ({
+      guide: `FD6${String(i).padStart(6, "0")}`,
+      group: "delivered",
+      checkedAt: NOW - 5 * D,
+    }));
+    const tracked = [...enCamino, ...cerradas];
+    const plan = planForzaSync({ ...base, limit: 12, orderGuides: pedidosDe(tracked), tracked });
+    expect(plan).toHaveLength(12);
+    // La cuarta parte del cupo (3) va a las cerradas.
+    expect(plan.filter((g) => g.startsWith("FD6"))).toHaveLength(3);
+  });
+
   it("no relee guias de pedidos cancelados o fuera de la ventana", () => {
     // Paso con guias de enero que quedaron en "Creado": se releian cada pocas
     // horas y nunca se iban a mover.

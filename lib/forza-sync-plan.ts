@@ -52,6 +52,12 @@ export interface ForzaSyncPlanInput {
    * usa lo que sobra.
    */
   newShare?: number;
+  /**
+   * Parte del tope reservada para releer las cerradas sin historial (ver punto
+   * 3 de planForzaSync). Sin reserva no les tocaba nunca: las ~230 guias en
+   * camino se releen cada hora y se llevaban todo el cupo.
+   */
+  historialShare?: number;
 }
 
 /**
@@ -107,15 +113,18 @@ export function planForzaSync(input: ForzaSyncPlanInput): string[] {
     .sort((a, b) => a[1].checkedAt - b[1].checkedAt)
     .map(([guide]) => guide);
 
-  const vivasGarantizadas = Math.min(vivas.length, limit - Math.round(limit * share));
-  const tomarNuevas = Math.min(nuevas.length, limit - vivasGarantizadas);
-  const tomarVivas = Math.min(vivas.length, limit - tomarNuevas);
-
   const sinHistorial = Array.from(known.entries())
     .filter(([guide, t]) => enPedidos.has(guide) && FINALES.has(t.group) && !t.historial)
     .filter(([, t]) => input.nowMs - t.checkedAt >= input.freshWindowMs)
     .sort((a, b) => (enPedidos.get(b[0]) ?? 0) - (enPedidos.get(a[0]) ?? 0))
     .map(([guide]) => guide);
+  const historialShare = Math.min(1, Math.max(0, input.historialShare ?? 0.25));
+  const reservaHistorial = Math.min(sinHistorial.length, Math.round(limit * historialShare));
+  const cupo = limit - reservaHistorial;
+
+  const vivasGarantizadas = Math.min(vivas.length, cupo - Math.round(cupo * share));
+  const tomarNuevas = Math.min(nuevas.length, cupo - vivasGarantizadas);
+  const tomarVivas = Math.min(vivas.length, cupo - tomarNuevas);
   const tomarSinHistorial = Math.min(sinHistorial.length, limit - tomarNuevas - tomarVivas);
 
   return [
