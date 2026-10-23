@@ -22,6 +22,10 @@
       "schedule": "20,50 * * * *"
     },
     {
+      "path": "/api/cron/shopify-archivo",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/shopify-recent",
       "schedule": "*/10 * * * *"
     },
@@ -95,6 +99,9 @@
     },
     "app/api/cron/shopify-refresh/route.ts": {
       "maxDuration": 60
+    },
+    "app/api/cron/shopify-archivo/route.ts": {
+      "maxDuration": 300
     },
     "app/api/cron/shopify-recent/route.ts": {
       "maxDuration": 60

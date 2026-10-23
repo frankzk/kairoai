@@ -33,6 +33,8 @@ export const CRON_JOBS: CronJob[] = [
   { name: "shopify-recent", label: "Pedidos nuevos de Shopify", everyMinutes: 10 },
   { name: "shopify-refresh", label: "Guías de Shopify", everyMinutes: 180 },
   { name: "shopify-recheck-stale", label: "Pedidos viejos de Shopify", everyMinutes: 720 },
+  // Respaldo completo antes de que se suspendan las tiendas (28/10/2026).
+  { name: "shopify-archivo", label: "Respaldo de Shopify", everyMinutes: 15 },
   { name: "finance-index", label: "Índice de Finanzas", everyMinutes: 60 },
   { name: "incidencias", label: "Novedades", everyMinutes: 60 },
   { name: "moovin", label: "Tracking Moovin", everyMinutes: 60 },
