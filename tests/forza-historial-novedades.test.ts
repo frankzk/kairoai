@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { interpretarHistorialForza } from "../lib/forza-historial";
 import { detectForzaIncident, forzaCategory } from "../lib/incidents-detect";
 import { countForzaIncidents, esDevolucionForza, forzaGroupToStatus } from "../lib/finance-orders";
+import { courierYaNoReintenta } from "../lib/incidents-reprog";
 import { forzaHitos, senalForza } from "../lib/forza-novedades";
 import { syncForzaGuides, type ForzaSyncDeps } from "../lib/forza-sync";
 import type { ForzaTracking } from "../lib/forza";
@@ -123,6 +124,14 @@ describe("Gestion con el historial", () => {
     expect(entregada.latest_group).toBe("delivered");
     expect(esDevolucionForza(entregada)).toBe(false);
     expect(esDevolucionForza({ ...entregada, historial: false })).toBe(true);
+  });
+});
+
+describe("nuevo envio con Forza", () => {
+  // Con los intentos reales: 24 de 31 devoluciones tuvieron 3 o mas visitas.
+  it("se cobra cuando Forza devuelve, no al segundo intento", () => {
+    expect(courierYaNoReintenta("forza", 3, false)).toBe(false);
+    expect(courierYaNoReintenta("forza", 2, true)).toBe(true);
   });
 });
 

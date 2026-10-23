@@ -191,9 +191,9 @@ describe("reprogramar y nuevo envio con Cargo Expreso", () => {
     // Reintenta solo: hubo devoluciones despues de 0 y de 4 intentos.
     expect(courierYaNoReintenta("cargoexpreso", 3, false)).toBe(false);
     expect(courierYaNoReintenta("cargoexpreso", 0, true)).toBe(true);
-    // Moovin y Forza: despues del segundo intento, como antes.
+    // Moovin: despues del segundo intento, como antes.
     expect(courierYaNoReintenta("moovin", 2, false)).toBe(true);
-    expect(courierYaNoReintenta("forza", 1, false)).toBe(false);
+    expect(courierYaNoReintenta("moovin", 1, false)).toBe(false);
   });
 });
 

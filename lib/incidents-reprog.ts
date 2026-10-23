@@ -43,15 +43,19 @@ export function diasSinEntregaDe(source: string, proveedorTienda: string): numbe
  *    ningun intento y 3 tuvieron cuatro.
  *  - c807: de 15 devoluciones de septiembre, 3 sin intentos y 1 con cuatro; y
  *    una guia se entrego despues de cuatro intentos fallidos.
+ *  - Forza: con su historial completo (23/10/2026), de 31 devoluciones solo 7
+ *    tuvieron 1 o 2 intentos; 24 tuvieron 3 o mas, hasta 10. Y 5 de 49
+ *    entregas llegaron despues de 2 o mas intentos fallidos. Antes Kairo
+ *    deducia los intentos de 5 hitos y casi nunca pasaba de uno.
  */
 export function reintentaSolo(source: string): boolean {
-  return source === "cargoexpreso" || source === "c807";
+  return source === "cargoexpreso" || source === "c807" || source === "forza";
 }
 
 /**
  * true cuando el courier ya no va a intentar entregar y hay que cobrar un nuevo
- * envio. Moovin y Forza hacen dos intentos (el segundo incluido). Los que
- * reintentan solos (reintentaSolo) recien se sabe cuando devuelven.
+ * envio. Moovin hace dos intentos (el segundo incluido). Los que reintentan
+ * solos (reintentaSolo) recien se sabe cuando devuelven.
  */
 export function courierYaNoReintenta(source: string, intentosFallidos: number, devuelto: boolean): boolean {
   if (reintentaSolo(source)) return devuelto;

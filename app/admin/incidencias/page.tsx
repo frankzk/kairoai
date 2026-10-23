@@ -1175,7 +1175,7 @@ function DetailModal({
     incident.source,
     FINANCE_STORES.find((s) => s.code === storeCode)?.logisticsProvider ?? ""
   );
-  // Cuando se cobra un nuevo envio: Moovin y Forza despues del 2do intento;
+  // Cuando se cobra un nuevo envio: Moovin despues del 2do intento; Forza,
   // Cargo Expreso y c807 cuando devuelven el paquete (lib/incidents-reprog.ts).
   const devuelto = trackingEvents.some((e) => e.group === "returned");
   const sinMasReintentos = courierYaNoReintenta(incident.source, intentosEntrega, devuelto);
