@@ -18,10 +18,13 @@ export const maxDuration = 300;
 // estaban congeladas (la deteccion lee de este tracking). Moovin tiene su cron
 // desde siempre; Forza no tenia ninguno.
 
-// Consultas por corrida. Con ~3.800 guias atrasadas, 200 por hora ponen al dia
-// el atraso en alrededor de un dia; despues entran ~50 guias nuevas por dia y
-// el resto del cupo re-lee las que siguen en camino. Configurable por env.
-const MAX_PER_RUN = Number(process.env.FORZA_MAX_PER_RUN ?? 200);
+// Consultas por corrida. Con el historial completo (23/10/2026) hay ~230 guias
+// en camino que se releen cada hora y ~3.700 cerradas para releer una vez: con
+// 200 las en camino se llevaban todo el cupo. 400 a la tasa acordada con Forza
+// (una consulta cada 300 ms) son ~2 minutos, dentro del TIME_BUDGET_MS; la
+// cuarta parte queda reservada para las cerradas (lib/forza-sync-plan.ts).
+// Configurable por env.
+const MAX_PER_RUN = Number(process.env.FORZA_MAX_PER_RUN ?? 400);
 // Una guia ya leida no se reconsulta dentro de esta ventana (el cron corre cada
 // hora; evita repetir si alguien usa el boton manual en el medio).
 const FRESH_WINDOW_MINUTES = Number(process.env.FORZA_FRESH_WINDOW_MIN ?? 45);
