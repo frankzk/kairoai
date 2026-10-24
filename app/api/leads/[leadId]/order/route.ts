@@ -74,6 +74,14 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
     if (!lead) return NextResponse.json({ error: "lead no encontrado" }, { status: 404 });
 
     if (body?.destino === "icomfly") {
+      // Apagado tambien aca, no solo el boton: una pantalla abierta antes del
+      // deploy todavia lo muestra, y el pedido quedaria oculto en iComfly.
+      if (process.env.NEXT_PUBLIC_CREAR_EN_ICOMFLY !== "1") {
+        return NextResponse.json(
+          { error: "Crear en iComfly está desactivado por ahora: usa «Crear pedido». Recarga la página (F5)." },
+          { status: 403 }
+        );
+      }
       return await crearEnIcomfly({ body, items, lead, leadId, storeId: store.id, storeCode: store.code, vendedoraId });
     }
 
