@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import CreateOrderPanel from "@/components/CreateOrderPanel";
+import { leerYo } from "@/lib/sesion-cliente";
 import ProductivityPanel from "@/components/ProductivityPanel";
 import CustomerPanel from "@/components/CustomerPanel";
 import LeadChatPanel from "@/components/LeadChatPanel";
@@ -1658,6 +1659,11 @@ function LeadDrawer({
   // Donde se crea el pedido abierto: Shopify o iComfly (Shopify se suspende el
   // 28/10/2026). null: el panel esta cerrado.
   const [pedidoEn, setPedidoEn] = useState<"shopify" | "icomfly" | null>(null);
+  // "Crear en iComfly" solo para admin mientras iComfly no los muestre: el
+  // conector los crea con numero "EXCEL-..." y iComfly los trata como pedidos
+  // importados, fuera de su lista de Pedidos, del dashboard y de su API
+  // (24/10/2026). Una asesora que lo usara dejaria pedidos que nadie despacha.
+  const puedeCrearEnIcomfly = useMemo(() => leerYo()?.permisos.includes("usuarios") ?? false, []);
   const [historyKey, setHistoryKey] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -1773,14 +1779,16 @@ function LeadDrawer({
             <ShoppingCart className="mr-2 h-4 w-4" />
             {pedidoEn === "shopify" ? "Ocultar pedido" : "Crear pedido"}
           </Button>
-          <Button
-            size="sm"
-            variant={pedidoEn === "icomfly" ? "outline" : "default"}
-            onClick={() => setPedidoEn((v) => (v === "icomfly" ? null : "icomfly"))}
-          >
-            <ShoppingCart className="mr-2 h-4 w-4" />
-            {pedidoEn === "icomfly" ? "Ocultar pedido" : "Crear en iComfly"}
-          </Button>
+          {puedeCrearEnIcomfly && (
+            <Button
+              size="sm"
+              variant={pedidoEn === "icomfly" ? "outline" : "default"}
+              onClick={() => setPedidoEn((v) => (v === "icomfly" ? null : "icomfly"))}
+            >
+              <ShoppingCart className="mr-2 h-4 w-4" />
+              {pedidoEn === "icomfly" ? "Ocultar pedido" : "Crear en iComfly"}
+            </Button>
+          )}
           {/* 24x24 reales y con anillo de foco: es la unica salida de un
               dialogo que tapa la pantalla. 20px sin anillo la dejaba fuera del
               minimo tactil y muda por teclado. */}
