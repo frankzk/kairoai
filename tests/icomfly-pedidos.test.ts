@@ -120,6 +120,26 @@ describe("nombre y estado", () => {
     expect(nombrePedidoIcomfly("#1792779044403321771", "716120")).toBe("IC-1792779044403321771");
     expect(nombrePedidoIcomfly("", "716120")).toBe("IC-716120");
   });
+  it("los de la página web llevan el número que muestra iComfly (#15), no el código de 18 dígitos", () => {
+    // Honduras, 24/10/2026: el #15 de la web es el order_number "#179285280335629566".
+    expect(nombrePedidoIcomfly("#179285280335629566", "726281", "15")).toBe("IC-W15");
+    expect(nombrePedidoIcomfly("#179285280335629566", "726281", 15)).toBe("IC-W15");
+    const [p] = pedidosDeIcomfly([crudo({ order_number: "#179285280335629566", store_web_seq: 15 })], sinShopify, { currency: "HNL" });
+    expect(p.name).toBe("IC-W15");
+  });
+  it("el número de la web no choca con los números propios de iComfly", () => {
+    // Los pedidos de iComfly tienen numeros de 3.007 a 99.987: la web llega ahi.
+    const p = pedidosDeIcomfly(
+      [crudo({ id: "1", order_number: "3007" }), crudo({ id: "2", order_number: "#1792", store_web_seq: "3007" })],
+      sinShopify,
+      { currency: "CRC" }
+    );
+    expect(p.map((o) => o.name)).toEqual(["IC-3007", "IC-W3007"]);
+  });
+  it("sin número de la web (un carrito convertido, por ejemplo) sigue con el de iComfly", () => {
+    expect(nombrePedidoIcomfly("#1792858842838773760", "727728", null)).toBe("IC-1792858842838773760");
+    expect(nombrePedidoIcomfly("56703", "1", "")).toBe("IC-56703");
+  });
   it("un número a secas cruzaría con los códigos de Boxful; IC- no", () => {
     const [p] = pedidosDeIcomfly([crudo()], sinShopify, { currency: "CRC" });
     expect(getShopifyOrderMatchKeys(p)).toEqual(["ic-56703"]);

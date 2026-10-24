@@ -400,16 +400,9 @@ async function discoverActionIds(signal: AbortSignal): Promise<string[]> {
     cache: "no-store",
   });
   const html = await pageRes.text();
-  const chunks = Array.from(
-    new Set(
-      Array.from(html.matchAll(/\/_next\/static\/chunks\/[A-Za-z0-9._/-]+?\.js(?:\?[^"']*)?/g)).map(
-        (m) => m[0]
-      )
-    )
-  ).sort((a, b) => actionChunkScore(b) - actionChunkScore(a));
 
   const ids = new Set<string>();
-  for (const path of chunks.slice(0, 8)) {
+  for (const path of chunksAEscanear(html)) {
     try {
       const url = path.startsWith("http") ? path : `${MOOVIN_BASE}${path}`;
       const res = await fetch(url, { signal, headers: { "user-agent": MOOVIN_UA }, cache: "no-store" });
@@ -421,6 +414,25 @@ async function discoverActionIds(signal: AbortSignal): Promise<string[]> {
     }
   }
   return Array.from(ids);
+}
+
+// Los chunks de la pagina en el orden en que se escanean, TODOS (con un tope).
+// Antes eran solo los 8 primeros: el 24/10/2026 Moovin cambio de build, los
+// chunks pasaron a nombres sin "app/page-" ni numero ("1touaxc3w5ohl.js"), el
+// de la accion quedo en el puesto 12 de 15 y el descubrimiento no lo veia: 9
+// horas sin rastreo de Moovin. Bajarlos todos cuesta ~1 s y se cachea.
+const MAX_CHUNKS_DESCUBRIMIENTO = 40;
+
+export function chunksAEscanear(html: string): string[] {
+  return Array.from(
+    new Set(
+      Array.from(html.matchAll(/\/_next\/static\/chunks\/[A-Za-z0-9._/-]+?\.js(?:\?[^"']*)?/g)).map(
+        (m) => m[0]
+      )
+    )
+  )
+    .sort((a, b) => actionChunkScore(b) - actionChunkScore(a))
+    .slice(0, MAX_CHUNKS_DESCUBRIMIENTO);
 }
 
 // Heuristica de prioridad: el page chunk y los vendor numerados (p.ej. 684-*)

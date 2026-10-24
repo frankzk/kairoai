@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describeUnparsedMoovin,
+  chunksAEscanear,
   extractActionIds,
   moovinRouterStateTree,
   parseMoovinResponse,
@@ -115,5 +116,34 @@ describe("describeUnparsedMoovin", () => {
     expect(describeUnparsedMoovin(200, '0:{"a":1}')).toBe(
       "No se pudo interpretar la respuesta de Moovin"
     );
+  });
+});
+
+// El 24/10/2026 Moovin cambio de build (nombres de chunk sin "app/page-" ni
+// numero) y el chunk con la accion quedo en el puesto 12 de 15: el
+// descubrimiento miraba solo 8 y Kairo paso 9 horas sin rastreo de Moovin.
+describe("chunksAEscanear", () => {
+  const pagina = (chunks: string[]) =>
+    chunks.map((c) => `<script src="/_next/static/chunks/${c}" async=""></script>`).join("");
+  const DEL_24_10 = [
+    "02sn6ryfjufz-.js", "0s2cptn1mmf6r.js", "2yjzgs9_vk_v-.js", "3laf0p3zs8nt2.js", "2hoi73vy1wqpo.js",
+    "0a1b2c3d4e5f6.js", "1b2c3d4e5f6a7.js", "2c3d4e5f6a7b8.js", "3d4e5f6a7b8c9.js", "4e5f6a7b8c9d0.js",
+    "5f6a7b8c9d0e1.js", "1touaxc3w5ohl.js", "6a7b8c9d0e1f2.js", "7b8c9d0e1f2a3.js", "8c9d0e1f2a3b4.js",
+  ];
+
+  it("con el build del 24/10 incluye el chunk de la acción aunque esté en el puesto 12", () => {
+    const chunks = chunksAEscanear(pagina(DEL_24_10));
+    expect(chunks).toHaveLength(15);
+    expect(chunks).toContain("/_next/static/chunks/1touaxc3w5ohl.js");
+  });
+
+  it("el build viejo sigue primero: la página y los vendor numerados", () => {
+    const chunks = chunksAEscanear(pagina(["webpack-1.js", "main-app-2.js", "684-abc.js", "app/page-xyz.js"]));
+    expect(chunks.slice(0, 2)).toEqual(["/_next/static/chunks/app/page-xyz.js", "/_next/static/chunks/684-abc.js"]);
+  });
+
+  it("sin repetidos y con tope", () => {
+    const muchos = Array.from({ length: 60 }, (_, i) => `c${i}.js`);
+    expect(chunksAEscanear(pagina([...muchos, ...muchos]))).toHaveLength(40);
   });
 });
