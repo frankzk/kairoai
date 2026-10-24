@@ -62,6 +62,7 @@ async function crear(store: string, shipping: Record<string, string> = ENVIO) {
 }
 
 beforeEach(() => {
+  process.env.NEXT_PUBLIC_CREAR_EN_ICOMFLY = "1";
   llamadas.length = 0;
   ganados.length = 0;
   shopifyCreados = 0;
@@ -118,5 +119,15 @@ describe("Crear en iComfly", () => {
     expect((await res.json()).error).toMatch(/es de Mireva Costa Rica/);
     expect(llamadas).toEqual([]);
     expect(ganados).toEqual([]);
+  });
+
+  it("apagado (sin NEXT_PUBLIC_CREAR_EN_ICOMFLY=1) no crea nada aunque una pantalla vieja lo pida", async () => {
+    delete process.env.NEXT_PUBLIC_CREAR_EN_ICOMFLY;
+    const res = await crear("mireva-hn");
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/desactivado/);
+    expect(llamadas).toEqual([]);
+    expect(ganados).toEqual([]);
+    expect(shopifyCreados).toBe(0);
   });
 });
