@@ -5,9 +5,13 @@
 // solo el despacho. Si el crudo quedara emparejado con el id equivocado, un
 // cliente quedaria con los productos de otro. Y guardarlo nunca puede romper el
 // sync de despacho que ya funciona.
+//
+// Y si iComfly contesta con pedidos de OTRA tienda (Honduras recibio los de
+// Costa Rica desde julio porque la API responde con la tienda que el usuario
+// ve), no se guardan y el cron lo marca como error.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { filasDePayload } from "../lib/icomfly-payloads";
+import { deLaTienda, filasDePayload } from "../lib/icomfly-payloads";
 import type { NormalizedIcomflyOrder } from "../lib/dispatch";
 
 const pedido = (id: string): NormalizedIcomflyOrder => ({
@@ -59,25 +63,47 @@ vi.mock("@/lib/finance", () => ({
     if (fallaPayloads) throw new Error("tabla nueva caida");
   },
 }));
+let paginas = 0;
 vi.mock("@/lib/icomfly", () => ({
-  resolveIcomflyStoreContext: () => ({ store: { id: 1, code: "mireva-cr" }, externalStoreId: 71 }),
+  // Costa Rica es la tienda 71 de iComfly; Honduras, otra.
+  resolveIcomflyStoreContext: (opts: { store?: string }) =>
+    opts.store === "mireva-hn"
+      ? { store: { id: 2, code: "mireva-hn" }, externalStoreId: 99 }
+      : { store: { id: 1, code: "mireva-cr" }, externalStoreId: 71 },
   listAgents: async () => [],
-  listOrdersWithAttribution: async () => ({
-    orders: [pedido("A"), pedido("B")],
-    raw: [{ id: "A" }, { id: "B" }],
-    hasMore: false,
-  }),
+  // La API responde siempre con Costa Rica, como hace en produccion. Siempre
+  // dice que hay mas paginas.
+  listOrdersWithAttribution: async () => {
+    paginas += 1;
+    return {
+      orders: [pedido("A"), pedido("B")],
+      raw: [
+        { id: "A", store_id: 71, store_name: "Mireva Costa Rica" },
+        { id: "B", store_id: "71", store_name: "Mireva Costa Rica" },
+      ],
+      hasMore: paginas < 2,
+    };
+  },
 }));
 
 describe("el sync de iComfly", () => {
   beforeEach(() => {
     llamadas.length = 0;
     fallaPayloads = false;
+    paginas = 0;
   });
   it("guarda el despacho y después el pedido completo", async () => {
     const { runIcomflySync } = await import("../lib/icomfly-sync");
     const res = await runIcomflySync({ store: "mireva-cr" });
     expect(res.synced).toBe(2);
+    expect(res.otra_tienda).toBe(0);
+    expect(llamadas).toEqual(["despacho:2", "completo:2"]);
+  });
+  it("un pedido que sale en dos páginas se guarda una sola vez", async () => {
+    // Postgres rechaza el upsert entero si la misma llave viene dos veces.
+    const { runIcomflySync } = await import("../lib/icomfly-sync");
+    const res = await runIcomflySync({ store: "mireva-cr" });
+    expect(res.pages_fetched).toBe(2);
     expect(llamadas).toEqual(["despacho:2", "completo:2"]);
   });
   it("si guardar el pedido completo falla, el sync de despacho sigue igual", async () => {
@@ -85,5 +111,42 @@ describe("el sync de iComfly", () => {
     const { runIcomflySync } = await import("../lib/icomfly-sync");
     await expect(runIcomflySync({ store: "mireva-cr" })).resolves.toMatchObject({ synced: 2 });
     expect(llamadas).toEqual(["despacho:2", "completo:2"]);
+  });
+  it("los pedidos de otra tienda no se guardan, y no sigue paginando", async () => {
+    const { runIcomflySync } = await import("../lib/icomfly-sync");
+    const res = await runIcomflySync({ store: "mireva-hn" });
+    expect(res).toMatchObject({ synced: 0, otra_tienda: 2, pages_fetched: 1, tiendas_ajenas: ["71 (Mireva Costa Rica)"] });
+    expect(llamadas).toEqual(["despacho:0", "completo:0"]);
+  });
+});
+
+describe("filtrar por tienda", () => {
+  it("queda lo de la tienda pedida, venga el id como número o texto", () => {
+    const p = deLaTienda(71, [pedido("A"), pedido("B"), pedido("C")], [{ store_id: 71 }, { store_id: "71" }, { store_id: 72, store_name: "Mireva Honduras" }]);
+    expect(p.orders.map((o) => o.icomflyOrderId)).toEqual(["A", "B"]);
+    expect(p.raw).toEqual([{ store_id: 71 }, { store_id: "71" }]);
+    expect(p).toMatchObject({ ajenos: 1, tiendasAjenas: ["72 (Mireva Honduras)"] });
+  });
+  it("lo que no dice de qué tienda es se acepta", () => {
+    const p = deLaTienda(71, [pedido("A"), pedido("B")], [{ id: "A" }, { store_id: "" }]);
+    expect(p.orders).toHaveLength(2);
+    expect(p.ajenos).toBe(0);
+  });
+});
+
+describe("el cron marca el error", () => {
+  const limpio = { synced: 4, otra_tienda: 0, tiendas_ajenas: [] };
+  it("dice qué tienda recibió pedidos ajenos y de dónde", async () => {
+    const { errorDeTienda } = await import("../lib/icomfly-sync");
+    const error = errorDeTienda([
+      { store: "mireva-cr", result: limpio as never },
+      { store: "mireva-hn", result: { synced: 0, otra_tienda: 100, tiendas_ajenas: ["71 (Mireva Costa Rica)"] } as never },
+    ]);
+    expect(error).toContain("mireva-hn: iComfly devolvió 100 pedidos de la tienda 71 (Mireva Costa Rica)");
+    expect(error).not.toContain("mireva-cr");
+  });
+  it("si todo vino de su tienda, no hay error", async () => {
+    const { errorDeTienda } = await import("../lib/icomfly-sync");
+    expect(errorDeTienda([{ store: "mireva-cr", result: limpio as never }])).toBeNull();
   });
 });

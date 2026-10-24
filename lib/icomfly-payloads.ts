@@ -31,3 +31,40 @@ export function filasDePayload(
   });
   return Array.from(filas.values());
 }
+
+// iComfly puede responder con pedidos de OTRA tienda: si el usuario de la API
+// no ve la tienda pedida, contesta con la que si ve. Asi Honduras guardo los
+// pedidos de Costa Rica (tienda 71) desde julio. Cada pedido crudo trae su
+// `store_id`: se queda solo lo de la tienda pedida. Lo que no trae tienda se
+// acepta, no hay con que compararlo.
+export interface PaginaDeLaTienda {
+  orders: NormalizedIcomflyOrder[];
+  raw: unknown[];
+  ajenos: number;
+  /** "71 (Mireva Costa Rica)": de donde vino lo descartado, para el error. */
+  tiendasAjenas: string[];
+}
+
+export function deLaTienda(
+  externalStoreId: number,
+  orders: NormalizedIcomflyOrder[],
+  raw: unknown[]
+): PaginaDeLaTienda {
+  const pagina: PaginaDeLaTienda = { orders: [], raw: [], ajenos: 0, tiendasAjenas: [] };
+  const ajenas = new Set<string>();
+  orders.forEach((order, i) => {
+    const crudo = raw[i];
+    const datos = crudo && typeof crudo === "object" && !Array.isArray(crudo) ? (crudo as Record<string, unknown>) : {};
+    const tienda = datos.store_id == null || datos.store_id === "" ? NaN : Number(datos.store_id);
+    if (Number.isFinite(tienda) && tienda !== externalStoreId) {
+      pagina.ajenos += 1;
+      const nombre = typeof datos.store_name === "string" && datos.store_name ? ` (${datos.store_name})` : "";
+      ajenas.add(`${tienda}${nombre}`);
+      return;
+    }
+    pagina.orders.push(order);
+    pagina.raw.push(crudo);
+  });
+  pagina.tiendasAjenas = Array.from(ajenas);
+  return pagina;
+}

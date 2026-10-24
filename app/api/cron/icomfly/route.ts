@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { listConfiguredIcomflyStoreContexts } from "@/lib/icomfly";
-import { runIcomflySync } from "@/lib/icomfly-sync";
+import { errorDeTienda, runIcomflySync } from "@/lib/icomfly-sync";
 import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
@@ -24,7 +24,12 @@ async function handle() {
         })
       )
     );
-    return NextResponse.json({ stores_synced: results.length, results });
+    const error = errorDeTienda(results.map((result, i) => ({ store: targets[i].store.code, result })));
+    return NextResponse.json({
+      stores_synced: results.length,
+      results,
+      ...(error ? { ok: false, error } : {}),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error en cron iComfly";
     return NextResponse.json({ error: message }, { status: 500 });

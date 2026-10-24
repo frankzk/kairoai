@@ -20,7 +20,7 @@ import {
   type DispatchState,
 } from "@/lib/dispatch";
 import type { FinanceStoreCode } from "@/lib/store-config";
-import { filasDePayload, type IcomflyPayloadRow } from "@/lib/icomfly-payloads";
+import { deLaTienda, filasDePayload, type IcomflyPayloadRow } from "@/lib/icomfly-payloads";
 
 const DEFAULT_MAX_PAGES = 5;
 const MAX_MAX_PAGES = 20;
@@ -33,6 +33,9 @@ export interface SyncResult {
   has_more: boolean;
   agents_synced: number;
   summary: DispatchSummary;
+  /** Pedidos descartados porque iComfly los mando de otra tienda. */
+  otra_tienda: number;
+  tiendas_ajenas: string[];
 }
 
 export interface DispatchSummary {
@@ -99,21 +102,36 @@ export async function runIcomflySync(opts: {
   }
 
   // ── Pedidos con atribucion ─────────────────────────────────────────────────
-  const allOrders: NormalizedIcomflyOrder[] = [];
-  // El pedido completo de cada pagina, para icomfly_order_payloads.
-  const payloads: IcomflyPayloadRow[] = [];
+  // Un mismo pedido puede salir en dos paginas (la lista se corre si entra uno
+  // nuevo mientras se pagina) y Postgres rechaza un upsert que toca la misma
+  // llave dos veces: queda la ultima version vista, con su pedido completo.
+  const vistos = new Map<string, { order: NormalizedIcomflyOrder; raw: unknown }>();
   let pagesFetched = 0;
   let hasMore = false;
   let page = startPage;
+  let otraTienda = 0;
+  const tiendasAjenas = new Set<string>();
   for (let i = 0; i < maxPages; i++) {
     const res = await listOrdersWithAttribution({ storeId, externalStoreId, page, limit: PAGE_LIMIT });
-    allOrders.push(...res.orders);
-    payloads.push(...filasDePayload(storeId, res.orders, res.raw));
+    const propia = deLaTienda(externalStoreId, res.orders, res.raw);
+    otraTienda += propia.ajenos;
+    propia.tiendasAjenas.forEach((t) => tiendasAjenas.add(t));
+    propia.orders.forEach((order, j) => {
+      if (order.icomflyOrderId) vistos.set(order.icomflyOrderId, { order, raw: propia.raw[j] });
+    });
     pagesFetched += 1;
     hasMore = res.hasMore;
     if (!res.hasMore) break;
+    // Una pagina entera de otra tienda: las siguientes tambien lo seran.
+    if (propia.ajenos > 0 && !propia.orders.length) break;
     page += 1;
   }
+  const allOrders = Array.from(vistos.values(), (v) => v.order);
+  const payloads: IcomflyPayloadRow[] = filasDePayload(
+    storeId,
+    allOrders,
+    Array.from(vistos.values(), (v) => v.raw)
+  );
 
   // Enriquecer la planilla con quien aparece atribuido en los pedidos.
   const actors = allOrders.flatMap((o) =>
@@ -123,9 +141,7 @@ export async function runIcomflySync(opts: {
   );
   await enrichStaff(actors, staff, staffLikes);
 
-  const rows = allOrders
-    .filter((o) => o.icomflyOrderId)
-    .map((o) => buildIcomflyOrderRow(o, { staff: staffLikes, boxfulDispatched, now }));
+  const rows = allOrders.map((o) => buildIcomflyOrderRow(o, { staff: staffLikes, boxfulDispatched, now }));
 
   await upsertIcomflyOrders(rows as Array<Omit<IcomflyOrderRecord, "synced_at">>);
 
@@ -142,7 +158,23 @@ export async function runIcomflySync(opts: {
     has_more: hasMore,
     agents_synced: agentsSynced,
     summary: summarizeRows(rows),
+    otra_tienda: otraTienda,
+    tiendas_ajenas: Array.from(tiendasAjenas),
   };
+}
+
+// Pedidos de otra tienda no son un detalle del sync: es configuracion (el
+// numero de tienda de iComfly o el acceso de su usuario) y tiene que verse
+// en el monitor de crons aunque la corrida responda 200.
+export function errorDeTienda(resultados: Array<{ store: string; result: SyncResult }>): string | null {
+  const problemas = resultados
+    .filter(({ result }) => result.otra_tienda > 0)
+    .map(
+      ({ store, result }) =>
+        `${store}: iComfly devolvió ${result.otra_tienda} pedidos de la tienda ${result.tiendas_ajenas.join(", ")} y se descartaron`
+    );
+  if (!problemas.length) return null;
+  return `${problemas.join("; ")}. Revisa el número de tienda de iComfly configurado y que su usuario tenga acceso a esa tienda.`;
 }
 
 // Completa user_id/correo faltantes en personas de la planilla que hacen match
