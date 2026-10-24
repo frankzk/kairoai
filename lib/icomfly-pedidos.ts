@@ -19,7 +19,11 @@
 // Nombre: el numero de Shopify si iComfly lo trae (y Shopify todavia no llego
 // a la base: la bitacora de la cola sigue en el mismo pedido cuando llega). Si
 // no, "IC-" + el numero de iComfly: un numero a secas cruzaria por casualidad
-// con los codigos de Boxful (ver getShopifyDirectOrderMatchKeys).
+// con los codigos de Boxful (ver getShopifyDirectOrderMatchKeys). Los de la
+// pagina web de iComfly llevan el numero que iComfly muestra (#15 -> "IC-W15"):
+// su order_number es un codigo de 18 digitos que nadie ve. La "W" los separa
+// de los numeros propios de iComfly (de 3.007 a 99.987, medido el 24/10/2026):
+// "IC-15" chocaria con el pedido 15 en cuanto la web llegue a esos numeros.
 //
 // Puro: se prueba en tests/icomfly-pedidos.test.ts.
 
@@ -48,6 +52,7 @@ export interface PedidoIcomflyCrudo {
   product_price?: unknown;
   carrier_name?: unknown;
   tracking_number?: unknown;
+  store_web_seq?: unknown;
 }
 
 /** Las columnas JSON de icomfly_order_payloads que llenan PedidoIcomflyCrudo (el objeto entero pesa ~5 KB). */
@@ -70,6 +75,7 @@ export const COLUMNAS_PEDIDO_ICOMFLY = [
   "product_price:payload->>product_price",
   "carrier_name:payload->>carrier_name",
   "tracking_number:payload->>tracking_number",
+  "store_web_seq:payload->>store_web_seq",
 ].join(",");
 
 function texto(value: unknown): string {
@@ -90,7 +96,9 @@ export function nombreCliente(...candidatos: unknown[]): string {
   return candidatos.map(texto).find((n) => n && !NOMBRES_GENERICOS.test(n)) ?? "";
 }
 
-export function nombrePedidoIcomfly(orderNumber: unknown, id: unknown): string {
+export function nombrePedidoIcomfly(orderNumber: unknown, id: unknown, webSeq?: unknown): string {
+  const web = texto(webSeq);
+  if (/^\d+$/.test(web)) return `IC-W${web}`;
   const propio = texto(orderNumber).replace(/^#/, "");
   return `IC-${propio || texto(id)}`;
 }
@@ -205,7 +213,7 @@ export function pedidosDeIcomfly(
     out.push({
       id: `icomfly-${id}`,
       order_number: 0,
-      name: shopify || nombrePedidoIcomfly(p.order_number, id),
+      name: shopify || nombrePedidoIcomfly(p.order_number, id, p.store_web_seq),
       customer_name: nombreCliente(p.shipping_name, cliente.fullName) || "Sin nombre",
       last_name: "",
       phone: texto(cliente.phone) || texto(p.shipping_phone) || texto(cliente.whatsapp) || null,

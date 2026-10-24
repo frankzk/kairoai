@@ -368,13 +368,11 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   // Van con los de Shopify para que filas, liquidaciones, productos y notas
   // los traten igual (lib/icomfly-pedidos.ts explica cuando NO se agregan).
   // El SKU sale de los pedidos que estan en los dos: con el, el costo del producto.
-  const shopifyOrders = [
-    ...deShopify,
-    ...pedidosDeIcomfly(crudosIcomfly, deShopify, {
-      currency: store.currency,
-      skus: skusPorProducto(crudosIcomfly, deShopify),
-    }),
-  ];
+  const soloIcomfly = pedidosDeIcomfly(crudosIcomfly, deShopify, {
+    currency: store.currency,
+    skus: skusPorProducto(crudosIcomfly, deShopify),
+  });
+  const shopifyOrders = [...deShopify, ...soloIcomfly];
   const moovinByPackage = new Map(moovin.map((row) => [row.id_package, row]));
   const forzaByGuide = buildForzaTrackingMap(forza);
   const wynByGuide = buildWynTrackingMap(wyn);
@@ -399,11 +397,17 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   // aqui para que orders/ lo funda en el "Estado de seguimiento" y que conteos/
   // filtro/paginacion sean consistentes. iComfly va keyed por #MCRC
   // (shopify_display_number); fuera de esa tienda el mapa no matchea -> null.
-  // Los pedidos que solo estan en iComfly se llaman "IC-<numero>": tambien
-  // por ese nombre.
+  // Los pedidos que solo estan en iComfly van tambien por el nombre que les
+  // dio pedidosDeIcomfly ("IC-W15" los de la web, "IC-<numero>" los demas).
+  const nombreSoloIcomfly = new Map(soloIcomfly.map((o) => [o.icomfly?.id ?? "", o.name]));
   const dispatchByKey = new Map<string, IcomflyOrderRecord>();
   for (const o of icomflyOrders) {
-    for (const nombre of [o.shopify_display_number || "", nombrePedidoIcomfly(o.order_number, o.icomfly_order_id)]) {
+    const nombres = [
+      o.shopify_display_number || "",
+      nombreSoloIcomfly.get(String(o.icomfly_order_id)) ?? "",
+      nombrePedidoIcomfly(o.order_number, o.icomfly_order_id),
+    ];
+    for (const nombre of nombres) {
       const key = normalizeMatchKey(nombre);
       if (key && !dispatchByKey.has(key)) dispatchByKey.set(key, o);
     }

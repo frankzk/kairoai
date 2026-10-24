@@ -615,6 +615,7 @@ export default function FinancePage() {
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const refreshRunRef = useRef(0);
   const selectedStore = useMemo(() => getFinanceStore(selectedStoreCode), [selectedStoreCode]);
+  tiendaDeLosMontos = selectedStore;
   // Alto de la barra superior fija. La tabla de pedidos pega sus titulos justo
   // debajo cuando se baja la pagina (ya no tiene scroll propio).
   const headerRef = useRef<HTMLElement>(null);
@@ -6867,7 +6868,7 @@ function formatOriginalCurrencyAmount(currencyCode: string, amount: number): str
   if (currencyCode === "PEN") {
     return `S/ ${amount.toLocaleString("es-PE", { maximumFractionDigits: 2 })}`;
   }
-  if (currencyCode === "CRC") return currency(amount);
+  if (currencyCode === "CRC") return currency(amount, FINANCE_STORES[0]);
   return `${currencyCode} ${amount.toLocaleString("es-CR", { maximumFractionDigits: 2 })}`;
 }
 
@@ -9683,7 +9684,12 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   return <Badge variant="muted">{label || "Pendiente"}</Badge>;
 }
 
-function currency(value: number, store = FINANCE_STORES[0]): string {
+// La tienda que se esta viendo: los montos salen en su moneda (L en Honduras,
+// colones en Costa Rica). FinancePage la fija al renderizar, antes que sus
+// hijos; asi las ~80 llamadas a currency() no tienen que recibir la tienda.
+let tiendaDeLosMontos: FinanceStorePublic = FINANCE_STORES[0];
+
+function currency(value: number, store = tiendaDeLosMontos): string {
   return new Intl.NumberFormat(store.locale, {
     style: "currency",
     currency: store.currency,
