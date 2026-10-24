@@ -17,7 +17,6 @@ import {
   X,
 } from "lucide-react";
 import CreateOrderPanel from "@/components/CreateOrderPanel";
-import { leerYo } from "@/lib/sesion-cliente";
 import ProductivityPanel from "@/components/ProductivityPanel";
 import CustomerPanel from "@/components/CustomerPanel";
 import LeadChatPanel from "@/components/LeadChatPanel";
@@ -1659,11 +1658,12 @@ function LeadDrawer({
   // Donde se crea el pedido abierto: Shopify o iComfly (Shopify se suspende el
   // 28/10/2026). null: el panel esta cerrado.
   const [pedidoEn, setPedidoEn] = useState<"shopify" | "icomfly" | null>(null);
-  // "Crear en iComfly" solo para admin mientras iComfly no los muestre: el
-  // conector los crea con numero "EXCEL-..." y iComfly los trata como pedidos
-  // importados, fuera de su lista de Pedidos, del dashboard y de su API
-  // (24/10/2026). Una asesora que lo usara dejaria pedidos que nadie despacha.
-  const puedeCrearEnIcomfly = useMemo(() => leerYo()?.permisos.includes("usuarios") ?? false, []);
+  // "Crear en iComfly" APAGADO hasta que iComfly muestre esos pedidos: el
+  // conector los crea con numero "EXCEL-..." y quedan fuera de la lista de
+  // Pedidos (ni buscando el numero aparecen), del dashboard y de su API
+  // (24/10/2026, pedido 729804 de Costa Rica). Quien lo usara dejaria pedidos
+  // que nadie despacha. Se prende con NEXT_PUBLIC_CREAR_EN_ICOMFLY=1 (y deploy).
+  const puedeCrearEnIcomfly = process.env.NEXT_PUBLIC_CREAR_EN_ICOMFLY === "1";
   const [historyKey, setHistoryKey] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
 
