@@ -61,14 +61,22 @@ export function productosDelRespaldo(
 /** El catalogo de una tienda desde el respaldo, con las fotos de la copia propia. */
 export async function cargarCatalogoRespaldo(storeId: number): Promise<ShopifyProductOption[]> {
   const db = getDB();
-  const { data, error } = await db
-    .from("shopify_archivo")
-    .select("id:payload->id,title:payload->>title,variants:payload->variants,image:payload->image")
-    .eq("store_id", storeId)
-    .eq("recurso", "product")
-    .limit(5000);
-  if (error) throw new Error(`cargarCatalogoRespaldo: ${error.message}`);
-  const productos = (data ?? []) as unknown as ProductoRespaldo[];
+  // PostgREST corta en 1.000 filas: se pagina (hoy son 130 y 215 productos).
+  const productos: ProductoRespaldo[] = [];
+  const pagina = 1000;
+  for (let desde = 0; ; desde += pagina) {
+    const { data, error } = await db
+      .from("shopify_archivo")
+      .select("id:payload->id,title:payload->>title,variants:payload->variants,image:payload->image")
+      .eq("store_id", storeId)
+      .eq("recurso", "product")
+      .order("shopify_id")
+      .range(desde, desde + pagina - 1);
+    if (error) throw new Error(`cargarCatalogoRespaldo: ${error.message}`);
+    const filas = (data ?? []) as unknown as ProductoRespaldo[];
+    productos.push(...filas);
+    if (filas.length < pagina) break;
+  }
 
   // Fotos: best-effort. Si no se pueden firmar, queda la URL original.
   const fotoPorImagen = new Map<string, string>();
