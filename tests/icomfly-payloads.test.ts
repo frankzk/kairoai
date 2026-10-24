@@ -65,6 +65,7 @@ vi.mock("@/lib/finance", () => ({
 }));
 let paginas = 0;
 vi.mock("@/lib/icomfly", () => ({
+  credencialIcomfly: () => ({ origen: "ICOMFLY_TOKEN" }),
   // Costa Rica es la tienda 71 de iComfly; Honduras, otra.
   resolveIcomflyStoreContext: (opts: { store?: string }) =>
     opts.store === "mireva-hn"
@@ -121,7 +122,13 @@ describe("el sync de iComfly", () => {
   it("los pedidos de otra tienda no se guardan, y no sigue paginando", async () => {
     const { runIcomflySync } = await import("../lib/icomfly-sync");
     const res = await runIcomflySync({ store: "mireva-hn" });
-    expect(res).toMatchObject({ synced: 0, otra_tienda: 2, pages_fetched: 1, tiendas_ajenas: ["71 (Mireva Costa Rica)"] });
+    expect(res).toMatchObject({
+      synced: 0,
+      otra_tienda: 2,
+      pages_fetched: 1,
+      tiendas_ajenas: ["71 (Mireva Costa Rica)"],
+      credencial: "ICOMFLY_TOKEN",
+    });
     expect(llamadas).toEqual(["despacho:0", "completo:0"]);
   });
 });
@@ -146,9 +153,9 @@ describe("el cron marca el error", () => {
     const { errorDeTienda } = await import("../lib/icomfly-sync");
     const error = errorDeTienda([
       { store: "mireva-cr", result: limpio as never },
-      { store: "mireva-hn", result: { synced: 0, otra_tienda: 100, tiendas_ajenas: ["71 (Mireva Costa Rica)"] } as never },
+      { store: "mireva-hn", result: { synced: 0, otra_tienda: 100, tiendas_ajenas: ["71 (Mireva Costa Rica)"], credencial: "ICOMFLY_TOKEN" } as never },
     ]);
-    expect(error).toContain("mireva-hn: iComfly devolvió 100 pedidos de la tienda 71 (Mireva Costa Rica)");
+    expect(error).toContain("mireva-hn: iComfly devolvió 100 pedidos de la tienda 71 (Mireva Costa Rica) y se descartaron (clave: ICOMFLY_TOKEN)");
     expect(error).not.toContain("mireva-cr");
   });
   it("si todo vino de su tienda, no hay error", async () => {

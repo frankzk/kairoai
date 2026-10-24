@@ -28,6 +28,7 @@ function tramo(over: Partial<SyncResult>): SyncResult {
     summary: { total: 0, pendiente: 0, despacho_solicitado: 0, despachado: 0, standby: 0 },
     otra_tienda: 0,
     tiendas_ajenas: [],
+    credencial: "ICOMFLY_TOKEN",
     ...over,
   };
 }

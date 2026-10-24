@@ -10,7 +10,7 @@ import {
   getDispatchedBoxfulKeys,
   type IcomflyOrderRecord,
 } from "@/lib/finance";
-import { listOrdersWithAttribution, listAgents, resolveIcomflyStoreContext } from "@/lib/icomfly";
+import { credencialIcomfly, listOrdersWithAttribution, listAgents, resolveIcomflyStoreContext } from "@/lib/icomfly";
 import {
   buildIcomflyOrderRow,
   matchStaff,
@@ -36,6 +36,8 @@ export interface SyncResult {
   /** Pedidos descartados porque iComfly los mando de otra tienda. */
   otra_tienda: number;
   tiendas_ajenas: string[];
+  /** Variable de entorno de la clave usada (nunca el valor). */
+  credencial: string;
 }
 
 export interface DispatchSummary {
@@ -163,6 +165,7 @@ export async function runIcomflySync(opts: {
     summary: summarizeRows(rows),
     otra_tienda: otraTienda,
     tiendas_ajenas: Array.from(tiendasAjenas),
+    credencial: credencialIcomfly(store.code).origen,
   };
 }
 
@@ -174,10 +177,10 @@ export function errorDeTienda(resultados: Array<{ store: string; result: SyncRes
     .filter(({ result }) => result.otra_tienda > 0)
     .map(
       ({ store, result }) =>
-        `${store}: iComfly devolvió ${result.otra_tienda} pedidos de la tienda ${result.tiendas_ajenas.join(", ")} y se descartaron`
+        `${store}: iComfly devolvió ${result.otra_tienda} pedidos de la tienda ${result.tiendas_ajenas.join(", ")} y se descartaron (clave: ${result.credencial})`
     );
   if (!problemas.length) return null;
-  return `${problemas.join("; ")}. Revisa el número de tienda de iComfly configurado y que su usuario tenga acceso a esa tienda.`;
+  return `${problemas.join("; ")}. Revisa el número de tienda de iComfly configurado y que la clave sea la de esa tienda (ICOMFLY_<PAÍS>_TOKEN).`;
 }
 
 // Completa user_id/correo faltantes en personas de la planilla que hacen match

@@ -3,7 +3,7 @@ import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
 import { isC807Guide, normalizeC807Guide } from "./c807";
 import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "./cargo-expreso";
 import type { ShipmentTracking } from "./courier-tracking";
-import { COLUMNAS_PEDIDO_ICOMFLY, CORTE_PEDIDOS_ICOMFLY, type PedidoIcomflyCrudo } from "./icomfly-pedidos";
+import { COLUMNAS_PEDIDO_ICOMFLY, CORTE_PEDIDOS_ICOMFLY, nombreCliente, type PedidoIcomflyCrudo } from "./icomfly-pedidos";
 import { normalizeForzaGuide } from "./forza";
 import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
 import { isDeliveryRecheckDue, planMoovinSync } from "./moovin-sync-plan";
@@ -1487,7 +1487,7 @@ export async function listIcomflyGuides(storeId: number, desde: string): Promise
       for (const row of page) {
         const guide = (row.guide ?? "").trim();
         if (!guide || /cancelad|testeo/i.test(row.status ?? "")) continue;
-        out.push({ guide, createdAt: row.created_at ?? "", fullName: (row.full_name || row.shipping_name || "").trim() });
+        out.push({ guide, createdAt: row.created_at ?? "", fullName: nombreCliente(row.shipping_name, row.full_name) });
       }
       if (page.length < pageSize) break;
     }

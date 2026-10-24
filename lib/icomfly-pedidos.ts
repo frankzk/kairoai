@@ -81,6 +81,15 @@ function numero(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+// Los pedidos de la pagina web de iComfly traen un cliente generico ("Cliente
+// Shopify"); el nombre real es el del envio, el que se escribio en ese pedido.
+const NOMBRES_GENERICOS = /^(cliente shopify|sin nombre|cliente)$/i;
+
+/** El nombre del envio primero (el de ESTE pedido); el del cliente si no hay. Sin genericos. */
+export function nombreCliente(...candidatos: unknown[]): string {
+  return candidatos.map(texto).find((n) => n && !NOMBRES_GENERICOS.test(n)) ?? "";
+}
+
 export function nombrePedidoIcomfly(orderNumber: unknown, id: unknown): string {
   const propio = texto(orderNumber).replace(/^#/, "");
   return `IC-${propio || texto(id)}`;
@@ -152,7 +161,7 @@ export function pedidosDeIcomfly(
       id: `icomfly-${id}`,
       order_number: 0,
       name: shopify || nombrePedidoIcomfly(p.order_number, id),
-      customer_name: texto(cliente.fullName) || texto(p.shipping_name) || "Sin nombre",
+      customer_name: nombreCliente(p.shipping_name, cliente.fullName) || "Sin nombre",
       last_name: "",
       phone: texto(cliente.phone) || texto(p.shipping_phone) || texto(cliente.whatsapp) || null,
       products: items.map((item) => `${item.quantity}x ${item.title}`).join(", "),

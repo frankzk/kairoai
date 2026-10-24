@@ -53,11 +53,12 @@ beforeEach(() => {
 });
 
 describe("los couriers conocen las guías que solo están en iComfly", () => {
-  it("Moovin: la guía entra con el nombre del cliente (de ahí saca los apellidos)", async () => {
+  it("Moovin: la guía entra con el nombre del envío (de ahí saca los apellidos)", async () => {
     tablas.icomfly_order_payloads = [guia("2712707"), guia("2712708", { status: "Cancelado" })];
     const { listMoovinSyncCandidates } = await import("../lib/finance");
     const candidatos = await listMoovinSyncCandidates(50, 30);
-    expect(candidatos).toEqual([{ idPackage: "2712707", lastName: "", fullName: "Ana Mora Solís" }]);
+    // El nombre del envio: el de la etiqueta que lleva Moovin.
+    expect(candidatos).toEqual([{ idPackage: "2712707", lastName: "", fullName: "Ana Mora" }]);
   });
 
   it("Moovin: si Shopify ya tiene la guía, va una sola vez con los datos de Shopify", async () => {

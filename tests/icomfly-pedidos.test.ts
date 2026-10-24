@@ -71,6 +71,16 @@ describe("qué pedidos de iComfly entran", () => {
     ]);
   });
 
+  it("el pedido de la página web (cliente «Cliente Shopify») sale con el nombre del envío", () => {
+    // El pedido #1 de Honduras del 24/10/2026, el primero hecho en la web de iComfly.
+    const [p] = pedidosDeIcomfly(
+      [crudo({ customer: { fullName: "Cliente Shopify", phone: "+51965391481" }, shipping_name: "Frankz Kastner", shipping_phone: "51965391481" })],
+      sinShopify,
+      { currency: "HNL" }
+    );
+    expect(p).toMatchObject({ customer_name: "Frankz Kastner", phone: "+51965391481", currency: "HNL" });
+  });
+
   it("si Shopify ya lo tiene por número, no entra", () => {
     const p = pedidosDeIcomfly([crudo({ shopify_display_number: "#MCRC26861" })], [{ name: "#MCRC26861", order_number: 26861 }], {
       currency: "CRC",
