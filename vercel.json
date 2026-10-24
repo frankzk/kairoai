@@ -117,7 +117,7 @@
       "maxDuration": 300
     },
     "app/api/cron/icomfly/route.ts": {
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "app/api/cron/icomfly-historial/route.ts": {
       "maxDuration": 300
@@ -138,7 +138,7 @@
       "maxDuration": 60
     },
     "app/api/icomfly/sync/route.ts": {
-      "maxDuration": 60
+      "maxDuration": 120
     },
     "app/api/finance/settlements/route.ts": {
       "maxDuration": 60
