@@ -13,6 +13,7 @@ import {
   estadoFinalIcomfly,
   nombrePedidoIcomfly,
   pedidosDeIcomfly,
+  skusPorProducto,
   type PedidoIcomflyCrudo,
 } from "../lib/icomfly-pedidos";
 import { buildVisibleOrderRows } from "../lib/finance-orders";
@@ -184,5 +185,40 @@ describe("en las filas de Pedidos", () => {
     const [fila] = buildVisibleOrderRows([], [shopify], CR, new Map(), new Map());
     expect(fila.origen).toBeUndefined();
     expect(fila.internal_status).toBe("pending");
+  });
+});
+
+describe("el SKU de Shopify para el costo del producto", () => {
+  // Costos cargados por SKU; iComfly no lo trae. Se aprende de los pedidos que
+  // estan en los dos.
+  const shopify = (name: string, sku: string, title = "x") => ({ name, line_items: [{ sku, title, quantity: 1, price: 0 }] });
+  const par = (shopifyNumber: string, producto: string) =>
+    crudo({ id: shopifyNumber, shopify_display_number: shopifyNumber, items: [{ product_name: producto, quantity: 1, product_price: 1 }] });
+
+  it("aprende el SKU más visto por producto y lo usa en los pedidos solo de iComfly", () => {
+    const skus = skusPorProducto(
+      [par("#MCRC1", "Autogrip"), par("#MCRC2", "Autogrip"), par("#MCRC3", "Autogrip"), par("#MCRC4", "Antena TV")],
+      [shopify("#MCRC1", "AUTO-01"), shopify("#MCRC2", "AUTO-01"), shopify("#MCRC3", "AUTO-99"), shopify("#MCRC4", "ANT-1")]
+    );
+    expect(Object.fromEntries(skus)).toEqual({ autogrip: "auto-01", "antena tv": "ant-1" });
+    const [p] = pedidosDeIcomfly([crudo()], sinShopify, { currency: "CRC", skus });
+    expect(p.line_items.map((i) => i.sku)).toEqual(["auto-01", "ant-1"]);
+  });
+
+  it("solo aprende de pedidos con un producto de cada lado; sin par, sin SKU (el costo va por nombre)", () => {
+    const dos = crudo({ id: "9", shopify_display_number: "#MCRC9" });
+    const skus = skusPorProducto([dos], [{ name: "#MCRC9", line_items: [{ sku: "X-1", title: "x", quantity: 1, price: 0 }] }]);
+    expect(skus.size).toBe(0);
+    const [p] = pedidosDeIcomfly([crudo()], sinShopify, { currency: "CRC", skus });
+    expect(p.line_items.map((i) => i.sku)).toEqual(["", ""]);
+  });
+
+  it("ignora tildes y mayúsculas al cruzar el nombre", () => {
+    const skus = skusPorProducto([par("#MCRC1", "Cámara  WiFi")], [shopify("#MCRC1", "CAM-1")]);
+    const [p] = pedidosDeIcomfly([crudo({ items: [{ product_name: "camara wifi", quantity: 1, product_price: 1 }] })], sinShopify, {
+      currency: "CRC",
+      skus,
+    });
+    expect(p.line_items[0].sku).toBe("cam-1");
   });
 });

@@ -21,7 +21,7 @@ import {
   listShipmentTracking,
 } from "@/lib/finance";
 import { resolveDispatchState } from "@/lib/dispatch";
-import { CORTE_PEDIDOS_ICOMFLY, nombrePedidoIcomfly, pedidosDeIcomfly } from "@/lib/icomfly-pedidos";
+import { CORTE_PEDIDOS_ICOMFLY, nombrePedidoIcomfly, pedidosDeIcomfly, skusPorProducto } from "@/lib/icomfly-pedidos";
 import { normalizeMatchKey } from "@/lib/order-matching";
 import type { IcomflyOrderRecord } from "@/lib/finance-types";
 import {
@@ -367,7 +367,14 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   );
   // Van con los de Shopify para que filas, liquidaciones, productos y notas
   // los traten igual (lib/icomfly-pedidos.ts explica cuando NO se agregan).
-  const shopifyOrders = [...deShopify, ...pedidosDeIcomfly(crudosIcomfly, deShopify, { currency: store.currency })];
+  // El SKU sale de los pedidos que estan en los dos: con el, el costo del producto.
+  const shopifyOrders = [
+    ...deShopify,
+    ...pedidosDeIcomfly(crudosIcomfly, deShopify, {
+      currency: store.currency,
+      skus: skusPorProducto(crudosIcomfly, deShopify),
+    }),
+  ];
   const moovinByPackage = new Map(moovin.map((row) => [row.id_package, row]));
   const forzaByGuide = buildForzaTrackingMap(forza);
   const wynByGuide = buildWynTrackingMap(wyn);
