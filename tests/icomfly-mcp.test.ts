@@ -7,7 +7,14 @@
 // no como "pedido creado".
 
 import { describe, expect, it } from "vitest";
-import { credencialMcp, llamarHerramientaIcomfly, mensajeJsonRpc, resultadoHerramienta } from "../lib/icomfly-mcp";
+import {
+  credencialMcp,
+  errorDeTiendaMcp,
+  llamarHerramientaIcomfly,
+  mensajeJsonRpc,
+  resultadoHerramienta,
+  tiendaDeLaConexion,
+} from "../lib/icomfly-mcp";
 
 const ENV = {
   ICOMFLY_CR_MCP_URL: "https://api.icomfly.com/mcp/c_cr",
@@ -88,5 +95,37 @@ describe("la respuesta", () => {
     expect(() => resultadoHerramienta({ jsonrpc: "2.0", id: 1, error: { message: "Tool not found" } })).toThrow(
       "iComfly: Tool not found"
     );
+  });
+});
+
+describe("la clave es de la tienda correcta", () => {
+  // Lo que contesta iComfly al conectar con la clave de Honduras (24/10/2026).
+  const initialize = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    result: { serverInfo: { name: "iComfly MCP — Mireva Honduras", store: { id: 90, name: "Mireva Honduras" } } },
+  });
+
+  it("iComfly dice a qué tienda pertenece la clave, sin escribir nada", async () => {
+    const metodos: string[] = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      metodos.push(JSON.parse(String(init.body)).method);
+      return new Response(initialize);
+    }) as unknown as typeof fetch;
+    expect(await tiendaDeLaConexion("mireva-hn", { env: ENV, fetchImpl })).toEqual({ id: 90, nombre: "Mireva Honduras" });
+    expect(metodos).toEqual(["initialize"]);
+  });
+
+  it("con las claves cruzadas no se crea el pedido, y se dice qué revisar", () => {
+    expect(errorDeTiendaMcp("mireva-hn", { id: 90, nombre: "Mireva Honduras" }, 90)).toBeNull();
+    expect(errorDeTiendaMcp("mireva-hn", { id: 71, nombre: "Mireva Costa Rica" }, 90)).toBe(
+      "La clave de iComfly de Mireva Honduras es de Mireva Costa Rica (tienda 71, se esperaba la 90): " +
+        "revisa ICOMFLY_HN_MCP_URL y ICOMFLY_HN_MCP_TOKEN. No se creó el pedido."
+    );
+  });
+
+  it("sin dato de la tienda no se bloquea la venta", () => {
+    expect(errorDeTiendaMcp("mireva-cr", { id: null, nombre: "" }, 71)).toBeNull();
+    expect(errorDeTiendaMcp("mireva-cr", { id: 90, nombre: "x" }, null)).toBeNull();
   });
 });

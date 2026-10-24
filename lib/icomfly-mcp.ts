@@ -11,7 +11,7 @@
 // respuesta; el webhook de entrada de iComfly solo contesta {"ok":true} y no
 // reconocia los campos del pedido.
 
-import type { FinanceStoreCode } from "@/lib/store-config";
+import { getFinanceStore, type FinanceStoreCode } from "@/lib/store-config";
 
 const MCP_ENV_BY_CODE: Record<FinanceStoreCode, { url: string; token: string }> = {
   "mireva-cr": { url: "ICOMFLY_CR_MCP_URL", token: "ICOMFLY_CR_MCP_TOKEN" },
@@ -72,11 +72,11 @@ export function resultadoHerramienta(mensaje: Record<string, unknown>): Record<s
   return datos;
 }
 
-export async function llamarHerramientaIcomfly(
+async function rpc(
   storeCode: FinanceStoreCode,
-  nombre: string,
-  args: Record<string, unknown>,
-  opts: { fetchImpl?: typeof fetch; env?: Record<string, string | undefined> } = {}
+  metodo: string,
+  params: Record<string, unknown>,
+  opts: { fetchImpl?: typeof fetch; env?: Record<string, string | undefined> }
 ): Promise<Record<string, unknown>> {
   const cred = credencialMcp(storeCode, opts.env);
   if (!cred.url || !cred.token) {
@@ -89,7 +89,7 @@ export async function llamarHerramientaIcomfly(
       "Content-Type": "application/json",
       Accept: "application/json, text/event-stream",
     },
-    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name: nombre, arguments: args } }),
+    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: metodo, params }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
     cache: "no-store",
   });
@@ -98,5 +98,67 @@ export async function llamarHerramientaIcomfly(
     const detalle = res.status === 401 ? "clave rechazada (revisa la clave del Conector Claude)" : cuerpo.slice(0, 200);
     throw new Error(`iComfly ${res.status}: ${detalle}`);
   }
-  return resultadoHerramienta(mensajeJsonRpc(cuerpo));
+  return mensajeJsonRpc(cuerpo);
+}
+
+export async function llamarHerramientaIcomfly(
+  storeCode: FinanceStoreCode,
+  nombre: string,
+  args: Record<string, unknown>,
+  opts: { fetchImpl?: typeof fetch; env?: Record<string, string | undefined> } = {}
+): Promise<Record<string, unknown>> {
+  return resultadoHerramienta(await rpc(storeCode, "tools/call", { name: nombre, arguments: args }, opts));
+}
+
+export interface TiendaConexion {
+  id: number | null;
+  nombre: string;
+}
+
+/** La tienda que ve la clave, segun iComfly (initialize -> serverInfo.store). No escribe nada. */
+export async function tiendaDeLaConexion(
+  storeCode: FinanceStoreCode,
+  opts: { fetchImpl?: typeof fetch; env?: Record<string, string | undefined> } = {}
+): Promise<TiendaConexion> {
+  const mensaje = await rpc(
+    storeCode,
+    "initialize",
+    { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "kairo", version: "1" } },
+    opts
+  );
+  const info = ((mensaje.result as { serverInfo?: { store?: { id?: unknown; name?: unknown } } } | undefined)?.serverInfo
+    ?.store ?? {}) as { id?: unknown; name?: unknown };
+  const id = Number(info.id);
+  return { id: Number.isFinite(id) && id > 0 ? id : null, nombre: String(info.name ?? "") };
+}
+
+/**
+ * Error si la clave es de OTRA tienda de iComfly: con las claves cruzadas, el
+ * pedido de Honduras se crearia en Costa Rica (como paso con la sincronizacion
+ * de Honduras hasta el 24/10/2026). Sin dato de la tienda, no se bloquea.
+ */
+export function errorDeTiendaMcp(
+  storeCode: FinanceStoreCode,
+  conexion: TiendaConexion,
+  esperada: number | null
+): string | null {
+  if (esperada == null || conexion.id == null || conexion.id === esperada) return null;
+  const nombres = MCP_ENV_BY_CODE[storeCode];
+  return (
+    `La clave de iComfly de ${getFinanceStore(storeCode).label} es de ${conexion.nombre || "otra tienda"} ` +
+    `(tienda ${conexion.id}, se esperaba la ${esperada}): revisa ${nombres.url} y ${nombres.token}. No se creó el pedido.`
+  );
+}
+
+// Una clave verificada no se vuelve a preguntar por 10 minutos.
+const VERIFICADA_MS = 10 * 60 * 1000;
+const verificadas = new Map<FinanceStoreCode, number>();
+
+/** null si la clave es de esa tienda; el error para la asesora si no. */
+export async function verificarTiendaMcp(storeCode: FinanceStoreCode, esperada: number | null): Promise<string | null> {
+  const desde = verificadas.get(storeCode);
+  if (desde && Date.now() - desde < VERIFICADA_MS) return null;
+  const error = errorDeTiendaMcp(storeCode, await tiendaDeLaConexion(storeCode), esperada);
+  if (!error) verificadas.set(storeCode, Date.now());
+  return error;
 }

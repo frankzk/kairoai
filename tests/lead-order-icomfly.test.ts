@@ -13,8 +13,11 @@ const llamadas: Array<{ tienda: string; nombre: string; args: Record<string, unk
 const ganados: Array<{ storeId: number; shopifyOrderName: string }> = [];
 let shopifyCreados = 0;
 let fallaMarcar = false;
+let claveDeOtraTienda = false;
 
 vi.mock("@/lib/icomfly-mcp", () => ({
+  verificarTiendaMcp: async () =>
+    claveDeOtraTienda ? "La clave de iComfly de Mireva Honduras es de Mireva Costa Rica (tienda 71, se esperaba la 90)" : null,
   llamarHerramientaIcomfly: async (tienda: string, nombre: string, args: Record<string, unknown>) => {
     llamadas.push({ tienda, nombre, args });
     if (nombre === "consultar_producto") {
@@ -63,6 +66,7 @@ beforeEach(() => {
   ganados.length = 0;
   shopifyCreados = 0;
   fallaMarcar = false;
+  claveDeOtraTienda = false;
 });
 
 describe("Crear en iComfly", () => {
@@ -105,5 +109,14 @@ describe("Crear en iComfly", () => {
     const data = await res.json();
     expect(data.order_name).toBe("IC-729032");
     expect(data.aviso).toMatch(/El pedido se creó/);
+  });
+
+  it("con la clave de otra tienda no crea nada y lo dice", async () => {
+    claveDeOtraTienda = true;
+    const res = await crear("mireva-hn");
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/es de Mireva Costa Rica/);
+    expect(llamadas).toEqual([]);
+    expect(ganados).toEqual([]);
   });
 });

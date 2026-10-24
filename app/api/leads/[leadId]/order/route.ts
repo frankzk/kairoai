@@ -5,7 +5,8 @@ import { createLeadOrder, type LeadOrderInput, type ShopifyOrderAddress } from "
 import { getLead, markLeadWonByAdvisor, type LeadRecord } from "@/lib/leads";
 import { vendedoraEfectiva } from "@/lib/identidad";
 import { getStoreRegions, type FinanceStoreCode } from "@/lib/store-config";
-import { llamarHerramientaIcomfly } from "@/lib/icomfly-mcp";
+import { llamarHerramientaIcomfly, verificarTiendaMcp } from "@/lib/icomfly-mcp";
+import { getIcomflyExternalStoreId } from "@/lib/icomfly";
 import {
   argumentosCrearPedido,
   elegirProducto,
@@ -182,6 +183,11 @@ async function crearEnIcomfly(ctx: {
       { status: 400 }
     );
   }
+
+  // La clave tiene que ser de ESTA tienda: con las claves cruzadas, el pedido
+  // se crearia en la otra.
+  const errorTienda = await verificarTiendaMcp(storeCode, getIcomflyExternalStoreId(storeCode));
+  if (errorTienda) return NextResponse.json({ error: errorTienda }, { status: 409 });
 
   const productos = await Promise.all(
     items.map((it) => buscarProductoIcomfly(storeCode, String(it.product_title || it.title || "")))
