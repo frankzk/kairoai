@@ -3,6 +3,7 @@ import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
 import { isC807Guide, normalizeC807Guide } from "./c807";
 import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "./cargo-expreso";
 import type { ShipmentTracking } from "./courier-tracking";
+import { COLUMNAS_PEDIDO_ICOMFLY, type PedidoIcomflyCrudo } from "./icomfly-pedidos";
 import { normalizeForzaGuide } from "./forza";
 import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
 import { isDeliveryRecheckDue, planMoovinSync } from "./moovin-sync-plan";
@@ -1293,6 +1294,29 @@ export async function upsertIcomflyOrderPayloads(
       );
     if (error) throw new Error(`upsertIcomflyOrderPayloads: ${error.message}`);
   }
+}
+
+/** Pedidos completos de iComfly creados desde `desde` (YYYY-MM-DD), para el dataset. */
+export async function listIcomflyPedidosDesde(
+  storeId: number,
+  desde: string
+): Promise<PedidoIcomflyCrudo[]> {
+  const pageSize = 1000;
+  const all: PedidoIcomflyCrudo[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("icomfly_order_payloads")
+      .select(COLUMNAS_PEDIDO_ICOMFLY)
+      .eq("store_id", storeId)
+      .gte("payload->>created_at", desde)
+      .order("icomfly_order_id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listIcomflyPedidosDesde: ${error.message}`);
+    const page = (data ?? []) as unknown as PedidoIcomflyCrudo[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
 }
 
 export async function listIcomflyAgents(storeId?: number): Promise<IcomflyAgentRecord[]> {

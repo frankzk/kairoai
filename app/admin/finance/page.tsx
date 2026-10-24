@@ -216,6 +216,8 @@ interface TrackableOrderRow {
   dispatch_view?: "despacho_solicitado" | "recolectado" | "en_route" | "despachado" | "pendiente" | null;
   dispatch_requested_by?: string;
   dispatch_confirmed_by?: string;
+  /** "icomfly": el pedido no esta en Shopify, viene de iComfly (lib/icomfly-pedidos.ts). */
+  origen?: "icomfly";
 }
 
 type ProductCostSaveInput = {
@@ -3009,7 +3011,7 @@ function OrdersTable({
                 <span className="font-mono text-sm font-semibold">{currency(row.cod_amount)}</span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Badge variant={row.source === "boxful" ? "success" : row.source === "liquidacion" ? "warning" : "muted"}>
-                    {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
+                    {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : row.origen === "icomfly" ? "iComfly" : "Shopify"}
                   </Badge>
                   <SettlementStatusBadge traces={traces} />
                   {traces.length > 0 && (
@@ -3078,7 +3080,7 @@ function OrdersTable({
                 </td>
                 <td className="px-2 py-1.5">
                   <Badge variant={row.source === "boxful" ? "success" : row.source === "liquidacion" ? "warning" : "muted"}>
-                    {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : "Shopify"}
+                    {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : row.origen === "icomfly" ? "iComfly" : "Shopify"}
                   </Badge>
                 </td>
                 <td className="px-2 py-1.5 font-mono text-xs">{row.guide_number || "-"}</td>

@@ -8,6 +8,13 @@
 
 import { getDB } from "./db";
 import {
+  COLUMNAS_PEDIDO_ICOMFLY,
+  CORTE_PEDIDOS_ICOMFLY,
+  direccionIcomfly,
+  pedidosDeIcomfly,
+  type PedidoIcomflyCrudo,
+} from "./icomfly-pedidos";
+import {
   buildCustomerSummary,
   resolveOrderState,
   resolveOrderStateLabel,
@@ -28,6 +35,8 @@ interface OrderRow {
   tracking_number: string | null;
   line_items: unknown;
   raw_order: unknown;
+  /** Ya resuelta (pedidos de iComfly): no hay raw_order de Shopify. */
+  address?: string;
 }
 
 interface MoovinRow {
@@ -75,6 +84,44 @@ function formatAddress(raw: unknown): string {
   return parts.join(", ");
 }
 
+// Desde el 28/10/2026 los pedidos nuevos existen solo en iComfly
+// (lib/icomfly-pedidos.ts): tambien son historia del cliente, con las mismas
+// reglas para no contar dos veces lo que ya esta en Shopify.
+async function pedidosIcomflyDelTelefono(
+  storeId: number,
+  tail: string,
+  deShopify: OrderRow[],
+  currency: string
+): Promise<OrderRow[]> {
+  const { data, error } = await getDB()
+    .from("icomfly_order_payloads")
+    .select(COLUMNAS_PEDIDO_ICOMFLY)
+    .eq("store_id", storeId)
+    .gte("payload->>created_at", CORTE_PEDIDOS_ICOMFLY)
+    // `tail` son solo digitos: no puede romper el filtro.
+    .or(`payload->customer->>phone.ilike.*${tail},payload->>shipping_phone.ilike.*${tail}`)
+    .limit(MAX_ORDERS);
+  if (error) throw new Error(`pedidosIcomflyDelTelefono: ${error.message}`);
+  const crudos = (data ?? []) as unknown as PedidoIcomflyCrudo[];
+  const direccion = new Map(crudos.map((c) => [`icomfly-${String(c.id ?? "")}`, direccionIcomfly(c)]));
+  return pedidosDeIcomfly(
+    crudos,
+    deShopify.map((r) => ({ name: r.name, order_number: 0, tracking_number: r.tracking_number ?? "" })),
+    { currency }
+  ).map((p) => ({
+    name: p.name,
+    shopify_created_at: p.created_at,
+    total_price: p.total_price,
+    currency: p.currency,
+    fulfillment_status: p.fulfillment_status,
+    cancelled_at: p.cancelled_at,
+    tracking_number: p.tracking_number ?? "",
+    line_items: p.line_items,
+    raw_order: null,
+    address: direccion.get(p.id) ?? "",
+  }));
+}
+
 export function emptyCustomerOrders(currency: string): CustomerOrdersResult {
   return { orders: [], summary: buildCustomerSummary([], currency), last_address: "" };
 }
@@ -104,7 +151,15 @@ export async function loadCustomerOrdersByPhone(opts: {
     .limit(MAX_ORDERS);
   if (error) throw new Error(`loadCustomerOrdersByPhone: ${error.message}`);
 
-  const rows = (data ?? []) as OrderRow[];
+  const deShopify = (data ?? []) as OrderRow[];
+  // Best-effort: si iComfly falla, el historial de Shopify sale igual.
+  const deIcomfly = await pedidosIcomflyDelTelefono(opts.storeId, tail, deShopify, opts.currency).catch((err) => {
+    console.warn("[customer-orders] pedidos de iComfly:", err instanceof Error ? err.message : err);
+    return [];
+  });
+  const rows = [...deShopify, ...deIcomfly]
+    .sort((a, b) => String(b.shopify_created_at ?? "").localeCompare(String(a.shopify_created_at ?? "")))
+    .slice(0, MAX_ORDERS);
   if (rows.length === 0) return empty;
 
   // Tracking en vivo en UNA consulta para todos los pedidos con guia.
@@ -138,7 +193,7 @@ export async function loadCustomerOrdersByPhone(opts: {
       total: Number(row.total_price ?? 0),
       currency: row.currency ?? opts.currency,
       items: summarizeItems(row.line_items),
-      address: formatAddress(row.raw_order),
+      address: row.address ?? formatAddress(row.raw_order),
       guide,
       courier: guide ? (opts.logisticsProvider === "forza" ? "Forza" : "Moovin") : "",
       state,
