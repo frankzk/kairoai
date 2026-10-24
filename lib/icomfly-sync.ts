@@ -109,10 +109,12 @@ export async function runIcomflySync(opts: {
   let pagesFetched = 0;
   let hasMore = false;
   let page = startPage;
+  let ultimaPagina = startPage;
   let otraTienda = 0;
   const tiendasAjenas = new Set<string>();
   for (let i = 0; i < maxPages; i++) {
     const res = await listOrdersWithAttribution({ storeId, externalStoreId, page, limit: PAGE_LIMIT });
+    ultimaPagina = page;
     const propia = deLaTienda(externalStoreId, res.orders, res.raw);
     otraTienda += propia.ajenos;
     propia.tiendasAjenas.forEach((t) => tiendasAjenas.add(t));
@@ -154,7 +156,8 @@ export async function runIcomflySync(opts: {
   return {
     synced: rows.length,
     pages_fetched: pagesFetched,
-    next_page: hasMore ? page + 1 : null,
+    // La siguiente a la ultima leida (antes salteaba una: tras 1-5 decia 7).
+    next_page: hasMore ? ultimaPagina + 1 : null,
     has_more: hasMore,
     agents_synced: agentsSynced,
     summary: summarizeRows(rows),

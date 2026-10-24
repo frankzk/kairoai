@@ -30,6 +30,7 @@ export const CRON_JOBS: CronJob[] = [
   // tablero los mostraba a todos como "Solo saludó".
   { name: "leads-inbound", label: "Chat de los leads (Conversó)", everyMinutes: 10 },
   { name: "icomfly", label: "Pedidos de Icomfly", everyMinutes: 30 },
+  { name: "icomfly-historial", label: "Historial de Icomfly", everyMinutes: 60 },
   { name: "shopify-recent", label: "Pedidos nuevos de Shopify", everyMinutes: 10 },
   { name: "shopify-refresh", label: "Guías de Shopify", everyMinutes: 180 },
   { name: "shopify-recheck-stale", label: "Pedidos viejos de Shopify", everyMinutes: 720 },

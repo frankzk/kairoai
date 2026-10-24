@@ -112,6 +112,12 @@ describe("el sync de iComfly", () => {
     await expect(runIcomflySync({ store: "mireva-cr" })).resolves.toMatchObject({ synced: 2 });
     expect(llamadas).toEqual(["despacho:2", "completo:2"]);
   });
+  it("la página siguiente es la que viene después de la última leída", async () => {
+    // El historial reanuda desde next_page: antes se salteaba una.
+    const { runIcomflySync } = await import("../lib/icomfly-sync");
+    const res = await runIcomflySync({ store: "mireva-cr", maxPages: 1 });
+    expect(res).toMatchObject({ pages_fetched: 1, has_more: true, next_page: 2 });
+  });
   it("los pedidos de otra tienda no se guardan, y no sigue paginando", async () => {
     const { runIcomflySync } = await import("../lib/icomfly-sync");
     const res = await runIcomflySync({ store: "mireva-hn" });
