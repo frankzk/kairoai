@@ -1655,7 +1655,9 @@ function LeadDrawer({
   onClose: () => void;
   onRefresh: () => void;
 }) {
-  const [showOrder, setShowOrder] = useState(false);
+  // Donde se crea el pedido abierto: Shopify o iComfly (Shopify se suspende el
+  // 28/10/2026). null: el panel esta cerrado.
+  const [pedidoEn, setPedidoEn] = useState<"shopify" | "icomfly" | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -1763,9 +1765,21 @@ function LeadDrawer({
             </div>
           </div>
           <CallButton leadId={lead.id} store={leadStore} />
-          <Button size="sm" variant={showOrder ? "outline" : "default"} onClick={() => setShowOrder((v) => !v)}>
+          <Button
+            size="sm"
+            variant={pedidoEn === "shopify" ? "outline" : "default"}
+            onClick={() => setPedidoEn((v) => (v === "shopify" ? null : "shopify"))}
+          >
             <ShoppingCart className="mr-2 h-4 w-4" />
-            {showOrder ? "Ocultar pedido" : "Crear pedido"}
+            {pedidoEn === "shopify" ? "Ocultar pedido" : "Crear pedido"}
+          </Button>
+          <Button
+            size="sm"
+            variant={pedidoEn === "icomfly" ? "outline" : "default"}
+            onClick={() => setPedidoEn((v) => (v === "icomfly" ? null : "icomfly"))}
+          >
+            <ShoppingCart className="mr-2 h-4 w-4" />
+            {pedidoEn === "icomfly" ? "Ocultar pedido" : "Crear en iComfly"}
           </Button>
           {/* 24x24 reales y con anillo de foco: es la unica salida de un
               dialogo que tapa la pantalla. 20px sin anillo la dejaba fuera del
@@ -1810,16 +1824,21 @@ function LeadDrawer({
                 setHistoryKey((k) => k + 1);
               }}
             />
-            {showOrder && (
+            {pedidoEn && (
               <div className="absolute inset-0 z-10 overflow-y-auto bg-card">
                 <CreateOrderPanel
+                  // key: al cambiar de Shopify a iComfly el formulario empieza de cero.
+                  key={pedidoEn}
                   lead={{ id: lead.id, name: lead.name, phone: lead.phone }}
                   store={leadStore}
+                  destino={pedidoEn}
                   onCreated={() => {
                     onRefresh();
                     setHistoryKey((k) => k + 1);
-                    // Pedido creado: volver al historial, que ya lo incluye.
-                    setShowOrder(false);
+                    // Pedido creado: volver al historial, que ya lo incluye. El
+                    // de iComfly se queda abierto: muestra el numero que
+                    // devolvio iComfly (al historial llega con la sincronizacion).
+                    if (pedidoEn !== "icomfly") setPedidoEn(null);
                   }}
                 />
               </div>

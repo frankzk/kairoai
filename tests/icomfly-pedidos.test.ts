@@ -136,6 +136,10 @@ describe("nombre y estado", () => {
     );
     expect(p.map((o) => o.name)).toEqual(["IC-3007", "IC-W3007"]);
   });
+  it("los que crea Kairo (código interno EXCEL-…) van con el id de iComfly", () => {
+    expect(nombrePedidoIcomfly("EXCEL-MVMPVFBE-1UNUD", "729032")).toBe("IC-729032");
+    expect(nombrePedidoIcomfly("EXCEL-MVMPVFBE-1UNUD", 729032, null)).toBe("IC-729032");
+  });
   it("sin número de la web (un carrito convertido, por ejemplo) sigue con el de iComfly", () => {
     expect(nombrePedidoIcomfly("#1792858842838773760", "727728", null)).toBe("IC-1792858842838773760");
     expect(nombrePedidoIcomfly("56703", "1", "")).toBe("IC-56703");

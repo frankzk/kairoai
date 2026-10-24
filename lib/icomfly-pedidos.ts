@@ -24,6 +24,9 @@
 // su order_number es un codigo de 18 digitos que nadie ve. La "W" los separa
 // de los numeros propios de iComfly (de 3.007 a 99.987, medido el 24/10/2026):
 // "IC-15" chocaria con el pedido 15 en cuanto la web llegue a esos numeros.
+// Los que crea Kairo (Leads, lib/icomfly-pedido-lead.ts) traen un codigo
+// interno "EXCEL-MVMPVFBE-1UNUD": van con el id de iComfly ("IC-729032"), que
+// es lo que se busca en iComfly.
 //
 // Puro: se prueba en tests/icomfly-pedidos.test.ts.
 
@@ -100,7 +103,7 @@ export function nombrePedidoIcomfly(orderNumber: unknown, id: unknown, webSeq?: 
   const web = texto(webSeq);
   if (/^\d+$/.test(web)) return `IC-W${web}`;
   const propio = texto(orderNumber).replace(/^#/, "");
-  return `IC-${propio || texto(id)}`;
+  return `IC-${(propio && !/^EXCEL-/i.test(propio) ? propio : "") || texto(id)}`;
 }
 
 /** El estado final que iComfly ya conoce. Vacio si no es final: lo decide el courier. */
