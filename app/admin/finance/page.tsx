@@ -2084,6 +2084,35 @@ function OrdersTab({
   const [moovinMessage, setMoovinMessage] = useState("");
   const [forzaSyncing, setForzaSyncing] = useState(false);
   const [forzaMessage, setForzaMessage] = useState("");
+  const [icomflySyncing, setIcomflySyncing] = useState(false);
+  const [icomflyMessage, setIcomflyMessage] = useState("");
+
+  // Trae lo ultimo de iComfly de esta tienda y rearma la tabla: sin esto, un
+  // pedido nuevo tarda hasta la proxima sincronizacion (cada 30 minutos).
+  async function syncIcomfly() {
+    setIcomflySyncing(true);
+    setIcomflyMessage("Trayendo los pedidos nuevos de iComfly...");
+    try {
+      const res = await fetch(withStore("/api/icomfly/sync", selectedStore.code), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store: selectedStore.code, max_pages: 2, refrescar: true }),
+      });
+      const json = await readApiJson(res);
+      if (!res.ok) throw new Error(json.error ?? "No se pudo sincronizar iComfly");
+      metadataLoadedStoreRef.current = "";
+      setRefreshKey((key) => key + 1);
+      setIcomflyMessage(
+        json.tabla?.ok === false
+          ? `iComfly al dia (${Number(json.synced ?? 0)} pedidos revisados), pero la tabla no se pudo rearmar: ${json.tabla.error}`
+          : `iComfly al dia: ${Number(json.synced ?? 0)} pedidos revisados.`
+      );
+    } catch (err) {
+      setIcomflyMessage(err instanceof Error ? err.message : "No se pudo sincronizar iComfly");
+    } finally {
+      setIcomflySyncing(false);
+    }
+  }
 
   // Guias no terminales para los botones de sync: vienen del endpoint (calculadas
   // sobre el dataset completo server-side), no del snapshot en memoria.
@@ -2450,6 +2479,19 @@ function OrdersTab({
                 type="button"
                 variant="outline"
                 size="sm"
+                disabled={icomflySyncing}
+                onClick={syncIcomfly}
+                className="h-8 gap-1.5 px-2.5 text-xs"
+                title="Traer ya los pedidos nuevos de iComfly (solos llegan cada 30 minutos)"
+                aria-label="Sync iComfly"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${icomflySyncing ? "animate-spin" : ""}`} />
+                <span className="sm:hidden xl:inline">{icomflySyncing ? "Sincronizando..." : "Sync iComfly"}</span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
                 disabled={syncingShopify}
                 onClick={onSyncShopify}
                 className="h-8 gap-1.5 px-2.5 text-xs"
@@ -2495,7 +2537,7 @@ function OrdersTab({
             </div>
           </div>
 
-          {(syncMessage || moovinMessage || forzaMessage) && (
+          {(syncMessage || moovinMessage || forzaMessage || icomflyMessage) && (
             <div className="space-y-1 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               {syncMessage && (
                 <p className="flex items-center gap-1.5">
@@ -2510,6 +2552,11 @@ function OrdersTab({
               {forzaMessage && (
                 <p className="flex items-center gap-1.5">
                   <Search className="h-3.5 w-3.5 shrink-0" /> {forzaMessage}
+                </p>
+              )}
+              {icomflyMessage && (
+                <p className="flex items-center gap-1.5">
+                  <RefreshCw className="h-3.5 w-3.5 shrink-0" /> {icomflyMessage}
                 </p>
               )}
             </div>

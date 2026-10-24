@@ -1658,6 +1658,12 @@ function LeadDrawer({
   // Donde se crea el pedido abierto: Shopify o iComfly (Shopify se suspende el
   // 28/10/2026). null: el panel esta cerrado.
   const [pedidoEn, setPedidoEn] = useState<"shopify" | "icomfly" | null>(null);
+  // "Crear en iComfly" APAGADO hasta que iComfly muestre esos pedidos: el
+  // conector los crea con numero "EXCEL-..." y quedan fuera de la lista de
+  // Pedidos (ni buscando el numero aparecen), del dashboard y de su API
+  // (24/10/2026, pedido 729804 de Costa Rica). Quien lo usara dejaria pedidos
+  // que nadie despacha. Se prende con NEXT_PUBLIC_CREAR_EN_ICOMFLY=1 (y deploy).
+  const puedeCrearEnIcomfly = process.env.NEXT_PUBLIC_CREAR_EN_ICOMFLY === "1";
   const [historyKey, setHistoryKey] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -1773,14 +1779,16 @@ function LeadDrawer({
             <ShoppingCart className="mr-2 h-4 w-4" />
             {pedidoEn === "shopify" ? "Ocultar pedido" : "Crear pedido"}
           </Button>
-          <Button
-            size="sm"
-            variant={pedidoEn === "icomfly" ? "outline" : "default"}
-            onClick={() => setPedidoEn((v) => (v === "icomfly" ? null : "icomfly"))}
-          >
-            <ShoppingCart className="mr-2 h-4 w-4" />
-            {pedidoEn === "icomfly" ? "Ocultar pedido" : "Crear en iComfly"}
-          </Button>
+          {puedeCrearEnIcomfly && (
+            <Button
+              size="sm"
+              variant={pedidoEn === "icomfly" ? "outline" : "default"}
+              onClick={() => setPedidoEn((v) => (v === "icomfly" ? null : "icomfly"))}
+            >
+              <ShoppingCart className="mr-2 h-4 w-4" />
+              {pedidoEn === "icomfly" ? "Ocultar pedido" : "Crear en iComfly"}
+            </Button>
+          )}
           {/* 24x24 reales y con anillo de foco: es la unica salida de un
               dialogo que tapa la pantalla. 20px sin anillo la dejaba fuera del
               minimo tactil y muda por teclado. */}
