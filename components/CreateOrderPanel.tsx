@@ -44,12 +44,16 @@ const newLine = (): OrderLine => ({ key: lineSeq++, product: null, quantity: 1, 
 export default function CreateOrderPanel({
   lead,
   store,
+  destino = "shopify",
   onCreated,
 }: {
   lead: LeadLike;
   store: string;
+  /** Donde se crea el pedido: Shopify (hasta el 28/10/2026) o iComfly. */
+  destino?: "shopify" | "icomfly";
   onCreated: (orderName: string) => void;
 }) {
+  const plataforma = destino === "icomfly" ? "iComfly" : "Shopify";
   // Division administrativa y moneda segun el pais de la tienda: CR usa
   // provincia/canton y colones; HN departamento/municipio y lempiras.
   // useMemo para que el objeto sea estable entre renders (lo usa un efecto).
@@ -78,6 +82,7 @@ export default function CreateOrderPanel({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdOrder, setCreatedOrder] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
 
   // Asesoras + recordar la seleccionada.
   useEffect(() => {
@@ -167,7 +172,9 @@ export default function CreateOrderPanel({
   }, [gross, discountValue, discountType]);
 
   const validLines = lines.filter((l) => l.product && Number(l.quantity) > 0 && Number(l.price) > 0);
-  const canSubmit = vendedoraId != null && validLines.length > 0 && !submitting;
+  // iComfly no crea el pedido sin direccion, ciudad y departamento.
+  const faltaEnvio = destino === "icomfly" && (!address.trim() || !canton.trim() || !province);
+  const canSubmit = vendedoraId != null && validLines.length > 0 && !submitting && !faltaEnvio;
 
   async function submit() {
     if (!canSubmit) return;
@@ -179,11 +186,14 @@ export default function CreateOrderPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           store,
+          destino,
           vendedora_id: vendedoraId,
           items: validLines.map((l) => ({
             variant_id: l.product!.variant_id,
             sku: l.product!.sku,
             title: l.product!.display_name,
+            product_title: l.product!.product_title,
+            variant_title: l.product!.variant_title,
             price: Number(l.price),
             quantity: Number(l.quantity),
           })),
@@ -197,6 +207,7 @@ export default function CreateOrderPanel({
       // Confirmacion DENTRO del drawer: no cerramos, mostramos exito y
       // refrescamos el tablero por detras.
       setCreatedOrder(data.order_name);
+      setAviso(data.aviso ?? null);
       onCreated(data.order_name);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al crear el pedido");
@@ -208,6 +219,7 @@ export default function CreateOrderPanel({
 
   function resetForNew() {
     setCreatedOrder(null);
+    setAviso(null);
     setConfirming(false);
     setLines([newLine()]);
     setDiscountValue("");
@@ -221,9 +233,10 @@ export default function CreateOrderPanel({
         </div>
         <p className="text-lg font-semibold">Pedido creado</p>
         <p className="text-sm text-muted-foreground">
-          Se generó el pedido <span className="font-medium text-foreground">{createdOrder}</span> en Shopify.
+          Se generó el pedido <span className="font-medium text-foreground">{createdOrder}</span> en {plataforma}.
           El lead pasó a <span className="font-medium text-foreground">Ganados</span>.
         </p>
+        {aviso && <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-300">{aviso}</p>}
         <Button variant="outline" className="mt-2" onClick={resetForNew}>
           <Plus className="mr-2 h-4 w-4" /> Crear otro pedido
         </Button>
@@ -235,7 +248,7 @@ export default function CreateOrderPanel({
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <p className="font-medium">Crear pedido</p>
+        <p className="font-medium">{destino === "icomfly" ? "Crear pedido en iComfly" : "Crear pedido"}</p>
         {existingCustomer && (
           <Badge variant="success" className="gap-1">
             <CheckCircle2 className="h-3 w-3" /> Cliente en Shopify
@@ -405,13 +418,20 @@ export default function CreateOrderPanel({
           <span className="font-semibold">{currency}{total.toLocaleString("es-CR")}</span>
         </div>
         {!confirming ? (
-          <Button className="w-full" disabled={!canSubmit} onClick={() => setConfirming(true)}>
-            Revisar y crear pedido
-          </Button>
+          <>
+            {faltaEnvio && (
+              <p className="mb-2 text-center text-xs text-muted-foreground">
+                iComfly pide la dirección, {regions.subLabel} y {regions.label}.
+              </p>
+            )}
+            <Button className="w-full" disabled={!canSubmit} onClick={() => setConfirming(true)}>
+              Revisar y crear pedido
+            </Button>
+          </>
         ) : (
           <div className="space-y-2">
             <p className="text-center text-xs text-muted-foreground">
-              Se creará un pedido REAL en Shopify por {currency}{total.toLocaleString("es-CR")}. ¿Confirmas?
+              Se creará un pedido REAL en {plataforma} por {currency}{total.toLocaleString("es-CR")}. ¿Confirmas?
             </p>
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" disabled={submitting} onClick={() => setConfirming(false)}>

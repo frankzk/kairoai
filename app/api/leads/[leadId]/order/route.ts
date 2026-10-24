@@ -2,8 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody } from "@/lib/stores";
 import { getShopifyCredentials } from "@/lib/stores";
 import { createLeadOrder, type LeadOrderInput, type ShopifyOrderAddress } from "@/lib/shopify";
-import { getLead, markLeadWonByAdvisor } from "@/lib/leads";
+import { getLead, markLeadWonByAdvisor, type LeadRecord } from "@/lib/leads";
 import { vendedoraEfectiva } from "@/lib/identidad";
+import { getStoreRegions, type FinanceStoreCode } from "@/lib/store-config";
+import { llamarHerramientaIcomfly } from "@/lib/icomfly-mcp";
+import {
+  argumentosCrearPedido,
+  elegirProducto,
+  faltanParaIcomfly,
+  palabraDeBusqueda,
+  type ProductoIcomfly,
+} from "@/lib/icomfly-pedido-lead";
+import { nombrePedidoIcomfly } from "@/lib/icomfly-pedidos";
+import { runIcomflySync } from "@/lib/icomfly-sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -11,7 +22,17 @@ export const maxDuration = 30;
 interface OrderBody {
   store?: string;
   vendedora_id?: number;
-  items?: Array<{ variant_id?: number; sku?: string; title?: string; price?: string | number; quantity?: number }>;
+  /** "icomfly": el pedido se crea en iComfly (boton "Crear en iComfly"); si no, en Shopify. */
+  destino?: "shopify" | "icomfly";
+  items?: Array<{
+    variant_id?: number;
+    sku?: string;
+    title?: string;
+    product_title?: string;
+    variant_title?: string;
+    price?: string | number;
+    quantity?: number;
+  }>;
   shipping?: {
     name?: string;
     province?: string;
@@ -50,6 +71,10 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
   try {
     const lead = await getLead(store.id, leadId);
     if (!lead) return NextResponse.json({ error: "lead no encontrado" }, { status: 404 });
+
+    if (body?.destino === "icomfly") {
+      return await crearEnIcomfly({ body, items, lead, leadId, storeId: store.id, storeCode: store.code, vendedoraId });
+    }
 
     const { shop, token, missing } = getShopifyCredentials(store);
     if (!shop || !token) {
@@ -120,4 +145,101 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
     const message = err instanceof Error ? err.message : "Error al crear el pedido";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+// El producto de iComfly con ese nombre, para vincular el pedido al catalogo.
+// Best-effort: sin el, el pedido se crea igual con el nombre.
+async function buscarProductoIcomfly(storeCode: FinanceStoreCode, titulo: string): Promise<ProductoIcomfly | null> {
+  if (!titulo.trim()) return null;
+  try {
+    const r = await llamarHerramientaIcomfly(storeCode, "consultar_producto", { query: palabraDeBusqueda(titulo) });
+    return elegirProducto((r.productos ?? []) as Array<{ id?: unknown; name?: unknown }>, titulo);
+  } catch {
+    return null;
+  }
+}
+
+// El mismo pedido, creado en iComfly con el conector (lib/icomfly-mcp.ts):
+// desde el 28/10/2026 Shopify esta suspendido. Accion hacia afuera: crea un
+// pedido REAL en iComfly.
+async function crearEnIcomfly(ctx: {
+  body: OrderBody;
+  items: NonNullable<OrderBody["items"]>;
+  lead: LeadRecord;
+  leadId: number;
+  storeId: number;
+  storeCode: FinanceStoreCode;
+  vendedoraId: number;
+}): Promise<NextResponse> {
+  const { body, items, lead, leadId, storeId, storeCode, vendedoraId } = ctx;
+  const envio = body.shipping ?? {};
+  const falta = faltanParaIcomfly(envio);
+  if (falta.length) {
+    const regions = getStoreRegions(storeCode);
+    const nombres = { address: "la dirección exacta", canton: regions.subLabel, province: regions.label };
+    return NextResponse.json(
+      { error: `iComfly pide ${falta.map((c) => nombres[c]).join(", ")}: complétalo para crear el pedido.` },
+      { status: 400 }
+    );
+  }
+
+  const productos = await Promise.all(
+    items.map((it) => buscarProductoIcomfly(storeCode, String(it.product_title || it.title || "")))
+  );
+  const args = argumentosCrearPedido(
+    {
+      items: items.map((it) => ({
+        title: String(it.title || "Producto"),
+        product_title: it.product_title,
+        variant_title: it.variant_title,
+        price: Number(it.price) || 0,
+        quantity: Number(it.quantity) || 1,
+      })),
+      envio,
+      nombreLead: lead.name,
+      telefono: lead.phone,
+      pago: body.payment_method === "sinpe" ? "sinpe" : "cod",
+      descuento:
+        body.discount?.value && body.discount.value > 0
+          ? { value: body.discount.value, type: body.discount.type === "fixed_amount" ? "fixed_amount" : "percentage" }
+          : undefined,
+      nota: body.note,
+    },
+    productos
+  );
+  const r = await llamarHerramientaIcomfly(storeCode, "crear_pedido", args);
+  const pedido = (r.pedido ?? {}) as { id?: unknown; order_number?: unknown; total?: unknown };
+  if (pedido.id == null) throw new Error("iComfly no devolvió el pedido creado: revisa en iComfly antes de reintentar.");
+  const nombre = nombrePedidoIcomfly(pedido.order_number, pedido.id);
+
+  // El pedido YA existe: si marcar el lead falla, se avisa pero no se
+  // devuelve error (la asesora reintentaria y crearia otro pedido).
+  let aviso: string | undefined;
+  try {
+    await markLeadWonByAdvisor({
+      storeId,
+      leadId,
+      vendedora: vendedoraId,
+      shopifyOrderName: nombre,
+      note: `pedido ${nombre} creado por la asesora en iComfly`,
+    });
+  } catch (err) {
+    aviso = `El pedido se creó, pero el lead no se pudo marcar como ganado: ${err instanceof Error ? err.message : err}`;
+  }
+
+  // Que el pedido llegue ya a Kairo: la pagina mas reciente de iComfly de esa
+  // tienda (el cron lo trae igual cada 30 minutos). Hasta 8 s.
+  await Promise.race([
+    runIcomflySync({ store: storeCode, maxPages: 1 }).catch(() => undefined),
+    new Promise((resolve) => setTimeout(resolve, 8000)),
+  ]);
+
+  return NextResponse.json({
+    ok: true,
+    destino: "icomfly",
+    order_name: nombre,
+    icomfly_id: String(pedido.id),
+    total: pedido.total ?? args.total,
+    ...(aviso ? { aviso } : {}),
+  });
 }
