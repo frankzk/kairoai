@@ -167,6 +167,7 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/finance/order-detail", exige: P(...OPERACION) },
   { ruta: "/api/finance/kpis", exige: P(...OPERACION) },
   { ruta: "/api/finance/dispatch-audit", exige: P(...OPERACION) },
+  { ruta: "/api/finance/productividad", exige: P(...OPERACION) },
   { ruta: "/api/finance/notes", exige: P(...OPERACION) },
   { ruta: "/api/finance/boxful-files", exige: P(...OPERACION) },
   { ruta: "/api/finance/logistics", exige: P(...OPERACION) },

@@ -4,6 +4,7 @@ import { isC807Guide, normalizeC807Guide } from "./c807";
 import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "./cargo-expreso";
 import type { ShipmentTracking } from "./courier-tracking";
 import { COLUMNAS_PEDIDO_ICOMFLY, CORTE_PEDIDOS_ICOMFLY, nombreCliente, type PedidoIcomflyCrudo } from "./icomfly-pedidos";
+import type { AtribucionPedido } from "./productividad-despacho";
 import { normalizeForzaGuide } from "./forza";
 import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
 import { isDeliveryRecheckDue, planMoovinSync } from "./moovin-sync-plan";
@@ -1317,6 +1318,39 @@ export async function listIcomflyPedidosDesde(
     if (page.length < pageSize) break;
   }
   return all;
+}
+
+// Quien genero la guia y quien confirmo cada pedido de iComfly con despacho o
+// confirmacion en [desde, hasta): la pestaña Productividad de Gestion
+// (lib/productividad-despacho.ts). Dos consultas simples (por fecha de guia y
+// por fecha de confirmacion) unidas por pedido; solo las columnas que hacen
+// falta, paginado (PostgREST corta en 1.000).
+export async function listAtribucionDespacho(
+  storeId: number,
+  desdeIso: string,
+  hastaIso: string
+): Promise<AtribucionPedido[]> {
+  const pageSize = 1000;
+  const porPedido = new Map<string, AtribucionPedido>();
+  for (const columna of ["guide_final_at", "confirmed_at"] as const) {
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await getDB()
+        .from("icomfly_orders")
+        .select(
+          "icomfly_order_id,guide_final_at,confirmed_at,guia_por:raw_attribution->genero_guia->>name,confirmo_por:raw_attribution->confirmo->>name"
+        )
+        .eq("store_id", storeId)
+        .gte(columna, desdeIso)
+        .lt(columna, hastaIso)
+        .order("icomfly_order_id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) throw new Error(`listAtribucionDespacho: ${error.message}`);
+      const page = (data ?? []) as unknown as Array<AtribucionPedido & { icomfly_order_id: string }>;
+      for (const fila of page) porPedido.set(String(fila.icomfly_order_id), fila);
+      if (page.length < pageSize) break;
+    }
+  }
+  return Array.from(porPedido.values());
 }
 
 export async function listIcomflyAgents(storeId?: number): Promise<IcomflyAgentRecord[]> {
