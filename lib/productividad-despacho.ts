@@ -1,6 +1,6 @@
 // Productividad de despacho: quien despacha (genera la guia en iComfly) y
-// quien confirma cada pedido, por persona y por dia. Pestaña "Productividad"
-// de Gestion.
+// quien confirma cada pedido, por persona y por dia. Ventana "Productividad"
+// de Gestion (boton en la tabla de Pedidos).
 //
 // iComfly manda la atribucion de cada pedido en raw_attribution (sincronizado
 // en icomfly_orders): "confirmo" (con hora), "genero_guia" y "envio" (sin
