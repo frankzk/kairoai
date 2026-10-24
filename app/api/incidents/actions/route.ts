@@ -3,6 +3,7 @@ import { getIncident, patchIncident, recordIncidentEvent } from "@/lib/incidents
 import type { Incident } from "@/lib/incidents-types";
 import { diasSinEntregaDe, esDiaSinEntrega } from "@/lib/incidents-reprog";
 import { addOrderTag, cancelOrder } from "@/lib/shopify";
+import { esPedidoIcomfly } from "@/lib/icomfly-pedidos";
 import { FINANCE_STORES, getRequiredStoreFromSearchParams, getShopifyCredentials, getStoreConfig } from "@/lib/stores";
 
 export const runtime = "nodejs";
@@ -108,7 +109,11 @@ export async function POST(req: NextRequest) {
       case "rts": {
         let result: "ok" | "info" = "ok";
         let message = "Marcada para devolucion al origen (RTS)";
-        if (incident.shopify_order_id) {
+        // El pedido esta en iComfly, no en Shopify: no hay donde etiquetarlo aca.
+        if (esPedidoIcomfly(incident.shopify_order_id)) {
+          result = "info";
+          message += " (pedido de iComfly: etiquetalo alla)";
+        } else if (incident.shopify_order_id) {
           try {
             await addOrderTag(incident.shopify_order_id, "rts-kairo", shopifyCreds);
           } catch {
@@ -128,6 +133,12 @@ export async function POST(req: NextRequest) {
         if (!incident.shopify_order_id) {
           return NextResponse.json(
             { error: "La novedad no tiene pedido de Shopify vinculado" },
+            { status: 400 }
+          );
+        }
+        if (esPedidoIcomfly(incident.shopify_order_id)) {
+          return NextResponse.json(
+            { error: "Este pedido está en iComfly, no en Shopify: cancélalo en iComfly" },
             { status: 400 }
           );
         }

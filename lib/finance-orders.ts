@@ -22,6 +22,7 @@ import { mergeDispatchIntoTracking } from "@/lib/dispatch";
 import { isWynGuide, isWynIncidentCode, normalizeWynGuide } from "@/lib/wyn";
 import { isC807Guide, normalizeC807Guide } from "@/lib/c807";
 import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "@/lib/cargo-expreso";
+import { estadoFinalIcomfly } from "@/lib/icomfly-pedidos";
 import {
   buildShopifyMatchIndex,
   extractExternalOrderCodesFromText,
@@ -76,6 +77,8 @@ export interface ShopifyOrderSummary {
   tracking_company?: string;
   created_at: string;
   line_items: ProductLineItem[];
+  /** Pedido que existe solo en iComfly (lib/icomfly-pedidos.ts): su id y estado alla. */
+  icomfly?: { id: string; estado: string };
 }
 
 export interface TrackableOrderRow {
@@ -119,6 +122,8 @@ export interface TrackableOrderRow {
   dispatch_view?: import("./dispatch").DispatchView | null;
   dispatch_requested_by?: string;
   dispatch_confirmed_by?: string;
+  /** "icomfly": el pedido no esta en Shopify, viene de iComfly (lib/icomfly-pedidos.ts). */
+  origen?: "icomfly";
 }
 
 export interface OpMetrics {
@@ -816,8 +821,10 @@ export function buildVisibleOrderRows(
       last_name: order.last_name || "",
       phone: order.phone || null,
       boxful_status: "",
+      // iComfly ya sabe si se entrego o volvio; el courier, si lo hay, manda igual.
       internal_status:
-        order.cancelled_at || order.financial_status === "voided" ? "annulled" : "pending",
+        (order.icomfly && !order.cancelled_at ? estadoFinalIcomfly(order.icomfly.estado) : "") ||
+        (order.cancelled_at || order.financial_status === "voided" ? "annulled" : "pending"),
       match_status: "matched",
       cod_amount: Number(order.total_price || parseMoneyText(order.total)),
       shopify_order_name: order.name,
@@ -833,6 +840,7 @@ export function buildVisibleOrderRows(
         quantity: Number(item.quantity || 0),
         price: Number(item.price || 0),
       })),
+      ...(order.icomfly ? { origen: "icomfly" as const } : {}),
     };
   });
 

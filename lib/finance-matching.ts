@@ -1,6 +1,7 @@
 import { getDB } from "@/lib/db";
 import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
 import { getShopifyCredentials, getStoreConfig, type FinanceStoreConfig } from "./stores";
+import { fetchShopifyPage } from "./shopify-sync";
 import type { SettlementRow } from "./finance-types";
 
 // Campos que una fila de liquidacion toma de su pedido Shopify emparejado (o se
@@ -233,6 +234,16 @@ async function listPersistedOrdersSlim(storeId: number): Promise<{
   return { orders, latestUpdatedAt };
 }
 
+const SHOPIFY_TOPE_MS = 15_000;
+
+function conTope<T>(promesa: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const tope = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`sin respuesta en ${ms / 1000}s`)), ms);
+  });
+  return Promise.race([promesa, tope]).finally(() => clearTimeout(timer));
+}
+
 async function fetchOrdersFromShopify(
   filters: { createdAtMin?: string; updatedAtMin?: string },
   maxPages: number,
@@ -255,16 +266,19 @@ async function fetchOrdersFromShopify(
 
   const orders: MatchableShopifyOrder[] = [];
   for (let page = 0; page < maxPages && url; page++) {
-    const res = await fetch(url, {
-      headers: {
-        "X-Shopify-Access-Token": token,
-        "Content-Type": "application/json",
-      },
-      cache: "no-store",
-    });
-    if (!res.ok) break;
-
-    const json = (await res.json()) as { orders?: MatchableShopifyOrder[] };
+    // Shopify aca es un extra: los pedidos ya estan en la base. Si no responde
+    // (tienda suspendida desde el 28/10, red, lentitud) se empareja con lo
+    // guardado, en vez de colgar o tumbar la importacion.
+    let json: { orders?: MatchableShopifyOrder[] };
+    let res: Response;
+    try {
+      res = await conTope(fetchShopifyPage(url, store), SHOPIFY_TOPE_MS);
+      if (!res.ok) break;
+      json = (await conTope(res.json(), SHOPIFY_TOPE_MS)) as { orders?: MatchableShopifyOrder[] };
+    } catch (err) {
+      console.warn(`[finance-matching] Shopify ${store.code} no respondio:`, err instanceof Error ? err.message : err);
+      break;
+    }
     orders.push(...(json.orders ?? []));
 
     const link = res.headers.get("link") ?? "";

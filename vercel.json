@@ -50,6 +50,10 @@
       "schedule": "*/30 * * * *"
     },
     {
+      "path": "/api/cron/icomfly-historial",
+      "schedule": "25 * * * *"
+    },
+    {
       "path": "/api/cron/leads",
       "schedule": "*/5 * * * *"
     },
@@ -114,6 +118,9 @@
     },
     "app/api/cron/icomfly/route.ts": {
       "maxDuration": 60
+    },
+    "app/api/cron/icomfly-historial/route.ts": {
+      "maxDuration": 300
     },
     "app/api/cron/leads/route.ts": {
       "maxDuration": 300
