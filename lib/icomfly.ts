@@ -18,7 +18,8 @@ import {
 
 const BASE = process.env.ICOMFLY_BASE || "https://api.icomfly.com/api";
 
-let cachedToken: { token: string; expiresAt: number } | null = null;
+// Token de login cacheado por credencial (ver credencialIcomfly).
+const cachedTokens = new Map<string, { token: string; expiresAt: number }>();
 
 const ICOMFLY_STORE_ENV_BY_CODE: Record<FinanceStoreCode, string[]> = {
   "mireva-cr": ["ICOMFLY_CR_STORE_ID", "ICOMFLY_STORE_ID"],
@@ -79,12 +80,47 @@ export function listConfiguredIcomflyStoreContexts(): IcomflyStoreContext[] {
   });
 }
 
-async function getToken(): Promise<string> {
-  if (process.env.ICOMFLY_TOKEN) return process.env.ICOMFLY_TOKEN;
-  if (cachedToken && cachedToken.expiresAt > Date.now()) return cachedToken.token;
+// Credenciales POR TIENDA. Cada tienda de iComfly puede tener su propia clave:
+// una clave que solo "ve" una tienda contesta con esa aunque se pida otra (asi
+// Honduras recibio los pedidos de Costa Rica desde julio). Orden: la clave de
+// la tienda, su correo y contrasena, y si no hay, las compartidas de siempre.
+const ICOMFLY_CRED_ENV_BY_CODE: Record<FinanceStoreCode, { token: string; email: string; password: string }> = {
+  "mireva-cr": { token: "ICOMFLY_CR_TOKEN", email: "ICOMFLY_CR_EMAIL", password: "ICOMFLY_CR_PASSWORD" },
+  "mireva-hn": { token: "ICOMFLY_HN_TOKEN", email: "ICOMFLY_HN_EMAIL", password: "ICOMFLY_HN_PASSWORD" },
+};
 
-  const email = process.env.ICOMFLY_EMAIL;
-  const password = process.env.ICOMFLY_PASSWORD;
+export interface CredencialIcomfly {
+  /** Nombre de la variable de entorno que se usa: para errores, nunca el valor. */
+  origen: string;
+  token?: string;
+  email?: string;
+  password?: string;
+}
+
+export function credencialIcomfly(
+  storeCode: FinanceStoreCode,
+  env: Record<string, string | undefined> = process.env
+): CredencialIcomfly {
+  const propia = ICOMFLY_CRED_ENV_BY_CODE[storeCode];
+  if (propia && env[propia.token]) return { origen: propia.token, token: env[propia.token] };
+  if (propia && env[propia.email] && env[propia.password]) {
+    return { origen: propia.email, email: env[propia.email], password: env[propia.password] };
+  }
+  if (env.ICOMFLY_TOKEN) return { origen: "ICOMFLY_TOKEN", token: env.ICOMFLY_TOKEN };
+  return { origen: "ICOMFLY_EMAIL", email: env.ICOMFLY_EMAIL, password: env.ICOMFLY_PASSWORD };
+}
+
+function codigoDeTienda(storeId: number | undefined): FinanceStoreCode {
+  return (storeId != null ? getFinanceStoreById(storeId)?.code : undefined) ?? DEFAULT_FINANCE_STORE_CODE;
+}
+
+async function getToken(storeCode: FinanceStoreCode): Promise<string> {
+  const cred = credencialIcomfly(storeCode);
+  if (cred.token) return cred.token;
+  const cached = cachedTokens.get(cred.origen);
+  if (cached && cached.expiresAt > Date.now()) return cached.token;
+
+  const { email, password } = cred;
   if (!email || !password) {
     throw new Error("iComfly no configurado: define ICOMFLY_TOKEN o ICOMFLY_EMAIL + ICOMFLY_PASSWORD.");
   }
@@ -108,20 +144,20 @@ async function getToken(): Promise<string> {
     (data.accessToken as string);
   if (!token) throw new Error("iComfly login: no se encontro token en la respuesta.");
   // Cache conservador (50 min); el token real suele durar mas.
-  cachedToken = { token, expiresAt: Date.now() + 50 * 60 * 1000 };
+  cachedTokens.set(cred.origen, { token, expiresAt: Date.now() + 50 * 60 * 1000 });
   return token;
 }
 
-async function icomflyFetch(path: string): Promise<unknown> {
-  const token = await getToken();
+async function icomflyFetch(path: string, storeCode: FinanceStoreCode): Promise<unknown> {
+  const token = await getToken(storeCode);
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
   });
   if (res.status === 401) {
     // Token expirado: invalida cache y reintenta una vez.
-    cachedToken = null;
-    const retryToken = await getToken();
+    cachedTokens.delete(credencialIcomfly(storeCode).origen);
+    const retryToken = await getToken(storeCode);
     const retry = await fetch(`${BASE}${path}`, {
       headers: { Authorization: `Bearer ${retryToken}` },
       cache: "no-store",
@@ -163,7 +199,7 @@ export async function listOrdersWithAttribution(opts: {
     page: String(page),
     limit: String(limit),
   });
-  const body = await icomflyFetch(`/orders?${params.toString()}`);
+  const body = await icomflyFetch(`/orders?${params.toString()}`, codigoDeTienda(opts.storeId));
   const raw = extractArray(body);
   const orders = raw.map((r) => normalizeIcomflyOrder(r, storeId));
   // Si vino una pagina llena, asumimos que puede haber mas.
@@ -188,7 +224,7 @@ export async function listAgents(opts: {
   const params = new URLSearchParams({ store_id: String(externalStoreId) });
   if (opts.from) params.set("from", opts.from);
   if (opts.to) params.set("to", opts.to);
-  const body = await icomflyFetch(`/metrics/agents?${params.toString()}`);
+  const body = await icomflyFetch(`/metrics/agents?${params.toString()}`, codigoDeTienda(opts.storeId));
   const raw = extractArray(body);
   return raw
     .map((r) => {

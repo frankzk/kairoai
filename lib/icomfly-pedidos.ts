@@ -81,6 +81,15 @@ function numero(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+// Los pedidos de la pagina web de iComfly traen un cliente generico ("Cliente
+// Shopify"); el nombre real es el del envio, el que se escribio en ese pedido.
+const NOMBRES_GENERICOS = /^(cliente shopify|sin nombre|cliente)$/i;
+
+/** El nombre del envio primero (el de ESTE pedido); el del cliente si no hay. Sin genericos. */
+export function nombreCliente(...candidatos: unknown[]): string {
+  return candidatos.map(texto).find((n) => n && !NOMBRES_GENERICOS.test(n)) ?? "";
+}
+
 export function nombrePedidoIcomfly(orderNumber: unknown, id: unknown): string {
   const propio = texto(orderNumber).replace(/^#/, "");
   return `IC-${propio || texto(id)}`;
@@ -94,15 +103,58 @@ export function estadoFinalIcomfly(status: string): "delivered" | "not_delivered
   return "";
 }
 
-function lineas(p: PedidoIcomflyCrudo): ProductLineItem[] {
-  const items = Array.isArray(p.items) ? (p.items as Array<Record<string, unknown>>) : [];
-  const desdeItems = items
-    .filter((item) => item && typeof item === "object")
+function claveProducto(nombre: unknown): string {
+  return texto(nombre)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function itemsCrudos(p: PedidoIcomflyCrudo): Array<Record<string, unknown>> {
+  return Array.isArray(p.items) ? (p.items as Array<Record<string, unknown>>).filter((i) => i && typeof i === "object") : [];
+}
+
+/**
+ * El SKU de Shopify de cada producto de iComfly, aprendido de los pedidos que
+ * estan en los dos con un solo producto de cada lado (gana el SKU mas visto).
+ * iComfly no trae SKU y los costos se cargaron por SKU: sin esto el margen de
+ * los pedidos de iComfly tenia costo para el 41% de las unidades, contra el
+ * 50% de los de Shopify; con esto, 49% (Costa Rica desde el 05/10, medido el
+ * 24/10/2026). Un producto nuevo despues del 28/10 no tiene par: su costo se
+ * busca por nombre, como hasta ahora.
+ */
+export function skusPorProducto(
+  crudos: PedidoIcomflyCrudo[],
+  shopifyOrders: Pick<ShopifyOrderSummary, "name" | "line_items">[]
+): Map<string, string> {
+  const porNombre = new Map(shopifyOrders.map((o) => [normalizeMatchKey(o.name), o]));
+  const conteo = new Map<string, Map<string, number>>();
+  for (const p of crudos) {
+    const shopify = porNombre.get(normalizeMatchKey(texto(p.shopify_display_number)));
+    const items = itemsCrudos(p);
+    if (!shopify || items.length !== 1 || shopify.line_items.length !== 1) continue;
+    const sku = texto(shopify.line_items[0].sku).toLowerCase();
+    const producto = claveProducto(items[0].product_name || items[0].name);
+    if (!sku || !producto) continue;
+    const skus = conteo.get(producto) ?? new Map<string, number>();
+    skus.set(sku, (skus.get(sku) ?? 0) + 1);
+    conteo.set(producto, skus);
+  }
+  const out = new Map<string, string>();
+  conteo.forEach((skus, producto) => {
+    out.set(producto, Array.from(skus.entries()).sort((a, b) => b[1] - a[1])[0][0]);
+  });
+  return out;
+}
+
+function lineas(p: PedidoIcomflyCrudo, skus?: Map<string, string>): ProductLineItem[] {
+  const desdeItems = itemsCrudos(p)
     .map((item) => {
       const variante = texto(item.variant_label) || texto(item.variant_name);
       const nombre = texto(item.product_name) || texto(item.name);
       return {
-        sku: "",
+        sku: skus?.get(claveProducto(nombre)) ?? "",
         title: variante ? `${nombre} - ${variante}` : nombre,
         quantity: numero(item.quantity) || 1,
         price: numero(item.product_price),
@@ -111,13 +163,15 @@ function lineas(p: PedidoIcomflyCrudo): ProductLineItem[] {
     .filter((item) => item.title);
   if (desdeItems.length) return desdeItems;
   const nombre = texto(p.product_name);
-  return nombre ? [{ sku: "", title: nombre, quantity: numero(p.quantity) || 1, price: numero(p.product_price) }] : [];
+  return nombre
+    ? [{ sku: skus?.get(claveProducto(nombre)) ?? "", title: nombre, quantity: numero(p.quantity) || 1, price: numero(p.product_price) }]
+    : [];
 }
 
 export function pedidosDeIcomfly(
   crudos: PedidoIcomflyCrudo[],
   shopifyOrders: Pick<ShopifyOrderSummary, "name" | "order_number" | "tracking_number">[],
-  opts: { currency: string; corte?: string }
+  opts: { currency: string; corte?: string; skus?: Map<string, string> }
 ): ShopifyOrderSummary[] {
   const corte = opts.corte ?? CORTE_PEDIDOS_ICOMFLY;
   const enShopify = new Set<string>();
@@ -144,7 +198,7 @@ export function pedidosDeIcomfly(
     vistos.add(id);
 
     const cliente = p.customer && typeof p.customer === "object" ? (p.customer as Record<string, unknown>) : {};
-    const items = lineas(p);
+    const items = lineas(p, opts.skus);
     const total = numero(p.total);
     const cancelado =
       texto(p.cancelled_at) || (estado.toLowerCase() === "cancelado" ? texto(p.updated_at) || creado : "");
@@ -152,7 +206,7 @@ export function pedidosDeIcomfly(
       id: `icomfly-${id}`,
       order_number: 0,
       name: shopify || nombrePedidoIcomfly(p.order_number, id),
-      customer_name: texto(cliente.fullName) || texto(p.shipping_name) || "Sin nombre",
+      customer_name: nombreCliente(p.shipping_name, cliente.fullName) || "Sin nombre",
       last_name: "",
       phone: texto(cliente.phone) || texto(p.shipping_phone) || texto(cliente.whatsapp) || null,
       products: items.map((item) => `${item.quantity}x ${item.title}`).join(", "),

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromSearchParams, getShopifyCredentials } from "@/lib/stores";
+import { cargarCatalogoRespaldo } from "@/lib/catalogo-respaldo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,11 +24,26 @@ export async function GET(req: NextRequest) {
       { status: 400 }
     );
   }
+  // Desde el 28/10/2026 Shopify esta suspendido: si no contesta, el catalogo
+  // sale del respaldo (lib/catalogo-respaldo.ts) con la misma forma.
+  const desdeRespaldo = async (motivo: string) => {
+    try {
+      const products = await cargarCatalogoRespaldo(store.id);
+      if (products.length) return NextResponse.json({ products, store: store.code, fuente: "respaldo", motivo });
+    } catch (err) {
+      console.warn(`[shopify/products] respaldo ${store.code}:`, err instanceof Error ? err.message : err);
+    }
+    return null;
+  };
+
   const { shop, token, missing } = getShopifyCredentials(store);
   if (!shop || !token) {
-    return NextResponse.json(
-      { error: `Shopify ${store.shortLabel} no configurado. Agrega ${missing.join(" y ")} en Vercel.` },
-      { status: 503 }
+    return (
+      (await desdeRespaldo("Shopify sin configurar")) ??
+      NextResponse.json(
+        { error: `Shopify ${store.shortLabel} no configurado. Agrega ${missing.join(" y ")} en Vercel.` },
+        { status: 503 }
+      )
     );
   }
 
@@ -43,12 +59,21 @@ export async function GET(req: NextRequest) {
   const rawProducts: Array<Record<string, unknown>> = [];
   let url = `https://${shop}/admin/api/2024-01/products.json?limit=250&fields=id,title,variants,image`;
   for (let page = 0; page < MAX_PAGES && url; page++) {
-    const res = await fetch(url, { headers, next: { revalidate: 300 } });
+    let res: Response;
+    try {
+      res = await fetch(url, { headers, next: { revalidate: 300 } });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "sin respuesta";
+      return (
+        (await desdeRespaldo(`Shopify no respondio: ${message}`)) ??
+        NextResponse.json({ error: `Shopify no respondio: ${message}` }, { status: 502 })
+      );
+    }
     if (!res.ok) {
       const text = await res.text();
-      return NextResponse.json(
-        { error: `Shopify error ${res.status}: ${text}` },
-        { status: res.status }
+      return (
+        (await desdeRespaldo(`Shopify error ${res.status}`)) ??
+        NextResponse.json({ error: `Shopify error ${res.status}: ${text}` }, { status: res.status })
       );
     }
     const data = await res.json();
