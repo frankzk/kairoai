@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   CORTE_PEDIDOS_ICOMFLY,
   direccionIcomfly,
+  esPedidoIcomfly,
   estadoFinalIcomfly,
   nombrePedidoIcomfly,
   pedidosDeIcomfly,
@@ -117,6 +118,11 @@ describe("nombre y estado", () => {
     expect(estadoFinalIcomfly("Devolucion")).toBe("not_delivered");
     expect(estadoFinalIcomfly("En_Reparto")).toBe("");
     expect(estadoFinalIcomfly("Pendiente")).toBe("");
+  });
+  it("el id de iComfly se reconoce, para no mandarlo a Shopify", () => {
+    expect(esPedidoIcomfly("icomfly-722549")).toBe(true);
+    expect(esPedidoIcomfly("6123456789")).toBe(false);
+    expect(esPedidoIcomfly("")).toBe(false);
   });
   it("la dirección sale en una línea, como la de Shopify", () => {
     expect(direccionIcomfly(crudo())).toBe("Del parque 100 m sur, San Rafael, Escazú, San José");

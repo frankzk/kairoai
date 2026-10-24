@@ -3,7 +3,7 @@ import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
 import { isC807Guide, normalizeC807Guide } from "./c807";
 import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "./cargo-expreso";
 import type { ShipmentTracking } from "./courier-tracking";
-import { COLUMNAS_PEDIDO_ICOMFLY, type PedidoIcomflyCrudo } from "./icomfly-pedidos";
+import { COLUMNAS_PEDIDO_ICOMFLY, CORTE_PEDIDOS_ICOMFLY, type PedidoIcomflyCrudo } from "./icomfly-pedidos";
 import { normalizeForzaGuide } from "./forza";
 import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
 import { isDeliveryRecheckDue, planMoovinSync } from "./moovin-sync-plan";
@@ -1446,6 +1446,58 @@ export async function getRecentlyCheckedMoovinPackages(maxAgeMinutes: number): P
   return fresh;
 }
 
+export interface GuiaIcomfly {
+  guide: string;
+  createdAt: string;
+  /** Nombre del cliente: Moovin lo pide para consultar la guia. */
+  fullName: string;
+}
+
+/**
+ * Guias de los pedidos de iComfly creados desde `desde` (ISO), sin cancelados
+ * ni Testeos. Desde el 28/10/2026 los pedidos nuevos no pasan por Shopify y
+ * sin esto ningun courier conoce sus guias. Son las MISMAS que llegaban a
+ * shopify_orders (octubre de 2026 en Costa Rica: 1.723 de 1.727 iguales), asi
+ * que no se rastrea nada dos veces. Best-effort: si falla, lista vacia y cada
+ * courier sigue con sus fuentes de siempre.
+ */
+export async function listIcomflyGuides(storeId: number, desde: string): Promise<GuiaIcomfly[]> {
+  const pageSize = 1000;
+  const out: GuiaIcomfly[] = [];
+  try {
+    for (let from = 0; from < 50000; from += pageSize) {
+      const { data, error } = await getDB()
+        .from("icomfly_order_payloads")
+        .select(
+          "guide:payload->>tracking_number,created_at:payload->>created_at,status:payload->>status,full_name:payload->customer->>fullName,shipping_name:payload->>shipping_name"
+        )
+        .eq("store_id", storeId)
+        .gte("payload->>created_at", desde)
+        .neq("payload->>tracking_number", "")
+        .order("icomfly_order_id")
+        .range(from, from + pageSize - 1);
+      if (error) throw new Error(error.message);
+      const page = (data ?? []) as Array<{
+        guide: string | null;
+        created_at: string | null;
+        status: string | null;
+        full_name: string | null;
+        shipping_name: string | null;
+      }>;
+      for (const row of page) {
+        const guide = (row.guide ?? "").trim();
+        if (!guide || /cancelad|testeo/i.test(row.status ?? "")) continue;
+        out.push({ guide, createdAt: row.created_at ?? "", fullName: (row.full_name || row.shipping_name || "").trim() });
+      }
+      if (page.length < pageSize) break;
+    }
+  } catch (err) {
+    console.warn(`[listIcomflyGuides] tienda ${storeId}:`, err instanceof Error ? err.message : err);
+    return [];
+  }
+  return out;
+}
+
 // Candidatos a sincronizar con Moovin desde el servidor (para el cron): guias
 // Moovin que aun no estan en estado terminal (entregado/devuelto) en la cache
 // y que no se consultaron dentro de la ventana fresca.
@@ -1492,6 +1544,7 @@ export async function listMoovinSyncCandidates(
   // "solo-Shopify" son los puntos ciegos, asi que se priorizan al elegir candidatos.
   // Best-effort: si la consulta falla, se sigue con las guias de Boxful.
   const shopifyOnlyGuides: string[] = [];
+  const icomflyOnlyGuides: string[] = [];
   const moovinStore = FINANCE_STORES.find((store) => store.logisticsProvider === "moovin");
   if (moovinStore) {
     const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
@@ -1518,6 +1571,15 @@ export async function listMoovinSyncCandidates(
         shopifyOnlyGuides.push(guide);
       }
       if (page.length < pageSize) break;
+    }
+
+    // 1c) Guias de iComfly, con el mismo criterio que 1b: desde el 28/10/2026
+    // los pedidos nuevos no llegan a Shopify y este es el unico lugar donde
+    // aparecen. Sin apellido: Moovin lo saca del nombre completo.
+    for (const g of await listIcomflyGuides(moovinStore.id, since)) {
+      if (isWynGuide(g.guide) || byGuide.has(g.guide)) continue;
+      byGuide.set(g.guide, { lastName: "", fullName: g.fullName });
+      icomflyOnlyGuides.push(g.guide);
     }
   }
 
@@ -1571,7 +1633,7 @@ export async function listMoovinSyncCandidates(
   // el tablero (guia 2620536, entregada el 18/08 y leida hasta el 19/08).
   const pending: Array<{ guide: string; checkedAt: number }> = [];
   const seen = new Set<string>();
-  for (const guide of [...shopifyOnlyGuides, ...Array.from(byGuide.keys())]) {
+  for (const guide of [...shopifyOnlyGuides, ...icomflyOnlyGuides, ...Array.from(byGuide.keys())]) {
     if (seen.has(guide)) continue;
     if (terminal.has(guide) || fresh.has(guide)) continue;
     if (!byGuide.has(guide)) continue;
@@ -1628,6 +1690,15 @@ export async function listForzaSyncCandidates(
       orderGuides.push({ guide: row.tracking_number ?? "", orderedAt: Number.isNaN(orderedAt) ? 0 : orderedAt });
     }
     if (page.length < pageSize) break;
+  }
+  // Desde el 28/10/2026 las guias nuevas solo estan en iComfly.
+  const yaEstan = new Set(orderGuides.map((g) => g.guide.trim().toUpperCase()));
+  for (const g of await listIcomflyGuides(storeId, since)) {
+    const guide = g.guide.toUpperCase();
+    if (!guide.startsWith("FD") || yaEstan.has(guide)) continue;
+    yaEstan.add(guide);
+    const orderedAt = Date.parse(g.createdAt);
+    orderGuides.push({ guide: g.guide, orderedAt: Number.isNaN(orderedAt) ? 0 : orderedAt });
   }
 
   const tracked: ForzaTrackedGuide[] = [];
@@ -1794,6 +1865,11 @@ export async function listWynSyncCandidates(
       for (const guide of extractWynGuides(row.tracking_number)) guides.add(guide);
     }
     if (page.length < pageSize) break;
+  }
+  // Desde el 28/10/2026 las guias nuevas solo estan en iComfly (lo anterior al
+  // corte ya llego a Shopify).
+  for (const g of await listIcomflyGuides(storeId, CORTE_PEDIDOS_ICOMFLY)) {
+    for (const guide of extractWynGuides(g.guide)) guides.add(guide);
   }
 
   if (!guides.size) return [];
@@ -2031,6 +2107,11 @@ export async function listShipmentSyncCandidates(
       if (isGuide(guide)) guides.add(guide);
     }
     if (page.length < pageSize) break;
+  }
+  // Desde el 28/10/2026 las guias nuevas solo estan en iComfly.
+  for (const g of await listIcomflyGuides(storeId, since)) {
+    const guide = normalize(g.guide);
+    if (isGuide(guide)) guides.add(guide);
   }
   if (!guides.size) return [];
 

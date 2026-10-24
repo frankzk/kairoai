@@ -5,6 +5,7 @@
 // Moovin (encadena la deteccion justo despues de refrescar el tracking).
 import {
   listForzaTracking,
+  listIcomflyPedidosDesde,
   listLogisticsRows,
   listMoovinTracking,
   listPersistedShopifyOrders,
@@ -14,6 +15,7 @@ import {
 import { FINANCE_STORES } from "@/lib/store-config";
 import type { LogisticsRow } from "@/lib/finance-types";
 import { persistedOrderToSummary, type ShopifyOrderSummary } from "@/lib/finance-orders";
+import { CORTE_PEDIDOS_ICOMFLY, pedidosDeIcomfly } from "@/lib/icomfly-pedidos";
 import type { DetectedIncident } from "@/lib/incidents-types";
 import {
   detectC807Incident,
@@ -84,11 +86,21 @@ function lookupShopify(
   return undefined;
 }
 
-async function loadShopifyByGuide(storeId: number): Promise<Map<string, ShopifyOrderSummary>> {
-  const persisted = await listPersistedShopifyOrders(20000, 0, storeId);
-  return indexShopifyByGuide(
-    persisted.map((order) => persistedOrderToSummary(order as unknown as Record<string, unknown>))
-  );
+// Los pedidos que existen solo en iComfly (lib/icomfly-pedidos.ts) van
+// despues: si Shopify tiene la guia, gana Shopify. Desde el 28/10/2026 son
+// todos los nuevos; sin ellos la novedad saldria sin cliente, telefono ni
+// pedido. Best-effort: si iComfly falla, se cruza solo con Shopify.
+export async function loadShopifyByGuide(storeId: number): Promise<Map<string, ShopifyOrderSummary>> {
+  const [persisted, crudos] = await Promise.all([
+    listPersistedShopifyOrders(20000, 0, storeId),
+    listIcomflyPedidosDesde(storeId, CORTE_PEDIDOS_ICOMFLY).catch((err) => {
+      console.warn("[incidents] pedidos de iComfly:", err instanceof Error ? err.message : err);
+      return [];
+    }),
+  ]);
+  const deShopify = persisted.map((order) => persistedOrderToSummary(order as unknown as Record<string, unknown>));
+  const currency = FINANCE_STORES.find((s) => s.id === storeId)?.currency ?? "CRC";
+  return indexShopifyByGuide([...deShopify, ...pedidosDeIcomfly(crudos, deShopify, { currency })]);
 }
 
 // Maximo checked_at de un lote. Viene en ISO-UTC consistente desde Supabase, asi

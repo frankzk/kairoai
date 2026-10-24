@@ -184,3 +184,8 @@ export function direccionIcomfly(p: Pick<PedidoIcomflyCrudo, "shipping" | "custo
     [key, ...alt].map((k) => texto(envio[k]) || texto(cliente[k])).find(Boolean) ?? "";
   return [de("address"), de("district"), de("city"), de("province", "department")].filter(Boolean).join(", ");
 }
+
+/** El id que lleva un pedido de iComfly en lugar del de Shopify ("icomfly-<id>"). */
+export function esPedidoIcomfly(shopifyOrderId: string | null | undefined): boolean {
+  return String(shopifyOrderId ?? "").startsWith("icomfly-");
+}
