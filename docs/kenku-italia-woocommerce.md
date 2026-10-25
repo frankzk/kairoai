@@ -60,6 +60,50 @@ reintento y worker autenticado. `tests/woo-database.sql` se ejecuta con
 service_role dentro de BEGIN/ROLLBACK y verifica locks, revisión, auditoría,
 leases y aislamiento. Ejecutar `npm test`, `npm run lint` y `npm run build`.
 
-Pendiente independiente: puente Icomfly → WooCommerce, carga de históricos y
+Pendiente independiente: puente Icomfly → WooCommerce, carga de históricos en WooCommerce y
 validación comercial/legal de lanzamiento. Esta integración no despacha
 paquetes ni envía mensajes a clientes.
+
+## Gestión Shopify durante la migración (25-10-2026)
+
+El dueño confirmó que la gestión se guarda en Kairo y Shopify conserva sus
+estados originales. `/admin/finance/italia` ahora consulta ambos orígenes:
+Shopify desde el respaldo existente (6.264 pedidos verificados) y WooCommerce
+desde su tabla de recepción. No crea copias de pedidos Shopify en WooCommerce.
+Las claves compuestas origen/ID impiden mezclar plataformas. El listado pagina
+50 por petición, con búsqueda por pedido/cliente/teléfono y filtros por origen
+y estado. El cron de respaldo sigue incorporando cambios cada cinco minutos.
+
+En Shopify, **Gestionar** guarda estado operativo, nota interna, courier y guía.
+Un historial registra actor, fecha, versión y valores antes/después. No llama
+a la API de escritura Shopify, ni cobra, reembolsa, despacha o envía mensajes.
+Los estados nativos de pago y preparación se muestran por separado: paid no
+significa entregado; fulfilled es despachado salvo evidencia de entrega en
+sus fulfillments. Cancelación/reembolso nativos prevalecen en la vista y
+bloquean transiciones incompatibles, conservando la auditoría local.
+Una edición de nota sin cambio de estado sigue usando el estado nativo.
+WooCommerce conserva sus botones y retorno de estados ya implementados.
+
+Migraciones aplicadas:
+- `20261025183359_kenku_italia_shopify_management.sql`: gestión, auditoría,
+  función transaccional y vista unificada SECURITY INVOKER.
+- `20261025184034_kenku_italia_order_index.sql`: proyección de lectura pequeña,
+  actualizada por trigger de cada alta/cambio de pedido en el respaldo. El
+  payload original permanece intacto. La consulta principal se midió en
+  17,8 ms frente a 904 ms sin proyección (medición puntual, no SLA).
+
+Las tablas nuevas tienen RLS y acceso exclusivamente service_role; la vista
+y funciones revocan acceso de anon/authenticated/PUBLIC. Las rutas exigen
+operador de Italia y Origin válido para cambios. La versión del registro y
+fecha de actualización Shopify evitan guardar sobre datos desactualizados.
+Repetir el UUID de una petición idéntica no duplica la auditoría; reutilizarlo
+con valores diferentes produce conflicto.
+
+Validación: 1.266 tests y build/typecheck/lint correctos. SQL transaccional con
+ROLLBACK verifica permisos, versiones, idempotencia, estados, preservación del
+respaldo y refresco del índice. Playwright con registros sintéticos verifica
+paginación del histórico real en lectura, filtros, búsquedas, permisos por
+tienda, CSRF, gestión, historial, conflicto concurrente, conservación de notas
+ante actualización del respaldo y botones WooCommerce. Los fixtures se borran
+y las sesiones técnicas se invalidan al terminar. No se modifican pedidos
+reales para las pruebas. Tiempo no cronometrado.
