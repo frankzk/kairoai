@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { getShopifyOAuthCredentials, getStoreConfig, parseFinanceStoreCode } from "@/lib/stores";
+import { getShopifyOAuthCredentials, tiendaShopifyPorCodigo } from "@/lib/stores";
 
 // Shopify redirects here after merchant approves the app.
 // This exchanges the code for a permanent access token and displays it once.
@@ -8,11 +8,10 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const code = searchParams.get("code");
   const shop = searchParams.get("shop") ?? "";
-  const storeCode = getStoreCodeFromOAuthState(searchParams.get("state"));
-  if (!storeCode) {
+  const store = getStoreFromOAuthState(searchParams.get("state"));
+  if (!store) {
     return textResponse("Error: estado OAuth invalido o sin tienda.", 400);
   }
-  const store = getStoreConfig(storeCode);
   const tokenEnv = store.accessTokenEnv;
 
   if (!code) {
@@ -128,8 +127,8 @@ export async function GET(req: NextRequest) {
   });
 }
 
-function getStoreCodeFromOAuthState(state: string | null) {
-  return parseFinanceStoreCode(state?.split(":")[0]);
+function getStoreFromOAuthState(state: string | null) {
+  return tiendaShopifyPorCodigo(state?.split(":")[0]);
 }
 
 function textResponse(message: string, status: number) {

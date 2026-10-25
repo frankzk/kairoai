@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getRequiredStoreConfig, getShopifyOAuthCredentials } from "@/lib/stores";
+import { getShopifyOAuthCredentials, tiendaShopifyPorCodigo } from "@/lib/stores";
+import { scopesParaTienda } from "@/lib/shopify-scopes";
 
 // One-time OAuth flow to obtain a permanent Shopify access token.
 // Visit:
 // - Costa Rica: https://kairoai-pearl.vercel.app/api/shopify/auth?store=mireva-cr
 // - Honduras: https://kairoai-pearl.vercel.app/api/shopify/auth?store=mireva-hn
+// - Solo respaldo: ?store=kenku-mx, kenku-ar o kenku-it (lib/stores.ts)
 export async function GET(req: NextRequest) {
-  const store = getRequiredStoreConfig(req.nextUrl.searchParams.get("store"));
+  const store = tiendaShopifyPorCodigo(req.nextUrl.searchParams.get("store"));
   if (!store) {
-    return new NextResponse("store requerido: usa mireva-cr o mireva-hn.", { status: 400 });
+    return new NextResponse("store requerido: usa mireva-cr, mireva-hn, kenku-mx, kenku-ar o kenku-it.", { status: 400 });
   }
   const { clientId, missing: missingOAuth } = getShopifyOAuthCredentials(store);
   const shop =
@@ -25,23 +27,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const scopes = [
-    "read_products",
-    "read_orders",
-    "read_all_orders",
-    "write_orders",
-    "read_draft_orders",
-    "write_draft_orders",
-    "read_customers",
-    "read_checkouts",
-    // Fulfillments/tracking: sin estos scopes, order.fulfillments vuelve vacio
-    // para pedidos despachados por apps/3PL (bot, Boxful) y NO se captura la guia
-    // aunque Shopify marque el pedido como "fulfilled".
-    "read_fulfillments",
-    "read_merchant_managed_fulfillment_orders",
-    "read_assigned_fulfillment_orders",
-    "read_third_party_fulfillment_orders",
-  ].join(",");
+  const scopes = scopesParaTienda(store).join(",");
 
   const redirectUri = `https://kairoai-pearl.vercel.app/api/shopify/auth/callback`;
   const state = `${store.code}:${Math.random().toString(36).slice(2)}`;

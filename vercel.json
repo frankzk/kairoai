@@ -23,7 +23,7 @@
     },
     {
       "path": "/api/cron/shopify-archivo",
-      "schedule": "*/15 * * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/cron/shopify-recent",
