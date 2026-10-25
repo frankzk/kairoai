@@ -1244,17 +1244,22 @@ export async function updatePayrollStaffIcomfly(
 
 // ─── iComfly: pedidos con estado de despacho (migracion 0010) ────────────────
 
+// Los mas nuevos primero, en un orden TOTAL. Antes ordenaba por requested_at,
+// que iComfly dejo de mandar (24/10/2026: null en los 24.337 pedidos de Costa
+// Rica): el orden quedaba librado a Postgres, las paginas de range() se
+// pisaban y el tope devolvia 5.000 pedidos cualesquiera, no los ultimos.
 export async function listIcomflyOrders(
   opts: { storeId?: number; limit?: number } = {}
 ): Promise<IcomflyOrderRecord[]> {
-  const limit = Math.min(Math.max(opts.limit ?? 5000, 1), 50000);
+  const limit = Math.min(Math.max(opts.limit ?? 5000, 1), 200000);
   const pageSize = 1000;
   const all: IcomflyOrderRecord[] = [];
   for (let from = 0; from < limit; from += pageSize) {
     let query = getDB()
       .from("icomfly_orders")
       .select("*")
-      .order("requested_at", { ascending: false, nullsFirst: false })
+      .order("icomfly_created_at", { ascending: false, nullsFirst: false })
+      .order("icomfly_order_id", { ascending: false })
       .range(from, Math.min(from + pageSize, limit) - 1);
     if (opts.storeId != null) query = query.eq("store_id", opts.storeId);
     const { data, error } = await query;

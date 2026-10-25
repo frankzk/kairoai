@@ -332,6 +332,15 @@ async function writeDatasetCache(store: FinanceStorePublic, data: OrdersDataset)
   }
 }
 
+/**
+ * Tope de pedidos (de Shopify y de iComfly) que lee el dataset: TODOS. Antes
+ * eran 20.000 de Shopify y 5.000 de iComfly; Costa Rica tiene 25.935 y 24.337
+ * (25/10/2026), asi que Gestion perdia los 5.935 pedidos mas viejos y el estado
+ * de despacho de la mayoria. Shopify no crece despues del 28/10; iComfly suma
+ * unos 3.000 por mes. Armar el dataset tarda ~70 s de los 300 del cron.
+ */
+export const MAX_PEDIDOS_DATASET = 100_000;
+
 // Ensambla el dataset crudo->filas trackeables. Mismo orden de operaciones que
 // page.tsx: persistidos->summary, mapas de tracking por guia, traces de
 // liquidacion, y buildVisibleOrderRows.
@@ -344,7 +353,7 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
       return [];
     });
   const [persisted, logisticsRows, moovin, forza, wyn, c807, cargo, settlementRows, imports, icomflyOrders, crudosIcomfly] = await Promise.all([
-    listPersistedShopifyOrders(20000, 0, store.id),
+    listPersistedShopifyOrders(MAX_PEDIDOS_DATASET, 0, store.id),
     listLogisticsRows(undefined, store.id),
     listMoovinTracking(),
     listForzaTracking(store.id),
@@ -353,7 +362,7 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
     envio("cargoexpreso"),
     listSettlementRows(undefined, store.id),
     listSettlementImports(store.id),
-    listIcomflyOrders({ storeId: store.id }),
+    listIcomflyOrders({ storeId: store.id, limit: MAX_PEDIDOS_DATASET }),
     // Pedidos que existen solo en iComfly (desde el 28/10/2026, todos los
     // nuevos). Best-effort: si la tabla falla, el dataset se arma con Shopify.
     listIcomflyPedidosDesde(store.id, CORTE_PEDIDOS_ICOMFLY).catch((err) => {
