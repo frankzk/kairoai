@@ -4,10 +4,11 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import Link from "next/link";
 import {
   Activity, AlertTriangle, ArrowLeft, Ban, CalendarClock, Check, ChevronDown, ChevronsUpDown, ChevronUp, Copy,
-  Download, HelpCircle, History, MapPin, MessageSquare, PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Timer, Undo2, X,
+  Download, HelpCircle, History, MapPin, MessageSquare, PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Timer, Undo2, UserCheck, X,
   type LucideIcon,
 } from "lucide-react";
 import LeadChatPanel from "@/components/LeadChatPanel";
+import ProductividadNovedades from "@/components/ProductividadNovedades";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -470,6 +471,32 @@ function CausasModal({ causas, onClose }: { causas: IncidentCausaStat[]; onClose
   );
 }
 
+// Ventana "Productividad": quien trabaja las novedades, por persona y por dia.
+function ProductividadModal({ storeCode, onClose }: { storeCode: FinanceStoreCode; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <Card className="my-8 w-full max-w-4xl">
+        <div className="flex items-center justify-between border-b border-border p-4">
+          <div>
+            <span className="font-semibold">Productividad de novedades</span>
+            <p className="text-xs text-muted-foreground">{getFinanceStore(storeCode).label}</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
+        </div>
+        <CardContent className="p-4">
+          <ProductividadNovedades storeCode={storeCode} />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ----- Orden de la tabla: columnas ordenables al hacer click en el encabezado.
 type SortKey =
   | "estado" | "cliente" | "telefono" | "pedido" | "guia"
@@ -612,6 +639,7 @@ export default function IncidenciasPage() {
   const [trackingSync, setTrackingSync] = useState<string | null>(null);
   const [exec, setExec] = useState<IncidentExecutiveStats | null>(null);
   const [showCausas, setShowCausas] = useState(false);
+  const [showProductividad, setShowProductividad] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const [selected, setSelected] = useState<Incident | null>(null);
@@ -1019,6 +1047,10 @@ export default function IncidenciasPage() {
                 onClick={() => setStatusFilter(statusFilter === "sin_contestar" ? "" : "sin_contestar")}>
                 <CalendarClock className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Reintento fin del día</span>
               </Button>
+              <Button variant="outline" size="sm" className="gap-2 h-9" onClick={() => setShowProductividad(true)}
+                title="Quién trabaja las novedades, por persona y por día">
+                <UserCheck className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Productividad</span>
+              </Button>
               <Button variant="outline" size="sm" className="gap-2 h-9"
                 disabled={exporting || loading || !filtered.length} onClick={exportarExcel}
                 title="Descarga en Excel las novedades del filtro actual">
@@ -1142,6 +1174,7 @@ export default function IncidenciasPage() {
 
       {showNew && <NewModal storeCode={selectedStoreCode} onClose={() => setShowNew(false)} onCreated={() => { setShowNew(false); fetchData(); }} />}
       {showCausas && <CausasModal causas={exec?.causas ?? []} onClose={() => setShowCausas(false)} />}
+      {showProductividad && <ProductividadModal storeCode={selectedStoreCode} onClose={() => setShowProductividad(false)} />}
     </div>
   );
 }

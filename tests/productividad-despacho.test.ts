@@ -1,4 +1,4 @@
-// Productividad de despacho (pestaña Productividad de Gestion).
+// Productividad de despacho (ventana Productividad de Gestion).
 //
 // POR QUE ESTE TEST EXISTE: el reporte dice cuantos pedidos despacha cada
 // asesora, y con eso se mide y se paga. Un pedido contado en el dia equivocado

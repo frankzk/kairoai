@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 // GET: quien despacha (genera la guia) y quien confirma, por persona y por dia,
-// para la pestaña Productividad de Gestion. ?range=hoy|ayer|7d|30d|mes, o
+// para la ventana Productividad de Gestion. ?range=hoy|ayer|7d|30d|mes, o
 // ?from=YYYY-MM-DD&to=YYYY-MM-DD (dias locales, inclusivos; mandan sobre range).
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;

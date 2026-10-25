@@ -1,4 +1,6 @@
 import { getDB } from "@/lib/db";
+import { identidadActual } from "@/lib/identidad";
+import type { AccionNovedad } from "@/lib/productividad-novedades";
 import { DEFAULT_FINANCE_STORE_ID } from "@/lib/store-config";
 import { applyDetection, buildIncidentKey } from "@/lib/incidents-detect";
 import { buildTrend } from "@/lib/incidents-trend";
@@ -656,6 +658,29 @@ export async function getIncident(id: number, storeId?: number): Promise<Inciden
   return (data as Incident | null) ?? null;
 }
 
+// Las acciones con persona de una tienda en [desde, hasta): la ventana
+// Productividad de Novedades. Paginado (PostgREST corta en 1.000).
+export async function listAccionesNovedades(storeId: number, desdeIso: string, hastaIso: string): Promise<AccionNovedad[]> {
+  const pageSize = 1000;
+  const all: AccionNovedad[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("incident_events")
+      .select("incident_id, kind, created_at, actor:metadata->actor->>nombre, incidents!inner(store_id)")
+      .eq("incidents.store_id", storeId)
+      .gte("created_at", desdeIso)
+      .lt("created_at", hastaIso)
+      .not("metadata->actor->>nombre", "is", null)
+      .order("id")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listAccionesNovedades: ${error.message}`);
+    const page = (data ?? []) as unknown as AccionNovedad[];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
+}
+
 export async function listIncidentEvents(incidentId: number): Promise<IncidentEvent[]> {
   const { data, error } = await getDB()
     .from("incident_events")
@@ -668,8 +693,14 @@ export async function listIncidentEvents(incidentId: number): Promise<IncidentEv
 
 export async function recordIncidentEvent(
   incidentId: number,
-  event: IncidentEventInput
+  event: IncidentEventInput,
+  /** sistema: lo registra la deteccion, aunque la haya lanzado alguien con el boton. */
+  opts: { sistema?: boolean } = {}
 ): Promise<void> {
+  // Quien hizo la accion: la persona con sesion. Los procesos del sistema
+  // (crons, deteccion, cambios del courier) van sin actor. Es la base de la
+  // productividad de Novedades (lib/productividad-novedades.ts).
+  const yo = opts.sistema ? null : identidadActual();
   const { error } = await getDB().from("incident_events").insert({
     incident_id: incidentId,
     kind: event.kind,
@@ -677,7 +708,10 @@ export async function recordIncidentEvent(
     to_status: event.to_status ?? "",
     message: event.message ?? "",
     result: event.result ?? "ok",
-    metadata: event.metadata ?? {},
+    metadata: {
+      ...(event.metadata ?? {}),
+      ...(yo ? { actor: { id: yo.id, nombre: yo.nombre, staff_id: yo.staffId } } : {}),
+    },
   });
   if (error) throw new Error(`recordIncidentEvent: ${error.message}`);
 }
@@ -832,7 +866,7 @@ export async function upsertDetectedIncident(
     const { data, error } = await db.from("incidents").insert(payload).select().single();
     if (error) throw new Error(`upsertDetectedIncident: ${error.message}`);
     const incident = data as Incident;
-    if (decision.event) await recordIncidentEvent(incident.id, decision.event);
+    if (decision.event) await recordIncidentEvent(incident.id, decision.event, { sistema: true });
     return { incident, outcome: "created" };
   }
 
@@ -844,6 +878,6 @@ export async function upsertDetectedIncident(
     .select()
     .single();
   if (error) throw new Error(`upsertDetectedIncident: ${error.message}`);
-  if (decision.event) await recordIncidentEvent(existing!.id, decision.event);
+  if (decision.event) await recordIncidentEvent(existing!.id, decision.event, { sistema: true });
   return { incident: data as Incident, outcome: "updated" };
 }

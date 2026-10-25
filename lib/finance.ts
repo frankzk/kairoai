@@ -1321,7 +1321,7 @@ export async function listIcomflyPedidosDesde(
 }
 
 // Quien genero la guia y quien confirmo cada pedido de iComfly con despacho o
-// confirmacion en [desde, hasta): la pestaña Productividad de Gestion
+// confirmacion en [desde, hasta): la ventana Productividad de Gestion
 // (lib/productividad-despacho.ts). Dos consultas simples (por fecha de guia y
 // por fecha de confirmacion) unidas por pedido; solo las columnas que hacen
 // falta, paginado (PostgREST corta en 1.000).

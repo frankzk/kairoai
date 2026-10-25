@@ -101,9 +101,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import DispatchTab from "@/components/DispatchTab";
 import DispatchAuditTab from "@/components/DispatchAuditTab";
-import ProductividadDespachoTab from "@/components/ProductividadDespachoTab";
+import ProductividadDespacho from "@/components/ProductividadDespacho";
 
-type Tab = "orders" | "dispatch" | "productividad" | "audit" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
+type Tab = "orders" | "dispatch" | "audit" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
 
 // Carril 2 (ultimo tab): TODOS los tabs cargan server-side. Pedidos/KPIs, Productos,
 // Notas, Cierre y ahora Liquidaciones traen sus datos ya calculados desde sus
@@ -1581,9 +1581,6 @@ export default function FinancePage() {
           <TabButton active={tab === "dispatch"} onClick={() => setTab("dispatch")} icon={<Truck />}>
             Despacho
           </TabButton>
-          <TabButton active={tab === "productividad"} onClick={() => setTab("productividad")} icon={<UserCheck />}>
-            Productividad
-          </TabButton>
           <TabButton active={tab === "audit"} onClick={() => setTab("audit")} icon={<ShieldAlert />}>
             Auditoría
           </TabButton>
@@ -1647,7 +1644,6 @@ export default function FinancePage() {
               />
             )}
             {tab === "dispatch" && <DispatchTab storeCode={selectedStore.code} />}
-            {tab === "productividad" && <ProductividadDespachoTab storeCode={selectedStore.code} />}
             {tab === "audit" && <DispatchAuditTab storeCode={selectedStore.code} />}
             {tab === "products" && (
               <ProductAnalysisTab
@@ -1927,6 +1923,7 @@ function OrdersTab({
   onDatasetReady: (storeCode: FinanceStoreCode) => void;
 }) {
   const [isLogisticsModalOpen, setIsLogisticsModalOpen] = useState(false);
+  const [productividadAbierta, setProductividadAbierta] = useState(false);
   const [logisticsModalError, setLogisticsModalError] = useState("");
   const [orderSearch, setOrderSearch] = useState("");
   const [periodMode, setPeriodMode] = useState<OrderPeriodMode>("all");
@@ -2692,6 +2689,14 @@ function OrdersTab({
                 )}
               </FilaFiltros>
               <div className="hidden min-h-[26px] shrink-0 items-center gap-2.5 sm:flex">
+                <button
+                  type="button"
+                  onClick={() => setProductividadAbierta(true)}
+                  title="Quién despacha y quién confirma, por persona y por día"
+                  className="inline-flex h-[26px] items-center gap-1.5 border border-border px-2 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <UserCheck className="h-3.5 w-3.5" /> Productividad
+                </button>
                 {tableLoading && (
                   <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground">
                     <RefreshCw className="h-3 w-3 animate-spin" /> Actualizando...
@@ -2801,6 +2806,33 @@ function OrdersTab({
           )}
         </CardContent>
       </Card>
+
+      {productividadAbierta && (
+        <ModalOverlay onClose={() => setProductividadAbierta(false)} labelledBy="productividad-title">
+          <div className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
+            <div className="mb-3 flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <h3 id="productividad-title" className="text-base font-semibold">
+                  Productividad de despacho
+                </h3>
+                <p className="text-xs text-muted-foreground">{selectedStore.label}</p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Cerrar productividad"
+                onClick={() => setProductividadAbierta(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="min-h-0 overflow-y-auto">
+              <ProductividadDespacho storeCode={selectedStore.code} />
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
 
       {isLogisticsModalOpen && (
         <ModalOverlay onClose={() => setIsLogisticsModalOpen(false)} labelledBy="logistics-import-title">
