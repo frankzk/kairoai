@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { getDB } from "./db";
 import { SESSION_MAX_AGE_S, type SesionClaims } from "./auth";
 import { normalizarPermisos, esRol, type Permiso, type Rol } from "./permisos";
-import { FINANCE_STORES } from "./store-config";
+import { ACCESS_STORES } from "./access-stores";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number, opts: object) => Promise<Buffer>;
 
@@ -87,7 +87,7 @@ export function tieneClave(passwordHash: string): boolean {
   return passwordHash.startsWith("scrypt$");
 }
 
-export const CODIGOS_TIENDA = FINANCE_STORES.map((s) => s.code) as string[];
+export const CODIGOS_TIENDA = ACCESS_STORES.map((s) => s.code) as string[];
 
 export function normalizarTiendas(v: unknown): string[] {
   if (!Array.isArray(v)) return [];

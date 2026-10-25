@@ -19,9 +19,12 @@ export interface CronJob {
    * tests/cron-health.test.ts verifica que coincida con vercel.json.
    */
   everyMinutes: number | null;
+  /** Vercel por defecto; los externos se declaran en config/external-crons.json. */
+  scheduler?: "external";
 }
 
 export const CRON_JOBS: CronJob[] = [
+  { name: "woo-status", label: "Estados de Kenku Italia", everyMinutes: 5, scheduler: "external" },
   { name: "leads", label: "Leads de WhatsApp", everyMinutes: 5 },
   { name: "leads-reclassify", label: "Clasificación de leads", everyMinutes: 10 },
   { name: "leads-shopify-match", label: "Leads que ya compraron", everyMinutes: 60 },

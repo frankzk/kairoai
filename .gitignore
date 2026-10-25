@@ -28,4 +28,5 @@ next-env.d.ts
 .DS_Store
 *.pem
 .vercel
+supabase/.temp/
 .env*

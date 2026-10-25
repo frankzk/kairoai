@@ -25,3 +25,15 @@ export function cronAccessAllowed(opts: {
   if (!opts.secret) return true;
   return opts.authorization === `Bearer ${opts.secret}`;
 }
+
+/** Worker externo de Italia: falla cerrado y limita el acceso manual a su tienda. */
+export function wooCronAccessAllowed(opts: {
+  identity: { u: number; s: string[]; p: string[]; mc?: boolean } | null;
+  authorization: string | null;
+  secret: string | undefined;
+}): boolean {
+  const who = opts.identity;
+  if (who && !who.mc && (who.u === 0 || who.s.includes("kenku-it")) &&
+      who.p.some(p => p === "pedidos" || p === "finanzas")) return true;
+  return Boolean(opts.secret && opts.authorization === `Bearer ${opts.secret}`);
+}

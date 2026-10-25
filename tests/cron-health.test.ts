@@ -280,8 +280,18 @@ describe("el registro coincide con vercel.json, las carpetas y la siembra", () =
   it("un proceso registrado con intervalo esta de verdad en vercel.json", () => {
     // Si no, la tira lo acusaria de atrasado para siempre.
     const enVercel = new Set(cronsDeVercel().map((c) => c.name));
-    for (const job of CRON_JOBS.filter((j) => j.everyMinutes != null)) {
+    for (const job of CRON_JOBS.filter((j) => j.everyMinutes != null && j.scheduler !== "external")) {
       expect(enVercel.has(job.name), `${job.name} tiene intervalo pero no esta programado`).toBe(true);
+    }
+  });
+
+  it("los procesos externos tienen un horario declarado y no se duplican en Vercel", () => {
+    const external = JSON.parse(readFileSync(path.join(ROOT, "config/external-crons.json"), "utf8")) as Record<string, {schedule:string}>;
+    const jobs = CRON_JOBS.filter(j => j.scheduler === "external");
+    expect(Object.keys(external).sort()).toEqual(jobs.map(j => j.name).sort());
+    for (const job of jobs) {
+      expect(minutosEntre(external[job.name].schedule)).toBe(job.everyMinutes);
+      expect(cronsDeVercel().some(c => c.name === job.name)).toBe(false);
     }
   });
 
@@ -295,6 +305,14 @@ describe("el registro coincide con vercel.json, las carpetas y la siembra", () =
   it("cada ruta de cron anota sus corridas con SU nombre, y no tiene su propia puerta", () => {
     for (const job of CRON_JOBS) {
       const src = readFileSync(path.join(ROOT, "app/api/cron", job.name, "route.ts"), "utf8");
+      // El worker externo comprueba su secreto antes incluso del registro.
+      // tests/woo-cron-auth.test.ts verifica que un rechazo no escribe ni sincroniza.
+      if (job.scheduler === "external") {
+        expect(src).toContain(`const run = withCronRun("${job.name}",`);
+        expect(src).toContain("timingSafeEqual(expected,supplied)");
+        expect(src).toContain("return run()");
+        continue;
+      }
       expect(src, `${job.name}: export sin envolver`).not.toMatch(/^export async function (GET|POST)/m);
       expect(src, `${job.name}: GET no anota`).toContain(`export const GET = withCronRun("${job.name}",`);
       for (const meth of ["GET", "POST"]) {

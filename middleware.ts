@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { HEADER_USUARIO, identidadAHeader, leerSesion, opcionesCookie, SESSION_COOKIE, type SesionClaims } from "@/lib/auth";
-import { cronAccessAllowed } from "@/lib/cron-auth";
+import { cronAccessAllowed, wooCronAccessAllowed } from "@/lib/cron-auth";
 import { cumple, esEstatico, exigenciaDe, inicioDe } from "@/lib/permisos";
 import { aplicarEstado, consultarEstado } from "@/lib/sesion-revalidar";
 import { COOKIE_YO, yoACookie } from "@/lib/sesion-cliente";
@@ -86,7 +86,11 @@ export async function middleware(req: NextRequest) {
   const { claims, habiaCookie } = await sesionVigente(req);
 
   if (exige.tipo === "cron") {
-    const allowed = cronAccessAllowed({
+    const allowed = pathname === "/api/cron/woo-status" ? wooCronAccessAllowed({
+      identity: claims,
+      authorization: req.headers.get("authorization"),
+      secret: process.env.WOO_KENKU_IT_SYNC_SECRET,
+    }) : cronAccessAllowed({
       authenticated: Boolean(claims),
       authorization: req.headers.get("authorization"),
       secret: process.env.CRON_SECRET,

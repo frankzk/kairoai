@@ -22,6 +22,7 @@ export default function BarraUsuario() {
   if (pathname === "/login" || !yo) return null;
 
   const pantallas = pantallasDe(yo.permisos);
+  const puedeItalia = (yo.id === 0 || yo.tiendas.includes("kenku-it")) && yo.permisos.some(p => p === "pedidos" || p === "finanzas");
 
   async function salir() {
     try {
@@ -49,6 +50,7 @@ export default function BarraUsuario() {
             </Link>
           );
         })}
+        {puedeItalia && <Link href="/admin/finance/italia" className="rounded px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground">Kenku Italia</Link>}
         <div className="ml-auto flex items-center gap-1">
           <Link
             href="/cuenta"
