@@ -189,3 +189,74 @@ describe("fotos dentro de descripciones, páginas y colecciones", () => {
     expect(rutaImagen("kenku-mx", a, "image/jpeg")).toBe(`kenku-mx/contenido/${a.image_id.slice(4)}.jpg`);
   });
 });
+
+// El resumen de cada corrida queda en cron_runs, que guarda hasta 4.000
+// caracteres: el completo pasaba de eso y se perdia entero, incluido el error
+// que frenaba a las tres Kenku (25/10/2026).
+describe("resumen de la corrida", () => {
+  it("por tienda: el error que la frena, lo guardado, lo que quedó a mitad y lo que falla", async () => {
+    const { resumenCorto, errorCorto } = await import("../lib/shopify-archivo");
+    const base = { modo: "incremental" as const, completo: true, archivados: 0, pendiente: false };
+    const r = resumenCorto([
+      {
+        store: "mireva-cr",
+        recursos: [
+          { ...base, recurso: "order", paginas: 1, filas: 3 },
+          { ...base, recurso: "customer", paginas: 1, filas: 0 },
+          { ...base, recurso: "draft_order", modo: "completo", paginas: 4, filas: 1000, pendiente: true },
+          {
+            ...base,
+            recurso: "page",
+            paginas: 0,
+            filas: 0,
+            pendiente: true,
+            error: 'Shopify 403: {"errors":"[API] This action requires merchant approval for read_content scope."}',
+          },
+        ],
+        imagenes: { copiadas: 2, pendientes: 0, errores: 0 },
+      },
+      { store: "kenku-mx", recursos: [], error: "Shopify 400 al pedir el token de Kenku México: shop_not_permitted" },
+    ]);
+    expect(r).toEqual([
+      {
+        store: "mireva-cr",
+        filas: { order: 3, draft_order: 1000 },
+        a_mitad: ["draft_order"],
+        errores: { page: "403 falta read_content" },
+        fotos: { copiadas: 2, pendientes: 0, errores: 0 },
+      },
+      { store: "kenku-mx", error: "Shopify 400 al pedir el token de Kenku México: shop_not_permitted", filas: {}, a_mitad: [], errores: {} },
+    ]);
+    expect(errorCorto("Shopify 500: boom")).toBe("Shopify 500: boom");
+  });
+
+  it("el caso de hoy entra en lo que guarda cron_runs: Mireva sin permisos y las Kenku sin token", async () => {
+    const { resumenCorto, RECURSOS_ARCHIVO } = await import("../lib/shopify-archivo");
+    const conPermisosFaltantes = (store: string) => ({
+      store,
+      recursos: RECURSOS_ARCHIVO.map((recurso) => ({
+        recurso,
+        modo: "incremental" as const,
+        paginas: 1,
+        filas: 250,
+        completo: true,
+        archivados: 0,
+        pendiente: recurso === "draft_order",
+        ...(["page", "blog", "redirect", "price_rule", "location"].includes(recurso)
+          ? { error: `Shopify 403: {"errors":"[API] This action requires merchant approval for read_${recurso} scope."}` }
+          : {}),
+      })),
+      imagenes: { copiadas: 120, pendientes: 4000, errores: 3 },
+    });
+    const sinToken = (store: string) => ({
+      store,
+      recursos: [],
+      error: `Shopify 400 al pedir el token de ${store}: ${"{\"errors\":\"Oauth error shop_not_permitted: Client credentials cannot be performed on this shop.\"}".repeat(3)}`,
+    });
+    const texto = JSON.stringify({
+      ok: true,
+      results: resumenCorto([conPermisosFaltantes("mireva-cr"), conPermisosFaltantes("mireva-hn"), sinToken("kenku-mx"), sinToken("kenku-ar"), sinToken("kenku-it")]),
+    });
+    expect(texto.length).toBeLessThan(4000);
+  });
+});

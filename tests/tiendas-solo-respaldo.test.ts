@@ -47,11 +47,10 @@ describe("tiendas de solo respaldo", () => {
 });
 
 describe("permisos de la app de Shopify", () => {
-  it("las de solo respaldo solo leen, sin read_all_orders (el Dev Dashboard lo rechaza)", () => {
+  it("las de solo respaldo solo leen, con todos los pedidos y todo el respaldo", () => {
     const scopes = scopesParaTienda({ code: "kenku-mx" });
     expect(scopes.filter((s) => !s.startsWith("read_"))).toEqual([]);
-    expect(scopes).toEqual(expect.arrayContaining(["read_orders", "read_customers", "read_checkouts", ...SCOPES_RESPALDO]));
-    expect(scopes).not.toContain("read_all_orders");
+    expect(scopes).toEqual(expect.arrayContaining(["read_orders", "read_all_orders", "read_customers", "read_checkouts", ...SCOPES_RESPALDO]));
   });
 
   it("las de Kairo siguen escribiendo pedidos y borradores, y piden lo del respaldo", () => {
