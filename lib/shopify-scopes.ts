@@ -3,7 +3,9 @@
 //
 // Las tiendas de Kairo necesitan escribir (notas y borradores de pedidos desde
 // Leads). Las de solo respaldo (lib/stores.ts) solo leen: es lo unico que
-// hacen hasta que Shopify cierre.
+// hacen hasta que Shopify cierre. Y sin read_all_orders: el Dev Dashboard lo
+// rechaza ("alcances no validos", 25/10/2026), asi que el API da los ultimos
+// 60 dias de pedidos; la historia completa sale del CSV del admin.
 //
 // Lo de "respaldo" es lo que pide lib/shopify-archivo.ts ademas de pedidos,
 // clientes y productos: contenido (paginas, blog, redirecciones), descuentos,
@@ -14,7 +16,6 @@ import { esSoloRespaldo, type TiendaShopify } from "@/lib/stores";
 const LECTURA_BASE = [
   "read_products",
   "read_orders",
-  "read_all_orders",
   "read_draft_orders",
   "read_customers",
   "read_checkouts",
@@ -45,5 +46,5 @@ const ESCRITURA_KAIRO = ["write_orders", "write_draft_orders"];
 export function scopesParaTienda(store: Pick<TiendaShopify, "code">): string[] {
   return esSoloRespaldo(store)
     ? [...LECTURA_BASE, ...SCOPES_RESPALDO]
-    : [...LECTURA_BASE, ...ESCRITURA_KAIRO, ...SCOPES_RESPALDO];
+    : [...LECTURA_BASE, "read_all_orders", ...ESCRITURA_KAIRO, ...SCOPES_RESPALDO];
 }

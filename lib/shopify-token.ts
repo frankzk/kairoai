@@ -27,6 +27,11 @@ export async function tokenShopify(
   if (!shop) return { ok: false, error: `Faltan ${missing.join(" y ")}` };
   if (token) return { ok: true, valor: { token, origen: "vercel" } };
 
+  // El API solo responde en el dominio interno: kenku.com.mx sigue siendo la
+  // web, pero aca va kenku-xxxx.myshopify.com.
+  if (!/\.myshopify\.com$/i.test(shop.trim())) {
+    return { ok: false, error: `${store.shopDomainEnv} tiene que ser el dominio .myshopify.com de la tienda, no ${shop}` };
+  }
   const { clientId, clientSecret } = getShopifyOAuthCredentials(store);
   if (!clientId || !clientSecret) {
     return { ok: false, error: `Faltan ${store.accessTokenEnv} (o ${store.clientIdEnv} y ${store.clientSecretEnv})` };

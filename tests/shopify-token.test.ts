@@ -65,6 +65,18 @@ describe("token de la tienda", () => {
     expect(r).toEqual({ ok: false, error: "Shopify 400 al pedir el token de Kenku México: Oauth error shop_not_permitted" });
   });
 
+  it("con el dominio de la web en vez del interno, lo dice y no pide nada", async () => {
+    process.env.K_SHOP = "kenku.com.mx";
+    process.env.K_ID = "id";
+    process.env.K_SECRET = "secreto";
+    const pedir = respuestaToken("x");
+    expect(await tokenShopify(TIENDA, Date.now(), pedir)).toEqual({
+      ok: false,
+      error: "K_SHOP tiene que ser el dominio .myshopify.com de la tienda, no kenku.com.mx",
+    });
+    expect(pedir).not.toHaveBeenCalled();
+  });
+
   it("sin nada configurado, dice qué falta", async () => {
     expect(await tokenShopify(TIENDA)).toEqual({ ok: false, error: "Faltan K_TOKEN (o K_ID y K_SECRET)" });
     delete process.env.K_SHOP;
