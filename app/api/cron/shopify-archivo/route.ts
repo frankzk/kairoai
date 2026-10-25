@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { tiendasARespaldar } from "@/lib/stores";
-import { archivarTienda, type ResumenTienda } from "@/lib/shopify-archivo";
+import { archivarTienda, resumenCorto, type ResumenTienda } from "@/lib/shopify-archivo";
 import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
@@ -38,7 +38,7 @@ async function handleGet(req: NextRequest) {
       results.push({ store: store.code, recursos: [], error: err instanceof Error ? err.message : "Error" });
     }
   }
-  return NextResponse.json({ ok: true, results });
+  return NextResponse.json({ ok: true, results: resumenCorto(results) });
 }
 
 export const GET = withCronRun("shopify-archivo", handleGet);

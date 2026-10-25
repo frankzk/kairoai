@@ -569,6 +569,30 @@ export interface ResumenTienda {
   error?: string;
 }
 
+/** "Shopify 403: ...approval for read_content scope." -> "403 falta read_content". */
+export function errorCorto(error: string): string {
+  const permiso = error.match(/approval for (\w+) scope/i);
+  if (permiso) return `${error.match(/Shopify (\d{3})/)?.[1] ?? "403"} falta ${permiso[1]}`;
+  return error.slice(0, 200);
+}
+
+/**
+ * Lo que queda en cron_runs de cada corrida: por tienda, el error que la frena,
+ * lo que se guardo, lo que quedo a mitad y lo que falla. El resumen completo
+ * pasaba de los 4.000 caracteres que guarda cron_runs y se perdia entero,
+ * error de la tienda incluido.
+ */
+export function resumenCorto(tiendas: ResumenTienda[]) {
+  return tiendas.map((t) => ({
+    store: t.store,
+    ...(t.error ? { error: t.error.slice(0, 300) } : {}),
+    filas: Object.fromEntries(t.recursos.filter((r) => r.filas > 0).map((r) => [r.recurso, r.filas])),
+    a_mitad: t.recursos.filter((r) => r.pendiente && !r.error).map((r) => r.recurso),
+    errores: Object.fromEntries(t.recursos.filter((r) => r.error).map((r) => [r.recurso, errorCorto(r.error!)])),
+    ...(t.imagenes ? { fotos: t.imagenes } : {}),
+  }));
+}
+
 /** Suma lo de dos vueltas sobre el mismo recurso. */
 function sumar(a: ResumenRecurso, b: ResumenRecurso): ResumenRecurso {
   return { ...b, modo: a.modo, paginas: a.paginas + b.paginas, filas: a.filas + b.filas, saltado: a.saltado && b.saltado };
@@ -584,7 +608,10 @@ export async function archivarTienda(store: TiendaShopify, deadline: number): Pr
   const { shop } = getShopifyCredentials(store);
   // Sin token en Vercel ni app con client credentials: lo dice y no pide nada.
   const credencial = await tokenShopify(store);
-  if (!credencial.ok) return { store: store.code, recursos: [], error: credencial.error };
+  if (!credencial.ok) {
+    console.warn(`[shopify-archivo] ${store.code}: ${credencial.error}`);
+    return { store: store.code, recursos: [], error: credencial.error };
+  }
 
   const porRecurso = new Map<RecursoArchivo, ResumenRecurso>();
   const correr = async (recurso: RecursoArchivo, tope: number) => {
