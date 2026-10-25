@@ -31,7 +31,10 @@ export function credencialMcp(
   storeCode: FinanceStoreCode,
   env: Record<string, string | undefined> = process.env
 ): CredencialMcp {
-  const nombres = MCP_ENV_BY_CODE[storeCode];
+  // Una tienda sin entrada en el mapa no tiene conector: se dice que falta, sin
+  // romper (la revision de /api/icomfly/conexion recorre todas las tiendas).
+  const prefijo = String(storeCode).toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  const nombres = MCP_ENV_BY_CODE[storeCode] ?? { url: `ICOMFLY_${prefijo}_MCP_URL`, token: `ICOMFLY_${prefijo}_MCP_TOKEN` };
   const url = env[nombres.url]?.trim() || undefined;
   const token = env[nombres.token]?.trim() || undefined;
   return { url, token, faltan: [!url ? nombres.url : "", !token ? nombres.token : ""].filter(Boolean) };

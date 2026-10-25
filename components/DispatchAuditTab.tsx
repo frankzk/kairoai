@@ -6,7 +6,7 @@ import { AlertTriangle, PackageX, RefreshCw, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { FinanceStoreCode } from "@/lib/store-config";
+import { getCurrencySymbol, getFinanceStore, type FinanceStoreCode } from "@/lib/store-config";
 
 type AuditKind = "desfase" | "estancado";
 type AuditSeverity = "alta" | "media";
@@ -56,8 +56,9 @@ const COURIER_LABEL: Record<string, string> = {
   unknown: "Desconocido",
 };
 
-function money(value: number): string {
-  return `₡${Math.round(value).toLocaleString("es-CR")}`;
+// En la moneda de la tienda: Honduras salia en colones.
+function money(value: number, storeCode: FinanceStoreCode): string {
+  return `${getCurrencySymbol(storeCode)}${Math.round(value).toLocaleString(getFinanceStore(storeCode).locale)}`;
 }
 
 function whenCR(iso: string | null): string {
@@ -152,7 +153,7 @@ export default function DispatchAuditTab({ storeCode }: { storeCode: FinanceStor
             />
             <SummaryCard
               label="Plata mal contada"
-              value={money(summary?.monto_devuelto_mal_contado ?? 0)}
+              value={money(summary?.monto_devuelto_mal_contado ?? 0, storeCode)}
               hint="suma de esas devoluciones"
               tone="danger"
             />
@@ -249,7 +250,7 @@ export default function DispatchAuditTab({ storeCode }: { storeCode: FinanceStor
                           </div>
                         </div>
                       </td>
-                      <td className="px-3 py-2 text-right font-medium">{money(f.amount)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{money(f.amount, storeCode)}</td>
                     </tr>
                   ))}
                 </tbody>

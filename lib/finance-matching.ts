@@ -1,5 +1,5 @@
 import { getDB } from "@/lib/db";
-import { DEFAULT_FINANCE_STORE_ID } from "./store-config";
+import { DEFAULT_FINANCE_STORE_ID, getFinanceStoreById } from "./store-config";
 import { getShopifyCredentials, getStoreConfig, type FinanceStoreConfig } from "./stores";
 import { fetchShopifyPage } from "./shopify-sync";
 import type { SettlementRow } from "./finance-types";
@@ -125,7 +125,11 @@ export async function loadShopifyOrdersForMatching(
 ): Promise<MatchableShopifyOrder[]> {
   const includeFreshShopify = options.includeFreshShopify ?? true;
   const fallbackToShopify = options.fallbackToShopify ?? true;
-  const store = getStoreConfig(String(storeId === 2 ? "mireva-hn" : "mireva-cr"));
+  // La tienda por su id. Antes era "2 es Honduras, cualquier otra Costa Rica":
+  // una tienda nueva cruzaba sus liquidaciones contra los pedidos de Costa Rica.
+  const tienda = getFinanceStoreById(storeId);
+  if (!tienda) throw new Error(`loadShopifyOrdersForMatching: tienda ${storeId} desconocida`);
+  const store = getStoreConfig(tienda.code);
   const { orders: persisted, latestUpdatedAt } = await listPersistedOrdersSlim(store.id);
   if (!persisted.length) {
     if (!fallbackToShopify) return [];

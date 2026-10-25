@@ -79,7 +79,7 @@ export function fallbackPlatformStores(): PlatformStore[] {
     short_name: store.shortLabel,
     country_code: store.countryCode,
     currency: store.currency,
-    timezone: store.countryCode === "HN" ? "America/Tegucigalpa" : "America/Costa_Rica",
+    timezone: store.timezone,
     locale: store.locale,
     shopify_created_at_min:
       store.code === "mireva-hn"

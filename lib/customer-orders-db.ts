@@ -9,7 +9,7 @@
 import { getDB } from "./db";
 import {
   COLUMNAS_PEDIDO_ICOMFLY,
-  CORTE_PEDIDOS_ICOMFLY,
+  corteIcomflyDe,
   direccionIcomfly,
   pedidosDeIcomfly,
   type PedidoIcomflyCrudo,
@@ -97,7 +97,7 @@ async function pedidosIcomflyDelTelefono(
     .from("icomfly_order_payloads")
     .select(COLUMNAS_PEDIDO_ICOMFLY)
     .eq("store_id", storeId)
-    .gte("payload->>created_at", CORTE_PEDIDOS_ICOMFLY)
+    .gte("payload->>created_at", corteIcomflyDe(storeId))
     // `tail` son solo digitos: no puede romper el filtro.
     .or(`payload->customer->>phone.ilike.*${tail},payload->>shipping_phone.ilike.*${tail}`)
     .limit(MAX_ORDERS);
@@ -107,7 +107,7 @@ async function pedidosIcomflyDelTelefono(
   return pedidosDeIcomfly(
     crudos,
     deShopify.map((r) => ({ name: r.name, order_number: 0, tracking_number: r.tracking_number ?? "" })),
-    { currency }
+    { currency, corte: corteIcomflyDe(storeId) }
   ).map((p) => ({
     name: p.name,
     shopify_created_at: p.created_at,
