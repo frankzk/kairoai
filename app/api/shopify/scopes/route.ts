@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { FINANCE_STORES, getShopifyCredentials, getStoreConfig } from "@/lib/stores";
+import { getShopifyCredentials, tiendasARespaldar } from "@/lib/stores";
+import { tokenShopify } from "@/lib/shopify-token";
+import { scopesParaTienda } from "@/lib/shopify-scopes";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -23,11 +25,12 @@ const FULFILLMENT_SCOPES = [
 // Visitar:
 // - Una tienda: https://kairoai-pearl.vercel.app/api/shopify/scopes?store=mireva-hn
 // - Todas:      https://kairoai-pearl.vercel.app/api/shopify/scopes
+// Sin ?store= revisa tambien las de solo respaldo (las Kenku), que no estan en
+// las tiendas de ningun usuario y por eso no se pueden pedir con ?store=.
 export async function GET(req: NextRequest) {
   const storeFilter = req.nextUrl.searchParams.get("store");
-  const targets = storeFilter
-    ? FINANCE_STORES.filter((store) => store.code === storeFilter)
-    : FINANCE_STORES;
+  const tiendas = tiendasARespaldar();
+  const targets = storeFilter ? tiendas.filter((store) => store.code === storeFilter) : tiendas;
 
   if (targets.length === 0) {
     return NextResponse.json(
@@ -37,16 +40,13 @@ export async function GET(req: NextRequest) {
   }
 
   const results = await Promise.all(
-    targets.map(async (publicStore) => {
-      const store = getStoreConfig(publicStore.code);
-      const { shop, token, missing } = getShopifyCredentials(store);
-      if (!shop || !token) {
-        return {
-          store: store.code,
-          ok: false as const,
-          error: `Faltan variables en Vercel: ${missing.join(", ")}.`,
-        };
+    targets.map(async (store) => {
+      const { shop } = getShopifyCredentials(store);
+      const credencial = await tokenShopify(store);
+      if (!credencial.ok) {
+        return { store: store.code, ok: false as const, error: credencial.error };
       }
+      const token = credencial.valor.token;
       try {
         const res = await fetch(`https://${shop}/admin/oauth/access_scopes.json`, {
           headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
@@ -70,8 +70,11 @@ export async function GET(req: NextRequest) {
           store: store.code,
           ok: true as const,
           shop,
+          token_origen: credencial.valor.origen,
           has_fulfillment_scopes: missingFulfillment.length === 0,
           missing_fulfillment_scopes: missingFulfillment,
+          // Lo que Kairo pide hoy y el token no tiene (el respaldo de ese recurso anota el error).
+          missing_scopes: scopesParaTienda(store).filter((scope) => !granted.includes(scope)),
           granted_scopes: granted.sort(),
         };
       } catch (err) {

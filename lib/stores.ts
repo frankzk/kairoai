@@ -8,7 +8,11 @@ import {
 } from "./store-config";
 import { tiendasPermitidas } from "./identidad";
 
-export interface FinanceStoreConfig extends FinanceStorePublic {
+/** Lo que hace falta para hablar con el Admin API de una tienda de Shopify. */
+export interface TiendaShopify {
+  id: number;
+  code: string;
+  label: string;
   shopDomainEnv: string;
   accessTokenEnv: string;
   clientIdEnv: string;
@@ -19,7 +23,54 @@ export interface FinanceStoreConfig extends FinanceStorePublic {
   legacyClientSecretEnv?: string;
 }
 
-const STORE_SECRET_ENV: Record<FinanceStoreCode, Omit<FinanceStoreConfig, keyof FinanceStorePublic>> = {
+export interface FinanceStoreConfig extends FinanceStorePublic, TiendaShopify {
+  code: FinanceStoreCode;
+}
+
+/**
+ * Tiendas que Kairo SOLO respalda: las tres Kenku, que salen de Shopify el
+ * 28/10/2026 igual que Mireva. No son tiendas de Kairo todavia (Kairo asume
+ * Costa Rica u Honduras en moneda, hora y telefonos): no aparecen en Gestion,
+ * Leads ni Novedades, ni en los permisos. Solo las recorre el respaldo
+ * (lib/shopify-archivo.ts) y la autorizacion de la app (/api/shopify/auth).
+ * Su fila en `stores` va con active = false (migracion 0052).
+ */
+export const TIENDAS_SOLO_RESPALDO: TiendaShopify[] = [
+  { id: 3, code: "kenku-mx", label: "Kenku México", ...envShopify("KENKU_MX") },
+  { id: 4, code: "kenku-ar", label: "Kenku Argentina", ...envShopify("KENKU_AR") },
+  { id: 5, code: "kenku-it", label: "Kenku Italia", ...envShopify("KENKU_IT") },
+];
+
+function envShopify(prefijo: string): Pick<TiendaShopify, "shopDomainEnv" | "accessTokenEnv" | "clientIdEnv" | "clientSecretEnv"> {
+  return {
+    shopDomainEnv: `SHOPIFY_${prefijo}_SHOP_DOMAIN`,
+    accessTokenEnv: `SHOPIFY_${prefijo}_ACCESS_TOKEN`,
+    clientIdEnv: `SHOPIFY_${prefijo}_CLIENT_ID`,
+    clientSecretEnv: `SHOPIFY_${prefijo}_CLIENT_SECRET`,
+  };
+}
+
+/** Todas las tiendas de Shopify que se respaldan: las de Kairo y las de solo respaldo. */
+export function tiendasARespaldar(): TiendaShopify[] {
+  return [...FINANCE_STORES.map((store) => getStoreConfig(store.code)), ...TIENDAS_SOLO_RESPALDO];
+}
+
+/**
+ * Tienda de Shopify por codigo, para la autorizacion de la app: las de Kairo
+ * (con el control de tiendas permitidas de siempre) o una de solo respaldo.
+ */
+export function tiendaShopifyPorCodigo(value: unknown): TiendaShopify | null {
+  const deKairo = getRequiredStoreConfig(value);
+  if (deKairo) return deKairo;
+  const code = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return TIENDAS_SOLO_RESPALDO.find((store) => store.code === code) ?? null;
+}
+
+export function esSoloRespaldo(store: Pick<TiendaShopify, "code">): boolean {
+  return TIENDAS_SOLO_RESPALDO.some((t) => t.code === store.code);
+}
+
+const STORE_SECRET_ENV: Record<FinanceStoreCode, Omit<TiendaShopify, "id" | "code" | "label">> = {
   "mireva-cr": {
     shopDomainEnv: "SHOPIFY_CR_SHOP_DOMAIN",
     accessTokenEnv: "SHOPIFY_CR_ACCESS_TOKEN",
@@ -105,7 +156,7 @@ export function getRequiredStoreFromBody(body: unknown): FinanceStoreConfig | nu
   return getRequiredStoreConfig((body as { store?: unknown }).store);
 }
 
-export function getShopifyCredentials(store: FinanceStoreConfig): {
+export function getShopifyCredentials(store: TiendaShopify): {
   shop: string;
   token: string;
   missing: string[];
@@ -124,7 +175,7 @@ export function getShopifyCredentials(store: FinanceStoreConfig): {
   return { shop, token, missing };
 }
 
-export function getShopifyOAuthCredentials(store: FinanceStoreConfig): {
+export function getShopifyOAuthCredentials(store: TiendaShopify): {
   clientId: string;
   clientSecret: string;
   missing: string[];

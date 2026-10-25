@@ -1,5 +1,6 @@
-import { getShopifyCredentials, type FinanceStoreConfig } from "@/lib/stores";
+import { getShopifyCredentials, type FinanceStoreConfig, type TiendaShopify } from "@/lib/stores";
 import { type PersistedShopifyOrder } from "@/lib/finance";
+import { tokenShopify } from "@/lib/shopify-token";
 
 export const DEFAULT_CREATED_AT_MIN_BY_STORE: Record<string, string> = {
   "mireva-cr": "2026-01-01T00:00:00-06:00",
@@ -32,7 +33,7 @@ export function sleep(ms: number): Promise<void> {
  * Las URLs legitimas (las que arma el servidor y el cursor de paginacion que
  * devuelve Shopify en el header Link) son todas https://<tienda>/admin/api/...
  */
-export function isShopifyAdminUrl(url: string, store: FinanceStoreConfig): boolean {
+export function isShopifyAdminUrl(url: string, store: TiendaShopify): boolean {
   const { shop } = getShopifyCredentials(store);
   if (!shop) return false;
   let target: URL;
@@ -48,11 +49,14 @@ export function isShopifyAdminUrl(url: string, store: FinanceStoreConfig): boole
   return target.protocol === "https:" && target.host === shopHost && target.pathname.startsWith("/admin/api/");
 }
 
-export async function fetchShopifyPage(url: string, store: FinanceStoreConfig): Promise<Response> {
+export async function fetchShopifyPage(url: string, store: TiendaShopify): Promise<Response> {
   if (!isShopifyAdminUrl(url, store)) {
     throw new Error("URL rechazada: el token de Shopify solo se envia al Admin API de la tienda.");
   }
-  const { token } = getShopifyCredentials(store);
+  // El de Vercel o, sin el, el de la app (lib/shopify-token.ts). Sin ninguno
+  // va vacio y Shopify responde 401, como antes.
+  const credencial = await tokenShopify(store);
+  const token = credencial.ok ? credencial.valor.token : "";
   const doFetch = () =>
     fetch(url, {
       headers: {
