@@ -28,3 +28,10 @@ describe("cod-core envelope",()=>{
     expect(WC_STATUS.dispatched).toBe("cod-shipped");expect(WOO_TRANSITIONS.delivered).toEqual([]);expect(WOO_TRANSITIONS.cancelled).toEqual([]);
   });
 });
+
+describe("Stripe pagado, pendiente de confirmación operativa",()=>{
+ const paid=()=>{const p=sample();return {...p,order:{...p.order,payment_method:"stripe",status:"processing",paid:true,transaction_id:"pi_SYNTHETIC",paid_at:"2026-10-25T10:05:00+02:00"}};};
+ it("conserva pago anticipado y CAP sin confundirlo con confirmación Kairo",()=>{const p=paid();const normalized=normalizeWooPayload(p,[p.site]);expect(normalized.payment_method).toBe("stripe");expect(normalized.payment_paid).toBe(true);expect(normalized.paid_at).toBe("2026-10-25T08:05:00.000Z");expect(normalized.address.postcode).toBe("00118");expect(normalized).not.toHaveProperty("status");expect(normalized).not.toHaveProperty("transaction_id");});
+ it.each([{status:"pending"},{status:"failed"},{status:"cancelled"},{paid:false},{paid:"true"},{transaction_id:""},{paid_at:""},{paid_at:"bad"},{payment_method:"other"}])("rechaza pago incompleto o pasarela ajena: %j",change=>{const p=paid();Object.assign(p.order,change);expect(()=>normalizeWooPayload(p,[p.site])).toThrow();});
+ it("los COD anteriores conservan cobro al entregar",()=>{const p=sample();const n=normalizeWooPayload(p,[p.site]);expect(n.payment_method).toBe("cod");expect(n.payment_paid).toBe(false);expect(n.paid_at).toBeNull();});
+});

@@ -31,3 +31,8 @@ describe("Management body",()=>{
   for(const body of [{...valid,sourceUpdatedAt:undefined},{...valid,version:-1},{...valid,version:"0"},{...valid,note:"a".repeat(3001)},{...valid,requestId:"bad"},{...valid,status:"paid"},{...valid,sourceUpdatedAt:"bad"}])expect(validManagementBody(body)).toBe(false);
  });
 });
+
+describe("Pago Woo separado de preparación",()=>{
+ it("muestra Stripe pagado con estado operativo todavía pendiente",()=>{const order=mapItaliaOrder({...base,source:"woocommerce",payload:{payment_method:"stripe",payment_paid:true,total:39.9,currency:"EUR"}});expect(order.financial_status).toBe("paid");expect(order.status).toBe("pending");expect(transitions(order)).toContain("confirmed");});
+ it("los COD nuevos y antiguos siguen siendo contra entrega",()=>{for(const payload of [{},{payment_method:"cod",payment_paid:false}])expect(mapItaliaOrder({...base,source:"woocommerce",payload}).financial_status).toBe("cod");});
+});

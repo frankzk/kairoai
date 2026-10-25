@@ -38,7 +38,14 @@ export function normalizeWooPayload(input: unknown, origins: string[]) {
   const site = str(p.site, "site", 255);
   // Exact origins only; never use a URL supplied by the webhook to make requests.
   if (!origins.includes(site.replace(/\/$/, ""))) fail("site");
-  if (o.currency !== "EUR" || a.country !== "IT" || o.payment_method !== "cod" || o.status !== "cod-pending") fail("país, moneda, pago o estado");
+  if (o.currency !== "EUR" || a.country !== "IT") fail("país o moneda");
+  const prepaid = o.payment_method === "stripe";
+  if (prepaid) {
+    if (o.status !== "processing" || o.paid !== true) fail("pago Stripe sin completar");
+    str(o.transaction_id, "transaction_id", 200);
+    const paidAt = str(o.paid_at, "paid_at", 50);
+    if (!/^\d{4}-\d\d-\d\dT/.test(paidAt) || !Number.isFinite(Date.parse(paidAt))) fail("paid_at");
+  } else if (o.payment_method !== "cod" || o.status !== "cod-pending") fail("pago o estado");
   const id = number(o.id, "order.id", true); if (id < 1) fail("order.id");
   const postcode = str(a.postcode, "CAP", 5); if (!/^\d{5}$/.test(postcode)) fail("CAP");
   let phone = str(c.phone, "phone", 30).replace(/[\s().-]/g, "");
@@ -60,6 +67,7 @@ export function normalizeWooPayload(input: unknown, origins: string[]) {
     woo_id: id, order_number: str(o.number, "number", 80), created_at: new Date(created).toISOString(),
     customer_name: [str(c.first_name, "first_name", 150), str(c.last_name, "last_name", 150, true)].filter(Boolean).join(" "),
     phone, email: str(c.email, "email", 254, true), currency: "EUR", total,
+    payment_method: prepaid ? "stripe" : "cod", payment_paid: prepaid, paid_at: prepaid ? new Date(o.paid_at as string).toISOString() : null,
     shipping: number(o.shipping, "shipping"), discount: number(o.discount, "discount"), items,
     address: { country: "IT", state: str(a.state, "state", 10), city: str(a.city, "city", 150),
       address_1: str(a.address_1, "address_1", 500), address_2: str(a.address_2, "address_2", 500, true), postcode,

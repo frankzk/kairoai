@@ -107,3 +107,11 @@ tienda, CSRF, gestión, historial, conflicto concurrente, conservación de notas
 ante actualización del respaldo y botones WooCommerce. Los fixtures se borran
 y las sesiones técnicas se invalidan al terminar. No se modifican pedidos
 reales para las pruebas. Tiempo no cronometrado.
+
+## Preparación de Stripe y Elogy (25-10-2026)
+
+A petición del dueño, el receptor admite COD en cod-pending y Stripe pagado en processing, con paid=true, fecha de pago válida y transaction_id presente. Las firmas, país IT, EUR, CAP, origen e idempotencia mantienen sus controles. El JSON normalizado guarda método/indicador/fecha de pago sin conservar el identificador de transacción. El estado operativo sigue pending por el default transaccional existente; no se cambia la base de datos ni sus permisos.
+
+Gestión identifica «Pagado con Stripe · No cobrar al entregar». Los COD anteriores conservan «Contra entrega · Cobrar al entregar». La confirmación se realiza por el flujo operativo normal y la cola de estados devuelve revisión 1 a WooCommerce; cod-core admite processing→processing solo para esta primera confirmación de un prepago real (método no COD, pagado y con transacción). WooCommerce registra _cod_core_crm_confirmed_at separado del estado de pago, útil para la futura selección Elogy. No implica que el conector Elogy soporte todavía ese filtro ni que esté conectado.
+
+La cuenta Stripe debe conectarse y probarse en modo test (aprobado, rechazo, 3DS, reintentos/webhook). El cliente no debe ser cobrado otra vez al entregar y el estado processing por sí solo no autoriza a Elogy a despachar. No se ejecutaron cargos reales. La prueba de pago del gateway requiere las credenciales de Stripe del dueño. Verificación final y commit de producción se agregan al cierre. Responsable Codex, tiempo no cronometrado.

@@ -49,7 +49,7 @@ export function mapItaliaOrder(row: Obj): ItaliaOrder {
     email:shopify?first(p.email,customer.email):text(p.email),currency:text(p.currency),
     total:num(shopify?p.total_price:p.total),items,note:text(p.note),
     address:{address_1:first(address.address1,address.address_1),address_2:first(address.address2,address.address_2),city:text(address.city),state:first(address.province_code,address.state,address.province),postcode:first(address.zip,address.postcode),country:first(address.country_code,address.country),region:text(address.region),province:text(address.province)},
-    financial_status:shopify?text(p.financial_status):"",fulfillment_status:shopify?text(p.fulfillment_status)||"unfulfilled":"",
+    financial_status:shopify?text(p.financial_status):(p.payment_method==="stripe"&&p.payment_paid===true?"paid":"cod"),fulfillment_status:shopify?text(p.fulfillment_status)||"unfulfilled":"",
     original_tracking:arr(p.fulfillments).filter(f=>f.status!=="cancelled").flatMap(f=>Array.isArray(f.tracking_numbers)?f.tracking_numbers.map(text):[text(f.tracking_number)]).filter(Boolean).join(", "),
     shopify_cancelled:shopify && Boolean(p.cancelled_at),
   };
