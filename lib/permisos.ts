@@ -131,6 +131,7 @@ export const REGLAS: Regla[] = [
 
   // Webhooks externos: se autentican con su propia firma
   { ruta: "/api/shopify/webhook", exige: PUB },
+  { ruta: "/api/webhooks/cod-core/*", exige: PUB },
   { ruta: "/api/retell/llm", exige: PUB },
   { ruta: "/api/retell/webhook", exige: PUB },
   { ruta: "/api/zadarma/webhook", exige: PUB },
@@ -138,6 +139,9 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/shopify/auth", exige: PUB },
 
   { ruta: "/api/cron/", exige: { tipo: "cron" } },
+  // El middleware exige el secreto específico o un operador autorizado de Italia.
+  // La ruta además conserva su comprobación explícita antes de escribir o sincronizar.
+  { ruta: "/api/cron/woo-status", exige: { tipo: "cron" } },
 
   // Panel principal y configuracion
   { ruta: "/api/dashboard", exige: P("panel") },
@@ -164,6 +168,7 @@ export const REGLAS: Regla[] = [
   // Gestion de pedidos / finanzas
   { ruta: "/api/finance", exige: P("finanzas") },
   { ruta: "/api/finance/orders", exige: P(...OPERACION) },
+  { ruta: "/api/woo/orders", exige: P(...OPERACION) },
   { ruta: "/api/finance/order-detail", exige: P(...OPERACION) },
   { ruta: "/api/finance/kpis", exige: P(...OPERACION) },
   { ruta: "/api/finance/dispatch-audit", exige: P(...OPERACION) },

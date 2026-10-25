@@ -541,6 +541,20 @@ const FINANCE_FAST_FETCH_TIMEOUT_MS = 20000;
 const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 
 export default function FinancePage() {
+  const [italiaOnly, setItaliaOnly] = useState<boolean | null>(null);
+  const [verItalia, setVerItalia] = useState(false);
+  useEffect(() => {
+    const yo = leerYo();
+    setVerItalia(Boolean(yo && (yo.id === 0 || yo.tiendas.includes("kenku-it"))));
+    const only = Boolean(yo?.tiendas.includes("kenku-it") && !yo.tiendas.some(t => t === "mireva-cr" || t === "mireva-hn"));
+    setItaliaOnly(only);
+    if (only) window.location.replace("/admin/finance/italia");
+  }, []);
+  if (italiaOnly !== false) return <p className="p-6 text-sm">Cargando Gestión…</p>;
+  return <LegacyFinancePage verItalia={verItalia} />;
+}
+
+function LegacyFinancePage({ verItalia }: { verItalia: boolean }) {
   const [tab, setTab] = useState<Tab>("orders");
   // Las pestañas de plata (Productos, Liquidaciones, Gastos, Cierre) son del
   // permiso "finanzas". Logistica ve el resto. El servidor lo impone igual; aca
@@ -1421,7 +1435,10 @@ export default function FinancePage() {
           <div className="flex items-center gap-1.5 sm:ml-auto sm:gap-2">
             <select
               value={selectedStore.code}
-              onChange={(event) => setSelectedStoreCode(event.target.value as FinanceStoreCode)}
+              onChange={(event) => {
+                if (event.target.value === "kenku-it") window.location.assign("/admin/finance/italia");
+                else setSelectedStoreCode(event.target.value as FinanceStoreCode);
+              }}
               aria-label="Tienda"
               className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs font-semibold text-foreground outline-none focus:border-primary sm:h-9 sm:min-w-[190px] sm:flex-none sm:px-3 sm:text-sm"
             >
@@ -1430,6 +1447,7 @@ export default function FinancePage() {
                   {store.label}
                 </option>
               ))}
+              {verItalia && <option value="kenku-it">Kenku Italia · WooCommerce</option>}
             </select>
             <Button
               variant="outline"

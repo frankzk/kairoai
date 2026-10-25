@@ -26,7 +26,7 @@ export function validarAcceso(body: Record<string, unknown>): { error: string } 
   if (!permisos.length) return { error: "Marca al menos una pantalla a la que tenga acceso." };
 
   const tiendas = normalizarTiendas(body.tiendas);
-  if (!tiendas.length) return { error: "Marca al menos una tienda (Costa Rica u Honduras)." };
+  if (!tiendas.length) return { error: "Marca al menos una tienda." };
 
   const staffRaw = body.staff_id;
   const staffNum = staffRaw === null || staffRaw === "" || staffRaw === undefined ? null : Number(staffRaw);

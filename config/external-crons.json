@@ -1,0 +1,7 @@
+{
+  "woo-status": {
+    "schedule": "*/5 * * * *",
+    "host": "kenku-italia-produccion",
+    "path": "/api/cron/woo-status"
+  }
+}

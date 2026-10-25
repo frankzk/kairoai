@@ -35,7 +35,7 @@ function numero(src: string, re: RegExp): number | null {
 }
 
 const conPresupuestoYCache = rutas(path.join(ROOT, "app/api"))
-  .map((file) => ({ file: path.relative(ROOT, file), src: readFileSync(file, "utf8") }))
+  .map((file) => ({ file: path.relative(ROOT, file).split(path.sep).join("/"), src: readFileSync(file, "utf8") }))
   .filter(({ src }) => /TIME_BUDGET_MS\s*=/.test(src) && src.includes("refreshFinanceDatasetCache("));
 
 describe("tiempo limite de las rutas que reconstruyen la cache", () => {

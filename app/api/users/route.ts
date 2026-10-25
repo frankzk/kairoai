@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDB } from "@/lib/db";
 import { actorActual } from "@/lib/identidad";
 import { PERMISO_INFO, PERMISOS, ROL_INFO, ROLES } from "@/lib/permisos";
-import { FINANCE_STORES } from "@/lib/store-config";
+import { ACCESS_STORES } from "@/lib/access-stores";
 import {
   aPublico,
   buscarPorUsuario,
@@ -35,7 +35,7 @@ export async function GET() {
       catalogo: {
         permisos: PERMISOS.map((p) => ({ id: p, ...PERMISO_INFO[p] })),
         roles: ROLES.map((r) => ({ id: r, ...ROL_INFO[r] })),
-        tiendas: FINANCE_STORES.map((s) => ({ code: s.code, label: s.label ?? s.code })),
+        tiendas: ACCESS_STORES.map((s) => ({ code: s.code, label: s.label })),
       },
     });
   } catch (err) {
