@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { getDB } from "./db";
-import { tiendaShopifyPorCodigo, getShopifyCredentials } from "./stores";
+import { tiendaShopifyPorCodigo, getShopifyCredentials, getShopifyOAuthCredentials } from "./stores";
 import { tokenShopify } from "./shopify-token";
 import { CONFIG_RECURSOS, filasArchivo, siguientePadre, siguienteUrl, type RecursoArchivo } from "./shopify-archivo";
 
@@ -15,6 +15,14 @@ export function backupAuthorized(header:string|null,secret:string|undefined):boo
 }
 export function safeAssetUrl(value:string):boolean {
  try{const u=new URL(value);return u.protocol==="https:"&&!u.username&&!u.password&&(u.hostname==="cdn.shopify.com"||u.hostname==="storage.googleapis.com"||u.hostname.endsWith(".storage.googleapis.com")||u.hostname.endsWith(".s3.amazonaws.com"));}catch{return false;}
+}
+export async function currentBackupToken(base:URL,clientId:string,clientSecret:string,saved:string,request:typeof fetch=fetch){
+ if(base.protocol!=="https:"||!base.hostname.endsWith(".myshopify.com")||base.username||base.password)throw Error("invalid_shop");
+ if(clientId&&clientSecret){
+  const r=await request(new URL("/admin/oauth/access_token",base),{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"client_credentials",client_id:clientId,client_secret:clientSecret}).toString(),redirect:"error",cache:"no-store",signal:AbortSignal.timeout(20000)});
+  if(r.ok){const d=await r.json();if(typeof d.access_token==="string"&&d.access_token)return{token:d.access_token,source:"client_credentials"};}
+ }
+ return {token:saved,source:"saved"};
 }
 export const BULK_QUERIES:Record<string,string>={
  orders:`{orders{edges{node{id legacyResourceId name createdAt updatedAt currencyCode transactions{id kind status gateway processedAt amountSet{shopMoney{amount currencyCode}}} metafields{edges{node{id namespace key type value}}}}}}}`,
@@ -56,22 +64,25 @@ async function client(){
  const store=tiendaShopifyPorCodigo("kenku-ar");if(!store||store.id!==STORE)throw Error("wrong_store");
  const {shop}=getShopifyCredentials(store),credential=await tokenShopify(store);if(!credential.ok)throw Error("shopify_credentials_unavailable");
  const base=new URL(`https://${shop}`);if(base.protocol!=="https:"||!base.hostname.endsWith(".myshopify.com")||base.username||base.password)throw Error("invalid_shop");
+ // Refresh for this extraction only, so an old saved token cannot hide newly
+ // authorized scopes. Other integrations keep their existing credentials.
+ const oauth=getShopifyOAuthCredentials(store),current=await currentBackupToken(base,oauth.clientId,oauth.clientSecret,credential.valor.token);
  const read=async(path:string,body?:Obj):Promise<Response>=>{
   const url=new URL(path,base);if(url.origin!==base.origin||!url.pathname.startsWith("/admin/"))throw Error("foreign_shopify_url");
-  const run=()=>fetch(url,{method:body?"POST":"GET",headers:{"X-Shopify-Access-Token":credential.valor.token,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined,redirect:"error",cache:"no-store",signal:AbortSignal.timeout(45000)});
+  const run=()=>fetch(url,{method:body?"POST":"GET",headers:{"X-Shopify-Access-Token":current.token,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined,redirect:"error",cache:"no-store",signal:AbortSignal.timeout(45000)});
   let r=await run();if(r.status===429){await new Promise(resolve=>setTimeout(resolve,Math.min(5,Number(r.headers.get("retry-after"))||2)*1000));r=await run();}return r;
  };
  const gql=async(query:string,variables:Obj={})=>{const r=await read(`/admin/api/${VERSION}/graphql.json`,{query,variables});if(!r.ok)throw Error(`shopify_http_${r.status}`);const d=await r.json();if(d.errors)throw Error(`graphql_${String(d.errors[0]?.message||"error").slice(0,180)}`);return d.data;};
- return {read,gql,base};
+ return {read,gql,base,tokenSource:current.source};
 }
 async function audit(c:Awaited<ReturnType<typeof client>>){
  const d=await c.gql(`{currentAppInstallation{accessScopes{handle}} orders(first:1,sortKey:CREATED_AT){nodes{createdAt}} ordersCount(limit:null){count precision}}`);
  const counts:Record<string,unknown>={};
- for(const [name,path] of Object.entries({orders:"orders/count.json?status=any",customers:"customers/count.json",products:"products/count.json?status=any",drafts:"draft_orders/count.json"})){
+ for(const [name,path] of Object.entries({orders:"orders/count.json?status=any",customers:"customers/count.json",products:"products/count.json",drafts:"draft_orders/count.json"})){
   const r=await c.read(`/admin/api/${VERSION}/${path}`);counts[name]=r.ok?(await r.json()).count:{status:r.status};
  }
  const scopes=d.currentAppInstallation.accessScopes.map((s:{handle:string})=>s.handle);
- const result={at:new Date().toISOString(),scopes,readAllOrders:scopes.includes("read_all_orders"),oldestOrderAt:d.orders.nodes[0]?.createdAt||null,ordersCount:d.ordersCount,counts};
+ const result={at:new Date().toISOString(),tokenSource:c.tokenSource,scopes,readAllOrders:scopes.includes("read_all_orders"),oldestOrderAt:d.orders.nodes[0]?.createdAt||null,ordersCount:d.ordersCount,counts};
  await extra("audit",result.at,result);return result;
 }
 async function restResource(resource:string,c:Awaited<ReturnType<typeof client>>,deadline:number){

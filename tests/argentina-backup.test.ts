@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const { run }=vi.hoisted(()=>({run:vi.fn()}));
 vi.mock("@/lib/argentina-backup",async original=>({...await original<typeof import("@/lib/argentina-backup")>(),runArgentinaBackup:run}));
-import { backupAuthorized, safeAssetUrl, BACKUP_RESOURCES, BULK_QUERIES } from "@/lib/argentina-backup";
+import { backupAuthorized, safeAssetUrl, currentBackupToken, BACKUP_RESOURCES, BULK_QUERIES } from "@/lib/argentina-backup";
 import { POST } from "../app/api/argentina/backup/route";
 const secret="a".repeat(64);
 const req=(body:unknown,authorization:string|null=`Bearer ${secret}`)=>new Request("https://app.test/api/argentina/backup",{method:"POST",headers:{...(authorization?{Authorization:authorization}:{}),"Content-Type":"application/json"},body:JSON.stringify(body)});
@@ -27,5 +27,15 @@ describe("Private Argentina extraction",()=>{
  it("includes the existing data plus independent files and theme copies",()=>{
   for(const resource of ["order","customer","product","draft_order","theme","theme_asset","theme_files","shipping_zone","menus"])expect(BACKUP_RESOURCES).toContain(resource);
   for(const query of Object.values(BULK_QUERIES))expect(query).not.toMatch(/\bmutation\b|orderCreate|customerUpdate/);
+ });
+ it("uses a fresh app token after scopes change, without sending credentials to other hosts or following redirects",async()=>{
+  const request=vi.fn().mockResolvedValue(new Response(JSON.stringify({access_token:"fresh-test-token"}),{status:200}));
+  expect(await currentBackupToken(new URL("https://example.myshopify.com"),"test-id","test-secret","old-test-token",request)).toEqual({token:"fresh-test-token",source:"client_credentials"});
+  expect(String(request.mock.calls[0][0])).toBe("https://example.myshopify.com/admin/oauth/access_token");expect(request.mock.calls[0][1].redirect).toBe("error");
+  expect(new URLSearchParams(request.mock.calls[0][1].body).get("grant_type")).toBe("client_credentials");
+  request.mockClear();await expect(currentBackupToken(new URL("https://evil.example"),"test-id","test-secret","old",request)).rejects.toThrow("invalid_shop");expect(request).not.toHaveBeenCalled();
+ });
+ it("retains the saved token for apps that do not support client credentials",async()=>{
+  const request=vi.fn().mockResolvedValue(new Response("{}",{status:400}));expect(await currentBackupToken(new URL("https://example.myshopify.com"),"test-id","test-secret","old",request)).toEqual({token:"old",source:"saved"});
  });
 });

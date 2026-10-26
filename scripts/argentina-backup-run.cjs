@@ -9,7 +9,7 @@ async function call(action,resource=''){
  return d.result;
 }
 const resources=['order','customer','product','checkout','custom_collection','smart_collection','collect','page','blog','article','policy','shop','redirect','price_rule','discount_code','draft_order','location','inventory_level','shop_metafield','product_metafield','theme','theme_asset','shipping_zone','carrier_service','fulfillment_service','tender_transaction','payment_payout','payment_balance_transaction','menus','metaobject_definitions','markets','theme_files'];
-async function resource(name){for(let n=0;n<30;n++){const s=await call('resource',name);console.log(JSON.stringify({resource:name,status:s.status,pages:s.pages,records:s.records,error:s.error}));if(['complete','error'].includes(s.status))return;sleep: await wait(500);}}
+async function resource(name){for(let n=0;n<30;n++){const s=await call('resource',name);console.log(JSON.stringify({resource:name,status:s.status,pages:s.pages,records:s.records,error:s.error}));if(['complete','error'].includes(s.status))return;await wait(500);}}
 async function bulk(kind){for(let n=0;n<90;n++){const s=await call('bulk',kind);console.log(JSON.stringify({resource:'bulk_'+kind,status:s.status,records:s.records,error:s.error}));if(['complete','error'].includes(s.status))return;await wait(10000);}}
 (async()=>{
  const [action,name]=process.argv.slice(2);

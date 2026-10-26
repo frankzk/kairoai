@@ -34,6 +34,13 @@ async function downloadMedia(){
   const bytes=Buffer.from(await r.data.arrayBuffer());if(row.bytes!==null&&bytes.length!==row.bytes)throw Error('Media size mismatch');fs.writeFileSync(target,bytes);done++;
  }
  manifest.media={expected:data.length,downloaded:done};
+ const exports=await checked(db.from('argentina_shopify_extra').select('external_id,payload').eq('store_id',4).eq('resource','bulk_export'));
+ manifest.supplemental={expected:exports.data.length,downloaded:0};
+ for(const row of exports.data){const p=row.payload;if(p.bucket!=='argentina-shopify-archive'||!p.path.startsWith('kenku-ar/')||p.path.includes('..'))throw Error('Invalid supplemental path');
+  const target=path.join(root,'supplemental',p.path);fs.mkdirSync(path.dirname(target),{recursive:true});
+  if(!fs.existsSync(target)||fs.statSync(target).size!==p.bytes){const r=await db.storage.from(p.bucket).download(p.path);if(r.error)throw Error('Supplemental download failed');const bytes=Buffer.from(await r.data.arrayBuffer());if(bytes.length!==p.bytes)throw Error('Supplemental size mismatch');fs.writeFileSync(target,bytes);}
+  manifest.supplemental.downloaded++;
+ }
 }
 function hashFiles(dir){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const file=path.join(dir,entry.name);if(entry.isDirectory()){hashFiles(file);continue;}if(entry.name==='manifest.json'||entry.name.endsWith('.partial'))continue;const b=fs.readFileSync(file);manifest.files.push({path:path.relative(root,file).replaceAll('\\','/'),bytes:b.length,sha256:crypto.createHash('sha256').update(b).digest('hex')});}}
 (async()=>{
