@@ -76,13 +76,13 @@ async function client(){
  return {read,gql,base,tokenSource:current.source};
 }
 async function audit(c:Awaited<ReturnType<typeof client>>){
- const d=await c.gql(`{currentAppInstallation{accessScopes{handle}} orders(first:1,sortKey:CREATED_AT){nodes{createdAt}} ordersCount(limit:null){count precision}}`);
+ const d=await c.gql(`{currentAppInstallation{app{id title} accessScopes{handle}} orders(first:1,sortKey:CREATED_AT){nodes{createdAt}} ordersCount(limit:null){count precision}}`);
  const counts:Record<string,unknown>={};
  for(const [name,path] of Object.entries({orders:"orders/count.json?status=any",customers:"customers/count.json",products:"products/count.json",drafts:"draft_orders/count.json"})){
   const r=await c.read(`/admin/api/${VERSION}/${path}`);counts[name]=r.ok?(await r.json()).count:{status:r.status};
  }
  const scopes=d.currentAppInstallation.accessScopes.map((s:{handle:string})=>s.handle);
- const result={at:new Date().toISOString(),tokenSource:c.tokenSource,scopes,readAllOrders:scopes.includes("read_all_orders"),oldestOrderAt:d.orders.nodes[0]?.createdAt||null,ordersCount:d.ordersCount,counts};
+ const result={at:new Date().toISOString(),app:d.currentAppInstallation.app,tokenSource:c.tokenSource,scopes,readAllOrders:scopes.includes("read_all_orders"),oldestOrderAt:d.orders.nodes[0]?.createdAt||null,ordersCount:d.ordersCount,counts};
  await extra("audit",result.at,result);return result;
 }
 async function restResource(resource:string,c:Awaited<ReturnType<typeof client>>,deadline:number){
@@ -110,12 +110,17 @@ async function directResource(resource:string,c:Awaited<ReturnType<typeof client
  }return s;
 }
 async function themeFiles(c:Awaited<ReturnType<typeof client>>,deadline:number){
- const s=await state("theme_files");if(s.status==="complete")return s;const assets=await ids("theme_asset",false);let index=Number(s.meta.index)||0;s.status="running";s.error=null;
- for(;index<assets.length&&Date.now()<deadline;index++){
-  const id=assets[index],{data}=await checked(getDB().from("argentina_shopify_extra").select("parent_id,payload").eq("store_id",STORE).eq("resource","theme_asset").eq("external_id",id).single());
-  if(!data)throw Error("missing_asset_metadata");
-  const params=new URLSearchParams({"asset[key]":String(data.payload.key)}),r=await c.read(`/admin/api/${VERSION}/themes/${data.parent_id}/assets.json?${params}`);if(!r.ok)throw Error(`shopify_http_${r.status}`);const a=(await r.json()).asset;if(!a)throw Error("missing_asset");await extra("theme_file",id,a,data.parent_id);s.records++;s.pages++;s.meta.index=index+1;await save(s);await new Promise(resolve=>setTimeout(resolve,400));
- }s.status=index>=assets.length?"complete":"running";await save(s);return s;
+ const s=await state("theme_files");if(s.status==="complete")return s;const themes=await ids("theme",false);s.status="running";s.error=null;
+ if(!s.parent_id)s.parent_id=siguientePadre(themes,null);
+ while(s.parent_id&&Date.now()<deadline){
+  const d=await c.gql(`query($id:ID!,$after:String){theme(id:$id){files(first:100,after:$after){nodes{filename checksumMd5 contentType size body{...on OnlineStoreThemeFileBodyText{content} ...on OnlineStoreThemeFileBodyBase64{contentBase64} ...on OnlineStoreThemeFileBodyUrl{url}}} pageInfo{hasNextPage endCursor} userErrors{filename code}}}}`,{id:`gid://shopify/OnlineStoreTheme/${s.parent_id}`,after:s.next_url});
+  if(!d.theme?.files||d.theme.files.userErrors?.length)throw Error("theme_files_incomplete");
+  const files=d.theme.files,rows=files.nodes.map((f:Obj)=>{const body=f.body as Obj;return{store_id:STORE,resource:"theme_file",external_id:`${s.parent_id}:${f.filename}`,parent_id:s.parent_id,payload:{key:f.filename,checksum_md5:f.checksumMd5,content_type:f.contentType,size:f.size,...(body.content!==undefined?{value:body.content}:{}),...(body.contentBase64!==undefined?{attachment:body.contentBase64}:{}),...(body.url!==undefined?{public_url:body.url}:{})},captured_at:new Date().toISOString()};});
+  for(let i=0;i<rows.length;i+=10)await checked(getDB().from("argentina_shopify_extra").upsert(rows.slice(i,i+10),{onConflict:"store_id,resource,external_id"}));
+  s.pages++;s.records+=rows.length;s.next_url=files.pageInfo.hasNextPage?files.pageInfo.endCursor:null;
+  if(!s.next_url)s.parent_id=siguientePadre(themes,s.parent_id);
+  if(!s.parent_id)s.status="complete";await save(s);
+ }if(!s.parent_id){s.status="complete";await save(s);}return s;
 }
 async function bulk(kind:string,c:Awaited<ReturnType<typeof client>>){
  if(!BULK_QUERIES[kind])throw Error("invalid_bulk_kind");const s=await state(`bulk_${kind}`);if(s.status==="complete")return s;

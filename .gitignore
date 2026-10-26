@@ -33,3 +33,4 @@ supabase/.temp/
 
 # Private customer/catalog backups; never publish these in the source repository.
 backups/
+__pycache__/

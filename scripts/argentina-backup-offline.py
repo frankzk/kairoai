@@ -1,5 +1,5 @@
 """Portable Argentina archive. Python standard library only; never uses a network."""
-import argparse, base64, collections, csv, datetime, gzip, hashlib, html.parser, json, pathlib, sqlite3
+import argparse, base64, collections, csv, datetime, gzip, hashlib, html.parser, json, pathlib, sqlite3, urllib.parse
 
 class PlainText(html.parser.HTMLParser):
     def __init__(self):
@@ -78,6 +78,7 @@ def build(root):
                 entry=(source,str(p['id']),str(item.get('product_id') or ''),vid,sku,str(item.get('name') or item.get('title') or ''),item.get('quantity'),str(item.get('price','')),int(vid in variant_ids))
                 db.execute('insert into historical_items values(?,?,?,?,?,?,?,?,?)',entry);historical.append(entry)
     extra_count=collections.Counter();theme_files=0;theme_missing=0
+    asset_file=root/'asset-map.json';asset_map=json.loads(asset_file.read_text()) if asset_file.exists() else {}
     for row in rows(root,'argentina_shopify_extra'):
         resource=row['resource'];p=row['payload'];extra_count[resource]+=1
         if resource=='theme_file':
@@ -86,7 +87,12 @@ def build(root):
             out=inside(root,'themes/'+str(row['parent_id'])+'/'+key);out.parent.mkdir(parents=True,exist_ok=True)
             if p.get('attachment') is not None: out.write_bytes(base64.b64decode(p['attachment'],validate=True));theme_files+=1
             elif p.get('value') is not None: out.write_text(str(p['value']),encoding='utf-8');theme_files+=1
+            elif p.get('public_url'):
+                url=urllib.parse.urlsplit(p['public_url']);local=asset_map.get(urllib.parse.urlunsplit((url.scheme,url.netloc,url.path,'','')))
+                if local and inside(root,local).is_file():out.write_bytes(inside(root,local).read_bytes());theme_files+=1
+                else:theme_missing+=1
             else: theme_missing+=1
+            if out.is_file() and p.get('checksum_md5') and hashlib.md5(out.read_bytes()).hexdigest()!=p['checksum_md5']:raise ValueError('Theme checksum mismatch')
         elif resource=='bulk_export':
             file=inside(root,'supplemental/'+p['path'])
             if not file.exists(): continue
