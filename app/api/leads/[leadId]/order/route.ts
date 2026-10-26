@@ -9,6 +9,7 @@ import { llamarHerramientaIcomfly, verificarTiendaMcp } from "@/lib/icomfly-mcp"
 import { getIcomflyExternalStoreId } from "@/lib/icomfly";
 import {
   argumentosCrearPedido,
+  creaEnIcomfly,
   elegirProducto,
   faltanParaIcomfly,
   palabraDeBusqueda,
@@ -78,7 +79,9 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
       // compilar de nuevo (se lee en cada pedido). Se apago del 24 al 26/10/2026
       // porque iComfly dejaba ocultos los pedidos de crear_pedido (EXCEL-);
       // desde el 26/10 salen visibles ("Manual #…").
-      if (process.env.CREAR_EN_ICOMFLY_APAGADO === "1") {
+      // Apagado por tienda (ver TIENDAS_SIN_CREAR_EN_ICOMFLY): cubre una
+      // pantalla abierta desde antes de ocultar el boton.
+      if (process.env.CREAR_EN_ICOMFLY_APAGADO === "1" || !creaEnIcomfly(store.code)) {
         return NextResponse.json(
           { error: "Crear en iComfly está desactivado por ahora: usa «Crear pedido». Recarga la página (F5)." },
           { status: 403 }
