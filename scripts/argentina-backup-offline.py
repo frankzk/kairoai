@@ -77,16 +77,17 @@ def build(root):
                 vid=str(item.get('variant_id') or '');sku=str(item.get('sku') or '')
                 entry=(source,str(p['id']),str(item.get('product_id') or ''),vid,sku,str(item.get('name') or item.get('title') or ''),item.get('quantity'),str(item.get('price','')),int(vid in variant_ids))
                 db.execute('insert into historical_items values(?,?,?,?,?,?,?,?,?)',entry);historical.append(entry)
-    extra_count=collections.Counter();theme_files=0;theme_missing=0
+    extra_count=collections.Counter();theme_files=0;theme_missing=0;latest_audit={}
     asset_file=root/'asset-map.json';asset_map=json.loads(asset_file.read_text()) if asset_file.exists() else {}
     for row in rows(root,'argentina_shopify_extra'):
         resource=row['resource'];p=row['payload'];extra_count[resource]+=1
+        if resource=='audit' and p.get('at','')>latest_audit.get('at',''): latest_audit=p
         if resource=='theme_file':
             key=str(p.get('key',''));relative=pathlib.PurePosixPath(key)
             if not key or relative.is_absolute() or '..' in relative.parts or ':' in key: raise ValueError('Unsafe theme path')
             out=inside(root,'themes/'+str(row['parent_id'])+'/'+key);out.parent.mkdir(parents=True,exist_ok=True)
             if p.get('attachment') is not None: out.write_bytes(base64.b64decode(p['attachment'],validate=True));theme_files+=1
-            elif p.get('value') is not None: out.write_text(str(p['value']),encoding='utf-8');theme_files+=1
+            elif p.get('value') is not None: out.write_bytes(str(p['value']).encode('utf-8'));theme_files+=1
             elif p.get('public_url'):
                 url=urllib.parse.urlsplit(p['public_url']);local=asset_map.get(urllib.parse.urlunsplit((url.scheme,url.netloc,url.path,'','')))
                 if local and inside(root,local).is_file():out.write_bytes(inside(root,local).read_bytes());theme_files+=1
@@ -118,7 +119,12 @@ def build(root):
     csv_file(root,'clientes.csv',['id','nombre','apellido','email','telefono','pedidos_shopify'],[(p['id'],p.get('first_name'),p.get('last_name'),p.get('email'),p.get('phone'),p.get('orders_count')) for p in customers])
     csv_file(root,'borradores.csv',['id','numero','creado','estado','total','moneda','order_id'],[(p['id'],p.get('name'),p.get('created_at'),p.get('status'),p.get('total_price'),p.get('currency'),p.get('order_id')) for p in drafts])
     csv_file(root,'catalogo_historico.csv',['origen','pedido_id','producto_id','variante_id','sku_original','nombre','cantidad','precio','en_catalogo_actual'],historical)
-    audit={'counts':dict(counts),'catalog_variants':len(catalog),'catalog_issues':issues,'orphan_order_customers':orphan,'order_lines_without_current_variant':historical_missing,'drafts_linked_to_order':drafts_linked,'draft_order_references_absent_from_orders':drafts_missing_orders,'extras':dict(extra_count),'theme_files_restored':theme_files,'theme_files_without_content':theme_missing,'sqlite_integrity':integrity,'built_at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    coverage={}
+    for resource,field in [('order','orders'),('customer','customers'),('product','products'),('draft_order','drafts')]:
+        expected=latest_audit.get('counts',{}).get(field);expected=expected if type(expected) is int else None
+        coverage[resource]={'expected':expected,'archived':counts[resource],'missing':max(0,expected-counts[resource]) if expected is not None else None,'complete':expected is not None and counts[resource]==expected and (resource!='order' or latest_audit.get('readAllOrders') is True)}
+    denied=[{'resource':r['resource'],'status':r['status'],'error':r.get('error')} for r in rows(root,'argentina_shopify_extra_state') if r.get('status')=='error']
+    audit={'counts':dict(counts),'coverage':coverage,'source_access':{k:latest_audit.get(k) for k in ['at','app','readAllOrders','oldestOrderAt']},'resources_denied':denied,'catalog_variants':len(catalog),'catalog_issues':issues,'orphan_order_customers':orphan,'order_lines_without_current_variant':historical_missing,'drafts_linked_to_order':drafts_linked,'draft_order_references_absent_from_orders':drafts_missing_orders,'extras':dict(extra_count),'theme_files_restored':theme_files,'theme_files_without_content':theme_missing,'sqlite_integrity':integrity,'built_at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
     (root/'auditoria.json').write_text(json.dumps(audit,ensure_ascii=False,indent=2),encoding='utf-8')
     (root/'LEEME.txt').write_text('''KENKU ARGENTINA: COPIA PRIVADA
 

@@ -26,6 +26,7 @@ export async function currentBackupToken(base:URL,clientId:string,clientSecret:s
 }
 export const BULK_QUERIES:Record<string,string>={
  orders:`{orders{edges{node{id legacyResourceId name createdAt updatedAt currencyCode transactions{id kind status gateway processedAt amountSet{shopMoney{amount currencyCode}}} metafields{edges{node{id namespace key type value}}}}}}}`,
+ fulfillments:`{orders{edges{node{id fulfillmentOrders{edges{node{id status requestStatus createdAt updatedAt fulfillAt fulfillBy orderId orderName assignedLocation{name location{id}} lineItems{edges{node{id totalQuantity remainingQuantity lineItem{id}}}}}}}}}}}`,
  customers:`{customers{edges{node{id legacyResourceId metafields{edges{node{id namespace key type value}}}}}}}`,
  products:`{products{edges{node{id legacyResourceId title handle descriptionHtml status variants{edges{node{id legacyResourceId title sku barcode price compareAtPrice inventoryQuantity inventoryItem{id sku tracked unitCost{amount currencyCode} countryCodeOfOrigin harmonizedSystemCode} metafields{edges{node{id namespace key type value}}}}}} media{edges{node{id mediaContentType alt ... on MediaImage{image{url width height}} ... on Video{sources{url mimeType}} ... on ExternalVideo{originUrl host} ... on Model3d{sources{url mimeType}}}}} metafields{edges{node{id namespace key type value}}}}}}}`,
  files:`{files{edges{node{id alt createdAt ... on MediaImage{image{url width height}} ... on GenericFile{url mimeType} ... on Video{sources{url mimeType}} ... on Model3d{sources{url mimeType}}}}}}`,
