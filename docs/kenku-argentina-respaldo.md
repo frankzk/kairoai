@@ -54,3 +54,25 @@ Prueba de navegador: con las solicitudes a Shopify bloqueadas, se verificaron
 8.491 clientes, paginación, búsqueda vacía, 16 productos y sus 16 imágenes,
 16 códigos internos únicos, vista móvil y regresión del catálogo de México.
 La auditoría detectó 4 variantes sin SKU original y 2 con SKU original repetido.
+
+Al 26/10/2026 se contrastaron 6.689 pedidos, 8.491 clientes, 16 productos y
+7.776 borradores: los cuatro conteos coinciden con Shopify. read_all_orders
+está concedido en Kairo Kenku ARG (439649239041); el pedido más antiguo es del
+02/10/2025. Se recuperaron los 6.027 pedidos que faltaban. Búsqueda y paginación
+del histórico se verificaron con las solicitudes a Shopify bloqueadas.
+
+Se conservaron 1.013 archivos de tres temas y cinco exportaciones adicionales,
+incluidos 21.546 registros de preparación de pedidos y sus líneas. Los enlaces
+temporales de archivos se descargan durante la extracción y se verifica su MD5.
+La copia portable mantiene ambos originales de Shopify cuando el JSON cambia
+de formato; una excepción de checksum de bytes se acredita por igualdad de los
+valores JSON entre REST y GraphQL y se declara en auditoria.json. No se presenta
+esa excepción como coincidencia de checksum.
+
+La auditoría conserva una referencia de borrador cuyo pedido devuelve 404 y una
+línea histórica cuya variante ya no aparece en el catálogo actual. No se crean
+pedidos ni productos para ocultar esas diferencias. Markets y las liquidaciones
+de Shopify Payments devolvieron denegación de acceso y quedan identificados como
+no exportados; DropLatam/Fixy siguen pendientes. Las referencias CDN inexistentes
+quedan en asset-errors.json. Los JSON originales, CSV, SQLite, archivos y hashes
+de integridad permanecen en la carpeta privada de respaldo.
