@@ -1447,7 +1447,7 @@ function LegacyFinancePage({ verItalia }: { verItalia: boolean }) {
                   {store.label}
                 </option>
               ))}
-              {verItalia && <option value="kenku-it">Kenku Italia · WooCommerce</option>}
+              {verItalia && <option value="kenku-it">Kenku Italia</option>}
             </select>
             <Button
               variant="outline"

@@ -115,3 +115,32 @@ A petición del dueño, el receptor admite COD en cod-pending y Stripe pagado en
 Gestión identifica «Pagado con Stripe · No cobrar al entregar». Los COD anteriores conservan «Contra entrega · Cobrar al entregar». La confirmación se realiza por el flujo operativo normal y la cola de estados devuelve revisión 1 a WooCommerce; cod-core admite processing→processing solo para esta primera confirmación de un prepago real (método no COD, pagado y con transacción). WooCommerce registra _cod_core_crm_confirmed_at separado del estado de pago, útil para la futura selección Elogy. No implica que el conector Elogy soporte todavía ese filtro ni que esté conectado.
 
 La cuenta Stripe debe conectarse y probarse en modo test (aprobado, rechazo, 3DS, reintentos/webhook). El cliente no debe ser cobrado otra vez al entregar y el estado processing por sí solo no autoriza a Elogy a despachar. No se ejecutaron cargos reales. La prueba de pago del gateway requiere las credenciales de Stripe del dueño. Verificación final y commit de producción se agregan al cierre. Responsable Codex, tiempo no cronometrado.
+
+## Gestión de Italia con presentación común (25-10-2026)
+
+Se reemplaza la lista de tarjetas por la presentación compacta de Gestión usada
+en Honduras y Costa Rica: cabecera y selector de tienda, resumen operativo,
+filtros por fecha de creación, búsqueda, contadores de estado y tabla paginada.
+El número de pedido despliega dirección, CAP, productos, notas y seguimiento.
+Se mantienen los formularios de gestión Shopify y las confirmaciones WooCommerce
+con sus revisiones, UUID y controles de concurrencia. No cambian los pedidos
+originales de Shopify ni se activa sincronización logística nueva.
+
+Los contadores se consultan en el servidor con HEAD/count exact sobre la vista
+privada existente, con el mismo origen, búsqueda y fechas que la lista; el estado
+seleccionado filtra solo las filas. No se descargan todos los payloads para sumar.
+Se reutilizan los contadores al paginar o cambiar de estado y se refrescan tras
+una gestión, actualización manual o lectura periódica. No hay cambios de esquema.
+Los días y rangos inclusivos se convierten a intervalos UTC semiabiertos según
+Europe/Rome; las pruebas cubren días de 23 y 25 horas. Los errores de lectura se
+informan y deshabilitan acciones sobre filas anteriores.
+
+Esta entrega unifica la presentación de pedidos; liquidaciones, rentabilidad,
+reportes y herramientas específicas de los couriers de HN/CR siguen requiriendo
+sus fuentes e integraciones italianas. No se agregan pestañas sin funcionalidad.
+
+Verificación: 1.289 tests, TypeScript, lint y build correctos. Lectura real sin
+escrituras: 6.264 pedidos y suma de contadores consistente con la lista. La QA de
+navegador usa respuestas simuladas para gestionar, sin insertar ni modificar
+pedidos reales, sin cargos y sin envíos a Elogy. Evidencias locales en
+output/playwright/kenkuit/italia-tabla-*. Responsable Codex, tiempo no cronometrado.
