@@ -1,5 +1,5 @@
 """Portable Argentina archive. Python standard library only; never uses a network."""
-import argparse, base64, collections, csv, datetime, gzip, hashlib, html.parser, json, pathlib, sqlite3, urllib.parse
+import argparse, base64, collections, csv, datetime, gzip, hashlib, html.parser, json, pathlib, re, sqlite3, urllib.parse
 
 class PlainText(html.parser.HTMLParser):
     def __init__(self):
@@ -30,6 +30,22 @@ def inside(root,relative):
     path=(root/relative).resolve()
     if not path.is_relative_to(root.resolve()): raise ValueError('Archive path escapes backup')
     return path
+
+def theme_text_bytes(text,checksum):
+    """Only restore JSON formatting when its exact source checksum proves it."""
+    raw=text.encode('utf-8')
+    if not checksum or hashlib.md5(raw).hexdigest()==checksum:return raw
+    body=re.sub(r'^\s*/\*.*?\*/\s*','',text,flags=re.S);candidates=[body]
+    try:
+        value=json.loads(body)
+        candidates.extend(json.dumps(value,ensure_ascii=ascii,separators=(',',':')) for ascii in [False,True])
+    except ValueError:pass
+    for candidate in candidates:
+        for escaped in [candidate,candidate.replace('/','\\/'),candidate.replace('</','<\\/')]:
+            for form in [escaped,escaped.rstrip()+'\n',escaped.rstrip()+'\r\n']:
+                result=form.encode('utf-8')
+                if hashlib.md5(result).hexdigest()==checksum:return result
+    raise ValueError('Theme source checksum mismatch')
 def build(root):
     target=root/'kenku-argentina.sqlite'; temp=root/'kenku-argentina.sqlite.partial'
     if temp.exists(): temp.unlink()
@@ -79,15 +95,17 @@ def build(root):
                 db.execute('insert into historical_items values(?,?,?,?,?,?,?,?,?)',entry);historical.append(entry)
     extra_count=collections.Counter();theme_files=0;theme_missing=0;latest_audit={}
     asset_file=root/'asset-map.json';asset_map=json.loads(asset_file.read_text()) if asset_file.exists() else {}
+    originals={r['external_id']:r['payload'] for r in rows(root,'argentina_shopify_extra') if r['resource']=='theme_file_original'}
     for row in rows(root,'argentina_shopify_extra'):
         resource=row['resource'];p=row['payload'];extra_count[resource]+=1
         if resource=='audit' and p.get('at','')>latest_audit.get('at',''): latest_audit=p
         if resource=='theme_file':
+            if row['external_id'] in originals:p={**originals[row['external_id']],'checksum_md5':p.get('checksum_md5')}
             key=str(p.get('key',''));relative=pathlib.PurePosixPath(key)
             if not key or relative.is_absolute() or '..' in relative.parts or ':' in key: raise ValueError('Unsafe theme path')
             out=inside(root,'themes/'+str(row['parent_id'])+'/'+key);out.parent.mkdir(parents=True,exist_ok=True)
             if p.get('attachment') is not None: out.write_bytes(base64.b64decode(p['attachment'],validate=True));theme_files+=1
-            elif p.get('value') is not None: out.write_bytes(str(p['value']).encode('utf-8'));theme_files+=1
+            elif p.get('value') is not None: out.write_bytes(theme_text_bytes(str(p['value']),p.get('checksum_md5')));theme_files+=1
             elif p.get('public_url'):
                 url=urllib.parse.urlsplit(p['public_url']);local=asset_map.get(urllib.parse.urlunsplit((url.scheme,url.netloc,url.path,'','')))
                 if local and inside(root,local).is_file():out.write_bytes(inside(root,local).read_bytes());theme_files+=1

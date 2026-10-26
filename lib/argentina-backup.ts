@@ -46,7 +46,7 @@ const DIRECT_QUERIES:Record<string,{field:string;query:string}>={
  metaobject_definitions:{field:"metaobjectDefinitions",query:`query($after:String){metaobjectDefinitions(first:100,after:$after){nodes{id name type fieldDefinitions{key name type{name}}} pageInfo{hasNextPage endCursor}}}`},
  markets:{field:"markets",query:`query($after:String){markets(first:100,after:$after){nodes{id name handle} pageInfo{hasNextPage endCursor}}}`},
 };
-export const BACKUP_RESOURCES=[...Object.keys(CONFIG_RECURSOS),...Object.keys(EXTRA_REST),...Object.keys(DIRECT_QUERIES),"theme_files","draft_order_links"];
+export const BACKUP_RESOURCES=[...Object.keys(CONFIG_RECURSOS),...Object.keys(EXTRA_REST),...Object.keys(DIRECT_QUERIES),"theme_files","draft_order_links","theme_originals"];
 
 async function checked<T extends {error:unknown}>(p:PromiseLike<T>):Promise<T>{const r=await p;if(r.error)throw Error("backup_persistence_failed");return r;}
 async function state(resource:string):Promise<State>{
@@ -135,6 +135,11 @@ async function draftOrderLinks(c:Awaited<ReturnType<typeof client>>,deadline:num
   s.pages++;s.records++;await save(s);
  }s.status="complete";await save(s);return s;
 }
+async function themeOriginals(c:Awaited<ReturnType<typeof client>>){
+ const s=await state("theme_originals");if(s.status==="complete")return s;s.status="running";s.error=null;
+ for(const id of await ids("theme",false)){const key="config/settings_schema.json",params=new URLSearchParams({"asset[key]":key}),r=await c.read(`/admin/api/${VERSION}/themes/${id}/assets.json?${params}`);if(!r.ok)throw Error(`shopify_http_${r.status}`);const asset=(await r.json()).asset;if(asset?.key!==key||typeof asset.value!=="string")throw Error("invalid_theme_schema");await extra("theme_file_original",`${id}:${key}`,asset,id);s.pages++;s.records++;await save(s);}
+ s.status="complete";await save(s);return s;
+}
 async function bulk(kind:string,c:Awaited<ReturnType<typeof client>>){
  if(!BULK_QUERIES[kind])throw Error("invalid_bulk_kind");const s=await state(`bulk_${kind}`);if(s.status==="complete")return s;
  if(!s.meta.id){
@@ -163,7 +168,7 @@ export async function runArgentinaBackup(action:string,resource:string,deadline=
    try{return await bulk(resource,c);}catch(e){const s=await state(`bulk_${resource}`);s.status="error";s.error=e instanceof Error?e.message:"backup_failed";await save(s);return s;}
   }
   if(action!=="resource"||!BACKUP_RESOURCES.includes(resource))throw Error("invalid_action");
-  try{if(resource==="theme_files")return await themeFiles(c,deadline);if(resource==="draft_order_links")return await draftOrderLinks(c,deadline);if(DIRECT_QUERIES[resource])return await directResource(resource,c,deadline);return await restResource(resource,c,deadline);}
+  try{if(resource==="theme_files")return await themeFiles(c,deadline);if(resource==="draft_order_links")return await draftOrderLinks(c,deadline);if(resource==="theme_originals")return await themeOriginals(c);if(DIRECT_QUERIES[resource])return await directResource(resource,c,deadline);return await restResource(resource,c,deadline);}
   catch(e){const s=await state(resource);s.status="error";s.error=e instanceof Error?e.message:"backup_failed";await save(s);return s;}
  }finally{await checked(db.rpc("argentina_backup_release",{p_token:token}));}
 }

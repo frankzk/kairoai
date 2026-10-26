@@ -20,10 +20,15 @@ class PortableArchiveTest(unittest.TestCase):
     def test_paths_cannot_escape_private_backup(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):backup.inside(pathlib.Path(directory),'../../outside')
+    def test_theme_format_restoration_requires_matching_source_checksum(self):
+        source=b'{"html":"<p>Test<\\/p>"}'
+        representation='/* Generated file */\n{\n  "html": "<p>Test</p>"\n}'
+        self.assertEqual(backup.theme_text_bytes(representation,hashlib.md5(source).hexdigest()),source)
+        with self.assertRaises(ValueError):backup.theme_text_bytes(representation,'0'*32)
     def test_coverage_does_not_hide_missing_orders_and_theme_bytes_are_exact(self):
         with tempfile.TemporaryDirectory() as directory:
             root=pathlib.Path(directory);content='line one\nline two\n'
-            records=[{'store_id':4,'resource':'audit','payload':{'at':'2026-10-26','readAllOrders':False,'counts':{'orders':6027,'customers':0,'products':0,'drafts':0}}},{'store_id':4,'resource':'theme_file','parent_id':'123','payload':{'key':'templates/test.liquid','value':content,'checksum_md5':hashlib.md5(content.encode()).hexdigest()}}]
+            records=[{'store_id':4,'resource':'audit','external_id':'audit','payload':{'at':'2026-10-26','readAllOrders':False,'counts':{'orders':6027,'customers':0,'products':0,'drafts':0}}},{'store_id':4,'resource':'theme_file','external_id':'123:templates/test.liquid','parent_id':'123','payload':{'key':'templates/test.liquid','value':content,'checksum_md5':hashlib.md5(content.encode()).hexdigest()}}]
             with gzip.open(root/'argentina_shopify_extra.jsonl.gz','wt',encoding='utf-8') as file:
                 for r in records:file.write(json.dumps(r)+'\n')
             with contextlib.redirect_stdout(io.StringIO()):backup.build(root);backup.verify(root)
