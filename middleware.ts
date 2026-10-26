@@ -86,7 +86,7 @@ export async function middleware(req: NextRequest) {
   const { claims, habiaCookie } = await sesionVigente(req);
 
   if (exige.tipo === "cron") {
-    const allowed = pathname === "/api/cron/woo-status" ? wooCronAccessAllowed({
+    const allowed = pathname === "/api/cron/woo-status" || pathname === "/api/cron/elogy" ? wooCronAccessAllowed({
       identity: claims,
       authorization: req.headers.get("authorization"),
       secret: process.env.WOO_KENKU_IT_SYNC_SECRET,

@@ -144,3 +144,19 @@ escrituras: 6.264 pedidos y suma de contadores consistente con la lista. La QA d
 navegador usa respuestas simuladas para gestionar, sin insertar ni modificar
 pedidos reales, sin cargos y sin envíos a Elogy. Evidencias locales en
 output/playwright/kenkuit/italia-tabla-*. Responsable Codex, tiempo no cronometrado.
+
+### Elogy: logística y finanzas (25–26 octubre)
+
+Clave Rest API validada y secreto sensible configurado en producción. Espejo
+privado inicial: 4.699 pedidos, 4.634 envíos únicos, 2.537 cobros del courier y
+4.634 cargos company. Todos los envíos coinciden por referencia con Kairo.
+Se agregan Logística Elogy, Liquidaciones, Rentabilidad, Costos por SKU, Gastos
+y consulta de Cierre mensual, manteniendo la tabla operativa existente.
+
+Remesas y abonos bancarios se registran por comprobante; COD del courier no
+equivale a dinero recibido en banco. Faltan costos de compra de 22 SKU,
+comisiones reales online y cierre de inventario de retornos para un resultado
+operativo completo. No se alteran pedidos Shopify ni se despacha en Elogy.
+Actualización reanudable por worker del VPS programado cada cinco minutos.
+Contrato, permisos, contabilidad, pruebas y límites en
+[Integración Elogy](elogy-italia-integracion.md). Responsable Codex, tiempo no cronometrado.

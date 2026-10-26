@@ -9,8 +9,8 @@ describe("Cliente Elogy de solo lectura",()=>{
  });
  it("does not assume a short page is complete, and stops on an empty page",async()=>{
   vi.stubEnv("ELOGY_KENKU_IT_API_KEY","qa-token");
-  expect((await fetchElogyPage("cod",0,vi.fn().mockResolvedValue(Response.json({success:true,data:[{id:1}]})))).complete).toBe(false);
-  expect((await fetchElogyPage("cod",20,vi.fn().mockResolvedValue(Response.json({success:true,data:[]})))).complete).toBe(true);
+  expect((await fetchElogyPage("collected",0,vi.fn().mockResolvedValue(Response.json({success:true,data:[{id:1}]})))).complete).toBe(false);
+  expect((await fetchElogyPage("collected",20,vi.fn().mockResolvedValue(Response.json({success:true,data:[]})))).complete).toBe(true);
  });
  it("fails closed for missing credentials, unsupported resources and malformed envelopes",async()=>{
   vi.stubEnv("ELOGY_KENKU_IT_API_KEY","");const network=vi.fn();await expect(fetchElogyPage("orders",0,network)).rejects.toThrow("not_configured");expect(network).not.toHaveBeenCalled();

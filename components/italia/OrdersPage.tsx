@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, FileSpreadsheet, RefreshCw, Search } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, RefreshCw, Search } from "lucide-react";
 import { ITALIA_STATUS, type ItaliaOrder, type ItaliaStatus } from "@/lib/italia-orders";
 import { ITALIA_PERIODS, ITALIA_STATES, type ItaliaCounts, type ItaliaPeriod } from "@/lib/italia-filters";
 import { FINANCE_STORES } from "@/lib/store-config";
@@ -10,6 +10,7 @@ import { leerYo } from "@/lib/sesion-cliente";
 import { useSelectedStore } from "@/lib/use-selected-store";
 import ManageShopifyDialog from "./ManageShopifyDialog";
 import OrdersTable from "./OrdersTable";
+import ItaliaNav from "./ItaliaNav";
 import { control, countLabel, date, statusTone } from "./order-ui";
 
 type Sync = {updatedAt:string;complete:boolean;error:boolean}|null;
@@ -96,7 +97,8 @@ export default function ItalyOrders() {
         {period==="range"&&<div className="flex flex-wrap items-center gap-3 text-xs"><label className="flex items-center gap-2">Desde<input type="date" className={control} value={from} max={to||undefined} onChange={e=>{setFrom(e.target.value);setPage(1);}}/></label><label className="flex items-center gap-2">Hasta<input type="date" className={control} value={to} min={from||undefined} onChange={e=>{setTo(e.target.value);setPage(1);}}/></label>{!rangeReady&&<p role="status" className="text-muted-foreground">Elige ambas fechas para consultar.</p>}</div>}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">{stats.map(([label,value,tone])=><div key={label} className="rounded-lg border border-border bg-card px-3 py-3"><div className="flex items-center justify-between gap-2"><p className="text-[11px] text-muted-foreground">{label}</p><p className={`text-lg font-semibold tabular-nums ${tone}`}>{value===null?"—":number(value)}</p></div><p className="mt-1 text-[10px] text-muted-foreground">{period==="all"?"Histórico completo":"Periodo seleccionado"}</p></div>)}</div>
       </section>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border"><h2 className="-mb-px flex items-center gap-2 border-b-2 border-primary px-4 py-3 text-sm font-medium text-primary"><FileSpreadsheet size={15}/>Pedidos</h2><p className={`pb-2 text-[11px] ${sync?.error||stale?"text-amber-300":"text-muted-foreground"}`}>{sync?`Shopify: última lectura ${date(sync.updatedAt)}${sync.error?" · con error":stale?" · revisión atrasada":""}`:"Shopify: sin información de sincronización"}</p></div>
+      <ItaliaNav/>
+      <p className={`text-[11px] ${sync?.error||stale?"text-amber-300":"text-muted-foreground"}`}>{sync?`Shopify: última lectura ${date(sync.updatedAt)}${sync.error?" · con error":stale?" · revisión atrasada":""}`:"Shopify: sin información de sincronización"}</p>
       <section className="min-w-0 rounded-lg border border-border bg-card p-3 sm:p-4" aria-label="Gestión de pedidos de Italia" aria-busy={busy}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <form className="flex min-w-0 flex-1 basis-full gap-2 sm:min-w-[320px] sm:basis-auto" onSubmit={e=>{e.preventDefault();setPage(1);setExpanded(null);setQuery(search.trim());}}><div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-2.5 top-2 text-muted-foreground" size={14}/><input aria-label="Pedido, cliente o teléfono" className={`${control} h-8 w-full justify-start pl-8 text-xs`} value={search} maxLength={100} onChange={e=>setSearch(e.target.value)} placeholder="Buscar pedido, cliente o teléfono"/></div><button className={control} type="submit">Buscar</button></form>
