@@ -121,3 +121,26 @@ Verificación de esta entrega: 1.317 pruebas de Vitest, TypeScript, lint y build
 correctos. Navegador: todas las pestañas, paginación de 50 filas, búsqueda,
 CSV, costos con concurrencia, gastos y abonos simulados, error de lectura y
 móvil sin desbordar la página. SQL aislado: también gasto EUR e idempotencia.
+
+### Costo provisional autorizado por el dueño
+
+El dueño solicitó 9 EUR por unidad para todos los SKU mientras no dispone de
+costos de compra. Se registra provisional=true tanto en el costo vigente como en
+cada versión histórica, con actor y solicitud idempotente. Vigencia desde el
+primer pedido del histórico para poder estimarlo; no representa evidencia de
+precios históricos reales. Sin empaque propio adicional informado (0 EUR);
+cargos company reales de Elogy separados. Tres unidades cuestan 27 EUR y cinco
+45 EUR de producto, incluidos regalos.
+
+La interfaz y el CSV identifican las estimaciones. La contribución calculable
+puede consultarse como estimada; el resultado completo sigue pendiente mientras
+haya costos provisionales u otros datos sin resolver. Al editar un costo, el
+operador puede desmarcar provisional al contar con un importe comprobado. Las
+versiones anteriores se conservan y la fecha de vigencia usa el día de Italia.
+Los costos de Honduras y Costa Rica no cambian.
+
+Cargados 22 SKU a 9 EUR/unidad provisional con vigencia 2025-09-03 (primer
+pedido del histórico disponible), empaque propio adicional 0 EUR y auditoría
+exclusiva de kenku-it. Verificados 1.320 tests, TypeScript, lint, build y QA de
+navegador con guardados simulados. Elogy en producción: cron 200 sin error;
+primera ejecución programada validada. La cuenta técnica QA quedó desactivada.

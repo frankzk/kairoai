@@ -13,7 +13,7 @@ begin
  perform public.italia_elogy_finish(5,'shipments',lease,'[{"id":"QA","ref":"KITA-QA","order_id":"QA","source_updated_at":"2026-09-25T00:00:00Z","state":"in_transit"}]',1,1,true,'hash2',null);
  if (select data->>'state' from public.italia_elogy_records where store_id=5 and resource='shipments' and record_id='QA')<>'delivered' then raise exception 'old event overwrote new';end if;
  if (select count(*) from public.italia_elogy_records where store_id=5 and record_id='QA')<>1 then raise exception 'duplicate record';end if;
- costbody=jsonb_build_object('sku','QA-ELOGY-DO-NOT-SHIP','name','QA','unit_cents',100,'packaging_cents',0,'effective_from','2026-01-01','expected_updated_at',null);
+ costbody=jsonb_build_object('sku','QA-ELOGY-DO-NOT-SHIP','name','QA','unit_cents',100,'packaging_cents',0,'effective_from','2026-01-01','expected_updated_at',null,'provisional',true);
  a=public.italia_finance_mutate(5,'cost',costbody,req,'QA');costresult=a->'record';
  b=public.italia_finance_mutate(5,'cost',costbody,req,'QA');if not (b->>'duplicate')::boolean then raise exception 'not idempotent';end if;
  b=public.italia_finance_mutate(5,'cost',costbody||'{"unit_cents":200}',req,'QA');if b->>'error'<>'request_reused' then raise exception 'request reuse not rejected';end if;
@@ -21,6 +21,7 @@ begin
  costbody=costbody||jsonb_build_object('expected_updated_at',costresult->>'updated_at','unit_cents',200);
  b=public.italia_finance_mutate(5,'cost',costbody,gen_random_uuid(),'QA');if (b->'record'->>'unit_cost')::numeric<>2 then raise exception 'cost update failed';end if;
  if (select count(*) from public.product_cost_versions where store_id=5 and sku='qa-elogy-do-not-ship')<>2 then raise exception 'cost history incorrect';end if;
+ if (select count(*) from public.product_cost_versions where store_id=5 and sku='qa-elogy-do-not-ship' and provisional)<>2 or not (select provisional from public.product_costs where store_id=5 and sku='qa-elogy-do-not-ship') then raise exception 'provisional cost history lost';end if;
  req=gen_random_uuid();
  a=public.italia_finance_mutate(5,'expense','{"type":"ads","date":"2026-10-25","description":"QA-ELOGY-DO-NOT-PAY","amount_cents":1250,"platform":"QA","note":"Rollback fixture"}',req,'QA');
  if (a->'record'->>'amount')::numeric<>12.50 or a->'record'->>'currency'<>'EUR' then raise exception 'expense money or currency';end if;

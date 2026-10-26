@@ -1,5 +1,5 @@
 import type {ElogyFact,ProfitRow} from "@/lib/elogy-model";
-export type Cost={id:number;sku:string;product_name:string;unit_cost:number;packaging_cost:number;effective_from:string;updated_at:string};
+export type Cost={id:number;sku:string;product_name:string;unit_cost:number;packaging_cost:number;effective_from:string;updated_at:string;provisional?:boolean};
 export type Expense={id:number;type:string;expense_date:string;description:string;amount:number;currency:string;platform:string;notes:string};
 export type Payout={id:number;reference:string;statement_date:string;expected_cents:number;received_cents:number|null;received_at:string|null;note:string;version:number};
 export interface WorkspaceData {
@@ -7,7 +7,7 @@ export interface WorkspaceData {
  sync:Array<{resource:string;next_offset:number;total:number|null;last_ok_at:string|null;completed_at:string|null;last_error:string|null;cycles:number}>;
  shipments:Array<ElogyFact&{match:string}>;profit?:ProfitRow[];costs?:Cost[];expenses?:Expense[];payouts?:Payout[];collected?:ElogyFact[];
  skuCatalog?:Array<{sku:string;name:string}>;
- summary?:{deliveredSales:number;collected:number;expectedBank:number;receivedBank:number;expenses:number;knownContribution:number;incomplete:number;complete:boolean;netProfit:number|null};
+ summary?:{deliveredSales:number;collected:number;expectedBank:number;receivedBank:number;expenses:number;knownContribution:number;incomplete:number;complete:boolean;netProfit:number|null;estimated:number};
 }
 export const eur=(value:number|null|undefined)=>value===null||value===undefined?"Pendiente":new Intl.NumberFormat("it-IT",{style:"currency",currency:"EUR"}).format(value/100);
 export const field="h-9 w-full rounded-md border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";

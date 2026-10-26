@@ -10,6 +10,7 @@ export interface ElogyFact {
 }
 const iso=(v:unknown)=>typeof v==="string"&&Number.isFinite(Date.parse(v))?new Date(v).toISOString():null;
 const latest=(...values:unknown[])=>values.map(iso).filter((x):x is string=>Boolean(x)).sort().at(-1)||null;
+const romeCostDay=new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Rome",year:"numeric",month:"2-digit",day:"2-digit"});
 // Verified against Elogy's public getTrackingName mapping, not inferred from order payment status.
 export function elogyTracking(code:unknown):{state:LogisticsState;label:string} {
  const n=Number(code);
@@ -49,20 +50,21 @@ export function normalizeElogyFact(resource:ElogyResource,row:ElogyRecord):Elogy
  };
 }
 
-export interface CostVersion {sku:string;unit_cost:number;packaging_cost:number;currency:string;effective_from:string;created_at:string}
-export function productCost(items:ElogyItem[],day:string,versions:CostVersion[]):{cents:number|null;missing:string[]} {
- let cents=0;const missing:string[]=[];
- if(!items.length)return {cents:null,missing:["Productos sin detalle"]};
+export interface CostVersion {sku:string;unit_cost:number;packaging_cost:number;currency:string;effective_from:string;created_at:string;provisional?:boolean}
+export function productCost(items:ElogyItem[],day:string,versions:CostVersion[]):{cents:number|null;missing:string[];provisional:boolean} {
+ let cents=0,provisional=false;const missing:string[]=[];
+ if(!items.length)return {cents:null,missing:["Productos sin detalle"],provisional};
  for(const item of items){
   const candidates=versions.filter(c=>c.sku.toLowerCase()===item.sku.toLowerCase()&&c.currency==="EUR"&&c.effective_from<=day).sort((a,b)=>b.effective_from.localeCompare(a.effective_from)||b.created_at.localeCompare(a.created_at));
   const cost=candidates[0],unit=cost?euroCents(cost.unit_cost):null,pack=cost?euroCents(cost.packaging_cost):null;
+  if(cost?.provisional)provisional=true;
   if(!cost||unit===null||pack===null||unit<0||pack<0||!Number.isSafeInteger(item.quantity)||item.quantity<=0)missing.push(item.sku||"Sin SKU");
   else cents+=(unit+pack)*item.quantity;
  }
- return {cents:missing.length?null:cents,missing:Array.from(new Set(missing))};
+ return {cents:missing.length?null:cents,missing:Array.from(new Set(missing)),provisional};
 }
 
-export interface ProfitRow {id:string;ref:string;date:string|null;state:LogisticsState;sales:number|null;collected:number|null;logistics:number|null;products:number|null;contribution:number|null;missing:string[];gateway:string}
+export interface ProfitRow {id:string;ref:string;date:string|null;state:LogisticsState;sales:number|null;collected:number|null;logistics:number|null;products:number|null;contribution:number|null;missing:string[];gateway:string;estimated:boolean}
 /** Bank cash belongs to the receipt month, even if the statement is older. */
 export function payoutPeriod<T extends {statement_date:string;expected_cents:number;received_at:string|null;received_cents:number|null}>(rows:T[],range:{from:string;to:string}|null){
  const contains=(day:string|null)=>Boolean(day&&(!range||`${day}T12:00:00.000Z`>=range.from&&`${day}T12:00:00.000Z`<range.to));
@@ -74,7 +76,7 @@ export function profitability(shipments:ElogyFact[],orders:ElogyFact[],costs:Elo
  return shipments.map(s=>{
   const missing:string[]=[],billing=costById.get(s.order_id)||[],cash=cashById.get(s.order_id)||[];
   const fees=billing.length===1&&billing[0].billing_type==="company"&&billing[0].country==="IT"?billing[0].total_cents:null;
-  const original=orderById.get(s.order_id),items=original?.items||[],cogs=productCost(items,(original?.occurred_at||s.occurred_at||"").slice(0,10),versions);
+  const original=orderById.get(s.order_id),items=original?.items||[],orderedAt=original?.occurred_at||s.occurred_at,cogs=productCost(items,orderedAt?romeCostDay.format(new Date(orderedAt)):"",versions);
   const sales=s.currency==="EUR"&&s.state==="delivered"?s.total_cents:s.currency==="EUR"&&["cancelled","returned"].includes(s.state)?0:null;
   if(s.currency!=="EUR")missing.push("Moneda no conciliada");
   if(s.state==="delivered"&&s.total_cents===null)missing.push("Importe de venta pendiente");
@@ -85,6 +87,6 @@ export function profitability(shipments:ElogyFact[],orders:ElogyFact[],costs:Elo
   // Stripe gateway fees are separate from Elogy's fees. Missing is not zero.
   if(["online","stripe"].includes(s.gateway))missing.push("Comisión del pago online pendiente");
   const received=cash.length&&cash.every(c=>c.currency==="EUR"&&c.total_cents!==null)?cash.reduce((n,c)=>n+(c.total_cents||0),0):null;
-  return {id:s.id,ref:s.ref,date:s.occurred_at,state:s.state,sales,collected:received,logistics:fees,products:cogs.cents,contribution:missing.length||sales===null||fees===null||cogs.cents===null?null:sales-fees-cogs.cents,missing,gateway:s.gateway};
+  return {id:s.id,ref:s.ref,date:s.occurred_at,state:s.state,sales,collected:received,logistics:fees,products:cogs.cents,contribution:missing.length||sales===null||fees===null||cogs.cents===null?null:sales-fees-cogs.cents,missing,gateway:s.gateway,estimated:cogs.provisional};
  });
 }
