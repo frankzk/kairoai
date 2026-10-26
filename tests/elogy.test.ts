@@ -20,6 +20,9 @@ describe("Cliente Elogy de solo lectura",()=>{
  it("returns only technical errors, never an upstream body or credentials",async()=>{
   vi.stubEnv("ELOGY_KENKU_IT_API_KEY","qa-secret");await expect(fetchElogyPage("orders",0,vi.fn().mockResolvedValue(new Response("private upstream info",{status:401})))).rejects.toThrow(/^http_401$/);
  });
+ it("rejects a prematurely empty page when the provider still reports remaining rows",async()=>{
+  vi.stubEnv("ELOGY_KENKU_IT_API_KEY","qa-token");await expect(fetchElogyPage("costs",100,vi.fn().mockResolvedValue(Response.json({success:true,data:[],total:101})))).rejects.toThrow("pagination_incomplete");
+ });
 });
 describe("Importes y estados de Elogy",()=>{
  it("parses cents without confusing unknown amounts and zero or rounding silently",()=>{

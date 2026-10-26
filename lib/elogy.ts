@@ -33,6 +33,7 @@ export async function fetchElogyPage(resource:ElogyResource, offset=0, fetcher:t
   const rows=payload.data.map(object);
   if(rows.some(row=>!text(row.id)))throw new ElogyError("missing_record_identity");
   const total=Number.isSafeInteger(payload.total)&&Number(payload.total)>=0?Number(payload.total):null;
+  if(rows.length===0&&total!==null&&offset<total)throw new ElogyError("pagination_incomplete");
   const next=offset+rows.length;
   // A short page may just mean the provider capped the requested length.
   return {rows,total,next,complete:rows.length===0||total!==null&&next>=total};

@@ -34,7 +34,7 @@ export function normalizeElogyFact(resource:ElogyResource,row:ElogyRecord):Elogy
  const tracking=elogyTracking(row.last_tracking_status??row.tracking_status);
  const customer=object(row.customer),gateway=text(row.gateway);
  const occurred=resource==="collected"?iso(row.value_date||row.delivery_date):resource==="orders"?iso(row.created_at):iso(row.shipping_date||row.completed_at||row.created_at);
- const items=(Array.isArray(row.products)?row.products:[]).map(object).map(p=>({sku:text(p.sku||p.product_sku).trim().toLowerCase(),name:text(p.product_name||p.name),quantity:Number(p.quantity)}));
+ const items=(Array.isArray(row.products)?row.products:[]).map(object).map(p=>({sku:text(p.sku||p.product_sku).trim().toLowerCase(),name:text(p.product_name||p.name),quantity:Number.isSafeInteger(Number(p.quantity))&&Number(p.quantity)>0?Number(p.quantity):0}));
  return {
   id:text(row.id),ref,order_id:resource==="orders"||resource==="shipments"?text(row.id):text(row.order_id),occurred_at:occurred,
   source_updated_at:latest(row.updated_at,row.last_tracking_status_date,row.tracking_status_date,row.import_date,row.created_at),
@@ -44,7 +44,7 @@ export function normalizeElogyFact(resource:ElogyResource,row:ElogyRecord):Elogy
   state_label:text(row.last_tracking_status_desc||row.tracking_status_name)||tracking.label,
   state_at:iso(row.last_tracking_status_date||row.tracking_status_date),guide:text(row.shipping_number||row.ext_shipping_number||row.shipping_code||row.shipment_id),
   carrier:text(row.carrier_slug||row.carrier_name||row.carrier_code),customer:text(row.customer_fullname||row.order_customer_fullname)||[text(customer.first_name||row.first_name),text(customer.last_name||row.last_name)].filter(Boolean).join(" "),country,
-  external_id:text(row.external_id),items:items.filter(i=>Number.isSafeInteger(i.quantity)&&i.quantity>0),
+  external_id:text(row.external_id),items,
   billing_type:resource==="costs"?text(row.type):"",fees:resource==="costs"?Object.fromEntries(FEE_FIELDS.map(key=>[key,euroCents(row[key])])):{},file_ref:text(object(row.file).name),
  };
 }
@@ -77,6 +77,7 @@ export function profitability(shipments:ElogyFact[],orders:ElogyFact[],costs:Elo
   const original=orderById.get(s.order_id),items=original?.items||[],cogs=productCost(items,(original?.occurred_at||s.occurred_at||"").slice(0,10),versions);
   const sales=s.currency==="EUR"&&s.state==="delivered"?s.total_cents:s.currency==="EUR"&&["cancelled","returned"].includes(s.state)?0:null;
   if(s.currency!=="EUR")missing.push("Moneda no conciliada");
+  if(s.state==="delivered"&&s.total_cents===null)missing.push("Importe de venta pendiente");
   if(fees===null)missing.push(billing.length>1?"Cargos múltiples por revisar":"Costo Elogy pendiente");
   if(s.state!=="delivered")missing.push("Entrega o devolución sin cierre de inventario");
   missing.push(...cogs.missing.map(sku=>`Costo SKU: ${sku}`));

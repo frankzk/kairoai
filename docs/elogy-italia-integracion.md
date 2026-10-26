@@ -117,7 +117,7 @@ QA local de navegador con lecturas reales y guardados financieros simulados,
 sin crear costos, cobros, gastos ni pedidos reales. Evidencias privadas en
 output/playwright/kenkuit/elogy-*, excluidas del repositorio.
 
-Verificación de esta entrega: 1.315 pruebas de Vitest, TypeScript, lint y build
+Verificación de esta entrega: 1.317 pruebas de Vitest, TypeScript, lint y build
 correctos. Navegador: todas las pestañas, paginación de 50 filas, búsqueda,
 CSV, costos con concurrencia, gastos y abonos simulados, error de lectura y
 móvil sin desbordar la página. SQL aislado: también gasto EUR e idempotencia.

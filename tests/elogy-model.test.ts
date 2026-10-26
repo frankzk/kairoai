@@ -32,4 +32,10 @@ describe("Rentabilidad sin importes inventados",()=>{
   for(const extra of [{gateway:"online"},{last_tracking_status:19.1},{last_tracking_status:17.5}])expect(profitability([fact("shipments",extra)],[fact("orders")],[fact("costs")],[],versions)[0].contribution).toBeNull();
   expect(profitability([fact("shipments")],[fact("orders")],[fact("costs"),fact("costs",{id:"other"})],[],versions)[0].missing).toContain("Cargos múltiples por revisar");
  });
+ it("keeps invalid quantities visible as missing cost instead of dropping part of an order",()=>{
+  const order=fact("orders",{products:[{sku:"ryu-01",quantity:1},{sku:"ryu-01",quantity:"invalid"}]});
+  expect(order.items).toHaveLength(2);expect(order.items[1].quantity).toBe(0);
+  const row=profitability([fact("shipments")],[order],[fact("costs")],[],versions)[0];expect(row.products).toBeNull();expect(row.contribution).toBeNull();
+  expect(profitability([fact("shipments",{total_price:null})],[fact("orders")],[fact("costs")],[],versions)[0].missing).toContain("Importe de venta pendiente");
+ });
 });
