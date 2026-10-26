@@ -44,7 +44,67 @@ Tabla con RLS, sin acceso de anon/authenticated; vistas SECURITY INVOKER y
 función de lease SECURITY INVOKER con search_path vacío. Bucket nuevo privado,
 sin políticas que concedan acceso a clientes. No cambia otras tiendas.
 
-1.368 pruebas, TypeScript, lint y build correctos. Pruebas de lectores verifican
+Pruebas de lectores verifican
 tienda impuesta en servidor, búsqueda escapada, precios decimales, ausencia de
 datos privados innecesarios y cero llamadas a Shopify. El lease se prueba con
-BEGIN/ROLLBACK. QA local y evidencia de extracción se amplían durante la tarea.
+BEGIN/ROLLBACK.
+
+## Copia portable y restauración
+
+`node scripts/kenku-mx-export.cjs base <directorio>` descarga los JSON originales
+y las imágenes del bucket privado. `extras` copia los registros adicionales,
+verifica SHA-256 de los archivos masivos y descarga medios de los hosts de
+Shopify permitidos. `customers` actualiza solamente esa colección; `viewer`
+agrega el visor sin dependencias externas. Los comandos requieren credenciales
+locales de servicio; nunca las escriben dentro del respaldo. El directorio debe
+estar vacío o contener el marcador de un respaldo de México.
+
+Con Python 3.10 o superior:
+
+```
+python scripts/kenku-mx-offline.py build <directorio>
+python scripts/kenku-mx-offline.py seal <directorio>
+python scripts/kenku-mx-offline.py verify <directorio>
+python scripts/kenku-mx-offline.py serve <directorio>
+```
+
+El índice SQLite se reconstruye desde los JSONL. El visor enlaza clientes,
+pedidos y datos adicionales por sus identificadores originales; conserva
+decimales, códigos postales y SKU como texto. Solo escucha en 127.0.0.1 y su
+CSP impide conexiones externas. No necesita Shopify, Supabase ni internet.
+El manifiesto comprueba cada archivo por tamaño y SHA-256 y compara los
+conteos del índice con la captura. No debe modificarse un paquete ya sellado.
+
+La prueba de restauración extrae un ZIP en otro directorio, verifica sus hashes
+y abre ese visor con todas las conexiones externas bloqueadas. La evidencia
+privada se guarda fuera del paquete en `output/playwright/kenkumx/`.
+El respaldo contiene datos personales; `output/backups/` está excluido de Git.
+
+## Cobertura y límites visibles
+
+La extracción conserva 24.120 pedidos, 23.593 clientes, 44 productos y 8.929
+borradores, además de inventario, transacciones, cargos, historial, preparación
+logística, archivos, cuatro temas y traducciones disponibles. Los trabajos y
+sus conteos reales están en `snapshot.json`; no se interpreta una denegación
+de permisos como colección vacía. Algunos recursos solo se pueden copiar
+después de que el dueño publique y autorice nuevos permisos de la app.
+
+Los originales de MediaImage usan URLs firmadas que caducan en cinco minutos:
+se solicitan por páginas pequeñas y se descargan inmediatamente. Se guarda el
+archivo, no solo su URL. Los JSON de temas pueden incluir un encabezado y
+formato agregado por Shopify; su representación recibida y metadatos originales
+se conservan, y las diferencias se registran aparte de archivos faltantes.
+Los errores del CDN o recursos retirados quedan enumerados para no afirmar
+una cobertura que la fuente no permite.
+
+Los planes confiables pueden renovar la credencial mediante client credentials
+en Vercel para recoger permisos recién autorizados, sin exponer secretos.
+Una colección acotada por página debe declarar `boundedPage`; las demás
+consultas se rechazan si una conexión anidada quedó truncada. Reintentar un
+bulk fallido conserva su estado anterior en `_attempt`. El lease dura 600 s,
+más que el límite de 300 s de la función, para impedir solapamientos.
+
+El respaldo es una captura para consulta, exportación y migración. El checkout,
+procesamiento de pagos y creación de nuevas ventas requieren implementar o
+conectar esos servicios. Los envíos y liquidaciones propios de DropLatam
+deben incorporarse desde ese operador para completar la operación.
