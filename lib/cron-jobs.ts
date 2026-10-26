@@ -25,6 +25,7 @@ export interface CronJob {
 
 export const CRON_JOBS: CronJob[] = [
   { name: "woo-status", label: "Estados de Kenku Italia", everyMinutes: 5, scheduler: "external" },
+  { name: "elogy", label: "Logística y cobros Elogy Italia", everyMinutes: 5, scheduler: "external" },
   { name: "leads", label: "Leads de WhatsApp", everyMinutes: 5 },
   { name: "leads-reclassify", label: "Clasificación de leads", everyMinutes: 10 },
   { name: "leads-shopify-match", label: "Leads que ya compraron", everyMinutes: 60 },
