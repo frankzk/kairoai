@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { LogOut, UserRound } from "lucide-react";
 import { pantallasDe } from "@/lib/permisos";
+import { KENKU_MANAGEMENT_STORES } from "@/lib/kenku-management";
 import { leerYo, type Yo } from "@/lib/sesion-cliente";
 
 /**
@@ -22,7 +23,7 @@ export default function BarraUsuario() {
   if (pathname === "/login" || !yo) return null;
 
   const pantallas = pantallasDe(yo.permisos);
-  const puedeItalia = (yo.id === 0 || yo.tiendas.includes("kenku-it")) && yo.permisos.some(p => p === "pedidos" || p === "finanzas");
+  const kenkuStores = KENKU_MANAGEMENT_STORES.filter(s => (yo.id === 0 || yo.tiendas.includes(s.code)) && yo.permisos.some(p => p === "pedidos" || p === "finanzas"));
 
   async function salir() {
     try {
@@ -50,7 +51,7 @@ export default function BarraUsuario() {
             </Link>
           );
         })}
-        {puedeItalia && <Link href="/admin/finance/italia" className="rounded px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground">Kenku Italia</Link>}
+        {kenkuStores.map(s => <Link key={s.code} href={s.path} aria-current={pathname.startsWith(s.path)?"page":undefined} className="rounded px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{s.label}</Link>)}
         <div className="ml-auto flex items-center gap-1">
           <Link
             href="/cuenta"

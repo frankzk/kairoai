@@ -28,12 +28,10 @@ export interface FinanceStoreConfig extends FinanceStorePublic, TiendaShopify {
 }
 
 /**
- * Tiendas que Kairo SOLO respalda: las tres Kenku, que salen de Shopify el
- * 28/10/2026 igual que Mireva. No son tiendas de Kairo todavia (Kairo asume
- * Costa Rica u Honduras en moneda, hora y telefonos): no aparecen en Gestion,
- * Leads ni Novedades, ni en los permisos. Solo las recorre el respaldo
- * (lib/shopify-archivo.ts) y la autorizacion de la app (/api/shopify/auth).
- * Su fila en `stores` va con active = false (migracion 0052).
+ * Catálogo de respaldo Shopify de Kenku, separado de FINANCE_STORES y sus
+ * integraciones de CR/HN. Conserva el nombre histórico para los scopes de solo
+ * lectura y la autorización de la app. Italia y México tienen Gestión propia
+ * en KENKU_MANAGEMENT_STORES; Argentina continúa únicamente en respaldo.
  */
 export const TIENDAS_SOLO_RESPALDO: TiendaShopify[] = [
   { id: 3, code: "kenku-mx", label: "Kenku México", ...envShopify("KENKU_MX") },

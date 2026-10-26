@@ -11,21 +11,29 @@ import { useSelectedStore } from "@/lib/use-selected-store";
 import ManageShopifyDialog from "./ManageShopifyDialog";
 import OrdersTable from "./OrdersTable";
 import ItaliaNav from "./ItaliaNav";
-import { control, countLabel, date, statusTone } from "./order-ui";
+import { control, countLabel, statusTone } from "./order-ui";
+
+import { KENKU_MANAGEMENT_STORES, kenkuManagementStore, type KenkuManagementCode } from "@/lib/kenku-management";
+import { OrderDisplayContext, useOrderDisplay } from "./OrderDisplayContext";
 
 type Sync = {updatedAt:string;complete:boolean;error:boolean}|null;
 type Result = {key:string;orders:ItaliaOrder[];count:number;shopifySync:Sync};
 type Counts = {scope:string;values:ItaliaCounts};
-const number = (n:number) => n.toLocaleString("es-ES");
 
-export default function ItalyOrders() {
+export default function KenkuOrders({storeCode="kenku-it"}:{storeCode?:KenkuManagementCode}) {
+  return <OrderDisplayContext.Provider value={kenkuManagementStore(storeCode)}><OrdersWorkspace key={storeCode}/></OrderDisplayContext.Provider>;
+}
+
+function OrdersWorkspace() {
+  const config=useOrderDisplay(),{date}=config;
+  const number=(n:number)=>n.toLocaleString(config.locale);
   const [result,setResult]=useState<Result|null>(null),[counts,setCounts]=useState<Counts|null>(null),[page,setPage]=useState(1);
   const [source,setSource]=useState("all"),[status,setStatus]=useState(""),[search,setSearch]=useState(""),[query,setQuery]=useState("");
   const [period,setPeriod]=useState<ItaliaPeriod>("all"),[from,setFrom]=useState(""),[to,setTo]=useState("");
   const [error,setError]=useState(""),[busy,setBusy]=useState(false),[expanded,setExpanded]=useState<string|null>(null);
   const [managing,setManaging]=useState<ItaliaOrder|null>(null);
   const [change,setChange]=useState<{order:ItaliaOrder;status:ItaliaStatus;requestId:string}|null>(null),[saving,setSaving]=useState(false);
-  const [stores,setStores]=useState<typeof FINANCE_STORES>([]);
+  const [stores,setStores]=useState<Array<{code:string;label:string}>>([]);
   const [,selectStore]=useSelectedStore();
   const dialog=useRef<HTMLDialogElement>(null),request=useRef<AbortController|null>(null),countScope=useRef("");
   const scope=JSON.stringify([source,query,period,period==="range"?from:"",period==="range"?to:""]);
@@ -36,7 +44,7 @@ export default function ItalyOrders() {
   const visibleCounts=counts?.scope===scope?counts.values:null;
   const total=visibleCounts?Object.values(visibleCounts).reduce((a,b)=>a+b,0):null;
   const sync=result?.shopifySync;
-  useEffect(()=>{const yo=leerYo();setStores(yo?FINANCE_STORES.filter(s=>yo.id===0||yo.tiendas.includes(s.code)):[]);},[]);
+  useEffect(()=>{const yo=leerYo();setStores(yo?[...FINANCE_STORES,...KENKU_MANAGEMENT_STORES].filter(s=>yo.id===0||yo.tiendas.includes(s.code)):[]);},[]);
   useEffect(()=>{if(change)dialog.current?.showModal();else dialog.current?.close();},[change]);
 
   const load=useCallback(async(forceCounts=false)=>{
@@ -48,7 +56,7 @@ export default function ItalyOrders() {
       const params=new URLSearchParams({page:String(page),source,status,search:query,period});
       if(period==="range"){params.set("from",from);params.set("to",to);}
       if(forceCounts||countScope.current!==scope)params.set("summary","1");
-      const response=await fetch(`/api/italia/orders?${params}`,{cache:"no-store",signal:controller.signal});
+      const response=await fetch(`${config.api}/orders?${params}`,{cache:"no-store",signal:controller.signal});
       const data=await response.json();
       if(!response.ok)throw Error(data.error||"No se pudo cargar la lista");
       if(controller.signal.aborted)return;
@@ -59,7 +67,7 @@ export default function ItalyOrders() {
     } catch(e) {
       if(!controller.signal.aborted)setError(e instanceof Error?e.message:"Error de conexión");
     } finally {if(!controller.signal.aborted)setBusy(false);}
-  },[page,source,status,query,period,from,to,rangeReady,scope,viewKey]);
+  },[page,source,status,query,period,from,to,rangeReady,scope,viewKey,config.api]);
   useEffect(()=>{void load();return()=>request.current?.abort();},[load]);
   const pending=orders.some(o=>o.source==="woocommerce"&&o.version!==o.synced_version);
   useEffect(()=>{const timer=setInterval(()=>{if(document.visibilityState==="visible"&&!managing&&!change)void load(true);},pending?15000:60000);return()=>clearInterval(timer);},[load,pending,managing,change]);
@@ -87,22 +95,23 @@ export default function ItalyOrders() {
   return <div className="min-h-screen bg-background">
     <header className="border-b border-border/50 bg-card/70">
       <div className="container mx-auto flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-4">
-        <div className="flex min-w-0 flex-1 items-center gap-3"><Link href="/" className={`${control} shrink-0 border-transparent`}><ArrowLeft size={14}/><span>Dashboard</span></Link><div className="min-w-0"><h1 className="text-sm font-bold sm:text-lg">Gestión de pedidos</h1><p className="mt-0.5 text-xs text-muted-foreground">Kenku Italia · Shopify y WooCommerce · EUR</p></div></div>
-        <div className="flex items-center gap-2"><select aria-label="Tienda" value="kenku-it" className={`${control} h-9 min-w-0 flex-1 font-semibold sm:min-w-[190px]`} onChange={e=>{const store=stores.find(s=>s.code===e.target.value);if(store){selectStore(store.code);window.location.assign("/admin/finance");}}}>{stores.map(s=><option value={s.code} key={s.code}>{s.label}</option>)}<option value="kenku-it">Kenku Italia</option></select><button className={`${control} h-9`} onClick={()=>void load(true)} disabled={busy||!rangeReady}><RefreshCw size={14} className={busy?"motion-safe:animate-spin":""}/>{busy?"Actualizando…":"Actualizar"}</button></div>
+        <div className="flex min-w-0 flex-1 items-center gap-3"><Link href="/" className={`${control} shrink-0 border-transparent`}><ArrowLeft size={14}/><span>Dashboard</span></Link><div className="min-w-0"><h1 className="text-sm font-bold sm:text-lg">Gestión de pedidos</h1><p className="mt-0.5 text-xs text-muted-foreground">{config.label} · Shopify{config.woo?" y WooCommerce":""} · {config.currency}</p></div></div>
+        <div className="flex items-center gap-2"><select aria-label="Tienda" value={config.code} className={`${control} h-9 min-w-0 flex-1 font-semibold sm:min-w-[190px]`} onChange={e=>{const kenku=KENKU_MANAGEMENT_STORES.find(s=>s.code===e.target.value);if(kenku){window.location.assign(kenku.path);return;}const store=FINANCE_STORES.find(s=>s.code===e.target.value);if(store){selectStore(store.code);window.location.assign("/admin/finance");}}}>{stores.map(s=><option value={s.code} key={s.code}>{s.label}</option>)}</select><button className={`${control} h-9`} onClick={()=>void load(true)} disabled={busy||!rangeReady}><RefreshCw size={14} className={busy?"motion-safe:animate-spin":""}/>{busy?"Actualizando…":"Actualizar"}</button></div>
       </div>
     </header>
     <main className="container mx-auto space-y-5 px-4 py-5 sm:py-6">
       <section aria-label="Resumen de pedidos" className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap gap-1" role="group" aria-label="Periodo de creación">{ITALIA_PERIODS.map(([value,label])=><button key={value} aria-pressed={period===value} className={`${control} py-1 ${period===value?"border-primary/60 bg-primary/15 text-primary":"text-muted-foreground"}`} onClick={()=>{setPeriod(value);setPage(1);setExpanded(null);}}>{label}</button>)}</div><p className="text-[11px] text-muted-foreground">Por fecha de creación · Horario de Italia</p></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap gap-1" role="group" aria-label="Periodo de creación">{ITALIA_PERIODS.map(([value,label])=><button key={value} aria-pressed={period===value} className={`${control} py-1 ${period===value?"border-primary/60 bg-primary/15 text-primary":"text-muted-foreground"}`} onClick={()=>{setPeriod(value);setPage(1);setExpanded(null);}}>{label}</button>)}</div><p className="text-[11px] text-muted-foreground">Por fecha de creación · Horario de {config.region}</p></div>
         {period==="range"&&<div className="flex flex-wrap items-center gap-3 text-xs"><label className="flex items-center gap-2">Desde<input type="date" className={control} value={from} max={to||undefined} onChange={e=>{setFrom(e.target.value);setPage(1);}}/></label><label className="flex items-center gap-2">Hasta<input type="date" className={control} value={to} min={from||undefined} onChange={e=>{setTo(e.target.value);setPage(1);}}/></label>{!rangeReady&&<p role="status" className="text-muted-foreground">Elige ambas fechas para consultar.</p>}</div>}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">{stats.map(([label,value,tone])=><div key={label} className="rounded-lg border border-border bg-card px-3 py-3"><div className="flex items-center justify-between gap-2"><p className="text-[11px] text-muted-foreground">{label}</p><p className={`text-lg font-semibold tabular-nums ${tone}`}>{value===null?"—":number(value)}</p></div><p className="mt-1 text-[10px] text-muted-foreground">{period==="all"?"Histórico completo":"Periodo seleccionado"}</p></div>)}</div>
       </section>
-      <ItaliaNav/>
+      {config.woo&&<ItaliaNav/>}
       <p className={`text-[11px] ${sync?.error||stale?"text-amber-300":"text-muted-foreground"}`}>{sync?`Shopify: última lectura ${date(sync.updatedAt)}${sync.error?" · con error":stale?" · revisión atrasada":""}`:"Shopify: sin información de sincronización"}</p>
-      <section className="min-w-0 rounded-lg border border-border bg-card p-3 sm:p-4" aria-label="Gestión de pedidos de Italia" aria-busy={busy}>
+      {!config.woo&&<p className="text-xs text-muted-foreground">Estados según Shopify y gestión en Kairo. Las entregas y liquidaciones de DropLatam aún no están conciliadas.</p>}
+      <section className="min-w-0 rounded-lg border border-border bg-card p-3 sm:p-4" aria-label={`Gestión de pedidos de ${config.region}`} aria-busy={busy}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <form className="flex min-w-0 flex-1 basis-full gap-2 sm:min-w-[320px] sm:basis-auto" onSubmit={e=>{e.preventDefault();setPage(1);setExpanded(null);setQuery(search.trim());}}><div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-2.5 top-2 text-muted-foreground" size={14}/><input aria-label="Pedido, cliente o teléfono" className={`${control} h-8 w-full justify-start pl-8 text-xs`} value={search} maxLength={100} onChange={e=>setSearch(e.target.value)} placeholder="Buscar pedido, cliente o teléfono"/></div><button className={control} type="submit">Buscar</button></form>
-          <div className="flex" role="group" aria-label="Origen del pedido">{[["all","Todos"],["shopify","Shopify"],["woocommerce","WooCommerce"]].map(([value,label])=><button key={value} aria-pressed={source===value} className={`${control} rounded-none first:rounded-l-md last:rounded-r-md ${source===value?"border-primary/60 bg-primary/10 text-primary":"text-muted-foreground"}`} onClick={()=>{setSource(value);setPage(1);setExpanded(null);}}>{label}</button>)}</div>
+          {config.woo&&<div className="flex" role="group" aria-label="Origen del pedido">{[["all","Todos"],["shopify","Shopify"],["woocommerce","WooCommerce"]].map(([value,label])=><button key={value} aria-pressed={source===value} className={`${control} rounded-none first:rounded-l-md last:rounded-r-md ${source===value?"border-primary/60 bg-primary/10 text-primary":"text-muted-foreground"}`} onClick={()=>{setSource(value);setPage(1);setExpanded(null);}}>{label}</button>)}</div>}
         </div>
         <div className="mb-3 overflow-x-auto" role="group" aria-label="Estado operativo"><div className="flex min-w-max gap-1">
           <button aria-pressed={status===""} onClick={()=>filterStatus("")} className={`min-w-[84px] border px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${status===""?"border-foreground/40 bg-muted/30":"border-border hover:bg-muted/30"}`}><span className="block text-[10px] text-muted-foreground">Todos</span><span className="block text-sm font-semibold tabular-nums">{total===null?"—":number(total)}</span></button>

@@ -2,9 +2,12 @@
 import { useEffect, useRef, useState } from "react";
 import { ITALIA_STATUS, transitions, type ItaliaOrder, type ItaliaStatus } from "@/lib/italia-orders";
 
+import { useOrderDisplay } from "./OrderDisplayContext";
+
 type Event = {id:number;version:number;actor:string;created_at:string;after_state:{status:ItaliaStatus;note:string;courier:string;tracking_number:string}};
 const field="w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 export default function ManageShopifyDialog({order,onClose,onSaved}:{order:ItaliaOrder;onClose:()=>void;onSaved:()=>void}) {
+  const {api,date}=useOrderDisplay();
   const dialog=useRef<HTMLDialogElement>(null);
   const [form,setForm]=useState({status:order.status,note:order.management_note,courier:order.courier,tracking:order.tracking_number});
   const [requestId,setRequestId]=useState(()=>crypto.randomUUID());
@@ -13,16 +16,16 @@ export default function ManageShopifyDialog({order,onClose,onSaved}:{order:Itali
   useEffect(()=>{dialog.current?.showModal();},[]);
   useEffect(()=>{
     const abort=new AbortController();
-    void fetch(`/api/italia/shopify/${order.source_id}`,{signal:abort.signal,cache:"no-store"}).then(async r=>{
+    void fetch(`${api}/shopify/${order.source_id}`,{signal:abort.signal,cache:"no-store"}).then(async r=>{
       if(!r.ok)throw Error();const data=await r.json();setEvents(data.events);setHistoryLoaded(true);
     }).catch(()=>{if(!abort.signal.aborted)setHistoryError(true);});
     return()=>abort.abort();
-  },[order.source_id]);
+  },[order.source_id,api]);
   function edit(values:Partial<typeof form>){setForm(f=>({...f,...values}));setRequestId(crypto.randomUUID());setError("");}
   async function save(e:React.FormEvent){
     e.preventDefault();if(saving)return;setSaving(true);setError("");
     try{
-      const response=await fetch(`/api/italia/shopify/${order.source_id}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,version:order.version,sourceUpdatedAt:order.source_updated_at,requestId})});
+      const response=await fetch(`${api}/shopify/${order.source_id}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,version:order.version,sourceUpdatedAt:order.source_updated_at,requestId})});
       const data=await response.json();if(!response.ok)throw Error(data.error||"No se pudo guardar");onSaved();
     }catch(e){setError(e instanceof Error?e.message:"Error de conexión");setSaving(false);}
   }
@@ -42,7 +45,7 @@ export default function ManageShopifyDialog({order,onClose,onSaved}:{order:Itali
       <div className="flex justify-end gap-3"><button type="button" disabled={saving} className="rounded-md border border-border px-4 py-2 text-sm" onClick={onClose}>Volver</button><button disabled={saving} className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">{saving?"Guardando…":"Guardar gestión"}</button></div>
     </form>
     <details className="mt-5 border-t border-border pt-4 text-sm"><summary className="cursor-pointer">Historial de gestión en Kairo</summary>
-      {historyError?<p className="mt-3 text-red-400">No se pudo cargar el historial.</p>:!historyLoaded?<p className="mt-3">Cargando…</p>:events.length===0?<p className="mt-3 text-muted-foreground">Aún no hay cambios registrados en Kairo.</p>:<ol className="mt-3 space-y-3">{events.map(e=><li key={e.id} className="border-l-2 border-border pl-3"><p className="font-medium">{ITALIA_STATUS[e.after_state.status]} · {e.actor}</p><p className="text-xs text-muted-foreground">{new Date(e.created_at).toLocaleString("es-ES",{timeZone:"Europe/Rome"})}</p>{e.after_state.note&&<p className="mt-1 whitespace-pre-wrap break-words">{e.after_state.note}</p>}{(e.after_state.courier||e.after_state.tracking_number)&&<p className="break-words text-muted-foreground">{e.after_state.courier} · {e.after_state.tracking_number}</p>}</li>)}</ol>}
+      {historyError?<p className="mt-3 text-red-400">No se pudo cargar el historial.</p>:!historyLoaded?<p className="mt-3">Cargando…</p>:events.length===0?<p className="mt-3 text-muted-foreground">Aún no hay cambios registrados en Kairo.</p>:<ol className="mt-3 space-y-3">{events.map(e=><li key={e.id} className="border-l-2 border-border pl-3"><p className="font-medium">{ITALIA_STATUS[e.after_state.status]} · {e.actor}</p><p className="text-xs text-muted-foreground">{date(e.created_at)}</p>{e.after_state.note&&<p className="mt-1 whitespace-pre-wrap break-words">{e.after_state.note}</p>}{(e.after_state.courier||e.after_state.tracking_number)&&<p className="break-words text-muted-foreground">{e.after_state.courier} · {e.after_state.tracking_number}</p>}</li>)}</ol>}
     </details>
   </dialog>;
 }

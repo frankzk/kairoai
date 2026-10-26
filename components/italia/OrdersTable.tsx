@@ -2,12 +2,15 @@ import { Fragment } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { FINANCIAL_LABELS, FULFILLMENT_LABELS, ITALIA_STATUS, type ItaliaOrder, type ItaliaStatus } from "@/lib/italia-orders";
 import OrderDetails from "./OrderDetails";
-import { control, date, money, shortDate, statusTone } from "./order-ui";
+import { control, statusTone } from "./order-ui";
+
+import { useOrderDisplay } from "./OrderDisplayContext";
 
 export default function OrdersTable({orders,loading,disabled,expanded,onExpand,onManage,onChange}:{orders:ItaliaOrder[];loading:boolean;disabled:boolean;expanded:string|null;onExpand:(id:string)=>void;onManage:(order:ItaliaOrder)=>void;onChange:(order:ItaliaOrder,status:ItaliaStatus)=>void}) {
-  return <div className="max-h-[70vh] overflow-auto" role="region" aria-label="Tabla de pedidos de Italia" tabIndex={0}>
+  const {date,money,shortDate,region,label}=useOrderDisplay();
+  return <div className="max-h-[70vh] overflow-auto" role="region" aria-label={`Tabla de pedidos de ${region}`} tabIndex={0}>
     <table className="w-full min-w-[1150px] text-left text-xs">
-      <caption className="sr-only">Pedidos de Kenku Italia. Abre el número de pedido para ver dirección, productos completos y acciones.</caption>
+      <caption className="sr-only">Pedidos de {label}. Abre el número de pedido para ver dirección, productos completos y acciones.</caption>
       <thead className="sticky top-0 z-[1] border-y border-border bg-background text-[11px] text-muted-foreground"><tr>{["Orden","Origen","Guía / courier","Cliente","Estado operativo","Pago / envío original","Fecha","Items","Importe","Gestión"].map(h=><th scope="col" key={h} className="px-2.5 py-2.5 font-semibold">{h}</th>)}</tr></thead>
       <tbody>
         {loading&&orders.length===0?Array.from({length:8},(_,i)=><tr key={i} aria-hidden="true" className="border-b border-border/60">{Array.from({length:10},(_,j)=><td key={j} className="px-2.5 py-4"><div className="h-4 w-full rounded bg-muted motion-safe:animate-pulse"/></td>)}</tr>):orders.map(o=>{
