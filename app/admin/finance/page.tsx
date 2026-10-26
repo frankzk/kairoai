@@ -545,20 +545,22 @@ export default function FinancePage() {
   const [italiaOnly, setItaliaOnly] = useState<boolean | null>(null);
   const [verItalia, setVerItalia] = useState(false);
   const [verMexico, setVerMexico] = useState(false);
+  const [verArgentina, setVerArgentina] = useState(false);
   useEffect(() => {
     const yo = leerYo();
     setVerItalia(Boolean(yo && (yo.id === 0 || yo.tiendas.includes("kenku-it"))));
     setVerMexico(Boolean(yo && (yo.id === 0 || yo.tiendas.includes("kenku-mx"))));
+    setVerArgentina(Boolean(yo && (yo.id === 0 || yo.tiendas.includes("kenku-ar"))));
     const firstKenku = KENKU_MANAGEMENT_STORES.find(s => yo?.tiendas.includes(s.code));
     const only = Boolean(yo && yo.id !== 0 && firstKenku && !yo.tiendas.some(t => t === "mireva-cr" || t === "mireva-hn"));
     setItaliaOnly(only);
     if (only && firstKenku) window.location.replace(firstKenku.path);
   }, []);
   if (italiaOnly !== false) return <p className="p-6 text-sm">Cargando Gestión…</p>;
-  return <LegacyFinancePage verItalia={verItalia} verMexico={verMexico} />;
+  return <LegacyFinancePage verItalia={verItalia} verMexico={verMexico} verArgentina={verArgentina} />;
 }
 
-function LegacyFinancePage({ verItalia, verMexico }: { verItalia: boolean; verMexico: boolean }) {
+function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: boolean; verMexico: boolean; verArgentina: boolean }) {
   const [tab, setTab] = useState<Tab>("orders");
   // Las pestañas de plata (Productos, Liquidaciones, Gastos, Cierre) son del
   // permiso "finanzas". Logistica ve el resto. El servidor lo impone igual; aca
@@ -1442,6 +1444,7 @@ function LegacyFinancePage({ verItalia, verMexico }: { verItalia: boolean; verMe
               onChange={(event) => {
                 if (event.target.value === "kenku-it") window.location.assign("/admin/finance/italia");
                 else if (event.target.value === "kenku-mx") window.location.assign("/admin/finance/mexico");
+                else if (event.target.value === "kenku-ar") window.location.assign("/admin/finance/argentina");
                 else setSelectedStoreCode(event.target.value as FinanceStoreCode);
               }}
               aria-label="Tienda"
@@ -1454,6 +1457,7 @@ function LegacyFinancePage({ verItalia, verMexico }: { verItalia: boolean; verMe
               ))}
               {verItalia && <option value="kenku-it">Kenku Italia</option>}
               {verMexico && <option value="kenku-mx">Kenku México</option>}
+              {verArgentina && <option value="kenku-ar">Kenku Argentina</option>}
             </select>
             <Button
               variant="outline"
