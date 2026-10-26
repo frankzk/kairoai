@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { getDB } from "./db";
 import { tiendaShopifyPorCodigo, getShopifyCredentials, getShopifyOAuthCredentials } from "./stores";
@@ -116,7 +116,13 @@ async function themeFiles(c:Awaited<ReturnType<typeof client>>,deadline:number){
  while(s.parent_id&&Date.now()<deadline){
   const d=await c.gql(`query($id:ID!,$after:String){theme(id:$id){files(first:100,after:$after){nodes{filename checksumMd5 contentType size body{...on OnlineStoreThemeFileBodyText{content} ...on OnlineStoreThemeFileBodyBase64{contentBase64} ...on OnlineStoreThemeFileBodyUrl{url}}} pageInfo{hasNextPage endCursor} userErrors{filename code}}}}`,{id:`gid://shopify/OnlineStoreTheme/${s.parent_id}`,after:s.next_url});
   if(!d.theme?.files||d.theme.files.userErrors?.length)throw Error("theme_files_incomplete");
-  const files=d.theme.files,rows=files.nodes.map((f:Obj)=>{const body=f.body as Obj;return{store_id:STORE,resource:"theme_file",external_id:`${s.parent_id}:${f.filename}`,parent_id:s.parent_id,payload:{key:f.filename,checksum_md5:f.checksumMd5,content_type:f.contentType,size:f.size,...(body.content!==undefined?{value:body.content}:{}),...(body.contentBase64!==undefined?{attachment:body.contentBase64}:{}),...(body.url!==undefined?{public_url:body.url}:{})},captured_at:new Date().toISOString()};});
+  const files=d.theme.files,rows=[];
+  for(const f of files.nodes as Obj[]){const body=f.body as Obj;
+   if(typeof body.url==="string"){
+    if(!safeAssetUrl(body.url))throw Error("unexpected_theme_file_host");const r=await fetch(body.url,{redirect:"error",signal:AbortSignal.timeout(45000)});if(!r.ok)throw Error(`theme_file_http_${r.status}`);const bytes=Buffer.from(await r.arrayBuffer());if(bytes.length>10000000)throw Error("theme_file_too_large");if(f.checksumMd5&&createHash("md5").update(bytes).digest("hex")!==f.checksumMd5)throw Error("theme_binary_checksum_mismatch");body.contentBase64=bytes.toString("base64");
+   }
+   rows.push({store_id:STORE,resource:"theme_file",external_id:`${s.parent_id}:${f.filename}`,parent_id:s.parent_id,payload:{key:f.filename,checksum_md5:f.checksumMd5,content_type:f.contentType,size:f.size,...(body.content!==undefined?{value:body.content}:{}),...(body.contentBase64!==undefined?{attachment:body.contentBase64}:{}),...(body.url!==undefined?{public_url:body.url}:{})},captured_at:new Date().toISOString()});
+  }
   for(let i=0;i<rows.length;i+=10)await checked(getDB().from("argentina_shopify_extra").upsert(rows.slice(i,i+10),{onConflict:"store_id,resource,external_id"}));
   s.pages++;s.records+=rows.length;s.next_url=files.pageInfo.hasNextPage?files.pageInfo.endCursor:null;
   if(!s.next_url)s.parent_id=siguientePadre(themes,s.parent_id);

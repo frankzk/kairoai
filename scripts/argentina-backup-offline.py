@@ -38,7 +38,7 @@ def theme_text_bytes(text,checksum):
     body=re.sub(r'^\s*/\*.*?\*/\s*','',text,flags=re.S);candidates=[body]
     try:
         value=json.loads(body)
-        candidates.extend(json.dumps(value,ensure_ascii=ascii,separators=(',',':')) for ascii in [False,True])
+        candidates.extend(json.dumps(value,ensure_ascii=ascii,indent=indent,separators=(',',':') if indent is None else (',',': ')) for ascii in [False,True] for indent in [None,2,4])
     except ValueError:pass
     for candidate in candidates:
         for escaped in [candidate,candidate.replace('/','\\/'),candidate.replace('</','<\\/')]:
@@ -46,6 +46,20 @@ def theme_text_bytes(text,checksum):
                 result=form.encode('utf-8')
                 if hashlib.md5(result).hexdigest()==checksum:return result
     raise ValueError('Theme source checksum mismatch')
+
+def restore_theme_text(payload,original=None):
+    checksum=payload.get('checksum_md5');text=str(payload['value'])
+    try:return theme_text_bytes(text,checksum),False
+    except ValueError:
+        if original is None:raise
+    try:return theme_text_bytes(str(original['value']),checksum),False
+    except ValueError:pass
+    # Shopify can reserialize numeric JSON values in both APIs. Retain both raw
+    # responses and disclose the byte-checksum exception; never claim a match.
+    if not payload.get('key','').endswith('.json') or original.get('checksum')!=checksum:raise ValueError('Theme original checksum disagreement')
+    strip=lambda value:re.sub(r'^\s*/\*.*?\*/\s*','',str(value),flags=re.S)
+    if json.loads(strip(text))!=json.loads(strip(original['value'])):raise ValueError('Theme JSON content disagreement')
+    return text.encode('utf-8'),True
 def build(root):
     target=root/'kenku-argentina.sqlite'; temp=root/'kenku-argentina.sqlite.partial'
     if temp.exists(): temp.unlink()
@@ -93,25 +107,26 @@ def build(root):
                 vid=str(item.get('variant_id') or '');sku=str(item.get('sku') or '')
                 entry=(source,str(p['id']),str(item.get('product_id') or ''),vid,sku,str(item.get('name') or item.get('title') or ''),item.get('quantity'),str(item.get('price','')),int(vid in variant_ids))
                 db.execute('insert into historical_items values(?,?,?,?,?,?,?,?,?)',entry);historical.append(entry)
-    extra_count=collections.Counter();theme_files=0;theme_missing=0;latest_audit={}
+    extra_count=collections.Counter();theme_files=0;theme_missing=0;latest_audit={};theme_checksum_issues=[]
     asset_file=root/'asset-map.json';asset_map=json.loads(asset_file.read_text()) if asset_file.exists() else {}
     originals={r['external_id']:r['payload'] for r in rows(root,'argentina_shopify_extra') if r['resource']=='theme_file_original'}
     for row in rows(root,'argentina_shopify_extra'):
         resource=row['resource'];p=row['payload'];extra_count[resource]+=1
         if resource=='audit' and p.get('at','')>latest_audit.get('at',''): latest_audit=p
         if resource=='theme_file':
-            if row['external_id'] in originals:p={**originals[row['external_id']],'checksum_md5':p.get('checksum_md5')}
             key=str(p.get('key',''));relative=pathlib.PurePosixPath(key)
             if not key or relative.is_absolute() or '..' in relative.parts or ':' in key: raise ValueError('Unsafe theme path')
             out=inside(root,'themes/'+str(row['parent_id'])+'/'+key);out.parent.mkdir(parents=True,exist_ok=True)
             if p.get('attachment') is not None: out.write_bytes(base64.b64decode(p['attachment'],validate=True));theme_files+=1
-            elif p.get('value') is not None: out.write_bytes(theme_text_bytes(str(p['value']),p.get('checksum_md5')));theme_files+=1
+            elif p.get('value') is not None:
+                content,semantic=restore_theme_text(p,originals.get(row['external_id']));out.write_bytes(content);theme_files+=1
+                if semantic:theme_checksum_issues.append({'theme_id':str(row['parent_id']),'key':key,'reason':'Shopify REST and GraphQL JSON values agree; source byte checksum differs','source_checksum':p.get('checksum_md5')})
             elif p.get('public_url'):
                 url=urllib.parse.urlsplit(p['public_url']);local=asset_map.get(urllib.parse.urlunsplit((url.scheme,url.netloc,url.path,'','')))
                 if local and inside(root,local).is_file():out.write_bytes(inside(root,local).read_bytes());theme_files+=1
                 else:theme_missing+=1
             else: theme_missing+=1
-            if out.is_file() and p.get('checksum_md5') and hashlib.md5(out.read_bytes()).hexdigest()!=p['checksum_md5']:raise ValueError('Theme checksum mismatch')
+            if out.is_file() and 'value' not in p and p.get('checksum_md5') and hashlib.md5(out.read_bytes()).hexdigest()!=p['checksum_md5']:raise ValueError('Theme checksum mismatch')
         elif resource=='bulk_export':
             file=inside(root,'supplemental/'+p['path'])
             if not file.exists(): continue
@@ -143,6 +158,7 @@ def build(root):
         coverage[resource]={'expected':expected,'archived':counts[resource],'missing':max(0,expected-counts[resource]) if expected is not None else None,'complete':expected is not None and counts[resource]==expected and (resource!='order' or latest_audit.get('readAllOrders') is True)}
     denied=[{'resource':r['resource'],'status':r['status'],'error':r.get('error')} for r in rows(root,'argentina_shopify_extra_state') if r.get('status')=='error']
     audit={'counts':dict(counts),'coverage':coverage,'source_access':{k:latest_audit.get(k) for k in ['at','app','readAllOrders','oldestOrderAt']},'resources_denied':denied,'catalog_variants':len(catalog),'catalog_issues':issues,'orphan_order_customers':orphan,'order_lines_without_current_variant':historical_missing,'drafts_linked_to_order':drafts_linked,'draft_order_references_absent_from_orders':drafts_missing_orders,'extras':dict(extra_count),'theme_files_restored':theme_files,'theme_files_without_content':theme_missing,'sqlite_integrity':integrity,'built_at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    audit['theme_source_checksum_issues']=theme_checksum_issues
     (root/'auditoria.json').write_text(json.dumps(audit,ensure_ascii=False,indent=2),encoding='utf-8')
     (root/'LEEME.txt').write_text('''KENKU ARGENTINA: COPIA PRIVADA
 

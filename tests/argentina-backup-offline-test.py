@@ -25,6 +25,13 @@ class PortableArchiveTest(unittest.TestCase):
         representation='/* Generated file */\n{\n  "html": "<p>Test</p>"\n}'
         self.assertEqual(backup.theme_text_bytes(representation,hashlib.md5(source).hexdigest()),source)
         with self.assertRaises(ValueError):backup.theme_text_bytes(representation,'0'*32)
+    def test_theme_numeric_reserialization_is_disclosed_and_requires_both_api_contents_to_agree(self):
+        checksum=hashlib.md5(b'{"number":1.000000000000}').hexdigest()
+        source={'key':'config/settings_schema.json','value':'{"number":1}','checksum_md5':checksum}
+        original={'value':'{"number":1.0}','checksum':checksum}
+        self.assertEqual(backup.restore_theme_text(source,original),(b'{"number":1}',True))
+        with self.assertRaises(ValueError):backup.restore_theme_text(source,{**original,'value':'{"number":2}'})
+        with self.assertRaises(ValueError):backup.restore_theme_text(source,{**original,'checksum':'0'*32})
     def test_coverage_does_not_hide_missing_orders_and_theme_bytes_are_exact(self):
         with tempfile.TemporaryDirectory() as directory:
             root=pathlib.Path(directory);content='line one\nline two\n'
