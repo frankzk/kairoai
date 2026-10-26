@@ -138,10 +138,9 @@ export function argumentosCrearPedido(
     departamento: envio.province?.trim() ?? "",
     ...producto,
     total,
-    // Con el valor que usa iComfly. Hoy crear_pedido no lo guarda (queda vacio
-    // con "Contra Entrega" y con "Contraentrega", medido el 24/10/2026): el
-    // pago va tambien en las notas.
-    metodo_pago: pedido.pago === "sinpe" ? "Transferencia" : "Contra Entrega",
+    // Como lo escribe la documentacion de crear_pedido. Desde el 26/10/2026
+    // iComfly lo guarda (antes quedaba vacio); el pago va tambien en las notas.
+    metodo_pago: pedido.pago === "sinpe" ? "Transferencia" : "Contraentrega",
     notas: notas.join(" "),
   };
 }

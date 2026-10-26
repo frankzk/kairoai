@@ -139,6 +139,9 @@ describe("nombre y estado", () => {
   it("los que crea Kairo (código interno EXCEL-…) van con el id de iComfly", () => {
     expect(nombrePedidoIcomfly("EXCEL-MVMPVFBE-1UNUD", "729032")).toBe("IC-729032");
     expect(nombrePedidoIcomfly("EXCEL-MVMPVFBE-1UNUD", 729032, null)).toBe("IC-729032");
+    // Desde el 26/10/2026 salen "MANUAL-…" y el panel los muestra "Manual #746359".
+    expect(nombrePedidoIcomfly("MANUAL-1792993355514-C6KQC", 746359)).toBe("IC-746359");
+    expect(nombrePedidoIcomfly("manual-1792993355514-C6KQC", "746359", null)).toBe("IC-746359");
   });
   it("sin número de la web (un carrito convertido, por ejemplo) sigue con el de iComfly", () => {
     expect(nombrePedidoIcomfly("#1792858842838773760", "727728", null)).toBe("IC-1792858842838773760");
