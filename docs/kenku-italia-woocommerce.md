@@ -166,3 +166,14 @@ Italia. Se cargan con historial desde el primer pedido para estimar el históric
 y la UI/CSV distingue contribución estimada de resultado completo. Regalos
 incluidos: 27 EUR de producto para 3 unidades y 45 EUR para 5. Sin cambios en
 costos de otras tiendas. Migración italia_costos_provisionales aplicada.
+
+### Conciliación preparada sin extractos (26 octubre)
+
+Se incorporan detalle por pedido de las liquidaciones, abonos bancarios parciales,
+reparto de saldo entre remesas, detección de duplicados y bloqueo de cierres con
+diferencias. El dueño pospuso entregar los extractos: no se registran abonos ni
+liquidaciones reales y no se marca el mes como cerrado. EUR exacto; USD/GBP
+requieren contravalor documentado. Retiradas, anulaciones y reaperturas conservan
+motivo e historial. La revisión de cobros funciona con los datos reales del espejo.
+Contrato y pruebas en docs/elogy-italia-integracion.md. Migración aplicada mediante
+CLI oficial, con su versión e historial en la misma transacción.

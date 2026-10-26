@@ -6,6 +6,7 @@ import {ELOGY_RESOURCES,ElogyError,fetchElogyPage,elogyConfigured,type ElogyReso
 import {normalizeElogyFact,type ElogyFact,type CostVersion,profitability,payoutPeriod} from "./elogy-model";
 import {euroCents} from "./elogy-shared";
 import {italiaDateRange} from "./italia-filters";
+import {reconciliationData,type ElogyStatement,type StatementLine,type BankMovement,type BankAllocation} from "./elogy-reconciliation";
 
 export function italiaFinanceAccess():boolean {return wooAccess()&&Boolean(identidadActual()?.permisos.includes("finanzas"));}
 export const resources=Object.keys(ELOGY_RESOURCES) as ElogyResource[];
@@ -53,6 +54,11 @@ async function versions(store:number):Promise<CostVersion[]> {
  for(let offset=0;offset<20000;offset+=1000){const q=await getDB().from("product_cost_versions").select("sku,unit_cost,packaging_cost,currency,effective_from,created_at,provisional").eq("store_id",store).order("id").range(offset,offset+999);if(q.error)throw new ElogyError("database_read_failed");out.push(...(q.data||[]) as CostVersion[]);if((q.data||[]).length<1000)return out;}
  throw new ElogyError("dataset_too_large");
 }
+async function ledgerRows(store:number,table:"italia_elogy_statement_lines"|"italia_elogy_bank_movements"|"italia_elogy_bank_allocations"){
+ const rows:Record<string,unknown>[]=[];
+ for(let offset=0;offset<50000;offset+=1000){const q=await getDB().from(table).select("*").eq("store_id",store).order("id").range(offset,offset+999);if(q.error)throw new ElogyError("database_read_failed");rows.push(...(q.data||[]));if((q.data||[]).length<1000)return rows;}
+ throw new ElogyError("dataset_too_large");
+}
 export function elogyPeriod(params:URLSearchParams){return italiaDateRange(params.get("period")||"month",params.get("from")||"",params.get("to")||"");}
 export async function readElogyWorkspace(params:URLSearchParams,finance:boolean) {
  const store=await wooStoreId(),db=getDB(),range=elogyPeriod(params);
@@ -70,18 +76,22 @@ export async function readElogyWorkspace(params:URLSearchParams,finance:boolean)
  const refs=new Map<string,string[]>();
  for(const row of index.data||[]){const ref=row.order_number.trim().replace(/^#+/,"").toUpperCase();refs.set(ref,[...(refs.get(ref)||[]),`${row.source}:${row.source_id}`]);}
  const enriched=shipments.filter(s=>inRange(s.occurred_at)).sort((a,b)=>(b.occurred_at||"").localeCompare(a.occurred_at||"")||b.ref.localeCompare(a.ref)).map(s=>({...s,match:refs.get(s.ref)?.length===1?"matched":refs.has(s.ref)?"ambiguous":"unmatched"}));
- const base={configured:elogyConfigured(),sync:sync.data,shipments:enriched,finance,sourceCount:shipments.length};
+ // The browser needs the operational columns, not the full provider mirror.
+ const shipmentRows=enriched.map(({id,ref,guide,carrier,customer,state,state_label,state_at,occurred_at,gateway,currency,total_cents,match})=>({id,ref,guide,carrier,customer,state,state_label,state_at,occurred_at,gateway,currency,total_cents,match}));
+ const base={configured:elogyConfigured(),sync:sync.data,shipments:shipmentRows,finance,sourceCount:shipments.length};
  if(!finance)return base;
- const [costs,collected,costVersions,currentCosts,expenseResult,payoutResult]=await Promise.all([
+ const [costs,collected,costVersions,currentCosts,expenseResult,payoutResult,lines,banks,allocations]=await Promise.all([
   elogyFacts(store,"costs"),elogyFacts(store,"collected"),versions(store),
   db.from("product_costs").select("id,sku,product_name,unit_cost,packaging_cost,currency,effective_from,updated_at,provisional").eq("store_id",store).eq("active",true).order("sku"),
   db.from("business_expenses").select("id,type,expense_date,description,amount,currency,platform,notes",{count:"exact"}).eq("store_id",store).order("expense_date",{ascending:false}).limit(1000),
   db.from("italia_elogy_payouts").select("*",{count:"exact"}).eq("store_id",store).order("statement_date",{ascending:false}).limit(1000),
+  ledgerRows(store,"italia_elogy_statement_lines"),ledgerRows(store,"italia_elogy_bank_movements"),ledgerRows(store,"italia_elogy_bank_allocations"),
  ]);
  if(currentCosts.error||expenseResult.error||payoutResult.error)throw new ElogyError("database_read_failed");
  if((expenseResult.count||0)>(expenseResult.data||[]).length||(payoutResult.count||0)>(payoutResult.data||[]).length)throw new ElogyError("dataset_too_large");
  const expenses=(expenseResult.data||[]).filter(e=>inRange(new Date(`${e.expense_date}T12:00:00Z`).toISOString()));
- const bank=payoutPeriod(payoutResult.data||[],range),payouts=bank.rows;
+ const bank=payoutPeriod(payoutResult.data||[],range);
+ const reconciliation=reconciliationData((payoutResult.data||[]) as ElogyStatement[],lines as unknown as StatementLine[],banks as unknown as BankMovement[],allocations as unknown as BankAllocation[],collected,costs,shipments,range),payouts=reconciliation.statements;
  const profit=profitability(enriched,orders,costs,collected,costVersions);
  const cash=collected.filter(c=>inRange(c.occurred_at)).sort((a,b)=>(b.occurred_at||"").localeCompare(a.occurred_at||""));
  const expenseCents=expenses.reduce((n,e)=>n+(e.currency==="EUR"?euroCents(e.amount)||0:0),0);
@@ -90,11 +100,12 @@ export async function readElogyWorkspace(params:URLSearchParams,finance:boolean)
  const estimated=profit.filter(p=>p.estimated).length;
  const complete=resources.every(r=>(sync.data||[]).some(s=>s.resource===r&&s.completed_at&&!s.last_error));
  // Dates of COD receipt and shipment intentionally belong to different report views.
- return {...base,profit,costs:currentCosts.data,expenses,payouts,collected:cash,summary:{
+ const cashRows=cash.map(({id,ref,guide,occurred_at,currency,total_cents})=>({id,ref,guide,occurred_at,currency,total_cents}));
+ return {...base,profit,costs:currentCosts.data,expenses,payouts,collected:cashRows,reconciliation,summary:{
   deliveredSales:profit.filter(p=>p.state==="delivered").reduce((n,p)=>n+(p.sales||0),0),
   collected:cash.filter(c=>c.currency==="EUR").reduce((n,c)=>n+(c.total_cents||0),0),
   expectedBank:bank.expected,
-  receivedBank:bank.received,
+  receivedBank:reconciliation.summary.bankReceived,
   expenses:expenseCents,knownContribution,incomplete,complete,estimated,
   netProfit:complete&&profit.length>0&&incomplete===0&&estimated===0?knownContribution-expenseCents:null,
  },skuCatalog:Array.from(new Map(orders.flatMap(o=>o.items).filter(i=>i.sku).map(i=>[i.sku,{sku:i.sku,name:i.name}])).values())};

@@ -171,6 +171,7 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/woo/orders", exige: P(...OPERACION) },
   { ruta: "/api/italia", exige: P(...OPERACION) },
   { ruta: "/api/italia/finance", exige: P("finanzas") },
+  { ruta: "/api/italia/reconciliation", exige: P("finanzas") },
   { ruta: "/api/finance/order-detail", exige: P(...OPERACION) },
   { ruta: "/api/finance/kpis", exige: P(...OPERACION) },
   { ruta: "/api/finance/dispatch-audit", exige: P(...OPERACION) },
