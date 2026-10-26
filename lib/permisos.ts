@@ -171,6 +171,7 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/woo/orders", exige: P(...OPERACION) },
   { ruta: "/api/italia", exige: P(...OPERACION) },
   { ruta: "/api/mexico", exige: P(...OPERACION) },
+  { ruta: "/api/mexico/preservation", exige: P("config") },
   { ruta: "/api/argentina", exige: P(...OPERACION) },
   // Private extraction worker authenticates with its own server-only secret.
   { ruta: "/api/argentina/backup", exige: PUB },

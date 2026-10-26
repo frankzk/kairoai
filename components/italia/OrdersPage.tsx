@@ -11,6 +11,7 @@ import { useSelectedStore } from "@/lib/use-selected-store";
 import ManageShopifyDialog from "./ManageShopifyDialog";
 import OrdersTable from "./OrdersTable";
 import ItaliaNav from "./ItaliaNav";
+import MexicoNav from "../MexicoNav";
 import { control, countLabel, statusTone } from "./order-ui";
 
 import { KENKU_MANAGEMENT_STORES, kenkuManagementStore, type KenkuManagementCode } from "@/lib/kenku-management";
@@ -105,7 +106,7 @@ function OrdersWorkspace() {
         {period==="range"&&<div className="flex flex-wrap items-center gap-3 text-xs"><label className="flex items-center gap-2">Desde<input type="date" className={control} value={from} max={to||undefined} onChange={e=>{setFrom(e.target.value);setPage(1);}}/></label><label className="flex items-center gap-2">Hasta<input type="date" className={control} value={to} min={from||undefined} onChange={e=>{setTo(e.target.value);setPage(1);}}/></label>{!rangeReady&&<p role="status" className="text-muted-foreground">Elige ambas fechas para consultar.</p>}</div>}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">{stats.map(([label,value,tone])=><div key={label} className="rounded-lg border border-border bg-card px-3 py-3"><div className="flex items-center justify-between gap-2"><p className="text-[11px] text-muted-foreground">{label}</p><p className={`text-lg font-semibold tabular-nums ${tone}`}>{value===null?"—":number(value)}</p></div><p className="mt-1 text-[10px] text-muted-foreground">{period==="all"?"Pedidos disponibles en Kairo":"Periodo seleccionado"}</p></div>)}</div>
       </section>
-      {config.woo&&<ItaliaNav/>}
+      {config.woo?<ItaliaNav/>:<MexicoNav/>}
       <p className={`text-[11px] ${sync?.error||stale?"text-amber-300":"text-muted-foreground"}`}>{sync?`Shopify: última lectura ${date(sync.updatedAt)}${sync.error?" · con error":stale?" · revisión atrasada":""}`:"Shopify: sin información de sincronización"}</p>
       {!config.woo&&<p className="text-xs text-muted-foreground">Estados según Shopify y gestión en Kairo. Las entregas y liquidaciones de {config.code==="kenku-ar"?"DropLatam y Fixy":"DropLatam"} aún no están conciliadas.</p>}
       <section className="min-w-0 rounded-lg border border-border bg-card p-3 sm:p-4" aria-label={`Gestión de pedidos de ${config.region}`} aria-busy={busy}>
