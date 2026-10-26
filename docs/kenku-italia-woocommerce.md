@@ -160,3 +160,9 @@ operativo completo. No se alteran pedidos Shopify ni se despacha en Elogy.
 Actualización reanudable por worker del VPS programado cada cinco minutos.
 Contrato, permisos, contabilidad, pruebas y límites en
 [Integración Elogy](elogy-italia-integracion.md). Responsable Codex, tiempo no cronometrado.
+
+El dueño autorizó después 9 EUR provisionales por unidad para los 22 SKU de
+Italia. Se cargan con historial desde el primer pedido para estimar el histórico,
+y la UI/CSV distingue contribución estimada de resultado completo. Regalos
+incluidos: 27 EUR de producto para 3 unidades y 45 EUR para 5. Sin cambios en
+costos de otras tiendas. Migración italia_costos_provisionales aplicada.

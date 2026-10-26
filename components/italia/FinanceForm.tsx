@@ -8,7 +8,7 @@ export default function FinanceForm({action,cost,payout,disabled,skus,onSaved,on
  const input=(name:string,label:string,type="text",value?:string|number)=><label className="block space-y-1 text-xs"><span>{label}</span><input className={field} name={name} type={type} required defaultValue={value} step={type==="number"?"0.01":undefined} min={type==="number"?0:undefined} maxLength={type==="text"?300:undefined}/></label>;
  async function save(event:React.FormEvent<HTMLFormElement>){
   event.preventDefault();if(saving||disabled)return;const form=event.currentTarget,values=Object.fromEntries(new FormData(form));setSaving(true);setError("");
-  try{const body={...values,action,requestId,...(action==="cost"?{expected_updated_at:cost?.updated_at||null}:{}),...(action==="receipt"?{id:payout?.id,version:payout?.version}:{})};
+  try{const body={...values,action,requestId,...(action==="cost"?{expected_updated_at:cost?.updated_at||null,provisional:values.provisional==="on"}:{}),...(action==="receipt"?{id:payout?.id,version:payout?.version}:{})};
    const r=await fetch("/api/italia/finance",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw Error(d.error||"No se pudo guardar");form.reset();setRequestId(crypto.randomUUID());onSaved();
   }catch(e){setError(e instanceof Error?e.message:"Error de conexión");}finally{setSaving(false);}
  }
@@ -21,7 +21,7 @@ export default function FinanceForm({action,cost,payout,disabled,skus,onSaved,on
    {action==="receipt"&&<>{input("received","Importe efectivamente recibido (EUR)","number",payout?.received_cents==null?undefined:payout.received_cents/100)}{input("date","Fecha de abono en banco","date",payout?.received_at||romeToday())}</>}
    {action!=="cost"&&<label className="space-y-1 text-xs sm:col-span-2"><span>Nota o referencia del comprobante (opcional)</span><input className={field} name="note" maxLength={3000} defaultValue={payout?.note}/></label>}
   </fieldset>
-  {action==="cost"&&<p className="text-[11px] text-muted-foreground">Se aplicará por SKU y fecha, a todas las unidades enviadas, incluidos los regalos. El empaque propio se suma al costo del producto; los cargos de Elogy se leen por separado.</p>}
+  {action==="cost"&&<><label className="flex items-center gap-2 text-xs"><input type="checkbox" name="provisional" defaultChecked={cost?.provisional||false} disabled={disabled||saving}/>Costo provisional para estimar rentabilidad</label><p className="text-[11px] text-muted-foreground">Se aplicará por SKU y fecha, a todas las unidades enviadas, incluidos los regalos. El empaque propio se suma al costo del producto; los cargos de Elogy se leen por separado.</p></>}
   {action==="payout"&&<p className="max-w-prose text-[11px] text-muted-foreground">Introduce el neto del extracto de Elogy. Un cobro del courier no es una recepción bancaria. Este registro no realiza transferencias.</p>}
   {action==="receipt"&&<p className="text-[11px] text-muted-foreground">Registra solo abonos comprobados en EUR. Se conserva el historial de cambios. No se cobra ni transfiere dinero desde este formulario.</p>}
   {error&&<p role="alert" className="text-sm text-red-300">{error}</p>}

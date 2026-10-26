@@ -5,7 +5,11 @@ const requestId="12345678-1234-1234-1234-123456789012";
 describe("Registro financiero Italia",()=>{
  it("whitelists EUR cents and concurrency fields, never trusting actor/store/received status",()=>{
   const r=financeInput({action:"cost",requestId,sku:" RYU-01 ",name:"QA",unit_cost:"2,10",packaging_cost:"0",effective_from:"2026-01-01",expected_updated_at:null,store_id:1,actor:"spoof",currency:"USD"});
-  expect(r?.body).toEqual({sku:"ryu-01",name:"QA",unit_cents:210,packaging_cents:0,effective_from:"2026-01-01",expected_updated_at:null});
+  expect(r?.body).toEqual({sku:"ryu-01",name:"QA",unit_cents:210,packaging_cents:0,effective_from:"2026-01-01",expected_updated_at:null,provisional:false});
+ });
+ it("requires an explicit boolean for the provisional cost marker",()=>{
+  const b={action:"cost",requestId,sku:"qa",name:"QA",unit_cost:"9",packaging_cost:"0",effective_from:"2026-01-01",expected_updated_at:null};
+  expect(financeInput({...b,provisional:true})?.body.provisional).toBe(true);expect(financeInput({...b,provisional:"true"})).toBeNull();
  });
  it("rejects malformed dates, negative amounts, unknown actions and missing request identity",()=>{
   const valid={action:"payout",requestId,reference:"R1",date:"2026-10-25",expected:"10.00"};expect(financeInput(valid)).not.toBeNull();

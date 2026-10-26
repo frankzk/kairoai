@@ -50,7 +50,7 @@ export async function elogyFacts(store:number,resource:ElogyResource):Promise<El
 }
 async function versions(store:number):Promise<CostVersion[]> {
  const out:CostVersion[]=[];
- for(let offset=0;offset<20000;offset+=1000){const q=await getDB().from("product_cost_versions").select("sku,unit_cost,packaging_cost,currency,effective_from,created_at").eq("store_id",store).order("id").range(offset,offset+999);if(q.error)throw new ElogyError("database_read_failed");out.push(...(q.data||[]) as CostVersion[]);if((q.data||[]).length<1000)return out;}
+ for(let offset=0;offset<20000;offset+=1000){const q=await getDB().from("product_cost_versions").select("sku,unit_cost,packaging_cost,currency,effective_from,created_at,provisional").eq("store_id",store).order("id").range(offset,offset+999);if(q.error)throw new ElogyError("database_read_failed");out.push(...(q.data||[]) as CostVersion[]);if((q.data||[]).length<1000)return out;}
  throw new ElogyError("dataset_too_large");
 }
 export function elogyPeriod(params:URLSearchParams){return italiaDateRange(params.get("period")||"month",params.get("from")||"",params.get("to")||"");}
@@ -74,7 +74,7 @@ export async function readElogyWorkspace(params:URLSearchParams,finance:boolean)
  if(!finance)return base;
  const [costs,collected,costVersions,currentCosts,expenseResult,payoutResult]=await Promise.all([
   elogyFacts(store,"costs"),elogyFacts(store,"collected"),versions(store),
-  db.from("product_costs").select("id,sku,product_name,unit_cost,packaging_cost,currency,effective_from,updated_at").eq("store_id",store).eq("active",true).order("sku"),
+  db.from("product_costs").select("id,sku,product_name,unit_cost,packaging_cost,currency,effective_from,updated_at,provisional").eq("store_id",store).eq("active",true).order("sku"),
   db.from("business_expenses").select("id,type,expense_date,description,amount,currency,platform,notes",{count:"exact"}).eq("store_id",store).order("expense_date",{ascending:false}).limit(1000),
   db.from("italia_elogy_payouts").select("*",{count:"exact"}).eq("store_id",store).order("statement_date",{ascending:false}).limit(1000),
  ]);
@@ -87,6 +87,7 @@ export async function readElogyWorkspace(params:URLSearchParams,finance:boolean)
  const expenseCents=expenses.reduce((n,e)=>n+(e.currency==="EUR"?euroCents(e.amount)||0:0),0);
  const incomplete=profit.filter(p=>p.contribution===null).length;
  const knownContribution=profit.reduce((n,p)=>n+(p.contribution||0),0);
+ const estimated=profit.filter(p=>p.estimated).length;
  const complete=resources.every(r=>(sync.data||[]).some(s=>s.resource===r&&s.completed_at&&!s.last_error));
  // Dates of COD receipt and shipment intentionally belong to different report views.
  return {...base,profit,costs:currentCosts.data,expenses,payouts,collected:cash,summary:{
@@ -94,7 +95,7 @@ export async function readElogyWorkspace(params:URLSearchParams,finance:boolean)
   collected:cash.filter(c=>c.currency==="EUR").reduce((n,c)=>n+(c.total_cents||0),0),
   expectedBank:bank.expected,
   receivedBank:bank.received,
-  expenses:expenseCents,knownContribution,incomplete,complete,
-  netProfit:complete&&profit.length>0&&incomplete===0?knownContribution-expenseCents:null,
+  expenses:expenseCents,knownContribution,incomplete,complete,estimated,
+  netProfit:complete&&profit.length>0&&incomplete===0&&estimated===0?knownContribution-expenseCents:null,
  },skuCatalog:Array.from(new Map(orders.flatMap(o=>o.items).filter(i=>i.sku).map(i=>[i.sku,{sku:i.sku,name:i.name}])).values())};
 }

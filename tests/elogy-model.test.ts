@@ -38,4 +38,14 @@ describe("Rentabilidad sin importes inventados",()=>{
   const row=profitability([fact("shipments")],[order],[fact("costs")],[],versions)[0];expect(row.products).toBeNull();expect(row.contribution).toBeNull();
   expect(profitability([fact("shipments",{total_price:null})],[fact("orders")],[fact("costs")],[],versions)[0].missing).toContain("Importe de venta pendiente");
  });
+ it("labels the owner's temporary nine-euro costs as estimates and counts gift units",()=>{
+  const costs=[{...versions[0],unit_cost:9,packaging_cost:0,provisional:true}];
+  expect(productCost([{sku:"ryu-01",name:"QA",quantity:3}],"2026-09-25",costs)).toMatchObject({cents:2700,provisional:true});
+  expect(productCost([{sku:"ryu-01",name:"QA",quantity:5}],"2026-09-25",costs).cents).toBe(4500);
+  const row=profitability([fact("shipments")],[fact("orders")],[fact("costs")],[],costs)[0];expect(row.estimated).toBe(true);expect(row.contribution).toBe(544);
+  expect(productCost([{sku:"ryu-01",name:"QA",quantity:1}],"2026-10-25",[...costs,{...versions[1],provisional:false}]).provisional).toBe(false);
+ });
+ it("uses the original order's calendar date in Italy for a cost change at midnight",()=>{
+  const row=profitability([fact("shipments")],[fact("orders",{created_at:"2026-09-30T23:30:00Z"})],[fact("costs")],[],versions)[0];expect(row.products).toBe(2700);
+ });
 });

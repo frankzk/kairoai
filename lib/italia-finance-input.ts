@@ -8,9 +8,9 @@ export function financeInput(input:unknown):{action:string;requestId:string;body
  const note=text(b.note);if(note.length>3000)return null;
  let body:Record<string,unknown>;
  if(a==="cost"){
-  const unit=cents(b.unit_cost),pack=cents(b.packaging_cost);
+  const unit=cents(b.unit_cost),pack=cents(b.packaging_cost);if(b.provisional!==undefined&&typeof b.provisional!=="boolean")return null;
   if(!bounded(b.sku,100,true)||!bounded(b.name,300)||!validDate(b.effective_from)||unit===null||pack===null||!(b.expected_updated_at===null||typeof b.expected_updated_at==="string"&&Number.isFinite(Date.parse(b.expected_updated_at))))return null;
-  body={sku:text(b.sku).trim().toLowerCase(),name:b.name,unit_cents:unit,packaging_cents:pack,effective_from:b.effective_from,expected_updated_at:b.expected_updated_at};
+  body={sku:text(b.sku).trim().toLowerCase(),name:b.name,unit_cents:unit,packaging_cents:pack,effective_from:b.effective_from,expected_updated_at:b.expected_updated_at,provisional:b.provisional===true};
  }else if(a==="expense"){
   const amount=cents(b.amount);if(!["ads","payroll","misc"].includes(text(b.type))||!validDate(b.date)||!bounded(b.description,300,true)||amount===null||!bounded(b.platform||"",100))return null;
   body={type:b.type,date:b.date,description:b.description,amount_cents:amount,platform:b.platform||"",note};
