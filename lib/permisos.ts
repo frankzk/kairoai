@@ -172,6 +172,8 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/italia", exige: P(...OPERACION) },
   { ruta: "/api/mexico", exige: P(...OPERACION) },
   { ruta: "/api/argentina", exige: P(...OPERACION) },
+  // Private extraction worker authenticates with its own server-only secret.
+  { ruta: "/api/argentina/backup", exige: PUB },
   { ruta: "/api/italia/finance", exige: P("finanzas") },
   { ruta: "/api/italia/reconciliation", exige: P("finanzas") },
   { ruta: "/api/finance/order-detail", exige: P(...OPERACION) },
