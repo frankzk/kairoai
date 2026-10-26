@@ -1,1 +1,5 @@
-export { default } from "@/components/italia/OrdersPage";
+import OrdersPage from "@/components/italia/OrdersPage";
+
+export default function ItalyOrdersPage() {
+  return <OrdersPage />;
+}
