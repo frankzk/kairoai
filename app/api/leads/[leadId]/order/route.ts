@@ -74,11 +74,11 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
     if (!lead) return NextResponse.json({ error: "lead no encontrado" }, { status: 404 });
 
     if (body?.destino === "icomfly") {
-      // Apagado tambien aca, no solo el boton: una pantalla abierta antes del
-      // deploy todavia lo muestra. Se apago el 24/10/2026 porque iComfly dejaba
-      // ocultos los pedidos de crear_pedido (EXCEL-); desde el 26/10 salen
-      // visibles ("Manual #…") y se prende con NEXT_PUBLIC_CREAR_EN_ICOMFLY=1.
-      if (process.env.NEXT_PUBLIC_CREAR_EN_ICOMFLY !== "1") {
+      // Interruptor de emergencia: CREAR_EN_ICOMFLY_APAGADO=1 lo apaga sin
+      // compilar de nuevo (se lee en cada pedido). Se apago del 24 al 26/10/2026
+      // porque iComfly dejaba ocultos los pedidos de crear_pedido (EXCEL-);
+      // desde el 26/10 salen visibles ("Manual #…").
+      if (process.env.CREAR_EN_ICOMFLY_APAGADO === "1") {
         return NextResponse.json(
           { error: "Crear en iComfly está desactivado por ahora: usa «Crear pedido». Recarga la página (F5)." },
           { status: 403 }

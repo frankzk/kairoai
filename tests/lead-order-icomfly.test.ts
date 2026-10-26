@@ -62,7 +62,7 @@ async function crear(store: string, shipping: Record<string, string> = ENVIO) {
 }
 
 beforeEach(() => {
-  process.env.NEXT_PUBLIC_CREAR_EN_ICOMFLY = "1";
+  delete process.env.CREAR_EN_ICOMFLY_APAGADO;
   llamadas.length = 0;
   ganados.length = 0;
   shopifyCreados = 0;
@@ -121,8 +121,8 @@ describe("Crear en iComfly", () => {
     expect(ganados).toEqual([]);
   });
 
-  it("apagado (sin NEXT_PUBLIC_CREAR_EN_ICOMFLY=1) no crea nada aunque una pantalla vieja lo pida", async () => {
-    delete process.env.NEXT_PUBLIC_CREAR_EN_ICOMFLY;
+  it("apagado (CREAR_EN_ICOMFLY_APAGADO=1) no crea nada aunque la pantalla lo pida", async () => {
+    process.env.CREAR_EN_ICOMFLY_APAGADO = "1";
     const res = await crear("mireva-hn");
     expect(res.status).toBe(403);
     expect((await res.json()).error).toMatch(/desactivado/);
