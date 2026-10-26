@@ -30,3 +30,6 @@ next-env.d.ts
 .vercel
 supabase/.temp/
 .env*
+
+# Private customer/catalog backups; never publish these in the source repository.
+backups/
