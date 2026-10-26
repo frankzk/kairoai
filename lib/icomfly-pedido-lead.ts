@@ -8,6 +8,19 @@
 //
 // Puro: se prueba en tests/icomfly-pedido-lead.test.ts.
 
+/**
+ * Tiendas donde "Crear en iComfly" esta apagado: el boton no sale en la ficha
+ * del lead y la ruta lo rechaza. Mireva Costa Rica desde el 26/10/2026: su
+ * conector sigue creando pedidos "EXCEL-", ocultos en el panel y la busqueda
+ * de iComfly y sin metodo de pago (746441, 746488, 746499); el de Honduras ya
+ * los crea "MANUAL-" y visibles. Se quita de aca cuando iComfly lo arregle.
+ */
+export const TIENDAS_SIN_CREAR_EN_ICOMFLY: readonly string[] = ["mireva-cr"];
+
+export function creaEnIcomfly(storeCode: string): boolean {
+  return !TIENDAS_SIN_CREAR_EN_ICOMFLY.includes(storeCode);
+}
+
 export interface ItemPedidoLead {
   /** Nombre que se muestra: producto + variante ("Shorts - Negro / L"). */
   title: string;

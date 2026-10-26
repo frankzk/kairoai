@@ -22,6 +22,7 @@ import CustomerPanel from "@/components/CustomerPanel";
 import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
 import { hideWebphone } from "@/lib/webphone";
+import { creaEnIcomfly } from "@/lib/icomfly-pedido-lead";
 import ZadarmaWebphone from "@/components/ZadarmaWebphone";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -1773,18 +1774,21 @@ function LeadDrawer({
             <ShoppingCart className="mr-2 h-4 w-4" />
             {pedidoEn === "shopify" ? "Ocultar pedido" : "Crear pedido"}
           </Button>
-          {/* Siempre visible desde el 26/10/2026: el conector de iComfly ya crea
-              pedidos visibles ("Manual #…"). Antes dependia de una variable
-              NEXT_PUBLIC que se fija al compilar; el interruptor ahora vive en
-              el servidor (CREAR_EN_ICOMFLY_APAGADO, ver la ruta del pedido). */}
-          <Button
-            size="sm"
-            variant={pedidoEn === "icomfly" ? "outline" : "default"}
-            onClick={() => setPedidoEn((v) => (v === "icomfly" ? null : "icomfly"))}
-          >
-            <ShoppingCart className="mr-2 h-4 w-4" />
-            {pedidoEn === "icomfly" ? "Ocultar pedido" : "Crear en iComfly"}
-          </Button>
+          {/* Visible desde el 26/10/2026: el conector de iComfly ya crea
+              pedidos visibles ("Manual #…"). Salvo en las tiendas de
+              TIENDAS_SIN_CREAR_EN_ICOMFLY, cuyo conector todavia los deja
+              ocultos. El interruptor general vive en el servidor
+              (CREAR_EN_ICOMFLY_APAGADO, ver la ruta del pedido). */}
+          {creaEnIcomfly(leadStore) && (
+            <Button
+              size="sm"
+              variant={pedidoEn === "icomfly" ? "outline" : "default"}
+              onClick={() => setPedidoEn((v) => (v === "icomfly" ? null : "icomfly"))}
+            >
+              <ShoppingCart className="mr-2 h-4 w-4" />
+              {pedidoEn === "icomfly" ? "Ocultar pedido" : "Crear en iComfly"}
+            </Button>
+          )}
           {/* 24x24 reales y con anillo de foco: es la unica salida de un
               dialogo que tapa la pantalla. 20px sin anillo la dejaba fuera del
               minimo tactil y muda por teclado. */}

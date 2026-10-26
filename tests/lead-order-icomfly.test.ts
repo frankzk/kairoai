@@ -90,10 +90,19 @@ describe("Crear en iComfly", () => {
     expect(ganados).toEqual([expect.objectContaining({ storeId: 2, shopifyOrderName: "IC-729032" })]);
   });
 
-  it("Costa Rica, con la clave de Costa Rica", async () => {
-    await crear("mireva-cr");
-    expect(llamadas.map((l) => l.nombre)).toContain("crear_pedido");
-    expect(llamadas.every((l) => l.tienda === "mireva-cr")).toBe(true);
+  it("Costa Rica está apagada (su conector deja los pedidos ocultos): no llama a iComfly", async () => {
+    const res = await crear("mireva-cr");
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/desactivado/);
+    expect(llamadas).toEqual([]);
+    expect(ganados).toEqual([]);
+    expect(shopifyCreados).toBe(0);
+  });
+
+  it("el botón se oculta solo en las tiendas apagadas", async () => {
+    const { creaEnIcomfly } = await import("../lib/icomfly-pedido-lead");
+    expect(creaEnIcomfly("mireva-cr")).toBe(false);
+    expect(creaEnIcomfly("mireva-hn")).toBe(true);
   });
 
   it("sin dirección, ciudad o departamento no llama a iComfly y dice qué falta", async () => {
