@@ -46,7 +46,7 @@ const DIRECT_QUERIES:Record<string,{field:string;query:string}>={
  metaobject_definitions:{field:"metaobjectDefinitions",query:`query($after:String){metaobjectDefinitions(first:100,after:$after){nodes{id name type fieldDefinitions{key name type{name}}} pageInfo{hasNextPage endCursor}}}`},
  markets:{field:"markets",query:`query($after:String){markets(first:100,after:$after){nodes{id name handle} pageInfo{hasNextPage endCursor}}}`},
 };
-export const BACKUP_RESOURCES=[...Object.keys(CONFIG_RECURSOS),...Object.keys(EXTRA_REST),...Object.keys(DIRECT_QUERIES),"theme_files"];
+export const BACKUP_RESOURCES=[...Object.keys(CONFIG_RECURSOS),...Object.keys(EXTRA_REST),...Object.keys(DIRECT_QUERIES),"theme_files","draft_order_links"];
 
 async function checked<T extends {error:unknown}>(p:PromiseLike<T>):Promise<T>{const r=await p;if(r.error)throw Error("backup_persistence_failed");return r;}
 async function state(resource:string):Promise<State>{
@@ -123,6 +123,18 @@ async function themeFiles(c:Awaited<ReturnType<typeof client>>,deadline:number){
   if(!s.parent_id)s.status="complete";await save(s);
  }if(!s.parent_id){s.status="complete";await save(s);}return s;
 }
+async function draftOrderLinks(c:Awaited<ReturnType<typeof client>>,deadline:number){
+ const s=await state("draft_order_links");if(s.status==="complete")return s;
+ const grants=await c.gql(`{currentAppInstallation{accessScopes{handle}}}`);if(!grants.currentAppInstallation.accessScopes.some((v:{handle:string})=>v.handle==="read_all_orders"))throw Error("requires_read_all_orders");
+ const present=new Set(await ids("order",true)),references=new Set<string>();
+ for(let offset=0;;offset+=1000){const {data}=await checked(getDB().from("shopify_archivo").select("order_id:payload->order_id").eq("store_id",STORE).eq("recurso","draft_order").order("shopify_id").range(offset,offset+999));for(const row of data||[]){const id=String(row.order_id||"");if(/^\d+$/.test(id)&&!present.has(id))references.add(id);}if(!data||data.length<1000)break;}
+ s.status="running";s.error=null;s.meta={missingReferences:references.size,recovered:0,unavailable:0};
+ for(const id of Array.from(references)){if(Date.now()>=deadline){await save(s);return s;}const r=await c.read(`/admin/api/${VERSION}/orders/${id}.json`);
+  if(r.status===404){await extra("unavailable_order",id,{httpStatus:404,referencedBy:"draft_order",checkedAt:new Date().toISOString()});s.meta.unavailable=Number(s.meta.unavailable)+1;}
+  else {if(!r.ok)throw Error(`shopify_http_${r.status}`);const order=(await r.json()).order;if(!order||String(order.id)!==id)throw Error("invalid_referenced_order");const mapped=filasArchivo("order",[order],STORE,new Date());await checked(getDB().from("shopify_archivo").upsert(mapped,{onConflict:"store_id,recurso,shopify_id"}));s.meta.recovered=Number(s.meta.recovered)+1;}
+  s.pages++;s.records++;await save(s);
+ }s.status="complete";await save(s);return s;
+}
 async function bulk(kind:string,c:Awaited<ReturnType<typeof client>>){
  if(!BULK_QUERIES[kind])throw Error("invalid_bulk_kind");const s=await state(`bulk_${kind}`);if(s.status==="complete")return s;
  if(!s.meta.id){
@@ -151,7 +163,7 @@ export async function runArgentinaBackup(action:string,resource:string,deadline=
    try{return await bulk(resource,c);}catch(e){const s=await state(`bulk_${resource}`);s.status="error";s.error=e instanceof Error?e.message:"backup_failed";await save(s);return s;}
   }
   if(action!=="resource"||!BACKUP_RESOURCES.includes(resource))throw Error("invalid_action");
-  try{if(resource==="theme_files")return await themeFiles(c,deadline);if(DIRECT_QUERIES[resource])return await directResource(resource,c,deadline);return await restResource(resource,c,deadline);}
+  try{if(resource==="theme_files")return await themeFiles(c,deadline);if(resource==="draft_order_links")return await draftOrderLinks(c,deadline);if(DIRECT_QUERIES[resource])return await directResource(resource,c,deadline);return await restResource(resource,c,deadline);}
   catch(e){const s=await state(resource);s.status="error";s.error=e instanceof Error?e.message:"backup_failed";await save(s);return s;}
  }finally{await checked(db.rpc("argentina_backup_release",{p_token:token}));}
 }

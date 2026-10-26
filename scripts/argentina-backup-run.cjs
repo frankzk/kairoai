@@ -18,7 +18,7 @@ async function bulk(kind){for(let n=0;n<90;n++){const s=await call('bulk',kind);
  if(action==='bulk'){await bulk(name);return;}
  if(action!=='all')throw Error('Use audit, resource <name>, bulk <kind>, or all');
  console.log(JSON.stringify({audit:await call('audit')}));
- for(const r of resources)await resource(r);
+ for(const r of [...resources,'draft_order_links'])await resource(r);
  for(const kind of ['orders','customers','products','files','fulfillments'])await bulk(kind);
  console.log(JSON.stringify({finalAudit:await call('audit')}));
 })().catch(e=>{console.error(JSON.stringify({error:e.message}));process.exitCode=1;});
