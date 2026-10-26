@@ -144,3 +144,91 @@ pedido del histórico disponible), empaque propio adicional 0 EUR y auditoría
 exclusiva de kenku-it. Verificados 1.320 tests, TypeScript, lint, build y QA de
 navegador con guardados simulados. Elogy en producción: cron 200 sin error;
 primera ejecución programada validada. La cuenta técnica QA quedó desactivada.
+
+## Conciliación de liquidaciones y banco (26 octubre 2026)
+
+El dueño aplazó la entrega de extractos. Se deja preparada la herramienta; no se
+crea ninguna liquidación ni abono real y no se da por conciliado un mes vacío.
+Los 9 EUR de producto siguen siendo provisionales. El cierre de tesorería de una
+remesa es independiente de completar costos, comisiones online e inventario.
+
+### Recorrido
+
+1. Nueva liquidación: referencia, fecha del extracto y neto declarado por Elogy.
+2. Vincular únicamente sus cobros Collected COD y cargos company, por identidad
+   del proveedor. El buscador paginado consulta todas las partidas sin asignar;
+   admite hasta 100 por operación y conserva importes del servidor.
+3. Registrar cualquier ajuste que figure en el extracto con motivo y referencia
+   del comprobante. La confirmación del detalle es explícita. Cambiar sus
+   partidas retira esa confirmación.
+4. Banco: fecha valor, alias estable de cuenta, referencia bancaria única,
+   importe original, moneda y referencia de extracto/comprobante. EUR conserva
+   exactamente el importe recibido. USD/GBP conservan el original y quedan sin
+   asignar hasta disponer de un contravalor documentado en EUR; no se inventa FX.
+5. Asignar abonos completos o parciales. Un abono puede repartir su saldo entre
+   varias liquidaciones y una liquidación recibir varios abonos. El total usado
+   nunca puede superar el contravalor comprobado del abono.
+6. Cerrar la liquidación solo cuando detalle confirmado, neto declarado y banco
+   coinciden al céntimo. Una remesa neta cero exige detalle y comprobante, aunque
+   no necesite abono. Cierre no realiza transferencias ni cambia estados Elogy.
+7. Reabrir o retirar vínculos requiere motivo y auditoría. Movimientos bancarios
+   equivocados pueden anularse solo después de retirar sus asignaciones. No se
+   borran movimientos ni auditoría. Los registros cerrados requieren reapertura.
+
+La interfaz muestra: Liquidaciones, Banco y Cobros por revisar. La revisión
+separa entregados COD sin cobro, cobros parciales/superiores, cobros con devolución,
+cobros COD en pedidos online y cobros sin envío en el espejo. Son alertas para
+revisar, no pérdidas confirmadas. Se conserva el origen de Elogy y el estado
+original de Shopify. Los CSV corresponden a cada vista.
+
+### Periodos y diferencias
+
+Remesas por fecha de extracto; banco por fecha valor de cada abono, no por la
+fecha del último abono de toda la liquidación. Un abono comprobado sin asignar
+figura como recibido y disponible. El importe asignado es otro dato separado.
+La consulta mensual incluye remesas con extracto o algún abono en ese periodo.
+Un cambio posterior del importe/pedido de Elogy se señala incluso después del
+cierre: el snapshot del extracto no se sobrescribe silenciosamente.
+
+No se deduce un pago al comercio restando todos los cargos del mes a todos los
+cobros. Elogy Virtual Balance contiene movimientos internos y recargas; no se
+trata como evidencia de ingreso bancario. Sin extractos no se enlazan partidas,
+no se introducen ajustes y no se confirman abonos reales.
+
+### Persistencia, seguridad y verificación
+
+Migración 20261026050848_italia_elogy_conciliacion: partidas por liquidación,
+movimientos bancarios y asignaciones privadas con RLS y sin privilegios de
+anon/authenticated. RPC SECURITY INVOKER exclusiva del servidor, restringida a
+kenku-it y finanzas, con Origin validado, actor del servidor, UUID, revisiones,
+bloqueo transaccional y snapshots de auditoría. Un mismo cobro/cargo no puede
+pertenecer a dos remesas; referencia bancaria es única por alias de cuenta.
+
+Las partidas se validan antes de insertar cualquier elemento del lote y se
+bloquean durante su lectura para evitar cambios concurrentes del espejo. La
+asignación de saldo es atómica y un cierre vuelve a comprobar fuente y totales.
+El antiguo atajo de registrar recibido_cents sin movimiento vinculado queda
+bloqueado en la API y la RPC. La protección de Origin admite el Host que Next
+realmente enruta, sin confiar en forwarded-host arbitrarios.
+
+El conector de migraciones devolvió requestState caducado. Se utilizó la CLI
+oficial ya autenticada, enlazada explícitamente a xxqunqnicvjhnwbnyghe, con la
+migración y su fila de historial en una sola transacción, lock_timeout de 5s y
+statement_timeout de 60s. Versión aplicada verificada por consulta independiente.
+
+SQL probado en PostgreSQL 17 aislado: RLS/grants, lote inválido sin inserción
+parcial, doble asignación de cobros, duplicados bancarios, FX ausente, abonos
+parciales entre meses, límites de saldo, versiones, cierre/reapertura, cambios
+posteriores de Elogy, bloqueo del atajo anterior y separación de tiendas.
+Las pruebas de navegador usan solo escrituras simuladas. No se registran
+movimientos financieros reales para QA.
+
+Verificación de la conciliación: 1.342 pruebas, TypeScript, lint y build correctos.
+Navegador con fuentes reales y escrituras simuladas: confirmación, dos abonos
+parciales entre meses, cierre/reapertura, añadir/retirar cargos, registrar/anular
+abono, completar contravalor, paginación/búsqueda de fuentes y diferencias, CSV,
+móvil y bloqueo de escrituras ante error de lectura. El histórico se redujo de
+5,30 MB a 3,30 MB proyectando solo columnas de pantalla. Candidatos se consultan
+por páginas de 50 y no añaden su histórico completo a esa respuesta.
+Los registros de banco y liquidaciones reales permanecen vacíos, como pidió el
+dueño al aplazar los extractos. Evidencias privadas elogy-conciliacion-*.
