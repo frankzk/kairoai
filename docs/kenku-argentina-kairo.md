@@ -55,7 +55,7 @@ de lectura para no alterar la autorización Shopify existente.
 
 ## Verificación
 
-1.351 pruebas automatizadas correctas, tipos/lint/build correctos. El SQL de
+1.362 pruebas automatizadas correctas, tipos/lint/build correctos. El SQL de
 `tests/argentina-management-database.sql` prueba con BEGIN/ROLLBACK permisos,
 RLS, aislamiento, transiciones, notas, idempotencia, revisiones, conservación
 del respaldo y refresco del índice. La prueba inicial incluyó crear el esquema
@@ -67,8 +67,11 @@ conflicto de guardado, móvil e integración italiana existente.
 
 ## Pendiente de fuente argentina
 
-El dueño debe identificar el courier y su panel/API o archivos. No se conecta
+El dueño identificó DropLatam y Fixy, y pospuso revisar sus accesos. El portal
+Fixy encontrado públicamente no es el que utiliza; no se presume acceso a ese
+sistema. Deben confirmarse los paneles/API o archivos reales. No se conecta
 Elogy Italia a Argentina ni se inventan entregas, cobros, tarifas, costos de
 producto, gastos o abonos bancarios. Logística automática, liquidaciones,
 rentabilidad y conciliación quedan pendientes de esos datos. Tampoco se ha
 solicitado ni configurado una tienda WooCommerce argentina.
+

@@ -1,5 +1,5 @@
-import { italiaDateRange } from "./italia-filters";
-import { ARGENTINA_WORKSPACE } from "./management-workspace";
+import { orderDateRange } from "./italia-filters";
+import { kenkuManagementStore } from "./kenku-management";
 export function argentinaDateRange(period:string,start="",end="",now=new Date()) {
-  return italiaDateRange(period,start,end,now,ARGENTINA_WORKSPACE.timeZone);
+  return orderDateRange(kenkuManagementStore("kenku-ar").timeZone,period,start,end,now);
 }

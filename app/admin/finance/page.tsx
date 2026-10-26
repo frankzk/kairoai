@@ -1,4 +1,5 @@
 "use client";
+import { KENKU_MANAGEMENT_STORES } from "@/lib/kenku-management";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
@@ -543,18 +544,21 @@ const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 export default function FinancePage() {
   const [italiaOnly, setItaliaOnly] = useState<boolean | null>(null);
   const [verItalia, setVerItalia] = useState(false);
+  const [verMexico, setVerMexico] = useState(false);
   useEffect(() => {
     const yo = leerYo();
     setVerItalia(Boolean(yo && (yo.id === 0 || yo.tiendas.includes("kenku-it"))));
-    const only = Boolean(yo?.tiendas.includes("kenku-it") && !yo.tiendas.some(t => t === "mireva-cr" || t === "mireva-hn"));
+    setVerMexico(Boolean(yo && (yo.id === 0 || yo.tiendas.includes("kenku-mx"))));
+    const firstKenku = KENKU_MANAGEMENT_STORES.find(s => yo?.tiendas.includes(s.code));
+    const only = Boolean(yo && yo.id !== 0 && firstKenku && !yo.tiendas.some(t => t === "mireva-cr" || t === "mireva-hn"));
     setItaliaOnly(only);
-    if (only) window.location.replace("/admin/finance/italia");
+    if (only && firstKenku) window.location.replace(firstKenku.path);
   }, []);
   if (italiaOnly !== false) return <p className="p-6 text-sm">Cargando Gestión…</p>;
-  return <LegacyFinancePage verItalia={verItalia} />;
+  return <LegacyFinancePage verItalia={verItalia} verMexico={verMexico} />;
 }
 
-function LegacyFinancePage({ verItalia }: { verItalia: boolean }) {
+function LegacyFinancePage({ verItalia, verMexico }: { verItalia: boolean; verMexico: boolean }) {
   const [tab, setTab] = useState<Tab>("orders");
   // Las pestañas de plata (Productos, Liquidaciones, Gastos, Cierre) son del
   // permiso "finanzas". Logistica ve el resto. El servidor lo impone igual; aca
@@ -1437,6 +1441,7 @@ function LegacyFinancePage({ verItalia }: { verItalia: boolean }) {
               value={selectedStore.code}
               onChange={(event) => {
                 if (event.target.value === "kenku-it") window.location.assign("/admin/finance/italia");
+                else if (event.target.value === "kenku-mx") window.location.assign("/admin/finance/mexico");
                 else setSelectedStoreCode(event.target.value as FinanceStoreCode);
               }}
               aria-label="Tienda"
@@ -1448,6 +1453,7 @@ function LegacyFinancePage({ verItalia }: { verItalia: boolean }) {
                 </option>
               ))}
               {verItalia && <option value="kenku-it">Kenku Italia</option>}
+              {verMexico && <option value="kenku-mx">Kenku México</option>}
             </select>
             <Button
               variant="outline"

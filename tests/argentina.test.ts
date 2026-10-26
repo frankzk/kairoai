@@ -3,8 +3,6 @@ import { NextRequest } from "next/server";
 import { argentinaDateRange } from "@/lib/argentina-filters";
 import { ACCESS_STORES } from "@/lib/access-stores";
 import { FINANCE_STORES } from "@/lib/store-config";
-import { date, money } from "@/components/italia/order-ui";
-import { ARGENTINA_WORKSPACE } from "@/lib/management-workspace";
 const { identity, queries, rpc, from } = vi.hoisted(() => ({
   identity:vi.fn(), queries:[] as Array<{table:string;calls:Array<[string,...unknown[]]>}>, rpc:vi.fn(), from:vi.fn(),
 }));
@@ -86,12 +84,9 @@ describe("Gestión Kenku Argentina",()=>{
     expect(ACCESS_STORES.filter(s=>s.code==="kenku-ar")).toHaveLength(1);
     expect(FINANCE_STORES.map(s=>s.code)).toEqual(["mireva-cr","mireva-hn"]);
   });
-  it("uses Buenos Aires days, preserves ARS and leaves Italian formatting unchanged",()=>{
+  it("uses Buenos Aires days",()=>{
     expect(argentinaDateRange("today","","",new Date("2026-10-26T01:30:00Z"))).toEqual({from:"2026-10-25T03:00:00.000Z",to:"2026-10-26T03:00:00.000Z"});
     expect(argentinaDateRange("month","","",new Date("2026-10-26T12:00:00Z"))).toEqual({from:"2026-10-01T03:00:00.000Z",to:"2026-10-27T03:00:00.000Z"});
     expect(argentinaDateRange("all")).toBeNull();
-    expect(money(12500,"ARS",ARGENTINA_WORKSPACE.locale)).toContain("12.500,00");
-    expect(date("2026-10-26T01:30:00Z",ARGENTINA_WORKSPACE.timeZone)).toContain("25/10/2026");
-    expect(date("2026-10-26T01:30:00Z")).toContain("26/10/2026");
   });
 });

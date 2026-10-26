@@ -1,5 +1,4 @@
 import { FINANCE_STORES } from "./store-config";
-import { ARGENTINA_WORKSPACE } from "./management-workspace";
-import { WOO_STORES } from "./woo-config";
+import { KENKU_MANAGEMENT_STORES } from "./kenku-management";
 // Authorization catalog, distinct from legacy finance/Shopify jobs.
-export const ACCESS_STORES = [...FINANCE_STORES, ...WOO_STORES, ARGENTINA_WORKSPACE];
+export const ACCESS_STORES = [...FINANCE_STORES, ...KENKU_MANAGEMENT_STORES];

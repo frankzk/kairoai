@@ -11,10 +11,10 @@ export const countLabel: Record<ItaliaStatus,string> = {
   pending:"Pendientes", confirmed:"Confirmados", dispatched:"Enviados", partial:"Envío parcial",
   delivered:"Entregados", cancelled:"Anulados", returned:"Devueltos", refunded:"Reembolsados",
 };
-export const date = (value:string,timeZone="Europe/Rome") => new Date(value).toLocaleString("es-ES",{timeZone});
-export const shortDate = (value:string,timeZone="Europe/Rome") => new Date(value).toLocaleDateString("es-ES",{timeZone});
-export function money(value:number|null,currency:string,locale="it-IT") {
+export const date = (value:string) => new Date(value).toLocaleString("es-ES",{timeZone:"Europe/Rome"});
+export const shortDate = (value:string) => new Date(value).toLocaleDateString("es-ES",{timeZone:"Europe/Rome"});
+export function money(value:number|null,currency:string) {
   if(value===null)return "Sin importe";
-  try{return new Intl.NumberFormat(locale,{style:"currency",currency}).format(value);}
-  catch{return `${value.toLocaleString(locale)} ${currency}`;}
+  try{return new Intl.NumberFormat("it-IT",{style:"currency",currency}).format(value);}
+  catch{return `${value.toLocaleString("it-IT")} ${currency}`;}
 }
