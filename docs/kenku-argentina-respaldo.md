@@ -43,3 +43,14 @@ datos de tarjetas no se exportan desde Shopify.
 
 La auditoría final, los límites observados y la prueba offline se registrarán
 al concluir la extracción. DropLatam/Fixy siguen fuera de este trabajo.
+
+Clientes y catálogo se consultan en `/admin/finance/argentina/customers` y
+`/admin/finance/argentina/catalog`. Sus APIs leen únicamente el archivo de Kairo;
+las imágenes usan copias privadas propias. Ambas rutas exigen acceso a Argentina.
+Los códigos internos conservan el SKU original si es único; para SKU faltantes
+o repetidos usan KAR-V seguido del ID de variante. No se escribe en Shopify.
+
+Prueba de navegador: con las solicitudes a Shopify bloqueadas, se verificaron
+8.491 clientes, paginación, búsqueda vacía, 16 productos y sus 16 imágenes,
+16 códigos internos únicos, vista móvil y regresión del catálogo de México.
+La auditoría detectó 4 variantes sin SKU original y 2 con SKU original repetido.
