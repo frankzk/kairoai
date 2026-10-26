@@ -42,7 +42,7 @@ describe("lo que se manda a iComfly", () => {
       cantidad: 1,
       product_id: 3833,
       total: 890,
-      metodo_pago: "Contra Entrega",
+      metodo_pago: "Contraentrega",
       notas: "Cerrado por la asesora desde el tablero de Leads (Kairo). Pago: Contraentrega.",
     });
   });
