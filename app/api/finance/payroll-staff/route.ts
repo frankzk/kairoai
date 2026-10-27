@@ -5,13 +5,18 @@ import {
   listPayrollStaff,
   updatePayrollStaffZadarma,
 } from "@/lib/finance";
+import { identidadActual } from "@/lib/identidad";
+import { planillaPara } from "@/lib/planilla-publica";
 
 export const runtime = "nodejs";
 
+// GET: cualquiera con sesion (selector de asesora). Correo, usuario de iComfly
+// y extension solo para quien administra personal (lib/planilla-publica.ts).
 export async function GET() {
   try {
     const staff = await listPayrollStaff();
-    return NextResponse.json({ staff });
+    const yo = identidadActual();
+    return NextResponse.json({ staff: planillaPara(staff, yo ? yo.permisos : null) });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer personal";
     return NextResponse.json({ staff: [], error: message }, { status: 500 });

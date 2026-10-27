@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import {
+  cambiarRol,
   cumple,
   exigenciaDe,
   inicioDe,
@@ -142,6 +143,45 @@ describe("lo que puede hacer cada rol", () => {
 
   it("el admin tiene tambien el permiso nuevo", () => {
     expect(permisosDeRoles(["admin"])).toContain("leads_productividad");
+  });
+
+  it("Novedades y Gestion de pedidos usan el chat, pero no el tablero de Leads ni su resincronizacion", () => {
+    for (const p of [["novedades"], ["pedidos"]] as Permiso[][]) {
+      expect(puede(p, "/api/leads/5/messages"), p[0]).toBe(true);
+      expect(puede(p, "/api/leads/5/send", "POST"), p[0]).toBe(true);
+      expect(puede(p, "/api/leads/media"), p[0]).toBe(true);
+      expect(puede(p, "/api/leads"), p[0]).toBe(false);
+      expect(puede(p, "/api/leads", "POST"), p[0]).toBe(false);
+      expect(puede(p, "/api/leads/5/history"), p[0]).toBe(false);
+    }
+    expect(puede(["leads"], "/api/leads")).toBe(true);
+    expect(puede(["leads"], "/api/leads", "POST")).toBe(true);
+  });
+
+  it("logistica importa Boxful pero no borra importaciones", () => {
+    const l = permisosDeRoles(["logistica"]);
+    expect(puede(l, "/api/finance/logistics")).toBe(true);
+    expect(puede(l, "/api/finance/logistics", "POST")).toBe(true);
+    expect(puede(l, "/api/finance/logistics", "DELETE")).toBe(false);
+    expect(puede(["finanzas"], "/api/finance/logistics", "DELETE")).toBe(true);
+  });
+});
+
+describe("cambiarRol: los ajustes a mano no se pierden", () => {
+  it("marcar un rol suma sus permisos sin borrar los extra", () => {
+    // Monica: asesora + ver productividad + novedades + pedidos.
+    const r = cambiarRol(["asesora"], ["leads", "leads_productividad", "novedades", "pedidos"], "finanzas");
+    expect(r.roles).toEqual(["asesora", "finanzas"]);
+    expect(r.permisos).toEqual(["leads", "leads_productividad", "novedades", "pedidos", "finanzas"]);
+  });
+
+  it("desmarcar saca solo lo que no da otro rol", () => {
+    const r = cambiarRol(["asesora", "logistica"], ["leads", "leads_productividad", "novedades", "pedidos"], "logistica");
+    expect(r.roles).toEqual(["asesora"]);
+    expect(r.permisos).toEqual(["leads", "leads_productividad"]);
+    // jefa_tienda y logistica comparten novedades/pedidos: quitar logistica no los saca.
+    const j = cambiarRol(["jefa_tienda", "logistica"], permisosDeRoles(["jefa_tienda", "logistica"]), "logistica");
+    expect(j.permisos).toEqual(permisosDeRoles(["jefa_tienda"]));
   });
 });
 

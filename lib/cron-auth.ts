@@ -11,18 +11,25 @@
 //     sesion y sin el secreto— recibiria 401, y SessionGuard ante cualquier
 //     401 manda al login: la usuaria quedaba expulsada por apretar un boton.
 //
-// La regla ahora: pasa quien tiene sesion iniciada (los botones de la app) o
-// quien trae el secreto (Vercel lo manda solo en cada cron programado).
+// La regla ahora (27/10/2026):
+//   - Pasa quien trae el secreto: Vercel lo manda solo en cada cron programado.
+//   - Con sesion, solo quien tiene el permiso de ESE cron
+//     (permisosParaCronManual en lib/permisos.ts): el boton "Detectar" de
+//     Novedades, o quien administra. Antes pasaba cualquier sesion.
+//   - Sin secreto configurado NO pasa nadie sin sesion. Antes se dejaba pasar
+//     "para no cortar los crons el dia del deploy", y CRON_SECRET no estaba en
+//     Vercel: cualquiera en internet podia dispararlos.
 
 export function cronAccessAllowed(opts: {
-  authenticated: boolean;
+  /** Permisos de la sesion, o null si no hay sesion. */
+  permisos: readonly string[] | null;
+  /** Alguno de estos permisos deja dispararlo a mano. */
+  requeridos: readonly string[];
   authorization: string | null;
   secret: string | undefined;
 }): boolean {
-  if (opts.authenticated) return true;
-  // Sin secreto configurado no hay con que comparar. Se deja pasar para no
-  // cortar los crons el dia del deploy; la tira de salud lo avisa.
-  if (!opts.secret) return true;
+  if (opts.permisos && opts.requeridos.some((p) => opts.permisos!.includes(p))) return true;
+  if (!opts.secret) return false;
   return opts.authorization === `Bearer ${opts.secret}`;
 }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { HEADER_USUARIO, identidadAHeader, leerSesion, opcionesCookie, SESSION_COOKIE, type SesionClaims } from "@/lib/auth";
 import { cronAccessAllowed, wooCronAccessAllowed } from "@/lib/cron-auth";
-import { cumple, esEstatico, exigenciaDe, inicioDe } from "@/lib/permisos";
+import { cumple, esEstatico, exigenciaDe, inicioDe, permisosParaCronManual } from "@/lib/permisos";
 import { aplicarEstado, consultarEstado } from "@/lib/sesion-revalidar";
 import { COOKIE_YO, yoACookie } from "@/lib/sesion-cliente";
 
@@ -91,11 +91,17 @@ export async function middleware(req: NextRequest) {
       authorization: req.headers.get("authorization"),
       secret: process.env.WOO_KENKU_IT_SYNC_SECRET,
     }) : cronAccessAllowed({
-      authenticated: Boolean(claims),
+      permisos: claims ? claims.p : null,
+      requeridos: permisosParaCronManual(pathname),
       authorization: req.headers.get("authorization"),
       secret: process.env.CRON_SECRET,
     });
-    return allowed ? siguiente(req, claims) : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (allowed) return siguiente(req, claims);
+    // Con sesion pero sin el permiso: 403, no 401 (SessionGuard manda al
+    // login ante cualquier 401 y la persona quedaria expulsada).
+    return claims
+      ? NextResponse.json({ error: "No tienes acceso a este proceso." }, { status: 403 })
+      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   if (!claims) return sinSesion(req, habiaCookie);

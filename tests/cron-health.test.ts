@@ -23,6 +23,7 @@ import {
   type CronRunRow,
 } from "../lib/cron-jobs";
 import { cronAccessAllowed } from "../lib/cron-auth";
+import { permisosParaCronManual } from "../lib/permisos";
 
 const ROOT = path.resolve(__dirname, "..");
 const AHORA = Date.parse("2026-10-04T18:00:00Z");
@@ -217,20 +218,33 @@ describe("corridaOk y mensajeDeError", () => {
 
 describe("cronAccessAllowed: una sola puerta", () => {
   const SECRET = "s3cr3t";
-  it("con sesion pasa siempre: los botones de la app no se rompen", () => {
-    // El boton "Detectar" de Novedades llama a /api/cron/moovin con la cookie
-    // y SIN el secreto. Si esto diera 401, SessionGuard manda al login.
-    expect(cronAccessAllowed({ authenticated: true, authorization: null, secret: SECRET })).toBe(true);
+  const moovin = permisosParaCronManual("/api/cron/moovin");
+  const leads = permisosParaCronManual("/api/cron/leads");
+  it("el boton Detectar de Novedades sigue funcionando con la sesion", () => {
+    // Llama a /api/cron/moovin y /api/cron/incidencias con la cookie y SIN el
+    // secreto. Si esto fallara, la usuaria no podria detectar novedades.
+    expect(cronAccessAllowed({ permisos: ["novedades"], requeridos: moovin, authorization: null, secret: SECRET })).toBe(true);
+    expect(
+      cronAccessAllowed({ permisos: ["novedades"], requeridos: permisosParaCronManual("/api/cron/incidencias"), authorization: null, secret: SECRET })
+    ).toBe(true);
+  });
+  it("una sesion cualquiera ya no dispara crons", () => {
+    expect(cronAccessAllowed({ permisos: ["leads"], requeridos: moovin, authorization: null, secret: SECRET })).toBe(false);
+    expect(cronAccessAllowed({ permisos: ["leads", "novedades"], requeridos: leads, authorization: null, secret: SECRET })).toBe(false);
+    expect(cronAccessAllowed({ permisos: ["config"], requeridos: leads, authorization: null, secret: SECRET })).toBe(true);
   });
   it("sin sesion, solo con el secreto exacto", () => {
-    expect(cronAccessAllowed({ authenticated: false, authorization: `Bearer ${SECRET}`, secret: SECRET })).toBe(true);
-    expect(cronAccessAllowed({ authenticated: false, authorization: null, secret: SECRET })).toBe(false);
-    expect(cronAccessAllowed({ authenticated: false, authorization: "Bearer otro", secret: SECRET })).toBe(false);
-    expect(cronAccessAllowed({ authenticated: false, authorization: SECRET, secret: SECRET })).toBe(false);
+    expect(cronAccessAllowed({ permisos: null, requeridos: leads, authorization: `Bearer ${SECRET}`, secret: SECRET })).toBe(true);
+    expect(cronAccessAllowed({ permisos: null, requeridos: leads, authorization: null, secret: SECRET })).toBe(false);
+    expect(cronAccessAllowed({ permisos: null, requeridos: leads, authorization: "Bearer otro", secret: SECRET })).toBe(false);
+    expect(cronAccessAllowed({ permisos: null, requeridos: leads, authorization: SECRET, secret: SECRET })).toBe(false);
   });
-  it("sin secreto configurado se deja pasar (para no cortar los crons el dia del deploy)", () => {
-    expect(cronAccessAllowed({ authenticated: false, authorization: null, secret: undefined })).toBe(true);
-    expect(cronAccessAllowed({ authenticated: false, authorization: null, secret: "" })).toBe(true);
+  it("sin secreto configurado NO pasa nadie sin sesion (antes quedaban abiertos a internet)", () => {
+    expect(cronAccessAllowed({ permisos: null, requeridos: leads, authorization: null, secret: undefined })).toBe(false);
+    expect(cronAccessAllowed({ permisos: null, requeridos: leads, authorization: "Bearer ", secret: "" })).toBe(false);
+  });
+  it("la ruta con barra final usa la misma regla", () => {
+    expect(permisosParaCronManual("/api/cron/moovin/")).toEqual(moovin);
   });
 });
 

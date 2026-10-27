@@ -76,6 +76,50 @@ export function permisosDeRoles(roles: readonly string[]): Permiso[] {
 }
 
 /**
+ * Marcar o desmarcar un rol en la ficha de una persona, SIN perder los ajustes
+ * hechos a mano. Antes, tocar un rol reemplazaba los permisos por la suma de
+ * los roles y borraba en silencio, por ejemplo, "ver productividad del equipo".
+ *
+ * - Marcar: suma los permisos del rol a los que ya tiene.
+ * - Desmarcar: saca solo los permisos de ese rol que no da ningun otro de sus
+ *   roles. Lo agregado a mano que no es de ese rol, queda.
+ */
+export function cambiarRol(
+  roles: readonly string[],
+  permisos: readonly string[],
+  rol: Rol
+): { roles: Rol[]; permisos: Permiso[] } {
+  const actuales = roles.filter(esRol);
+  const marcar = !actuales.includes(rol);
+  const nuevosRoles = marcar ? [...actuales, rol] : actuales.filter((r) => r !== rol);
+  const set = new Set(normalizarPermisos(permisos));
+  if (marcar) {
+    for (const p of ROL_INFO[rol].permisos) set.add(p);
+  } else {
+    const quedan = new Set(permisosDeRoles(nuevosRoles));
+    for (const p of ROL_INFO[rol].permisos) if (!quedan.has(p)) set.delete(p);
+  }
+  return { roles: ROLES.filter((r) => nuevosRoles.includes(r)), permisos: PERMISOS.filter((p) => set.has(p)) };
+}
+
+/**
+ * Quien puede disparar A MANO un cron con su sesion (los botones de la app).
+ * Lo demas lo dispara solo Vercel, con CRON_SECRET (lib/cron-auth.ts). Antes
+ * cualquier sesion podia: una asesora podia lanzar sincronizaciones pesadas.
+ */
+const CRON_MANUAL: Record<string, Permiso[]> = {
+  // Boton "Detectar" de Novedades (app/admin/incidencias/page.tsx).
+  "/api/cron/moovin": ["novedades"],
+  "/api/cron/incidencias": ["novedades"],
+};
+const CRON_MANUAL_POR_DEFECTO: Permiso[] = ["config", "usuarios"];
+
+export function permisosParaCronManual(pathname: string): Permiso[] {
+  const ruta = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  return CRON_MANUAL[ruta] ?? CRON_MANUAL_POR_DEFECTO;
+}
+
+/**
  * Ve la productividad de TODO el equipo en Leads (no solo su fila). Lo da la
  * supervision completa o el permiso de solo ver, que no deja gestionar a
  * nombre de otra.
@@ -95,7 +139,8 @@ export function normalizarPermisos(lista: unknown): Permiso[] {
 
 /**
  * - publico: no pide sesion (login, webhooks que se autentican solos).
- * - cron: la puerta propia de los crons (sesion o CRON_SECRET).
+ * - cron: la puerta propia de los crons (CRON_SECRET, o sesion con el permiso
+ *   de permisosParaCronManual).
  * - sesion: cualquiera con sesion valida.
  * - permiso: sesion + al menos UNO de los permisos de la lista.
  */
@@ -164,8 +209,13 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/upsell-rules", exige: P("upsell") },
   { ruta: "/api/platform", exige: P("config", "usuarios") },
 
-  // Leads y chat
-  { ruta: "/api/leads", exige: P(...CHAT) },
+  // Leads y chat. El tablero (GET /api/leads) y la resincronizacion (POST)
+  // son de Leads; Novedades y Gestion de pedidos solo usan el panel de chat
+  // (mensajes, adjuntos y enviar).
+  { ruta: "/api/leads", exige: P(...LEADS) },
+  { ruta: "/api/leads/*/messages", exige: P(...CHAT) },
+  { ruta: "/api/leads/*/send", exige: P(...CHAT) },
+  { ruta: "/api/leads/media", exige: P(...CHAT) },
   { ruta: "/api/leads/chat-snapshots", exige: P("leads_equipo", "usuarios") },
   { ruta: "/api/leads/productivity", exige: P(...LEADS, "leads_productividad") },
   { ruta: "/api/leads/*/disposition", exige: P(...LEADS) },
@@ -198,6 +248,9 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/finance/notes", exige: P(...OPERACION) },
   { ruta: "/api/finance/boxful-files", exige: P(...OPERACION) },
   { ruta: "/api/finance/logistics", exige: P(...OPERACION) },
+  // Importar Boxful lo hace logistica desde Pedidos; BORRAR una importacion
+  // (y sus filas) no tiene boton y es de finanzas.
+  { ruta: "/api/finance/logistics", metodo: "DELETE", exige: P("finanzas") },
   { ruta: "/api/finance/shopify-sync", exige: P(...OPERACION) },
   { ruta: "/api/finance/moovin-sync", exige: P(...OPERACION) },
   { ruta: "/api/finance/forza-sync", exige: P(...OPERACION) },

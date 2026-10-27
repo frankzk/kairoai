@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { permisosDeRoles, type Permiso, type Rol } from "@/lib/permisos";
+import { cambiarRol, type Permiso, type Rol } from "@/lib/permisos";
 
 // Usuarios y accesos. Solo la ve quien tiene el permiso "usuarios".
 //
@@ -155,11 +155,11 @@ export default function UsuariosPage() {
     return lista.includes(v) ? lista.filter((x) => x !== v) : [...lista, v];
   }
 
-  // Marcar o desmarcar un rol recalcula las pantallas: la suma de los roles.
+  // Marcar un rol suma sus pantallas; desmarcarlo saca solo las que no da otro
+  // de sus roles. Los ajustes hechos a mano se conservan (lib/permisos.ts).
   function toggleRol(r: Rol) {
     if (!borrador) return;
-    const roles = toggle(borrador.roles, r);
-    setBorrador({ ...borrador, roles, permisos: permisosDeRoles(roles) });
+    setBorrador({ ...borrador, ...cambiarRol(borrador.roles, borrador.permisos, r) });
   }
 
   function elegirStaff(idStr: string) {
@@ -555,7 +555,7 @@ export default function UsuariosPage() {
             </div>
 
             <fieldset className="mt-5">
-              <legend className="mb-2 text-sm font-medium">Roles <span className="font-normal text-muted-foreground">(se suman; precargan las pantallas)</span></legend>
+              <legend className="mb-2 text-sm font-medium">Roles <span className="font-normal text-muted-foreground">(se suman; marcar uno agrega sus pantallas sin quitar los ajustes a mano)</span></legend>
               <div className="flex flex-wrap gap-2">
                 {catalogo.roles.map((r) => (
                   <label key={r.id} className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/10">
