@@ -108,3 +108,21 @@ El respaldo es una captura para consulta, exportación y migración. El checkout
 procesamiento de pagos y creación de nuevas ventas requieren implementar o
 conectar esos servicios. Los envíos y liquidaciones propios de DropLatam
 deben incorporarse desde ese operador para completar la operación.
+
+## Ampliación autorizada del 27-10-2026
+
+La credencial renovada confirma `read_discounts`, `read_markets`, `read_locales`
+y `read_returns` en la misma app Kairo Kenku MX. Se extrajeron dos mercados con
+sus condiciones de países, monedas, dominios, idioma e impuestos, español como
+único idioma publicado y 470 definiciones de motivos de devolución. La consulta
+de descuentos modernos finalizó sin registros. La exportación de devoluciones
+nativas terminó con 24.120 pedidos y ningún nodo Return; los 5.913 reembolsos
+guardados en el respaldo financiero son un recurso distinto.
+
+Las reglas legales de devolución requieren `read_legal_policies`, que no está
+concedido. Tarjetas regalo, scripts y liquidaciones de Shopify Payments siguen
+denegados con una credencial renovada. Estos bloqueos se conservan en el informe;
+no se interpretan como colecciones vacías. La copia del día 26 se conserva y la
+ampliación se empaqueta como una versión nueva del día 27, con índice, manifiesto
+y prueba de restauración propios. La autorización de México solicita los cuatro
+permisos ya publicados; las otras tiendas mantienen sus alcances anteriores.
