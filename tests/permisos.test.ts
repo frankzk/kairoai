@@ -11,6 +11,7 @@ import {
   permisosDeRoles,
   reglaDe,
   rutaInternaSegura,
+  veProductividadDelEquipo,
   type Permiso,
 } from "../lib/permisos";
 
@@ -127,6 +128,20 @@ describe("lo que puede hacer cada rol", () => {
   it("solo usuarios administra usuarios", () => {
     expect(puede(permisosDeRoles(["jefa_tienda"]), "/api/users")).toBe(false);
     expect(puede(permisosDeRoles(["admin"]), "/api/users", "POST")).toBe(true);
+  });
+
+  it("ver productividad del equipo NO es supervision: solo abre la productividad", () => {
+    const solo: Permiso[] = ["leads_productividad"];
+    expect(puede(solo, "/api/leads/productivity")).toBe(true);
+    expect(puede(solo, "/api/leads/5/disposition", "POST")).toBe(false);
+    expect(puede(solo, "/api/leads/chat-snapshots")).toBe(false);
+    expect(veProductividadDelEquipo(["leads", "leads_productividad"])).toBe(true);
+    expect(veProductividadDelEquipo(["leads", "leads_equipo"])).toBe(true);
+    expect(veProductividadDelEquipo(["leads"])).toBe(false);
+  });
+
+  it("el admin tiene tambien el permiso nuevo", () => {
+    expect(permisosDeRoles(["admin"])).toContain("leads_productividad");
   });
 });
 

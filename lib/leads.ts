@@ -3,6 +3,7 @@
 // que el resto de APIs del repo; no hay RLS todavia.
 
 import { getDB } from "./db";
+import { autorDeGestion } from "./identidad";
 import { PURCHASE_PROOF_STATUSES, statusBoardStage, statusCategory, statusesForBoard, type BoardStage } from "./leads-classify";
 import { elegirPedidosParecidos, type CandidatoPedido } from "./leads-pedido-parecido";
 import type { ChatLeadSummary, LeadCategory, LeadStateSnapshot, StatusSource } from "./leads-types";
@@ -651,25 +652,41 @@ export async function insertLeadCall(row: {
   next_followup_at?: string | null;
   prev_state?: GestionSnapshot | null;
 }): Promise<number | null> {
-  const { data, error } = await getDB()
-    .from("lead_calls")
-    .insert({
-      lead_id: row.lead_id,
-      store_id: row.store_id,
-      vendedora: row.vendedora,
-      kind: row.kind,
-      new_status: row.new_status ?? null,
-      note: row.note ?? null,
-      next_followup_at: row.next_followup_at ?? null,
-      prev_state: row.prev_state ?? null,
-    })
-    // Devuelve el id para que quien registra una gestion pueda ofrecer
-    // "Deshacer" apuntando a ESA fila y no a "la ultima", que puede haber
-    // cambiado mientras la asesora leia el mensaje.
-    .select("id")
-    .single();
+  const fila = {
+    lead_id: row.lead_id,
+    store_id: row.store_id,
+    vendedora: row.vendedora,
+    kind: row.kind,
+    new_status: row.new_status ?? null,
+    note: row.note ?? null,
+    next_followup_at: row.next_followup_at ?? null,
+    prev_state: row.prev_state ?? null,
+  };
+  // Quien estaba conectado (no a nombre de quien quedo): ver
+  // 0053_lead_calls_autor.sql. Fuera de un pedido (crons) no hay autor.
+  const autor = autorDeGestion();
+  const insertar = (valores: Record<string, unknown>) =>
+    getDB()
+      .from("lead_calls")
+      .insert(valores)
+      // Devuelve el id para que quien registra una gestion pueda ofrecer
+      // "Deshacer" apuntando a ESA fila y no a "la ultima", que puede haber
+      // cambiado mientras la asesora leia el mensaje.
+      .select("id")
+      .single();
+  let { data, error } = await insertar(autor ? { ...fila, ...autor } : fila);
+  // Sin la migracion 0053 aplicada la gestion se registra igual, sin autor:
+  // perder la autoria es mejor que perder la gestion.
+  if (error && autor && faltanColumnasDeAutor(error.message)) {
+    ({ data, error } = await insertar(fila));
+  }
   if (error) throw new Error(`insertLeadCall: ${error.message}`);
   return (data as { id: number } | null)?.id ?? null;
+}
+
+/** El error de PostgREST/Postgres cuando lead_calls aun no tiene las columnas de autor. */
+export function faltanColumnasDeAutor(mensaje: string | undefined): boolean {
+  return /kairo_user_id|'actor'|"actor"|column .*actor/i.test(mensaje ?? "");
 }
 
 /**

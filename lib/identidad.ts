@@ -45,3 +45,19 @@ export function vendedoraEfectiva(pedida: unknown): number | null {
 export function actorActual(): string {
   return identidadActual()?.nombre || "sistema";
 }
+
+/**
+ * Quien registra una gestion (lead_calls.kairo_user_id / actor), o null si es
+ * un proceso del sistema. El admin de la contrasena compartida (id 0) no tiene
+ * fila en kairo_users: va sin id, solo con el nombre.
+ */
+export function autorDeGestion(yo: Identidad | null = identidadActual()): {
+  kairo_user_id: number | null;
+  actor: string;
+} | null {
+  if (!yo) return null;
+  return {
+    kairo_user_id: yo.id > 0 ? yo.id : null,
+    actor: yo.nombre || (yo.id > 0 ? `usuario ${yo.id}` : "Administrador"),
+  };
+}

@@ -42,6 +42,13 @@ describe("crDateRange", () => {
 const getProductivity = vi.fn();
 vi.mock("@/lib/leads", () => ({ getProductivity: (...a: unknown[]) => getProductivity(...a) }));
 
+// Quien consulta (null = proceso sin persona, como en los tests de rango).
+let yo: { id: number; nombre: string; permisos: string[]; tiendas: string[]; staffId: number | null } | null = null;
+vi.mock("@/lib/identidad", () => ({
+  identidadActual: () => yo,
+  tiendasPermitidas: () => (yo ? yo.tiendas : null),
+}));
+
 async function pedir(qs: string) {
   const { GET } = await import("../app/api/leads/productivity/route");
   return GET(new NextRequest(`http://localhost/api/leads/productivity?store=mireva-cr&${qs}`));
@@ -49,8 +56,40 @@ async function pedir(qs: string) {
 
 describe("/api/leads/productivity", () => {
   beforeEach(() => {
+    yo = null;
     getProductivity.mockReset();
     getProductivity.mockResolvedValue([{ vendedora_id: 1, name: "Susan", gestiones: 10, leads: 8, pedidos: 2 }]);
+  });
+
+  describe("que filas ve cada quien", () => {
+    const equipo = [
+      { vendedora_id: 19, name: "Leonor", gestiones: 2, leads: 2, pedidos: 1 },
+      { vendedora_id: 21, name: "Mónica", gestiones: 16, leads: 15, pedidos: 1 },
+    ];
+    const asesora = (permisos: string[]) => ({ id: 9, nombre: "Mónica", permisos, tiendas: ["mireva-cr"], staffId: 21 });
+
+    it("una asesora sin permisos extra ve solo su fila", async () => {
+      getProductivity.mockResolvedValue(equipo);
+      yo = asesora(["leads"]);
+      const json = await (await pedir("range=hoy")).json();
+      expect(json.rows.map((r: { name: string }) => r.name)).toEqual(["Mónica"]);
+      expect(json.solo_propia).toBe(true);
+    });
+
+    it("con 'ver productividad del equipo' ve a todo el equipo", async () => {
+      getProductivity.mockResolvedValue(equipo);
+      yo = asesora(["leads", "leads_productividad"]);
+      const json = await (await pedir("range=hoy")).json();
+      expect(json.rows).toHaveLength(2);
+      expect(json.solo_propia).toBe(false);
+      expect(json.totals).toEqual({ gestiones: 18, leads: 17, pedidos: 2 });
+    });
+
+    it("supervision tambien ve a todo el equipo", async () => {
+      getProductivity.mockResolvedValue(equipo);
+      yo = asesora(["leads", "leads_equipo"]);
+      expect((await (await pedir("range=hoy")).json()).rows).toHaveLength(2);
+    });
   });
 
   it("con from/to consulta exactamente ese rango", async () => {

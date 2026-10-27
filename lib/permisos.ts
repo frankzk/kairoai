@@ -17,6 +17,7 @@ export const PERMISOS = [
   "panel",
   "leads",
   "leads_equipo",
+  "leads_productividad",
   "novedades",
   "pedidos",
   "finanzas",
@@ -31,7 +32,11 @@ export const PERMISO_INFO: Record<Permiso, { label: string; detalle: string }> =
   leads: { label: "Leads", detalle: "Tablero de leads, chat y gestiones, siempre a su propio nombre" },
   leads_equipo: {
     label: "Leads: supervisión",
-    detalle: "Gestiona como cualquier asesora y ve la productividad de todo el equipo",
+    detalle: "Gestiona a nombre de cualquier asesora y ve la productividad de todo el equipo",
+  },
+  leads_productividad: {
+    label: "Leads: ver productividad del equipo",
+    detalle: "Ve la productividad de todo el equipo, pero gestiona siempre a su propio nombre",
   },
   novedades: { label: "Novedades", detalle: "Bandeja de entregas con problemas" },
   pedidos: { label: "Gestión de pedidos", detalle: "Pedidos, despacho, auditoría, notas y archivos de logística" },
@@ -68,6 +73,15 @@ export function permisosDeRoles(roles: readonly string[]): Permiso[] {
   const set = new Set<Permiso>();
   for (const r of roles) if (esRol(r)) for (const p of ROL_INFO[r].permisos) set.add(p);
   return PERMISOS.filter((p) => set.has(p));
+}
+
+/**
+ * Ve la productividad de TODO el equipo en Leads (no solo su fila). Lo da la
+ * supervision completa o el permiso de solo ver, que no deja gestionar a
+ * nombre de otra.
+ */
+export function veProductividadDelEquipo(permisos: readonly string[]): boolean {
+  return permisos.includes("leads_equipo") || permisos.includes("leads_productividad");
 }
 
 /** Limpia una lista que viene de afuera: solo permisos validos, sin repetir. */
@@ -153,7 +167,7 @@ export const REGLAS: Regla[] = [
   // Leads y chat
   { ruta: "/api/leads", exige: P(...CHAT) },
   { ruta: "/api/leads/chat-snapshots", exige: P("leads_equipo", "usuarios") },
-  { ruta: "/api/leads/productivity", exige: P(...LEADS) },
+  { ruta: "/api/leads/productivity", exige: P(...LEADS, "leads_productividad") },
   { ruta: "/api/leads/*/disposition", exige: P(...LEADS) },
   { ruta: "/api/leads/*/order", exige: P(...LEADS) },
   { ruta: "/api/leads/*/customer", exige: P(...LEADS) },
