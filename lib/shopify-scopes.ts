@@ -45,7 +45,13 @@ export const SCOPES_RESPALDO = [
 const ESCRITURA_KAIRO = ["write_orders", "write_draft_orders"];
 
 export function scopesParaTienda(store: Pick<TiendaShopify, "code">): string[] {
-  return esSoloRespaldo(store)
+  const scopes = esSoloRespaldo(store)
     ? [...LECTURA_BASE, ...SCOPES_RESPALDO]
     : [...LECTURA_BASE, ...ESCRITURA_KAIRO, ...SCOPES_RESPALDO];
+  // Publicados por el dueño en Kairo Kenku MX v3. Se solicitan también
+  // al reautorizar; read_returns sigue pendiente de publicación en Shopify.
+  if (store.code === "kenku-mx") {
+    scopes.push("read_discounts", "read_markets", "read_locales");
+  }
+  return scopes;
 }
