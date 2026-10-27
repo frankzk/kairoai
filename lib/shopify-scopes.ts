@@ -48,10 +48,10 @@ export function scopesParaTienda(store: Pick<TiendaShopify, "code">): string[] {
   const scopes = esSoloRespaldo(store)
     ? [...LECTURA_BASE, ...SCOPES_RESPALDO]
     : [...LECTURA_BASE, ...ESCRITURA_KAIRO, ...SCOPES_RESPALDO];
-  // Publicados por el dueño en Kairo Kenku MX v3. Se solicitan también
-  // al reautorizar; read_returns sigue pendiente de publicación en Shopify.
+  // Publicados y autorizados por el dueño en Kairo Kenku MX.
+  // Se solicitan también al reautorizar para conservar la lectura ampliada.
   if (store.code === "kenku-mx") {
-    scopes.push("read_discounts", "read_markets", "read_locales");
+    scopes.push("read_discounts", "read_markets", "read_locales", "read_returns");
   }
   return scopes;
 }

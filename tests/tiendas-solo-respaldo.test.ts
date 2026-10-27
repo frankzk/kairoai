@@ -47,11 +47,10 @@ describe("tiendas de solo respaldo", () => {
 });
 
 describe("permisos de la app de Shopify", () => {
-  it("reautoriza México con los tres permisos publicados sin pedirlos a otras tiendas", () => {
-    const extra = ["read_discounts", "read_markets", "read_locales"];
+  it("reautoriza México con los cuatro permisos publicados sin pedirlos a otras tiendas", () => {
+    const extra = ["read_discounts", "read_markets", "read_locales", "read_returns"];
     const mexico = scopesParaTienda({ code: "kenku-mx" });
     expect(mexico).toEqual(expect.arrayContaining(extra));
-    expect(mexico).not.toContain("read_returns");
     expect(new Set(mexico).size).toBe(mexico.length);
     for (const code of ["kenku-ar", "kenku-it", "mireva-cr", "mireva-hn"] as const) {
       expect(scopesParaTienda({ code }).filter(scope => extra.includes(scope))).toEqual([]);
