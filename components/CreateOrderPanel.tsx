@@ -44,7 +44,7 @@ const newLine = (): OrderLine => ({ key: lineSeq++, product: null, quantity: 1, 
 export default function CreateOrderPanel({
   lead,
   store,
-  destino = "shopify",
+  destino = "icomfly",
   onCreated,
 }: {
   lead: LeadLike;
@@ -82,6 +82,14 @@ export default function CreateOrderPanel({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdOrder, setCreatedOrder] = useState<string | null>(null);
+  const receiptKey = `icomfly-attempt:${store}:${lead.id}`;
+  const [pending, setPending] = useState<{request_id:string;icomfly_id?:string|null;message?:string}|null>(null);
+  const [receiptLoaded,setReceiptLoaded]=useState(false);
+  useEffect(()=>{
+    const saved=localStorage.getItem(receiptKey);
+    if(saved)setPending({request_id:saved,message:"Hay una solicitud anterior pendiente de comprobar."});
+    setReceiptLoaded(true);
+  },[receiptKey]);
   const [aviso, setAviso] = useState<string | null>(null);
 
   // Asesoras + recordar la seleccionada.
@@ -174,17 +182,23 @@ export default function CreateOrderPanel({
   const validLines = lines.filter((l) => l.product && Number(l.quantity) > 0 && Number(l.price) > 0);
   // iComfly no crea el pedido sin direccion, ciudad y departamento.
   const faltaEnvio = destino === "icomfly" && (!address.trim() || !canton.trim() || !province);
-  const canSubmit = vendedoraId != null && validLines.length > 0 && !submitting && !faltaEnvio;
+  const canSubmit = vendedoraId != null && validLines.length > 0 && !submitting && !faltaEnvio && receiptLoaded && !pending;
 
   async function submit() {
-    if (!canSubmit) return;
+    if (!canSubmit && !pending) return;
+    if(submitting)return;
     setSubmitting(true);
     setError(null);
+    const requestId=pending?.request_id??crypto.randomUUID();
+    const wasPending=!!pending;
+    localStorage.setItem(receiptKey,requestId);
+    setPending({request_id:requestId,message:"Consultando confirmación de iComfly…"});
     try {
       const res = await fetch(`/api/leads/${lead.id}/order`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(wasPending ? {store,destino:"icomfly",request_id:requestId,vendedora_id:vendedoraId} : {
+          request_id:requestId,
           store,
           destino,
           vendedora_id: vendedoraId,
@@ -203,7 +217,19 @@ export default function CreateOrderPanel({
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Error al crear el pedido");
+      if(data.pending || res.status===202){
+        const receipt={request_id:data.request_id||requestId,icomfly_id:data.icomfly_id,message:data.message};
+        localStorage.setItem(receiptKey,receipt.request_id);
+        setPending(receipt);
+        return;
+      }
+      if (!res.ok){
+        if(res.status<500){localStorage.removeItem(receiptKey);setPending(null);}
+        throw new Error(data.error || "No se pudo verificar la solicitud.");
+      }
+      if(data.verified!==true || !data.order_name)throw new Error("Falta la confirmación verificada de iComfly.");
+      localStorage.removeItem(receiptKey);
+      setPending(null);
       // Confirmacion DENTRO del drawer: no cerramos, mostramos exito y
       // refrescamos el tablero por detras.
       setCreatedOrder(data.order_name);
@@ -219,10 +245,23 @@ export default function CreateOrderPanel({
 
   function resetForNew() {
     setCreatedOrder(null);
+    setPending(null);
+    localStorage.removeItem(receiptKey);
     setAviso(null);
     setConfirming(false);
     setLines([newLine()]);
     setDiscountValue("");
+  }
+
+  if (pending) {
+    return <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center" role="status">
+      <p className="text-lg font-semibold">Pendiente de verificación</p>
+      {pending.icomfly_id && <p>Referencia de iComfly: <strong>{pending.icomfly_id}</strong></p>}
+      <p className="text-sm text-muted-foreground">{pending.message || "La solicitud no tiene confirmación todavía."}</p>
+      <p className="text-sm">Volver a consultar comprueba el mismo intento. No crea otro pedido.</p>
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      <Button disabled={submitting} onClick={submit}>{submitting?"Verificando en iComfly…":"Volver a consultar"}</Button>
+    </div>;
   }
 
   if (createdOrder) {
@@ -231,10 +270,10 @@ export default function CreateOrderPanel({
         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/15">
           <CheckCircle2 className="h-8 w-8 text-emerald-400" />
         </div>
-        <p className="text-lg font-semibold">Pedido creado</p>
+        <p className="text-lg font-semibold">Pedido verificado en iComfly</p>
         <p className="text-sm text-muted-foreground">
           Se generó el pedido <span className="font-medium text-foreground">{createdOrder}</span> en {plataforma}.
-          El lead pasó a <span className="font-medium text-foreground">Ganados</span>.
+          {!aviso && <> El lead pasó a <span className="font-medium text-foreground">Ganados</span>.</>}
         </p>
         {aviso && <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-300">{aviso}</p>}
         <Button variant="outline" className="mt-2" onClick={resetForNew}>

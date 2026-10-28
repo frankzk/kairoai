@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody } from "@/lib/stores";
-import { getShopifyCredentials } from "@/lib/stores";
-import { createLeadOrder, type LeadOrderInput, type ShopifyOrderAddress } from "@/lib/shopify";
 import { getLead, markLeadWonByAdvisor, type LeadRecord } from "@/lib/leads";
 import { vendedoraEfectiva } from "@/lib/identidad";
 import { getStoreRegions, type FinanceStoreCode } from "@/lib/store-config";
@@ -17,14 +15,17 @@ import {
 } from "@/lib/icomfly-pedido-lead";
 import { nombrePedidoIcomfly } from "@/lib/icomfly-pedidos";
 import { runIcomflySync } from "@/lib/icomfly-sync";
+import { verifyCreatedIcomflyOrder } from "@/lib/icomfly-confirmation";
+import { findReceipt, reserveReceipt, saveReceiptId, confirmReceipt, type Receipt } from "@/lib/icomfly-receipts";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 120;
 
 interface OrderBody {
+  request_id?: string;
   store?: string;
   vendedora_id?: number;
-  /** "icomfly": el pedido se crea en iComfly (boton "Crear en iComfly"); si no, en Shopify. */
+  /** Solo iComfly; Shopify se rechaza también para pantallas antiguas. */
   destino?: "shopify" | "icomfly";
   items?: Array<{
     variant_id?: number;
@@ -47,32 +48,33 @@ interface OrderBody {
   note?: string;
 }
 
-// POST: la asesora crea el pedido COD en Shopify desde el drawer y el lead
-// pasa a Ganado (atribuido a ella). Accion hacia afuera: crea un pedido REAL.
+// Creates only in iComfly. Win/success require independent read verification.
 export async function POST(req: NextRequest, ctx: { params: { leadId: string } }) {
   const body = (await req.json().catch(() => null)) as OrderBody | null;
   const store = getRequiredStoreFromBody(body);
   if (!store) {
     return NextResponse.json({ error: "store requerido: usa mireva-cr o mireva-hn" }, { status: 400 });
   }
+  if(body?.destino !== "icomfly") return NextResponse.json({error:"La creación en Shopify está desactivada. Recarga y usa Crear en iComfly."},{status:403});
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.request_id||""))return NextResponse.json({error:"Recarga la página para crear el pedido."},{status:400});
   const leadId = Number(ctx.params.leadId);
   if (!Number.isFinite(leadId)) {
     return NextResponse.json({ error: "leadId invalido" }, { status: 400 });
   }
+  try {
+    const lead = await getLead(store.id, leadId);
+    if (!lead) return NextResponse.json({ error: "lead no encontrado" }, { status: 404 });
+    const existing=await findReceipt(store.id,leadId,body.request_id!);
+    if(existing)return await verificarRecibo(existing,store.code);
   // Una asesora sin permiso de supervision queda SIEMPRE a su nombre
   // (lib/identidad.ts): el navegador no puede registrar a nombre de otra.
   const vendedoraId = vendedoraEfectiva(body?.vendedora_id) ?? NaN;
   if (!Number.isFinite(vendedoraId) || vendedoraId <= 0) {
     return NextResponse.json({ error: "Selecciona quien eres (asesora) antes de crear el pedido." }, { status: 400 });
   }
-  const items = (body?.items ?? []).filter((it) => (it.quantity ?? 0) > 0 && (it.variant_id || it.title));
-  if (!items.length) {
-    return NextResponse.json({ error: "Agrega al menos un producto al pedido." }, { status: 400 });
-  }
 
-  try {
-    const lead = await getLead(store.id, leadId);
-    if (!lead) return NextResponse.json({ error: "lead no encontrado" }, { status: 404 });
+    const items=(body.items??[]).filter(it=>(it.quantity??0)>0&&(it.variant_id||it.title));
+    if(!items.length)return NextResponse.json({error:"Agrega al menos un producto al pedido."},{status:400});
 
     if (body?.destino === "icomfly") {
       // Interruptor de emergencia: CREAR_EN_ICOMFLY_APAGADO=1 lo apaga sin
@@ -83,78 +85,13 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
       // pantalla abierta desde antes de ocultar el boton.
       if (process.env.CREAR_EN_ICOMFLY_APAGADO === "1" || !creaEnIcomfly(store.code)) {
         return NextResponse.json(
-          { error: "Crear en iComfly está desactivado por ahora: usa «Crear pedido». Recarga la página (F5)." },
+          { error: "Crear en iComfly está desactivado por ahora: contacta a supervisión. Recarga la página (F5)." },
           { status: 403 }
         );
       }
       return await crearEnIcomfly({ body, items, lead, leadId, storeId: store.id, storeCode: store.code, vendedoraId });
     }
-
-    const { shop, token, missing } = getShopifyCredentials(store);
-    if (!shop || !token) {
-      return NextResponse.json(
-        { error: `Shopify ${store.shortLabel} no configurado. Falta ${missing.join(" y ")}.` },
-        { status: 400 }
-      );
-    }
-
-    const nameParts = (body?.shipping?.name || lead.name || "").trim().split(/\s+/);
-    const firstName = nameParts.slice(0, -1).join(" ") || nameParts[0] || "Cliente";
-    const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : "";
-
-    const shipping: ShopifyOrderAddress = {
-      first_name: firstName,
-      last_name: lastName,
-      address1: [body?.shipping?.address, body?.shipping?.reference].filter(Boolean).join(" - ") || undefined,
-      city: body?.shipping?.canton || undefined,
-      province: body?.shipping?.province || undefined,
-      // El pais de la TIENDA. Estaba fijo en "Costa Rica" y los pedidos de
-      // Honduras creados desde el tablero salian con ese pais (44 hasta el
-      // 12/10/2026).
-      country: store.shortLabel,
-      country_code: store.countryCode,
-      phone: lead.phone,
-    };
-
-    const paymentLabel = body?.payment_method === "sinpe" ? "SINPE" : "Contraentrega";
-    const noteLines = [
-      `Cerrado por la asesora desde el tablero de Leads (Kairo).`,
-      `Pago: ${paymentLabel}.`,
-      body?.note ? `Nota: ${body.note}` : "",
-    ].filter(Boolean);
-
-    const input: LeadOrderInput = {
-      line_items: items.map((it) => ({
-        variant_id: it.variant_id,
-        sku: it.sku,
-        title: it.title || "Producto",
-        price: String(it.price ?? "0"),
-        quantity: Number(it.quantity) || 1,
-      })),
-      phone: lead.phone,
-      shipping_address: shipping,
-      note: noteLines.join(" "),
-      tags: "cerrado_por_asesora, kairo_leads",
-    };
-    if (body?.discount?.value && body.discount.value > 0) {
-      input.applied_discount = {
-        description: "Descuento asesora",
-        value_type: body.discount.type === "fixed_amount" ? "fixed_amount" : "percentage",
-        value: String(body.discount.value),
-      };
-    }
-
-    const order = await createLeadOrder(input, { shop, token });
-
-    await markLeadWonByAdvisor({
-      storeId: store.id,
-      leadId,
-      vendedora: vendedoraId,
-      shopifyOrderName: order.name,
-      note: `pedido ${order.name} creado por la asesora`,
-    });
-
-    return NextResponse.json({ ok: true, order_name: order.name, total: order.total });
+    return NextResponse.json({error:"Destino de creación no disponible."},{status:403});
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al crear el pedido";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -226,39 +163,40 @@ async function crearEnIcomfly(ctx: {
     },
     productos
   );
-  const r = await llamarHerramientaIcomfly(storeCode, "crear_pedido", args);
-  const pedido = (r.pedido ?? {}) as { id?: unknown; order_number?: unknown; total?: unknown };
-  if (pedido.id == null) throw new Error("iComfly no devolvió el pedido creado: revisa en iComfly antes de reintentar.");
-  const nombre = nombrePedidoIcomfly(pedido.order_number, pedido.id);
-
-  // El pedido YA existe: si marcar el lead falla, se avisa pero no se
-  // devuelve error (la asesora reintentaria y crearia otro pedido).
-  let aviso: string | undefined;
-  try {
-    await markLeadWonByAdvisor({
-      storeId,
-      leadId,
-      vendedora: vendedoraId,
-      shopifyOrderName: nombre,
-      note: `pedido ${nombre} creado por la asesora en iComfly`,
-    });
-  } catch (err) {
-    aviso = `El pedido se creó, pero el lead no se pudo marcar como ganado: ${err instanceof Error ? err.message : err}`;
+  const receipt: Receipt={request_id:body.request_id!,store_id:storeId,lead_id:leadId,advisor_id:vendedoraId,icomfly_id:null,confirmed_at:null};
+  if(!await reserveReceipt(receipt)){
+    const existing=await findReceipt(storeId,leadId,body.request_id!);
+    if(!existing)throw new Error("No se pudo recuperar el intento. Revisa iComfly antes de repetir.");
+    return verificarRecibo(existing,storeCode);
   }
+  try{
+    const r=await llamarHerramientaIcomfly(storeCode,"crear_pedido",args);
+    const pedido=(r.pedido??{}) as {id?:unknown};
+    if(!/^\d+$/.test(String(pedido.id??"")))return pendiente(receipt);
+    await saveReceiptId(receipt,String(pedido.id));
+  }catch{
+    // A timeout can occur AFTER creation: preserve the receipt and never resend.
+    return pendiente(receipt);
+  }
+  return verificarRecibo(receipt,storeCode);
+}
 
-  // Que el pedido llegue ya a Kairo: la pagina mas reciente de iComfly de esa
-  // tienda (el cron lo trae igual cada 30 minutos). Hasta 8 s.
-  await Promise.race([
-    runIcomflySync({ store: storeCode, maxPages: 1 }).catch(() => undefined),
-    new Promise((resolve) => setTimeout(resolve, 8000)),
-  ]);
-
-  return NextResponse.json({
-    ok: true,
-    destino: "icomfly",
-    order_name: nombre,
-    icomfly_id: String(pedido.id),
-    total: pedido.total ?? args.total,
-    ...(aviso ? { aviso } : {}),
-  });
+function pendiente(receipt: Receipt){
+ return NextResponse.json({ok:false,pending:true,request_id:receipt.request_id,icomfly_id:receipt.icomfly_id,
+  message:receipt.icomfly_id ? "iComfly devolvió una referencia. Falta verificar el pedido en su listado; no vuelvas a crearlo." : "La solicitud quedó sin confirmación. Revisa iComfly con supervisión antes de crear otro pedido."},{status:202});
+}
+async function verificarRecibo(receipt:Receipt,storeCode:FinanceStoreCode):Promise<NextResponse>{
+ if(!receipt.icomfly_id)return pendiente(receipt);
+ const nombre=nombrePedidoIcomfly(null,receipt.icomfly_id);
+ if(receipt.confirmed_at)return NextResponse.json({ok:true,verified:true,destino:"icomfly",order_name:nombre,icomfly_id:receipt.icomfly_id});
+ let verified;
+ try{verified=await verifyCreatedIcomflyOrder(storeCode,receipt.icomfly_id);}catch{return pendiente(receipt);}
+ if(!verified)return pendiente(receipt);
+ let aviso:string|undefined;
+ try{
+  await markLeadWonByAdvisor({storeId:receipt.store_id,leadId:receipt.lead_id,vendedora:receipt.advisor_id,shopifyOrderName:nombre,note:`pedido ${nombre} verificado en iComfly`});
+  await confirmReceipt(receipt);
+ }catch{aviso="El pedido se verificó en iComfly, pero falta actualizar su gestión en Kairo.";}
+ await Promise.race([runIcomflySync({store:storeCode,maxPages:1}).catch(()=>undefined),new Promise(resolve=>setTimeout(resolve,2000))]);
+ return NextResponse.json({ok:true,verified:true,destino:"icomfly",order_name:nombre,icomfly_id:receipt.icomfly_id,order_number:verified.orderNumber,total:verified.total,...(aviso?{aviso}:{})});
 }

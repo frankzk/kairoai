@@ -1766,14 +1766,6 @@ function LeadDrawer({
             </div>
           </div>
           <CallButton leadId={lead.id} store={leadStore} />
-          <Button
-            size="sm"
-            variant={pedidoEn === "shopify" ? "outline" : "default"}
-            onClick={() => setPedidoEn((v) => (v === "shopify" ? null : "shopify"))}
-          >
-            <ShoppingCart className="mr-2 h-4 w-4" />
-            {pedidoEn === "shopify" ? "Ocultar pedido" : "Crear pedido"}
-          </Button>
           {/* Visible desde el 26/10/2026: el conector de iComfly ya crea
               pedidos visibles ("Manual #…"). Salvo en las tiendas de
               TIENDAS_SIN_CREAR_EN_ICOMFLY, cuyo conector todavia los deja
@@ -1836,7 +1828,7 @@ function LeadDrawer({
               <div className="absolute inset-0 z-10 overflow-y-auto bg-card">
                 <CreateOrderPanel
                   // key: al cambiar de Shopify a iComfly el formulario empieza de cero.
-                  key={pedidoEn}
+                  key={`${leadStore}:${lead.id}:${pedidoEn}`}
                   lead={{ id: lead.id, name: lead.name, phone: lead.phone }}
                   store={leadStore}
                   destino={pedidoEn}
