@@ -129,6 +129,7 @@ async function getToken(storeCode: FinanceStoreCode): Promise<string> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
     cache: "no-store",
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) {
     throw new Error(`iComfly login error ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -153,6 +154,7 @@ async function icomflyFetch(path: string, storeCode: FinanceStoreCode): Promise<
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
+    signal: AbortSignal.timeout(15000),
   });
   if (res.status === 401) {
     // Token expirado: invalida cache y reintenta una vez.
@@ -161,6 +163,7 @@ async function icomflyFetch(path: string, storeCode: FinanceStoreCode): Promise<
     const retry = await fetch(`${BASE}${path}`, {
       headers: { Authorization: `Bearer ${retryToken}` },
       cache: "no-store",
+      signal: AbortSignal.timeout(15000),
     });
     if (!retry.ok) throw new Error(`iComfly API error ${retry.status}: ${(await retry.text()).slice(0, 200)}`);
     return retry.json();
