@@ -63,9 +63,10 @@ describe("marketing API isolation and availability", () => {
     expect(await response.json()).toHaveProperty("error");
   });
 
-  it("requires financial permission on both the page and API", () => {
+  it("requires marketing permission on both the page and API", () => {
     for (const route of ["/admin/marketing", "/api/marketing/summary", "/api/marketing/sources"]) {
-      expect(cumple(exigenciaDe(route), ["finanzas"])).toBe(true);
+      expect(cumple(exigenciaDe(route), ["marketing"])).toBe(true);
+      expect(cumple(exigenciaDe(route), ["finanzas"])).toBe(false);
       expect(cumple(exigenciaDe(route), ["pedidos"])).toBe(false);
       expect(cumple(exigenciaDe(route), ["leads"])).toBe(false);
     }

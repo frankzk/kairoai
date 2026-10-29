@@ -9,6 +9,7 @@ import { sanitizeExternalError } from "@/lib/api-errors";
 import { costaRicaDate, type MarketingSummary } from "@/lib/marketing";
 import type { MarketingSources } from "@/lib/marketing-source-types";
 import { buildMarketingAdsSummary } from "@/lib/marketing-ads-summary";
+import { leerYo } from "@/lib/sesion-cliente";
 import CampaignsTable from "@/components/marketing/CampaignsTable";
 
 const currency = new Intl.NumberFormat("es-CR", { style: "currency", currency: "CRC", maximumFractionDigits: 0 });
@@ -38,8 +39,12 @@ export default function MarketingPage() {
   const [sources, setSources] = useState<MarketingSources | null>(null);
   const [sourcesLoading, setSourcesLoading] = useState(true);
   const [sourcesError, setSourcesError] = useState("");
+  const [canViewManagement, setCanViewManagement] = useState(false);
 
-  useEffect(() => setMonth(costaRicaDate(new Date()).slice(0, 7)), []);
+  useEffect(() => {
+    setMonth(costaRicaDate(new Date()).slice(0, 7));
+    setCanViewManagement(Boolean(leerYo()?.permisos.some(permission => permission === "pedidos" || permission === "finanzas")));
+  }, []);
   useEffect(() => {
     if (!month) return;
     const controller = new AbortController();
@@ -105,9 +110,9 @@ export default function MarketingPage() {
     <main className="mx-auto max-w-[1400px] space-y-5 px-4 py-6 sm:px-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <Link href="/admin/finance?store=mireva-cr" className="mb-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {canViewManagement && <Link href="/admin/finance?store=mireva-cr" className="mb-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ArrowLeft className="h-3 w-3" aria-hidden="true" /> Gestión
-          </Link>
+          </Link>}
           <div className="flex items-center gap-2">
             <BarChart3 className="h-5 w-5 text-primary" aria-hidden="true" />
             <h1 className="text-2xl font-semibold tracking-tight">Marketing</h1>
@@ -163,7 +168,7 @@ export default function MarketingPage() {
             <p className="text-muted-foreground">Guardar el origen, las UTMs y los identificadores de campaña y anuncio junto al pedido de Icomfly. Hasta validar ese vínculo, los pedidos del panel incluyen todos los canales y no se atribuyen a una campaña.</p>
             <p className="text-muted-foreground">Las cuentas publicitarias de esta primera integración son exclusivas de Mireva Costa Rica. Las conversiones reportadas por Meta y TikTok se mantendrán separadas de los pedidos únicos.</p>
           </div>
-          <Link href="/admin/finance" className="inline-flex items-center gap-1 text-sm text-foreground underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Revisar registros en Gestión <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
+          {canViewManagement && <Link href="/admin/finance?store=mireva-cr" className="inline-flex items-center gap-1 text-sm text-foreground underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Revisar registros en Gestión <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>}
         </section>
       ) : view === "campaigns" ? <CampaignsTable sources={sources} loading={sourcesLoading} error={sourcesError} /> : loading ? (
         <div role="status" aria-live="polite" className="space-y-5"><span className="sr-only">Cargando datos de marketing de Costa Rica</span><div className="grid grid-cols-2 divide-x divide-border border border-border sm:grid-cols-6">{Array.from({ length: 6 }, (_, index) => <div key={index} className="space-y-3 p-4"><div className="h-3 w-16 bg-muted" /><div className="h-7 w-20 bg-muted" /></div>)}</div><div className="h-64 rounded-lg border border-border bg-muted/20" /></div>

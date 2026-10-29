@@ -19,7 +19,7 @@ Decisiones confirmadas por el dueño:
 
 Decisiones adicionales confirmadas: asignación editable de campaña a producto en Kairo; columna presupuesto con el presupuesto diario vigente, sumando conjuntos cuando corresponda; ventas sin evidencia de origen como «Sin atribuir» hasta poder distinguir orgánico y upsell. No se infiere que una venta sea orgánica por diferencia entre reportes publicitarios y pedidos. Las oportunidades de escala y alertas de inventario requieren stock real y un mínimo de evidencia antes de presentarse como recomendaciones. Esta adaptación del bosquejo es posterior a la publicación inicial del panel y la lectura de las cinco cuentas.
 
-Primera tienda: `mireva-cr`. Panel integrado en `/admin/marketing`, accesible con el permiso `finanzas` y el acceso a Costa Rica. El acceso aparece en la barra de Kairo para esas personas. API: `GET /api/marketing/summary?store=mireva-cr&month=YYYY-MM`.
+Primera tienda: `mireva-cr`. Panel integrado en `/admin/marketing`, accesible con el permiso independiente `marketing` y el acceso a Costa Rica. El acceso aparece en la barra de Kairo para esas personas. API: `GET /api/marketing/summary?store=mireva-cr&month=YYYY-MM`.
 
 ## Datos disponibles
 
@@ -70,3 +70,7 @@ El inventario se conserva por cuenta, almacén y SKU, con fecha de sincronizaci�
 ### Corrección del resumen publicitario, 2026-10-29
 
 El resumen inicial solo leía gastos manuales CRC aunque Meta ya estuviera conectado. Se corrigió para mostrar inversión y costo por pedido creado desde los reportes conectados, con cobertura parcial explícita hasta incorporar TikTok. La comprobación en lectura a las 15:51 de Lima devolvió las cinco cuentas y USD 20,714.85 de inversión en octubre; las cuentas comparten el calendario de Costa Rica. Pasaron 32 pruebas de marketing y la compilación con Next 14.2.35. La captura del usuario confirma acceso al panel privado publicado; no se automatizó una sesión de producción para esta corrección.
+
+### Permiso independiente de Marketing, 2026-10-29
+
+Usuarios ofrece la casilla Marketing para conceder el dashboard sin Finanzas ni Gestión. La página y ambas API exigen `marketing`; el acceso a Mireva Costa Rica sigue siendo necesario. Al guardar, la sesión aplica el cambio en la siguiente revalidación (hasta 30 segundos). El rol Administrador incluye el nuevo permiso y las sesiones firmadas del administrador legado reciben el catálogo actualizado sin extender su vencimiento. Los roles de Finanzas no conceden Marketing automáticamente: se marca explícitamente en cada persona. Los enlaces del dashboard hacia Gestión solo aparecen si la persona también puede acceder a ella. No se cambiaron permisos guardados de ninguna persona.
