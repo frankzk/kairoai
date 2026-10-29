@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildManualOrder, matchesExpectedIcomflyOrder, resolveManualOrderLine } from "../lib/icomfly-manual-order";
+import { buildManualOrder, manualOrderReference, matchesExpectedIcomflyOrder, resolveManualOrderLine } from "../lib/icomfly-manual-order";
 import { createManualIcomflyOrder } from "../lib/icomfly";
 import type { PedidoLead } from "../lib/icomfly-pedido-lead";
 
@@ -12,6 +12,26 @@ const lines=items.map((item,i)=>resolveManualOrderLine(item,{id:i?3595:1561,stor
 const prepared=buildManualOrder(pedido,lines,71,"request-test");
 
 describe("Contrato nativo de iComfly",()=>{
+ it("usa la referencia corta nativa y guarda la misma referencia para reconciliar el descuento",()=>{
+  const key="41401ecb-f583-4a14-af81-5ee680172f09";
+  const reference=manualOrderReference(key,1793307897766);
+  expect(reference).toMatch(/^MANUAL-1793307897766-[A-Z0-9]{5}$/);
+  expect(reference).toHaveLength(26);
+  expect(manualOrderReference(key,1793307897766)).toBe(reference);
+  expect(manualOrderReference("41401ecb-f583-4a14-af81-5ee680172f08",1793307897766)).not.toBe(reference);
+  const result=buildManualOrder({...pedido,descuento:{type:"percentage",value:15}},lines,71,key);
+  expect(result.body.orderNumber).toMatch(/^MANUAL-\d{13}-[A-Z0-9]{5}$/);
+  expect(result.expected.discount_adjustment?.order_number).toBe(result.body.orderNumber);
+ });
+ it("envía los campos de envío nativos además del cliente, sin mezclar los dos productos",()=>{
+  const result=buildManualOrder({...pedido,telefono:" 50600000000 ",envio:{...pedido.envio,reference:"PORTÓN AZUL"}},lines,71,"test");
+  expect(result.body).toMatchObject({
+   shipping_name:"PRUEBA",shipping_phone:"50600000000",shipping_address:"NO DESPACHAR - PORTÓN AZUL",
+   shipping_city:"San José",shipping_department:"San José",paymentMethod:"Contra entrega",payment_type:"cod",
+   customer:{fullName:"PRUEBA",phone:"50600000000",address:"NO DESPACHAR - PORTÓN AZUL",city:"San José",department:"San José"},
+   products:[{id:1561,quantity:1},{id:3595,quantity:1}],
+  });
+ });
  it("preserva dos productos, sus IDs, cantidades y total; no crea una línea genérica",()=>{
   expect(prepared.body).toMatchObject({
    manual_order:true,store_id:71,isCartOrder:true,quantity:2,subtotal:39800,total:39800,status:"Pendiente",
@@ -22,14 +42,14 @@ describe("Contrato nativo de iComfly",()=>{
  });
  it("conserva un descuento fijo y no duplica el valor de productos",()=>{
   const result=buildManualOrder({...pedido,descuento:{type:"fixed_amount",value:6420}},lines,71,"test");
-  expect(result.body).toMatchObject({subtotal:39800,discountAmount:6420,total:33380,quantity:2});
+  expect(result.body).toMatchObject({subtotal:39800,discountAmount:6420,discountType:"amount",discountValue:6420,total:33380,quantity:2});
   expect(result.expected.total).toBe(33380);
-  expect(result.expected.discount_adjustment).toEqual({subtotal:39800,order_number:"MANUAL-KAIRO-test",cod:true});
+  expect(result.expected.discount_adjustment).toEqual({subtotal:39800,order_number:result.body.orderNumber,cod:true});
  });
  it("conserva cantidades y descuento porcentual",()=>{
   const p={...pedido,items:[{...items[0],quantity:2},items[1]],descuento:{type:"percentage" as const,value:10}};
   const l=[{...lines[0],quantity:2},lines[1]];
-  expect(buildManualOrder(p,l,71,"test").body).toMatchObject({quantity:3,subtotal:59700,discountAmount:5970,total:53730});
+  expect(buildManualOrder(p,l,71,"test").body).toMatchObject({quantity:3,subtotal:59700,discountAmount:5970,discountType:"percent",discountValue:10,total:53730});
  });
  it("elige la variante única por SKU y conserva su ID nativo",()=>{
   expect(resolveManualOrderLine({...items[0],variant_title:"Negro / L",sku:"SHORT-L"},{

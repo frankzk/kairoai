@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { normalizarNombreProducto, totalPedidoLead, type ItemPedidoLead, type PedidoLead } from "@/lib/icomfly-pedido-lead";
 
 export interface IcomflyCatalogProduct {
@@ -18,6 +19,15 @@ export interface ExpectedIcomflyOrder {
   items: Array<{ product_id: number; variant_id: string | null; quantity: number }>;
   total: number;
   discount_adjustment?: { subtotal: number; order_number: string; cod: boolean };
+}
+
+/** Match iComfly's native MANUAL-{timestamp}-{5 characters} reference.
+ * The full request UUID remains the receipt's idempotency key in Kairo.
+ */
+export function manualOrderReference(requestId: string, now = Date.now()): string {
+  const suffix = (Number.parseInt(createHash("sha256").update(requestId).digest("hex").slice(0, 8), 16) % 36 ** 5)
+    .toString(36).padStart(5, "0").toUpperCase();
+  return `MANUAL-${now}-${suffix}`;
 }
 
 function variantsOf(raw: unknown): Array<Record<string, unknown>> {
@@ -71,16 +81,20 @@ export function buildManualOrder(pedido: PedidoLead, lines: ManualOrderLine[], e
   if (total < 0 || total > subtotal) throw new Error("El descuento del pedido no es válido.");
   const shipping = pedido.envio;
   const first = lines[0];
+  const orderNumber = manualOrderReference(requestId);
+  const customer = {
+    fullName: shipping.name?.trim() || pedido.nombreLead?.trim() || "Cliente",
+    phone: pedido.telefono.trim(), whatsapp: pedido.telefono.trim(),
+    address: [shipping.address?.trim(), shipping.reference?.trim()].filter(Boolean).join(" - "),
+    city: shipping.canton?.trim() || "", department: shipping.province?.trim() || "",
+  };
   return {
     body: {
-      orderNumber: "MANUAL-KAIRO-" + requestId,
+      orderNumber,
       manual_order: true, store_id: externalStoreId,
-      customer: {
-        fullName: shipping.name?.trim() || pedido.nombreLead?.trim() || "Cliente",
-        phone: pedido.telefono, whatsapp: pedido.telefono,
-        address: [shipping.address?.trim(), shipping.reference?.trim()].filter(Boolean).join(" - "),
-        city: shipping.canton?.trim() || "", department: shipping.province?.trim() || "",
-      },
+      customer,
+      shipping_name: customer.fullName, shipping_phone: customer.phone,
+      shipping_address: customer.address, shipping_city: customer.city, shipping_department: customer.department,
       product: { id: first.productId, name: first.productName, price: first.price },
       isCartOrder: true,
       products: lines.map(l => ({
@@ -89,7 +103,7 @@ export function buildManualOrder(pedido: PedidoLead, lines: ManualOrderLine[], e
       })),
       quantity: lines.reduce((n, l) => n + l.quantity, 0),
       subtotal, shippingCost: 0, total,
-      ...(discount > 0 ? { discountAmount: discount, discountType: pedido.descuento?.type === "percentage" ? "percent" : "fixed", discountValue: pedido.descuento?.value } : {}),
+      ...(discount > 0 ? { discountAmount: discount, discountType: pedido.descuento?.type === "percentage" ? "percent" : "amount", discountValue: pedido.descuento?.value } : {}),
       shippingOption: "Domicilio", paymentMethod: pedido.pago === "sinpe" ? "Transferencia" : "Contra entrega",
       payment_type: pedido.pago === "sinpe" ? "paid" : "cod",
       status: "Pendiente", send_to_shopify: false, send_confirmation: false,
@@ -98,7 +112,7 @@ export function buildManualOrder(pedido: PedidoLead, lines: ManualOrderLine[], e
     expected: {
       items: lines.map(l => ({ product_id: l.productId, variant_id: l.variantId, quantity: l.quantity })),
       total,
-      ...(discount > 0 ? { discount_adjustment: { subtotal, order_number: "MANUAL-KAIRO-" + requestId, cod: pedido.pago !== "sinpe" } } : {}),
+      ...(discount > 0 ? { discount_adjustment: { subtotal, order_number: orderNumber, cod: pedido.pago !== "sinpe" } } : {}),
     },
   };
 }
