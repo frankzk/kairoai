@@ -88,6 +88,12 @@ Session details:
 
 ## Existing Product Areas
 
+### Marketing Mireva Costa Rica (2026-10-28)
+
+`/admin/marketing` agrega resumen mensual, cohortes semanales, campañas, productos y disponibilidad de fuentes para `mireva-cr`. Reutiliza el dataset de Gestión y los gastos publicitarios manuales. Los conectores están implementados en lectura; Meta está configurado y verificado localmente, mientras TikTok y ShipHero siguen pendientes de configurar y validar; los reportes publicitarios conservan moneda/calendario nativos y no se suman al gasto manual. El stock actual se cruza por SKU único. Exige `finanzas` y acceso a la tienda en ambas API. Los importes operativos son CRC, las fechas usan Costa Rica y los gastos en otra moneda bloquean los ratios. Ver `docs/marketing-mireva-cr.md` para definiciones, límites del saldo parcial y variables de integración.
+
+El alcance de Meta para Costa Rica incluye las cinco cuentas confirmadas por el dueño (DC003 y CR2, CR3, CR4, CR5). Los IDs, la app, la versión Graph y el token están configurados localmente. La verificación final del 29/10/2026 confirmó HTTP 200 en cuentas e Insights para las cinco, y `ads_read`/`ads_management` concedidos. Se leyeron 42 campañas de octubre; todas las cuentas usan USD y `America/Costa_Rica`. El lector local está operativo, conservando el gasto USD aparte de la operación CRC. No se pidió ni guardó el secreto de la app. No se ha aplicado esta configuración a producción.
+
 ### Dashboard
 
 Main file: `app/page.tsx`

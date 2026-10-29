@@ -22,7 +22,9 @@ export default function BarraUsuario() {
 
   if (pathname === "/login" || !yo) return null;
 
-  const pantallas = pantallasDe(yo.permisos);
+  const pantallas = pantallasDe(yo.permisos).filter(p =>
+    p.ruta !== "/admin/marketing" || yo.tiendas.includes("mireva-cr")
+  );
   const kenkuStores = KENKU_MANAGEMENT_STORES.filter(s => (yo.id === 0 || yo.tiendas.includes(s.code)) && yo.permisos.some(p => p === "pedidos" || p === "finanzas"));
 
   async function salir() {
