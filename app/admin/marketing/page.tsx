@@ -8,12 +8,14 @@ import { Input } from "@/components/ui/input";
 import { sanitizeExternalError } from "@/lib/api-errors";
 import { costaRicaDate, type MarketingSummary } from "@/lib/marketing";
 import type { MarketingSources } from "@/lib/marketing-source-types";
+import { buildMarketingAdsSummary } from "@/lib/marketing-ads-summary";
 import CampaignsTable from "@/components/marketing/CampaignsTable";
 
 const currency = new Intl.NumberFormat("es-CR", { style: "currency", currency: "CRC", maximumFractionDigits: 0 });
 const number = new Intl.NumberFormat("es-CR");
 const percent = new Intl.NumberFormat("es-CR", { style: "percent", maximumFractionDigits: 1 });
 const amount = (value: number | null) => value == null ? "Sin datos" : currency.format(value);
+const adAmount = (value: number | null, code: string | null) => value == null || !code ? "Sin datos" : new Intl.NumberFormat("es-CR", { style: "currency", currency: code, currencyDisplay: "code", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 const rate = (value: number | null) => value == null ? "—" : percent.format(value);
 type View = "summary" | "campaigns" | "products" | "sources";
 
@@ -85,6 +87,10 @@ export default function MarketingPage() {
   }, [data, query, sort]);
   const maxWeekly = Math.max(1, ...(data?.weeks.map(week => week.generated) ?? []));
   const totals = data?.totals;
+  const ads = useMemo(() => buildMarketingAdsSummary(sources, month, data?.totals.generated ?? 0, data?.totals.delivered ?? 0), [sources, month, data]);
+  const adCoverage = sourcesLoading ? "Consultando plataformas…" : ads.accountCount ? `${ads.providers.join(" + ")} · ${ads.accountCount} cuentas${ads.partial ? " · Inversión parcial" : ""}` : "Sin inversión consultable";
+  const adSpend = sourcesLoading ? "Consultando…" : ads.breakdown.length > 1 ? "Varias monedas" : adAmount(ads.spend, ads.currency);
+  const adCpa = sourcesLoading ? "Consultando…" : adAmount(ads.costPerGenerated, ads.currency);
   const stockBySku = useMemo(() => {
     const result = new Map<string, { available: number; allocated: number } | null>();
     for (const item of sources?.shiphero.data?.stock ?? []) {
@@ -114,7 +120,7 @@ export default function MarketingPage() {
             <Input aria-label="Mes de creación del pedido" type="month" min="2020-01" max={costaRicaDate(new Date()).slice(0, 7)} value={month}
               onChange={event => { if (/^20\d{2}-(0[1-9]|1[0-2])$/.test(event.target.value)) setMonth(event.target.value); }} className="w-44 [color-scheme:dark]" />
           </label>
-          <Button variant="outline" disabled={!month || ((view === "sources" || view === "campaigns") ? sourcesLoading : loading)} onClick={() => setRevision(value => value + 1)}>
+          <Button variant="outline" disabled={!month || loading || sourcesLoading} onClick={() => setRevision(value => value + 1)}>
             <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />Actualizar
           </Button>
         </div>
@@ -147,7 +153,7 @@ export default function MarketingPage() {
               <tbody className="divide-y divide-border">
                 <tr><th scope="row" className="p-3 font-medium">Pedidos y logística</th><td className="p-3">Base de Gestión</td><td className="p-3 text-muted-foreground">Icomfly, histórico de Shopify y transportadoras, según la última sincronización operativa.</td></tr>
                 <tr><th scope="row" className="p-3 font-medium">Costos y liquidaciones</th><td className="p-3">Registros de Gestión</td><td className="p-3 text-muted-foreground">Costos por SKU e importaciones de liquidación disponibles en Kairo.</td></tr>
-                <tr><th scope="row" className="p-3 font-medium">Gasto publicitario</th><td className="p-3">Registro manual</td><td className="p-3 text-muted-foreground">Se leen los gastos de publicidad de Gestión. No certifican que el gasto del mes esté completo.</td></tr>
+                <tr><th scope="row" className="p-3 font-medium">Publicidad manual en CRC</th><td className="p-3">Registro de Gestión</td><td className="p-3 text-muted-foreground">Solo para el saldo financiero en colones. La inversión del resumen se consulta en Meta y TikTok; el gasto manual se mantiene separado para evitar duplicados.</td></tr>
                 {pendingSources.map(source => <tr key={source.name}><th scope="row" className="p-3 font-medium">{source.name}</th><td className="whitespace-nowrap p-3">{sourcesLoading ? "Consultando…" : sources?.[source.key].status === "ready" ? "Consulta completada" : sources?.[source.key].status === "error" ? "Error de consulta" : "Pendiente de conectar"}</td><td className="space-y-1 p-3 text-muted-foreground"><p className="text-foreground">{source.detail}</p><p>{sources?.[source.key].message || source.needs}</p>{sources?.[source.key].status !== "ready" && <p>{source.needs}</p>}</td></tr>)}
               </tbody>
             </table>
@@ -170,10 +176,10 @@ export default function MarketingPage() {
             <dl className="grid grid-cols-2 border border-border sm:grid-cols-3 lg:grid-cols-6">
               {[
                 ["Pedidos creados", number.format(totals.generated), "Todas las fuentes"],
-                ["Con guía", number.format(totals.withGuide), "No acredita salida física"],
+                ["Inversión publicitaria", adSpend, adCoverage],
+                ["Costo / pedido creado", adCpa, "Inversión consultada / todos los pedidos"],
                 ["Entregados", number.format(totals.delivered), `${rate(totals.deliveryRate)} de los creados`],
                 ["Sin cierre", number.format(totals.open), "Resultado todavía provisional"],
-                ["Publicidad registrada", amount(totals.registeredAdSpend), "Gastos manuales en CRC"],
                 ["Neto en liquidaciones", amount(totals.settlementNet), "Depósito bancario no verificado"],
               ].map(([label, value, note]) => <div key={label} className="border-b border-r border-border p-3"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 text-xl font-semibold tabular-nums tracking-tight">{value}</dd><dd className="mt-1 text-[11px] text-muted-foreground">{note}</dd></div>)}
             </dl>
@@ -197,18 +203,29 @@ export default function MarketingPage() {
               </section>
 
               <section aria-labelledby="spend-heading" className="space-y-4">
-                <div><h2 id="spend-heading" className="text-base font-semibold">Inversión y resultado registrado</h2><p className="mt-1 text-xs text-muted-foreground">Publicidad fechada en el mes y liquidaciones de los pedidos creados en ese mes.</p></div>
+                <div><h2 id="spend-heading" className="text-base font-semibold">Inversión publicitaria y costo por pedido</h2><p className="mt-1 text-xs text-muted-foreground">{adCoverage}. Gasto del mes seleccionado en la moneda de las cuentas.</p></div>
+                <dl aria-live="polite" className="divide-y divide-border border-y border-border text-xs">
+                  {[
+                    ["Inversión consultada", adSpend],
+                    ["Costo combinado / pedido creado", adCpa],
+                    ["Costo combinado / pedido entregado", sourcesLoading ? "Consultando…" : adAmount(ads.costPerDelivered, ads.currency)],
+                  ].map(([label, value]) => <div key={label} className="flex justify-between gap-4 py-3"><dt className="text-muted-foreground">{label}</dt><dd className="shrink-0 font-medium tabular-nums">{value}</dd></div>)}
+                  {ads.breakdown.length > 1 && ads.breakdown.map(group => <div key={group.currency} className="flex justify-between gap-4 py-3"><dt className="text-muted-foreground">Inversión en {group.currency}</dt><dd className="font-medium tabular-nums">{adAmount(group.spend, group.currency)}</dd></div>)}
+                </dl>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">El costo divide la inversión consultada entre todos los pedidos creados o entregados del mes, incluidos los orgánicos y sin atribuir. No es CPA atribuido a campañas ni CAC. {ads.partial && "La inversión y los costos son parciales hasta consultar Meta y TikTok."}</p>
+                {sourcesError && <p role="alert" className="text-xs text-amber-400">{sourcesError}</p>}
+                {!sourcesLoading && ads.accountCount > 0 && (!ads.aligned || ads.breakdown.length > 1) && <p className="text-xs text-amber-400">Los costos por pedido se ocultan porque las cuentas tienen distintas monedas o sus meses no coinciden con el calendario de Costa Rica.</p>}
+                <h3 className="pt-2 text-sm font-medium">Registros financieros en colones</h3>
                 <dl className="divide-y divide-border border-y border-border text-xs">
                   {[
-                    ["Publicidad registrada (CRC)", amount(totals.registeredAdSpend)],
-                    ["Costo combinado / pedido creado", amount(totals.costPerGenerated)],
-                    ["Costo combinado / pedido entregado", amount(totals.costPerDelivered)],
+                    ["Publicidad manual (CRC)", amount(totals.registeredAdSpend)],
+                    ["Neto en liquidaciones", amount(totals.settlementNet)],
                     ["Costo de producto en pedidos liquidados", amount(totals.productCost)],
                     ["Margen registrado antes de publicidad", amount(totals.recordedMargin)],
                     ["Saldo parcial después de publicidad", amount(totals.partialBalance)],
                   ].map(([label, value]) => <div key={label} className="flex justify-between gap-4 py-3"><dt className="text-muted-foreground">{label}</dt><dd className="shrink-0 font-medium tabular-nums">{value}</dd></div>)}
                 </dl>
-                <p className="text-[11px] leading-relaxed text-muted-foreground">Los costos combinados incluyen pedidos orgánicos y de otros canales. El saldo parcial excluye pedidos aún sin liquidar, nómina y otros gastos; no representa utilidad final ni ROAS atribuido. El gasto manual puede estar incompleto.</p>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">Estos registros usan gastos manuales en CRC, separados de la inversión de las plataformas para evitar duplicados y conversiones de moneda. El saldo parcial excluye pedidos aún sin liquidar, nómina y otros gastos; no representa utilidad final ni ROAS atribuido. El gasto manual puede estar incompleto.</p>
                 {data.channels.length > 0 && <div><h3 className="mb-2 text-xs font-medium">Publicidad por canal registrado</h3><ul className="divide-y divide-border text-xs">{data.channels.map(channel => <li key={channel.name} className="flex justify-between gap-3 py-2"><span>{channel.name} <span className="text-muted-foreground">({channel.records} registros)</span></span><span className="tabular-nums">{amount(channel.spend)}</span></li>)}</ul></div>}
               </section>
             </div>
@@ -222,7 +239,7 @@ export default function MarketingPage() {
                 <li>{number.format(data.quality.missingCosts)} pedidos liquidados y entregados sin costo completo. {number.format(data.quality.withoutProducts)} pedidos del mes sin productos identificados.</li>
                 {data.quality.foreignExpenses > 0 && <li className="text-amber-400">{number.format(data.quality.foreignExpenses)} gastos publicitarios en otra moneda o sin moneda, excluidos. Los costos combinados y el saldo se ocultan hasta conciliarlos.</li>}
                 {data.quality.withoutDate > 0 && <li>{number.format(data.quality.withoutDate)} pedidos del histórico no tienen fecha válida y no se asignan a ningún mes.</li>}
-                {data.quality.adRecords === 0 && <li className="text-amber-400">No hay gastos publicitarios en CRC registrados este mes. La inversión y sus ratios se muestran sin datos.</li>}
+                {data.quality.adRecords === 0 && <li>No hay gastos publicitarios manuales en CRC este mes. El saldo financiero después de publicidad queda sin datos; la inversión consultada en las plataformas se muestra arriba.</li>}
               </ul>
             </section>
           </> : <section aria-labelledby="products-heading" className="space-y-4">
