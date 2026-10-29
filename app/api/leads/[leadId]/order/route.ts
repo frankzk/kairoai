@@ -18,6 +18,7 @@ import {
 import { nombrePedidoIcomfly } from "@/lib/icomfly-pedidos";
 import { runIcomflySync } from "@/lib/icomfly-sync";
 import { verifyCreatedIcomflyOrder } from "@/lib/icomfly-confirmation";
+import { ensureManualOrderDiscount } from "@/lib/icomfly-discount";
 import { findReceipt, reserveReceipt, saveReceiptId, confirmReceipt, type Receipt } from "@/lib/icomfly-receipts";
 
 export const runtime = "nodejs";
@@ -205,7 +206,10 @@ async function verificarRecibo(receipt:Receipt,storeCode:FinanceStoreCode):Promi
  if(!receipt.icomfly_id)return pendiente(receipt);
  const nombre=nombrePedidoIcomfly(null,receipt.icomfly_id);
  let verified;
- try{verified=await verifyCreatedIcomflyOrder(storeCode,receipt.icomfly_id,receipt.expected_order);}catch{
+ try{
+  if(!receipt.confirmed_at && receipt.expected_order?.discount_adjustment)await ensureManualOrderDiscount(storeCode,receipt.icomfly_id,receipt.expected_order);
+  verified=await verifyCreatedIcomflyOrder(storeCode,receipt.icomfly_id,receipt.expected_order);
+ }catch{
   if(!receipt.confirmed_at)return pendiente(receipt);
  }
  if(!verified&&!receipt.confirmed_at)return pendiente(receipt);

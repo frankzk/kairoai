@@ -24,6 +24,7 @@ describe("Contrato nativo de iComfly",()=>{
   const result=buildManualOrder({...pedido,descuento:{type:"fixed_amount",value:6420}},lines,71,"test");
   expect(result.body).toMatchObject({subtotal:39800,discountAmount:6420,total:33380,quantity:2});
   expect(result.expected.total).toBe(33380);
+  expect(result.expected.discount_adjustment).toEqual({subtotal:39800,order_number:"MANUAL-KAIRO-test",cod:true});
  });
  it("conserva cantidades y descuento porcentual",()=>{
   const p={...pedido,items:[{...items[0],quantity:2},items[1]],descuento:{type:"percentage" as const,value:10}};

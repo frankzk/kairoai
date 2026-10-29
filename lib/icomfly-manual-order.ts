@@ -17,6 +17,7 @@ export interface ManualOrderLine {
 export interface ExpectedIcomflyOrder {
   items: Array<{ product_id: number; variant_id: string | null; quantity: number }>;
   total: number;
+  discount_adjustment?: { subtotal: number; order_number: string; cod: boolean };
 }
 
 function variantsOf(raw: unknown): Array<Record<string, unknown>> {
@@ -89,7 +90,7 @@ export function buildManualOrder(pedido: PedidoLead, lines: ManualOrderLine[], e
       quantity: lines.reduce((n, l) => n + l.quantity, 0),
       subtotal, shippingCost: 0, total,
       ...(discount > 0 ? { discountAmount: discount, discountType: pedido.descuento?.type === "percentage" ? "percent" : "fixed", discountValue: pedido.descuento?.value } : {}),
-      shippingOption: "Domicilio", paymentMethod: pedido.pago === "sinpe" ? "Transferencia" : "Contraentrega",
+      shippingOption: "Domicilio", paymentMethod: pedido.pago === "sinpe" ? "Transferencia" : "Contra entrega",
       payment_type: pedido.pago === "sinpe" ? "paid" : "cod",
       status: "Pendiente", send_to_shopify: false, send_confirmation: false,
       notes: "Cerrado por la asesora desde el tablero de Leads (Kairo)." + (pedido.nota?.trim() ? " " + pedido.nota.trim() : ""),
@@ -97,6 +98,7 @@ export function buildManualOrder(pedido: PedidoLead, lines: ManualOrderLine[], e
     expected: {
       items: lines.map(l => ({ product_id: l.productId, variant_id: l.variantId, quantity: l.quantity })),
       total,
+      ...(discount > 0 ? { discount_adjustment: { subtotal, order_number: "MANUAL-KAIRO-" + requestId, cod: pedido.pago !== "sinpe" } } : {}),
     },
   };
 }

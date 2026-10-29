@@ -18,6 +18,12 @@ let visible=true;
 let creationTimeout=false;
 let storeWebSeq:string|null="210";
 let verificationFails=false;
+let discountFails=false;
+const discountChecks: unknown[]=[];
+vi.mock("@/lib/icomfly-discount",()=>({ensureManualOrderDiscount:async(_store:string,_id:string,expected:unknown)=>{
+ discountChecks.push(expected);
+ if(discountFails)throw new Error("Importe pendiente");
+}}));
 const nativeOrders: Record<string,unknown>[]=[];
 const verifiedExpectations: unknown[]=[];
 let foreignCatalog=false;
@@ -77,7 +83,7 @@ vi.mock("@/lib/identidad", () => ({
 
 const ENVIO = { name: "Marvin Enrique Guzmán", province: "Cortés", canton: "San Pedro Sula", address: "Col. Trejo" };
 
-async function crear(store: string, shipping: Record<string, string> = ENVIO, items?: Array<Record<string,unknown>>) {
+async function crear(store: string, shipping: Record<string, string> = ENVIO, items?: Array<Record<string,unknown>>, discount?: {value:number;type:string}) {
   const { POST } = await import("../app/api/leads/[leadId]/order/route");
   const body = {
     store,
@@ -85,6 +91,7 @@ async function crear(store: string, shipping: Record<string, string> = ENVIO, it
     destino: "icomfly",
     items: items ?? [{ variant_id: 1, title: "Fat-Burn Shorts - Negro / L", product_title: "Fat-Burn Shorts", variant_title: "Negro / L", price: "1110", quantity: 1 }],
     shipping,
+    discount,
   };
   return POST(new NextRequest("http://localhost/api/leads/5/order", { method: "POST", body: JSON.stringify(body) }), {
     params: { leadId: "5" },
@@ -98,6 +105,8 @@ beforeEach(() => {
   creationTimeout=false;
   storeWebSeq="210";
   verificationFails=false;
+  discountFails=false;
+  discountChecks.length=0;
   nativeOrders.length=0;
   verifiedExpectations.length=0;
   foreignCatalog=false;
@@ -188,6 +197,19 @@ const MULTI_ITEMS=[
  {title:"Gomitas de Shilajit",product_title:"Gomitas de Shilajit",price:19900,quantity:1,sku:"GOMITAS/SHILAJIT"},
 ];
 describe("Varios productos con vínculo real al catálogo",()=>{
+ it("no confirma ni gana si falta corregir el descuento; reconsulta sin duplicar",async()=>{
+  discountFails=true;
+  const response=await crear("mireva-cr",ENVIO,MULTI_ITEMS,{value:15,type:"percentage"});
+  expect(response.status).toBe(202);
+  expect(ganados).toHaveLength(0);
+  expect(verifiedExpectations).toHaveLength(0);
+  expect(receipts[0].expected_order).toMatchObject({total:17858.5,discount_adjustment:{subtotal:21010,cod:true}});
+  discountFails=false;
+  expect((await crear("mireva-cr")).status).toBe(200);
+  expect(nativeOrders).toHaveLength(1);
+  expect(discountChecks).toHaveLength(2);
+  expect(ganados).toHaveLength(1);
+ });
  it("usa dos líneas nativas sin concatenarlas ni llamar crear_pedido",async()=>{
   const response=await crear("mireva-cr",ENVIO,MULTI_ITEMS);
   expect(response.status).toBe(200);
