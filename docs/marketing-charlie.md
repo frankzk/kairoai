@@ -19,7 +19,7 @@ Los importes USD de Meta permanecen en USD. Los importes CRC de la operación se
 
 Un recurrente requiere el mismo teléfono normalizado de Costa Rica y una entrega anterior a la creación del pedido actual. Una entrega posterior o sin fecha verificable no lo acredita; fechas de entrega sin hora se consideran al final del día para evitar anticiparlas. Los teléfonos se usan solo en servidor: la API devuelve agregados sin PII. La cobertura de identificación y el historial incompleto limitan el resultado; el teléfono es un proxy, no una identidad personal verificada.
 
-Revenue Floor suma pedidos recurrentes o de Hero Offer una sola vez. Sin Hero Offer definida, se informa la parte recurrente observada y la oferta permanece pendiente. No se inventa una oferta ni se interpreta este piso potencial como efectivo asegurado.
+Revenue Floor suma pedidos recurrentes o de Hero Offer una sola vez. Sin Hero Offer definida, Revenue Floor permanece pendiente; la recompra se presenta por separado cuando hay evidencia. Sin fechas verificables de entrega, la recompra también queda pendiente. La verificación real encontró entregas históricas sin fecha de entrega en este dataset. No se inventa una oferta ni se interpreta este piso potencial como efectivo asegurado.
 
 ## Fuentes, límites y protección
 
@@ -32,4 +32,4 @@ Revenue Floor suma pedidos recurrentes o de Hero Offer una sola vez. Sin Hero Of
 
 ## Verificación
 
-Suite completa: 1.560 pruebas aprobadas, además de TypeScript y compilación de producción. Lectura real verificada en las cinco cuentas: moneda USD, frecuencia diaria disponible donde hay actividad y metadatos completos. Referencia Hacienda verificada el 29/10/2026. QA de escritorio y móvil e interacciones con respuestas de prueba locales; esas capturas no acreditan acceso a una sesión privada de producción. El despliegue se confirma separadamente por commit y estado READY de Vercel.
+Suite completa: 1.561 pruebas aprobadas, además de TypeScript y compilación de producción. Lectura real verificada en las cinco cuentas: moneda USD, frecuencia diaria disponible donde hay actividad y metadatos completos. Referencia Hacienda verificada el 29/10/2026. QA de escritorio y móvil e interacciones con respuestas de prueba locales; esas capturas no acreditan acceso a una sesión privada de producción. El despliegue se confirma separadamente por commit y estado READY de Vercel.

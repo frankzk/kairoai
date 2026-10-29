@@ -106,18 +106,19 @@ export function buildCharlieRevenue(
     }
   }
   const complete = missingValues === 0;
+  const recurrenceAvailable = identified > 0 && deliveredBefore.size > 0;
   return {
     basis: "created_potential" as const,
     totalOrders: total,
     revenueCrc: complete ? revenueCrc : null,
     annulledRevenueCrc: complete ? annulledRevenueCrc : null,
     recurringRevenueCrc:
-      complete && identified > 0 ? recurringRevenueCrc : null,
+      complete && recurrenceAvailable ? recurringRevenueCrc : null,
     recurringOrders: recurring,
     identifiedOrders: identified,
     heroRevenueCrc: complete && hero.size ? heroRevenueCrc : null,
     floorRevenueCrc:
-      complete && (identified > 0 || hero.size) ? floorRevenueCrc : null,
+      complete && (recurrenceAvailable || hero.size) ? floorRevenueCrc : null,
     identityCoverage: total > 0 ? identified / total : null,
     missingValues,
     days: days.map((day) => ({

@@ -308,6 +308,7 @@ export function buildCharlieModel(
     heroUsd: asUsd(business?.heroRevenueCrc, "CRC", fx),
     floorUsd: asUsd(business?.floorRevenueCrc, "CRC", fx),
     floorShare:
+      (settings?.config.hero_product_keys.length ?? 0) > 0 &&
       business?.floorRevenueCrc != null &&
       business.revenueCrc != null &&
       business.revenueCrc > 0

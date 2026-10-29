@@ -418,8 +418,10 @@ export function CharlieExecutive({
           <p className={`${s.muted} mt-3`}>
             Recompra observada por teléfono con una entrega anterior en el
             histórico de Kairo. Puede representar un hogar; no prueba identidad.
-            Con identificación incompleta, la participación observada es una
-            cota mínima, no ingreso garantizado.
+            Sin fechas de entrega verificables, la recompra queda pendiente.
+            Revenue Floor requiere definir la Hero Offer. Con identificación
+            incompleta, la participación observada es una cota mínima, no
+            ingreso garantizado.
           </p>
         </section>
       </div>

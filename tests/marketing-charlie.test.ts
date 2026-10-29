@@ -130,6 +130,35 @@ const report = (ads: CharlieAd[]): CharlieReport => ({
 const summary = { period, totals: { generated: 2, delivered: 0 } };
 
 describe("Charlie financial decision engine", () => {
+  it("keeps recurrence pending without dated delivery history and Revenue Floor pending without a Hero Offer", () => {
+    const business = buildCharlieRevenue(
+      [
+        order("prior", "2026-10-01T12:00:00Z", {
+          tracking_status: "delivered",
+        }),
+        order("current", "2026-10-28T12:00:00Z"),
+      ],
+      new Map([
+        ["prior", "88888888"],
+        ["current", "88888888"],
+      ]),
+      period,
+      [],
+      now,
+    );
+    expect(business.recurringRevenueCrc).toBeNull();
+    expect(business.floorRevenueCrc).toBeNull();
+    const model = buildCharlieModel(
+      summary,
+      { ...business, floorRevenueCrc: 1000 },
+      sources(),
+      null,
+      settings(),
+      "",
+      now,
+    );
+    expect(model.floorShare).toBeNull();
+  });
   it("converts created order value to USD and keeps potential metrics separate from net profit", () => {
     const business = buildCharlieRevenue(
       [order("a", "2026-10-28T12:00:00Z"), order("b", "2026-10-29T12:00:00Z")],
