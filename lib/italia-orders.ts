@@ -1,9 +1,10 @@
 import { WOO_STATUS, WOO_TRANSITIONS, type WooStatus } from "./woo-config";
 
-export const ITALIA_STATUS = {...WOO_STATUS, partial:"Envío parcial", returned:"Devuelto", refunded:"Reembolsado"};
+export const MANAGEMENT_STATUS = {...WOO_STATUS, partial:"Envío parcial", returned:"Devuelto", refunded:"Reembolsado"};
+export const ITALIA_STATUS = {...MANAGEMENT_STATUS, preparing:"En preparación", out_for_delivery:"En reparto", incident:"Incidencia", returning:"En devolución"};
 export type ItaliaStatus = keyof typeof ITALIA_STATUS;
 export type ItaliaSource = "shopify" | "woocommerce";
-export const SHOPIFY_TRANSITIONS: Record<ItaliaStatus, ItaliaStatus[]> = {
+export const SHOPIFY_TRANSITIONS: Partial<Record<ItaliaStatus, ItaliaStatus[]>> = {
   pending:["confirmed","cancelled"], confirmed:["dispatched","cancelled"],
   partial:["dispatched","returned"], dispatched:["delivered","returned"],
   delivered:[], cancelled:[], returned:[], refunded:[],
@@ -21,6 +22,12 @@ export interface ItaliaOrder {
   items:Array<{name:string;sku:string;quantity:number;total:number|null}>;
   note:string; financial_status:string; fulfillment_status:string; original_tracking:string;
   shopify_cancelled:boolean;
+  reconciliation?: {
+    state:"matched"|"review"|"unmatched"|"ambiguous"|"unknown";
+    baseStatus:ItaliaStatus; applied:boolean; elogyStatus:string; label:string;
+    guide:string; carrier:string; stateAt:string|null; observedAt:string|null;
+    reason:string; totalCents:number|null; currency:string;
+  };
 }
 type Obj = Record<string,unknown>;
 const obj = (v:unknown):Obj => v && typeof v === "object" && !Array.isArray(v) ? v as Obj : {};
@@ -39,6 +46,7 @@ export function mapItaliaOrder(row: Obj): ItaliaOrder {
     const quantity=num(i.quantity)??0,price=num(i.price),discount=num(i.total_discount)??0;
     return {name:first(i.name,i.title)||"Producto",sku:text(i.sku),quantity,total:shopify?(price===null?null:Math.max(0,price*quantity-discount)):num(i.total)};
   });
+  const r=obj(row.reconciliation), hasReconciliation=shopify&&["matched","review","unmatched","ambiguous","unknown"].includes(text(row.reconciliation_state));
   return {
     id:`${source}:${String(row.source_id)}`,source,source_id:String(row.source_id),order_number:text(row.order_number),created_at:text(row.created_at),
     status:row.status as ItaliaStatus,version:Number(row.version),synced_version:Number(row.synced_version),last_error:text(row.last_error)||null,
@@ -52,12 +60,19 @@ export function mapItaliaOrder(row: Obj): ItaliaOrder {
     financial_status:shopify?text(p.financial_status):(p.payment_method==="stripe"&&p.payment_paid===true?"paid":"cod"),fulfillment_status:shopify?text(p.fulfillment_status)||"unfulfilled":"",
     original_tracking:arr(p.fulfillments).filter(f=>f.status!=="cancelled").flatMap(f=>Array.isArray(f.tracking_numbers)?f.tracking_numbers.map(text):[text(f.tracking_number)]).filter(Boolean).join(", "),
     shopify_cancelled:shopify && Boolean(p.cancelled_at),
+    ...(hasReconciliation?{reconciliation:{
+      state:text(row.reconciliation_state) as NonNullable<ItaliaOrder["reconciliation"]>["state"],
+      baseStatus:text(row.base_status) as ItaliaStatus,applied:r.applied===true,
+      elogyStatus:text(r.status),label:text(r.label),guide:text(r.guide),carrier:text(r.carrier),
+      stateAt:text(r.state_at)||null,observedAt:text(r.observed_at)||null,
+      reason:text(r.reason),totalCents:num(r.total_cents),currency:text(r.currency),
+    }}:{}),
   };
 }
 
 export function validManagementBody(value:unknown): value is {status:ItaliaStatus;version:number;sourceUpdatedAt:string|null;note:string;courier:string;tracking:string;requestId:string} {
   const b=obj(value);
-  return Object.prototype.hasOwnProperty.call(ITALIA_STATUS,b.status as string) && Number.isSafeInteger(b.version) && Number(b.version)>=0 &&
+  return Object.prototype.hasOwnProperty.call(MANAGEMENT_STATUS,b.status as string) && Number.isSafeInteger(b.version) && Number(b.version)>=0 &&
     (b.sourceUpdatedAt===null || typeof b.sourceUpdatedAt==="string" && Number.isFinite(Date.parse(b.sourceUpdatedAt))) &&
     typeof b.note==="string" && b.note.length<=3000 && typeof b.courier==="string" && b.courier.length<=100 &&
     typeof b.tracking==="string" && b.tracking.length<=150 && typeof b.requestId==="string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(b.requestId);

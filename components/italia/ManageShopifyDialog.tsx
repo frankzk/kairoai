@@ -8,8 +8,9 @@ type Event = {id:number;version:number;actor:string;created_at:string;after_stat
 const field="w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 export default function ManageShopifyDialog({order,onClose,onSaved}:{order:ItaliaOrder;onClose:()=>void;onSaved:()=>void}) {
   const {api,date}=useOrderDisplay();
+  const managementOrder={...order,status:order.reconciliation?.baseStatus??order.status};
   const dialog=useRef<HTMLDialogElement>(null);
-  const [form,setForm]=useState({status:order.status,note:order.management_note,courier:order.courier,tracking:order.tracking_number});
+  const [form,setForm]=useState({status:managementOrder.status,note:order.management_note,courier:order.courier,tracking:order.tracking_number});
   const [requestId,setRequestId]=useState(()=>crypto.randomUUID());
   const [saving,setSaving]=useState(false),[error,setError]=useState("");
   const [events,setEvents]=useState<Event[]>([]),[historyError,setHistoryError]=useState(false),[historyLoaded,setHistoryLoaded]=useState(false);
@@ -34,7 +35,8 @@ export default function ManageShopifyDialog({order,onClose,onSaved}:{order:Itali
     <p className="mt-1 text-sm text-muted-foreground">Pedido de Shopify · {order.customer_name}</p>
     <p className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-sm">Estos cambios se guardan en Kairo. No modifican Shopify, no cobran ni reembolsan y no envían avisos al cliente.</p>
     <form onSubmit={e=>void save(e)} className="mt-4 space-y-4">
-      <label className="block space-y-1 text-sm"><span>Estado operativo en Kairo</span><select autoFocus className={field} value={form.status} disabled={saving} onChange={e=>edit({status:e.target.value as ItaliaStatus})}>{[order.status,...transitions(order)].map(s=><option key={s} value={s}>{ITALIA_STATUS[s]}</option>)}</select></label>
+      {order.reconciliation&&<p className="text-xs text-muted-foreground">Seguimiento Elogy: {order.reconciliation.label||"Sin cruce"}. Este formulario edita la gestión interna conservada en Kairo; no modifica el seguimiento de Elogy.</p>}
+      <label className="block space-y-1 text-sm"><span>Estado operativo en Kairo</span><select autoFocus className={field} value={form.status} disabled={saving} onChange={e=>edit({status:e.target.value as ItaliaStatus})}>{[managementOrder.status,...transitions(managementOrder)].map(s=><option key={s} value={s}>{ITALIA_STATUS[s]}</option>)}</select></label>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block space-y-1 text-sm"><span>Courier</span><input className={field} value={form.courier} maxLength={100} disabled={saving} onChange={e=>edit({courier:e.target.value})}/></label>
         <label className="block space-y-1 text-sm"><span>Número de guía</span><input className={field} value={form.tracking} maxLength={150} disabled={saving} onChange={e=>edit({tracking:e.target.value})}/></label>

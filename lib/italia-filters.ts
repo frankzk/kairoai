@@ -1,4 +1,4 @@
-import { ITALIA_STATUS, type ItaliaStatus } from "./italia-orders";
+import { ITALIA_STATUS, MANAGEMENT_STATUS, type ItaliaStatus } from "./italia-orders";
 
 export const ITALIA_PERIODS = [
   ["today", "Hoy"], ["yesterday", "Ayer"], ["7d", "7 días"],
@@ -6,7 +6,8 @@ export const ITALIA_PERIODS = [
 ] as const;
 export type ItaliaPeriod = typeof ITALIA_PERIODS[number][0];
 export type ItaliaCounts = Record<ItaliaStatus, number>;
-export const ITALIA_STATES = Object.keys(ITALIA_STATUS) as ItaliaStatus[];
+export const ITALIA_STATES = Object.keys(MANAGEMENT_STATUS) as ItaliaStatus[];
+export const ITALIA_RECONCILED_STATES = Object.keys(ITALIA_STATUS) as ItaliaStatus[];
 
 function validDay(day: string): boolean {
   return /^20\d{2}-\d{2}-\d{2}$/.test(day) && Number.isFinite(Date.parse(`${day}T00:00:00Z`)) && new Date(`${day}T00:00:00Z`).toISOString().slice(0,10) === day;

@@ -29,6 +29,17 @@ describe("Management body",()=>{
  it("accepts a bounded operation and rejects missing concurrency fields and malformed values",()=>{
   expect(validManagementBody(valid)).toBe(true);
   for(const body of [{...valid,sourceUpdatedAt:undefined},{...valid,version:-1},{...valid,version:"0"},{...valid,note:"a".repeat(3001)},{...valid,requestId:"bad"},{...valid,status:"paid"},{...valid,sourceUpdatedAt:"bad"}])expect(validManagementBody(body)).toBe(false);
+  for(const status of ["preparing","out_for_delivery","incident","returning"])expect(validManagementBody({...valid,status})).toBe(false);
+ });
+});
+
+describe("Conciliación logística separada de Shopify",()=>{
+ it("projects only permitted provider fields while preserving source payment, state and optimistic version",()=>{
+  const o=mapItaliaOrder({...base,status:"delivered",base_status:"pending",version:7,managed_at:null,reconciliation_state:"matched",reconciliation:{applied:true,status:"delivered",label:"Consegnato",guide:"G-1",carrier:"gls",state_at:"2026-10-29T10:00:00Z",observed_at:"2026-10-29T10:05:00Z",secret:"DO-NOT-EXPOSE"},payload:{financial_status:"pending",fulfillment_status:null}});
+  expect(o.status).toBe("delivered");expect(o.reconciliation?.baseStatus).toBe("pending");expect(o.reconciliation?.applied).toBe(true);expect(o.reconciliation?.guide).toBe("G-1");expect(o.version).toBe(7);expect(o.financial_status).toBe("pending");expect(o.fulfillment_status).toBe("unfulfilled");expect(JSON.stringify(o)).not.toContain("DO-NOT-EXPOSE");
+ });
+ it("does not attach another store's provider information or apply unknown reconciliation shapes",()=>{
+  for(const row of [{...base,source:"woocommerce",reconciliation_state:"matched",reconciliation:{status:"delivered"}},{...base,reconciliation_state:"forged",reconciliation:{status:"delivered"}}])expect(mapItaliaOrder(row).reconciliation).toBeUndefined();
  });
 });
 

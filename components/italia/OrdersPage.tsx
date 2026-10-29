@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ChevronLeft, ChevronRight, RefreshCw, Search } from "lucide-react";
 import { ITALIA_STATUS, type ItaliaOrder, type ItaliaStatus } from "@/lib/italia-orders";
-import { ITALIA_PERIODS, ITALIA_STATES, type ItaliaCounts, type ItaliaPeriod } from "@/lib/italia-filters";
+import { ITALIA_PERIODS, ITALIA_STATES, ITALIA_RECONCILED_STATES, type ItaliaCounts, type ItaliaPeriod } from "@/lib/italia-filters";
 import { FINANCE_STORES } from "@/lib/store-config";
 import { leerYo } from "@/lib/sesion-cliente";
 import { useSelectedStore } from "@/lib/use-selected-store";
@@ -18,7 +18,7 @@ import { KENKU_MANAGEMENT_STORES, kenkuManagementStore, type KenkuManagementCode
 import { OrderDisplayContext, useOrderDisplay } from "./OrderDisplayContext";
 
 type Sync = {updatedAt:string;complete:boolean;error:boolean}|null;
-type Result = {key:string;orders:ItaliaOrder[];count:number;shopifySync:Sync};
+type Result = {key:string;orders:ItaliaOrder[];count:number;shopifySync:Sync;elogySync?:{updatedAt:string|null;completedAt:string|null;error:boolean}|null};
 type Counts = {scope:string;values:ItaliaCounts};
 
 export default function KenkuOrders({storeCode="kenku-it"}:{storeCode?:KenkuManagementCode}) {
@@ -27,9 +27,11 @@ export default function KenkuOrders({storeCode="kenku-it"}:{storeCode?:KenkuMana
 
 function OrdersWorkspace() {
   const config=useOrderDisplay(),{date}=config;
+  const italy=config.code==="kenku-it",states=italy?ITALIA_RECONCILED_STATES:ITALIA_STATES;
   const number=(n:number)=>n.toLocaleString(config.locale);
   const [result,setResult]=useState<Result|null>(null),[counts,setCounts]=useState<Counts|null>(null),[page,setPage]=useState(1);
   const [source,setSource]=useState("all"),[status,setStatus]=useState(""),[search,setSearch]=useState(""),[query,setQuery]=useState("");
+  const [reconciliation,setReconciliation]=useState("all");
   const [period,setPeriod]=useState<ItaliaPeriod>("all"),[from,setFrom]=useState(""),[to,setTo]=useState("");
   const [error,setError]=useState(""),[busy,setBusy]=useState(false),[expanded,setExpanded]=useState<string|null>(null);
   const [managing,setManaging]=useState<ItaliaOrder|null>(null);
@@ -37,7 +39,7 @@ function OrdersWorkspace() {
   const [stores,setStores]=useState<Array<{code:string;label:string}>>([]);
   const [,selectStore]=useSelectedStore();
   const dialog=useRef<HTMLDialogElement>(null),request=useRef<AbortController|null>(null),countScope=useRef("");
-  const scope=JSON.stringify([source,query,period,period==="range"?from:"",period==="range"?to:""]);
+  const scope=JSON.stringify([source,query,period,period==="range"?from:"",period==="range"?to:"",reconciliation]);
   const viewKey=JSON.stringify([scope,status,page]);
   const rangeReady=period!=="range"||Boolean(from&&to&&from<=to);
   const orders=result?.key===viewKey?result.orders:[];
@@ -55,6 +57,7 @@ function OrdersWorkspace() {
     setBusy(true);setError("");
     try {
       const params=new URLSearchParams({page:String(page),source,status,search:query,period});
+      if(italy)params.set("reconciliation",reconciliation);
       if(period==="range"){params.set("from",from);params.set("to",to);}
       if(forceCounts||countScope.current!==scope)params.set("summary","1");
       const response=await fetch(`${config.api}/orders?${params}`,{cache:"no-store",signal:controller.signal});
@@ -64,11 +67,11 @@ function OrdersWorkspace() {
       if(data.counts){setCounts({scope,values:data.counts});countScope.current=scope;}
       const lastPage=Math.max(1,Math.ceil(data.count/50));
       if(page>lastPage){setPage(lastPage);return;}
-      setResult({key:viewKey,orders:data.orders,count:data.count,shopifySync:data.shopifySync});
+      setResult({key:viewKey,orders:data.orders,count:data.count,shopifySync:data.shopifySync,elogySync:data.elogySync});
     } catch(e) {
       if(!controller.signal.aborted)setError(e instanceof Error?e.message:"Error de conexión");
     } finally {if(!controller.signal.aborted)setBusy(false);}
-  },[page,source,status,query,period,from,to,rangeReady,scope,viewKey,config.api]);
+  },[page,source,status,query,period,from,to,rangeReady,scope,viewKey,config.api,italy,reconciliation]);
   useEffect(()=>{void load();return()=>request.current?.abort();},[load]);
   const pending=orders.some(o=>o.source==="woocommerce"&&o.version!==o.synced_version);
   useEffect(()=>{const timer=setInterval(()=>{if(document.visibilityState==="visible"&&!managing&&!change)void load(true);},pending?15000:60000);return()=>clearInterval(timer);},[load,pending,managing,change]);
@@ -108,21 +111,23 @@ function OrdersWorkspace() {
       </section>
       {config.woo?<ItaliaNav/>:<MexicoNav region={config.code==="kenku-ar"?"argentina":"mexico"}/>}
       <p className={`text-[11px] ${sync?.error||stale?"text-amber-300":"text-muted-foreground"}`}>{sync?`Shopify: última lectura ${date(sync.updatedAt)}${sync.error?" · con error":stale?" · revisión atrasada":""}`:"Shopify: sin información de sincronización"}</p>
+      {italy&&<p className={`text-[11px] ${result?.elogySync?.error?"text-amber-300":"text-muted-foreground"}`}>Elogy: {result?.elogySync?.updatedAt?`última lectura ${date(result.elogySync.updatedAt)}`:"sin lectura acreditada"}{result?.elogySync?.completedAt?` · último recorrido completo ${date(result.elogySync.completedAt)}`:""}{result?.elogySync?.error?" · sincronización con error":""}. Cruce exacto por número; el seguimiento se actualiza desde el espejo de Elogy.</p>}
       {!config.woo&&<p className="text-xs text-muted-foreground">Estados según Shopify y gestión en Kairo. Las entregas y liquidaciones de {config.code==="kenku-ar"?"DropLatam y Fixy":"DropLatam"} aún no están conciliadas.</p>}
       <section className="min-w-0 rounded-lg border border-border bg-card p-3 sm:p-4" aria-label={`Gestión de pedidos de ${config.region}`} aria-busy={busy}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <form className="flex min-w-0 flex-1 basis-full gap-2 sm:min-w-[320px] sm:basis-auto" onSubmit={e=>{e.preventDefault();setPage(1);setExpanded(null);setQuery(search.trim());}}><div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-2.5 top-2 text-muted-foreground" size={14}/><input aria-label="Pedido, cliente o teléfono" className={`${control} h-8 w-full justify-start pl-8 text-xs`} value={search} maxLength={100} onChange={e=>setSearch(e.target.value)} placeholder="Buscar pedido, cliente o teléfono"/></div><button className={control} type="submit">Buscar</button></form>
           {config.woo&&<div className="flex" role="group" aria-label="Origen del pedido">{[["all","Todos"],["shopify","Shopify"],["woocommerce","WooCommerce"]].map(([value,label])=><button key={value} aria-pressed={source===value} className={`${control} rounded-none first:rounded-l-md last:rounded-r-md ${source===value?"border-primary/60 bg-primary/10 text-primary":"text-muted-foreground"}`} onClick={()=>{setSource(value);setPage(1);setExpanded(null);}}>{label}</button>)}</div>}
+          {italy&&<select aria-label="Conciliación Elogy" className={`${control} max-w-full`} value={reconciliation} onChange={e=>{setReconciliation(e.target.value);setPage(1);setExpanded(null);}}>{[["all","Toda la conciliación"],["matched","Con seguimiento conciliado"],["review","Diferencias por revisar"],["unmatched","Sin seguimiento Elogy"],["ambiguous","Coincidencia ambigua"],["unknown","Seguimiento sin verificar"]].map(([v,label])=><option key={v} value={v}>{label}</option>)}</select>}
         </div>
         <div className="mb-3 overflow-x-auto" role="group" aria-label="Estado operativo"><div className="flex min-w-max gap-1">
           <button aria-pressed={status===""} onClick={()=>filterStatus("")} className={`min-w-[84px] border px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${status===""?"border-foreground/40 bg-muted/30":"border-border hover:bg-muted/30"}`}><span className="block text-[10px] text-muted-foreground">Todos</span><span className="block text-sm font-semibold tabular-nums">{total===null?"—":number(total)}</span></button>
-          {ITALIA_STATES.map(key=><button key={key} aria-pressed={status===key} onClick={()=>filterStatus(key)} className={`min-w-[105px] flex-1 border px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${status===key?"border-primary bg-seleccion":"border-border hover:bg-muted/30"}`}><span className="flex items-center gap-1 text-[10px] text-muted-foreground"><span className={statusTone[key].split(" ").at(-1)} aria-hidden="true">●</span>{countLabel[key]}</span><span className="block text-sm font-semibold tabular-nums">{visibleCounts?number(visibleCounts[key]):"—"}</span></button>)}
+          {states.map(key=><button key={key} aria-pressed={status===key} onClick={()=>filterStatus(key)} className={`min-w-[105px] flex-1 border px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${status===key?"border-primary bg-seleccion":"border-border hover:bg-muted/30"}`}><span className="flex items-center gap-1 text-[10px] text-muted-foreground"><span className={statusTone[key].split(" ").at(-1)} aria-hidden="true">●</span>{countLabel[key]}</span><span className="block text-sm font-semibold tabular-nums">{visibleCounts?number(visibleCounts[key]):"—"}</span></button>)}
         </div></div>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px]"><p className="text-muted-foreground">{status?`Estado: ${ITALIA_STATUS[status as ItaliaStatus]}`:"Todos los estados operativos"}</p><div className="flex items-center gap-2"><p aria-live="polite">{loaded?`${number(result.count)} pedidos`:!rangeReady?"Rango pendiente":busy?"Cargando pedidos…":"Sin datos"}</p><button className={`${control} p-1`} aria-label="Página anterior" disabled={page===1||busy||!loaded} onClick={()=>{setPage(p=>p-1);setExpanded(null);}}><ChevronLeft size={14}/></button><span className="tabular-nums">{loaded?`${page} / ${Math.max(1,Math.ceil(result.count/50))}`:"—"}</span><button className={`${control} p-1`} aria-label="Página siguiente" disabled={!loaded||page*50>=result.count||busy} onClick={()=>{setPage(p=>p+1);setExpanded(null);}}><ChevronRight size={14}/></button></div></div>
         {error&&<p role="alert" className="mb-3 rounded border border-red-500/40 bg-red-500/10 p-3 text-sm">{error} <button className="ml-2 underline" onClick={()=>void load(true)}>Reintentar</button></p>}
         <OrdersTable orders={orders} loading={busy} disabled={busy||saving||Boolean(error)} expanded={expanded} onExpand={id=>setExpanded(v=>v===id?null:id)} onManage={setManaging} onChange={(order,next)=>setChange({order,status:next,requestId:crypto.randomUUID()})}/>
         {loaded&&!busy&&orders.length===0&&<div className="py-12 text-center"><h3 className="text-sm font-medium">No hay pedidos en esta vista</h3><p className="mt-2 text-xs text-muted-foreground">{source==="woocommerce"?"Los pedidos nuevos de WooCommerce aparecerán aquí al terminar la compra.":"Prueba otro periodo, estado o búsqueda."}</p></div>}
-        <p className="mt-3 max-w-prose text-[11px] leading-relaxed text-muted-foreground">La gestión de Shopify se guarda en Kairo. Sus estados originales de pago y envío se conservan y se actualizan cada cinco minutos.</p>
+        <p className="mt-3 max-w-prose text-[11px] leading-relaxed text-muted-foreground">La gestión de Shopify se guarda en Kairo. Sus estados originales de pago y envío se conservan y se actualizan cada cinco minutos.{italy?" El seguimiento conciliado de Elogy se muestra sin modificar Shopify ni enviar pedidos; anulaciones, reembolsos y diferencias protegidas quedan para revisión.":""}</p>
       </section>
     </main>
     {managing&&<ManageShopifyDialog key={managing.id} order={managing} onClose={()=>setManaging(null)} onSaved={()=>{setManaging(null);void load(true);}}/>}
