@@ -81,7 +81,7 @@ export default function CreateOrderPanel({
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [createdOrder, setCreatedOrder] = useState<string | null>(null);
+  const [createdOrder, setCreatedOrder] = useState<{ name: string; displayName: string } | null>(null);
   const receiptKey = `icomfly-attempt:${store}:${lead.id}`;
   const [pending, setPending] = useState<{request_id:string;icomfly_id?:string|null;message?:string}|null>(null);
   const [receiptLoaded,setReceiptLoaded]=useState(false);
@@ -232,7 +232,7 @@ export default function CreateOrderPanel({
       setPending(null);
       // Confirmacion DENTRO del drawer: no cerramos, mostramos exito y
       // refrescamos el tablero por detras.
-      setCreatedOrder(data.order_name);
+      setCreatedOrder({ name: data.order_name, displayName: data.order_display_name || data.order_name });
       setAviso(data.aviso ?? null);
       onCreated(data.order_name);
     } catch (err) {
@@ -272,9 +272,14 @@ export default function CreateOrderPanel({
         </div>
         <p className="text-lg font-semibold">Pedido verificado en iComfly</p>
         <p className="text-sm text-muted-foreground">
-          Se generó el pedido <span className="font-medium text-foreground">{createdOrder}</span> en {plataforma}.
+          Se generó el pedido <span className="font-medium text-foreground">{createdOrder.displayName}</span> en {plataforma}.
           {!aviso && <> El lead pasó a <span className="font-medium text-foreground">Ganados</span>.</>}
         </p>
+        {createdOrder.displayName !== createdOrder.name ? (
+          <p className="text-xs text-muted-foreground">Referencia interna de Kairo: {createdOrder.name}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">El correlativo de iComfly aún no está disponible.</p>
+        )}
         {aviso && <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-300">{aviso}</p>}
         <Button variant="outline" className="mt-2" onClick={resetForNew}>
           <Plus className="mr-2 h-4 w-4" /> Crear otro pedido

@@ -188,9 +188,20 @@ function pendiente(receipt: Receipt){
 async function verificarRecibo(receipt:Receipt,storeCode:FinanceStoreCode):Promise<NextResponse>{
  if(!receipt.icomfly_id)return pendiente(receipt);
  const nombre=nombrePedidoIcomfly(null,receipt.icomfly_id);
- if(receipt.confirmed_at)return NextResponse.json({ok:true,verified:true,destino:"icomfly",order_name:nombre,icomfly_id:receipt.icomfly_id});
  let verified;
- try{verified=await verifyCreatedIcomflyOrder(storeCode,receipt.icomfly_id);}catch{return pendiente(receipt);}
+ try{verified=await verifyCreatedIcomflyOrder(storeCode,receipt.icomfly_id);}catch{
+  if(!receipt.confirmed_at)return pendiente(receipt);
+ }
+ if(!verified&&!receipt.confirmed_at)return pendiente(receipt);
+ // El correlativo visible pertenece a la tienda; el ID interno sigue siendo
+ // la clave estable de la gestión. Nunca inferirlo del acuse de creación.
+ const identificacion={
+  order_name:nombre,
+  order_display_name:verified?.storeWebSeq?`#${verified.storeWebSeq}`:nombre,
+  store_web_seq:verified?.storeWebSeq??null,
+  icomfly_id:receipt.icomfly_id,
+ };
+ if(receipt.confirmed_at)return NextResponse.json({ok:true,verified:true,destino:"icomfly",...identificacion});
  if(!verified)return pendiente(receipt);
  let aviso:string|undefined;
  try{
@@ -198,5 +209,5 @@ async function verificarRecibo(receipt:Receipt,storeCode:FinanceStoreCode):Promi
   await confirmReceipt(receipt);
  }catch{aviso="El pedido se verificó en iComfly, pero falta actualizar su gestión en Kairo.";}
  await Promise.race([runIcomflySync({store:storeCode,maxPages:1}).catch(()=>undefined),new Promise(resolve=>setTimeout(resolve,2000))]);
- return NextResponse.json({ok:true,verified:true,destino:"icomfly",order_name:nombre,icomfly_id:receipt.icomfly_id,order_number:verified.orderNumber,total:verified.total,...(aviso?{aviso}:{})});
+ return NextResponse.json({ok:true,verified:true,destino:"icomfly",...identificacion,order_number:verified.orderNumber,total:verified.total,...(aviso?{aviso}:{})});
 }

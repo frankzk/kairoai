@@ -18,4 +18,12 @@ describe("Verificación real del listado",()=>{
   expect(await verifyCreatedIcomflyOrder("mireva-cr","123")).toBeNull();
   expect(list).toHaveBeenCalledTimes(3);
  });
+ it.each([196,"210"])("obtiene el correlativo visible %s de la lectura independiente",async seq=>{
+  list.mockResolvedValue({raw:[{id:123,store_id:71,order_number:"MANUAL-123",store_web_seq:seq}],hasMore:false});
+  expect(await verifyCreatedIcomflyOrder("mireva-cr","123")).toMatchObject({id:"123",storeWebSeq:String(seq)});
+ });
+ it.each([undefined,null,"",0,-1,"MANUAL-123","196.5"])("no inventa un correlativo cuando recibe %s",async seq=>{
+  list.mockResolvedValue({raw:[{id:123,store_id:71,order_number:"MANUAL-123",store_web_seq:seq}],hasMore:false});
+  expect(await verifyCreatedIcomflyOrder("mireva-cr","123")).toMatchObject({id:"123",storeWebSeq:null});
+ });
 });
