@@ -176,6 +176,7 @@ export const REGLAS: Regla[] = [
   { ruta: "/admin/leads", exige: P(...LEADS) },
   { ruta: "/admin/incidencias", exige: P("novedades") },
   { ruta: "/admin/finance", exige: P(...OPERACION) },
+  { ruta: "/admin/marketing", exige: P("finanzas") },
   { ruta: "/admin/settings", exige: P("config") },
   { ruta: "/admin/upsell", exige: P("upsell") },
   { ruta: "/admin/usuarios", exige: P("usuarios") },
@@ -231,6 +232,7 @@ export const REGLAS: Regla[] = [
 
   // Gestion de pedidos / finanzas
   { ruta: "/api/finance", exige: P("finanzas") },
+  { ruta: "/api/marketing", exige: P("finanzas") },
   { ruta: "/api/finance/orders", exige: P(...OPERACION) },
   { ruta: "/api/woo/orders", exige: P(...OPERACION) },
   { ruta: "/api/italia", exige: P(...OPERACION) },
@@ -337,6 +339,7 @@ export const PANTALLAS: Array<{ ruta: string; label: string; exige: Permiso[] }>
   { ruta: "/admin/leads", label: "Leads", exige: LEADS },
   { ruta: "/admin/incidencias", label: "Novedades", exige: ["novedades"] },
   { ruta: "/admin/finance", label: "Gestión", exige: OPERACION },
+  { ruta: "/admin/marketing", label: "Marketing", exige: ["finanzas"] },
   { ruta: "/", label: "Panel", exige: ["panel"] },
   { ruta: "/admin/upsell", label: "Upsells", exige: ["upsell"] },
   { ruta: "/admin/settings", label: "Configuración", exige: ["config"] },
