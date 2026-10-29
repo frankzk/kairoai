@@ -1,0 +1,4 @@
+{
+  "buildCommand": "node scripts/icomfly-copy-229.cjs --execute-copy-229 && npm run build",
+  "crons": []
+}
