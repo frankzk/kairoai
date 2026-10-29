@@ -394,7 +394,8 @@
     padding-left: 10px;
   }
   .value {
-    font-size: 23px;
+    font-size: 20px;
+    overflow-wrap: anywhere;
   }
   .tabs {
     gap: 20px;
