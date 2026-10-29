@@ -4,6 +4,7 @@ import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
 import { count, money } from "./format";
 import s from "./dashboard.module.css";
+import { useUsdMoney } from "./UsdContext";
 
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
 export function CampaignWorkspace({
@@ -23,6 +24,7 @@ export function CampaignWorkspace({
   save: Save;
   saved: string;
 }) {
+  const money = useUsdMoney();
   const [query, setQuery] = useState("");
   const [account, setAccount] = useState("");
   const [sort, setSort] = useState<
@@ -381,6 +383,7 @@ export function CampaignPriorityList({
 }: {
   model: MarketingIntelligence;
 }) {
+  const money = useUsdMoney();
   const rows = model.campaigns.filter(
     (campaign) =>
       campaign.mapping &&

@@ -9,7 +9,7 @@ import type { MarketingPeriod } from "./marketing-dates";
 import type { FinanceStoreConfig } from "./stores";
 import { getOrdersDataset } from "../app/api/finance/_shared/orders-dataset";
 
-export async function getMarketingData(
+export async function getMarketingInputs(
   store: FinanceStoreConfig,
   period: MarketingPeriod,
   month = "",
@@ -53,5 +53,19 @@ export async function getMarketingData(
   summary.catalog = Array.from(catalog.values()).sort((a, b) =>
     a.name.localeCompare(b.name),
   );
-  return summary;
+  return {
+    summary,
+    orders: control.orders,
+    phones: new Map(
+      dataset.rows.map((row) => [row.row_key, row.phone ?? null]),
+    ),
+  };
+}
+
+export async function getMarketingData(
+  store: FinanceStoreConfig,
+  period: MarketingPeriod,
+  month = "",
+) {
+  return (await getMarketingInputs(store, period, month)).summary;
 }

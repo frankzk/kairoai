@@ -3,6 +3,7 @@ import { Fragment, useMemo, useState } from "react";
 import type { MarketingProductMetric } from "@/lib/marketing-intelligence";
 import { count, money } from "./format";
 import s from "./dashboard.module.css";
+import { useUsdMoney } from "./UsdContext";
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
 const planBody = (product: MarketingProductMetric) => ({
   kind: "plan",
@@ -143,6 +144,7 @@ export function ProductWorkspace({
   save: Save;
   replenishment?: boolean;
 }) {
+  const money = useUsdMoney();
   const [query, setQuery] = useState("");
   const [priorityOnly, setPriorityOnly] = useState(false);
   const [sort, setSort] = useState("orders");

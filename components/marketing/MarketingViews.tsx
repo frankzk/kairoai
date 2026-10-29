@@ -3,10 +3,11 @@ import { useState } from "react";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
 import type { MarketingSources } from "@/lib/marketing-source-types";
-import { count, money, percentage, shortDate } from "./format";
+import { count, percentage, shortDate } from "./format";
 import { OrdersChart, ProductTrend } from "./MarketingCharts";
 import { CampaignPriorityList } from "./CampaignWorkspace";
 import s from "./dashboard.module.css";
+import { useUsdMoney } from "./UsdContext";
 
 export function AlertList({
   model,
@@ -89,6 +90,7 @@ export function Overview({
   sourcesLoading: boolean;
   go: (view: "details" | "trends" | "sources") => void;
 }) {
+  const money = useUsdMoney();
   const { totals } = data,
     { ads } = model;
   const growth =
@@ -275,7 +277,7 @@ export function Overview({
       </div>
       <details className={`${s.section} border-t border-border pt-4`}>
         <summary className={s.link}>
-          Estado de pedidos y registros financieros en CRC
+          Estado de pedidos y registros financieros en USD
         </summary>
         <div className="mt-4 grid gap-6 md:grid-cols-2">
           <dl className={s.list}>
@@ -305,9 +307,9 @@ export function Overview({
           </dl>
           <div className={s.muted}>
             Con guía no acredita salida física. Las liquidaciones no prueban un
-            depósito bancario. Los gastos manuales CRC permanecen separados de
-            los reportes publicitarios para evitar duplicados y conversiones de
-            moneda. El saldo es parcial, no utilidad final.
+            depósito bancario. Los gastos manuales de Gestión permanecen
+            separados de los reportes publicitarios para evitar duplicados y
+            conversiones de moneda. El saldo es parcial, no utilidad final.
             <p className="mt-3">
               {count(data.quality.deliveredWithoutSettlement)} entregados sin
               liquidación; {count(data.quality.duplicateSettlements)} con

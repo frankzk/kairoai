@@ -10,16 +10,14 @@ interface Resource<T> {
   loading: boolean;
   error: string;
 }
-function useResource<T>(url: string | null, revision: number) {
-  const [state, setState] = useState<Resource<T>>({
-    data: null,
-    loading: true,
-    error: "",
-  });
+export function useResource<T>(url: string | null, revision: number) {
+  const [state, setState] = useState<
+    Resource<T> & { requestKey: string | null }
+  >({ data: null, loading: true, error: "", requestKey: null });
   useEffect(() => {
     if (!url) return;
     const controller = new AbortController();
-    setState({ data: null, loading: true, error: "" });
+    setState({ data: null, loading: true, error: "", requestKey: url });
     fetch(url, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         if (!response.ok)
@@ -30,7 +28,7 @@ function useResource<T>(url: string | null, revision: number) {
       })
       .then((data) => {
         if (!controller.signal.aborted)
-          setState({ data, loading: false, error: "" });
+          setState({ data, loading: false, error: "", requestKey: url });
       })
       .catch(() => {
         if (!controller.signal.aborted)
@@ -39,11 +37,19 @@ function useResource<T>(url: string | null, revision: number) {
             loading: false,
             error:
               "No se pudo consultar esta información. Vuelve a actualizar.",
+            requestKey: url,
           });
       });
     return () => controller.abort();
   }, [url, revision]);
-  return { ...state, setState };
+  const current =
+    url && state.requestKey !== url
+      ? { data: null, loading: true, error: "" }
+      : state;
+  return {
+    ...current,
+    setState: (next: Resource<T>) => setState({ ...next, requestKey: url }),
+  };
 }
 export function useMarketing(period: MarketingPeriod | null, revision: number) {
   const query = period ? periodQuery(period) : null;
