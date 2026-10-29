@@ -108,7 +108,9 @@ export async function leerSesion(
   return {
     u: c.u,
     n: typeof c.n === "string" ? c.n : "",
-    p: normalizarPermisos(c.p),
+    // El administrador legado conserva el catálogo completo al añadir pantallas.
+    // La firma y el vencimiento ya se comprobaron; los usuarios normales conservan sus permisos explícitos.
+    p: c.u === ADMIN_LEGADO_ID ? [...PERMISOS] : normalizarPermisos(c.p),
     s: Array.isArray(c.s) ? c.s.filter((x): x is string => typeof x === "string") : [],
     st: typeof c.st === "number" ? c.st : null,
     sv: typeof c.sv === "number" ? c.sv : 0,
