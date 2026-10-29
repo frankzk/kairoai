@@ -1,3 +1,4 @@
+import OrderReconciliation from "./OrderReconciliation";
 import { FINANCIAL_LABELS, FULFILLMENT_LABELS, ITALIA_STATUS, transitions, type ItaliaOrder, type ItaliaStatus } from "@/lib/italia-orders";
 import { control } from "./order-ui";
 
@@ -7,6 +8,7 @@ export default function OrderDetails({order:o,disabled,onManage,onChange}:{order
   const {date,money,postcodeLabel}=useOrderDisplay();
   const a=o.address,isShopify=o.source==="shopify",awaiting=o.version!==o.synced_version;
   return <div className="w-[calc(100vw-5rem)] space-y-4 bg-muted/20 px-4 py-4 text-xs sm:w-auto">
+    <OrderReconciliation order={o}/>
     <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
       <section className="min-w-0 space-y-1"><h3 className="mb-2 font-semibold">Cliente y entrega</h3><p>{o.customer_name}</p>{o.phone&&<p><a className="underline" href={`tel:${o.phone.replace(/[^+\d]/g,"")}`}>{o.phone}</a></p>}{o.email&&<p className="break-all text-muted-foreground">{o.email}</p>}<p className="pt-1">{a.address_1||"Dirección no disponible"}</p>{a.address_2&&<p>{a.address_2}</p>}<p>{a.postcode&&<strong>{postcodeLabel} {a.postcode} · </strong>}{a.city}{a.state?` (${a.state})`:""}</p><p className="text-muted-foreground">{[a.region,a.country].filter(Boolean).join(" · ")}</p></section>
       <section className="min-w-0"><h3 className="mb-2 font-semibold">Productos</h3><ul className="space-y-2">{o.items.map((item,i)=><li key={i} className="break-words">{item.quantity} × {item.name}<span className="mt-0.5 block text-[11px] text-muted-foreground">SKU: {item.sku||"Sin SKU"} · {money(item.total,o.currency)}</span></li>)}</ul></section>

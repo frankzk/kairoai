@@ -232,3 +232,62 @@ móvil y bloqueo de escrituras ante error de lectura. El histórico se redujo de
 por páginas de 50 y no añaden su histórico completo a esa respuesta.
 Los registros de banco y liquidaciones reales permanecen vacíos, como pidió el
 dueño al aplazar los extractos. Evidencias privadas elogy-conciliacion-*.
+
+## Conciliación de pedidos Shopify con seguimiento Elogy (29-10-2026)
+
+Gestión de Italia consulta `italia_orders_reconciled`, una proyección de lectura
+sobre los pedidos originales y el espejo de envíos Elogy. El enlace exige tienda,
+referencia normalizada exacta (solo espacios externos, prefijo # y mayúsculas),
+un pedido de origen único y un envío único. No se cruza por nombre, teléfono,
+importe aproximado ni identificadores numéricos compartidos entre plataformas.
+
+Los estados de Elogy se muestran con su etiqueta original, guía, courier, fecha
+del seguimiento y fecha de lectura. Created se presenta como En preparación;
+In transit como Enviado; reparto, incidencia, devolución en curso, entregado y
+devuelto tienen estados diferenciados. Un lead sin envío no se supone confirmado
+ni entregado: puede existir en Elogy y aún carecer de seguimiento conciliable.
+
+La lista, búsqueda por guía, filtros y contadores usan la misma proyección. Los
+contadores se agrupan en una única RPC de lectura y una sola instantánea por
+ámbito, sin traer payloads al navegador. El estado de WooCommerce conserva su
+flujo CRM. México/Argentina mantienen sus filtros y fuentes anteriores.
+
+Se preservan payloads de Shopify, datos originales de pago/preparación, versiones,
+notas, gestión manual y claves de origen. Una anulación/reembolso, un estado
+terminal manual contradictorio, una regresión de entrega/despacho, moneda/importe
+diferentes, referencia duplicada, varios envíos o seguimiento desconocido no se
+resuelven eligiendo arbitrariamente: se conservan y señalan para revisión. No se
+escriben estados de Shopify/Elogy, no se confirman clientes ni se solicitan envíos.
+El formulario de gestión sigue editando el estado base de Kairo y conserva su
+control de concurrencia; la etiqueta logística de la lista no cambia ese contrato.
+
+Migraciones: 20261029171044_italia_pedidos_conciliados_elogy y
+20261029171910_italia_conciliacion_contadores. Vista security_invoker y RPC
+security invoker/stable con search_path vacío; sin permisos anon/authenticated,
+solo lectura de service_role en el servidor. Las tablas base conservan su RLS.
+Reversión: desplegar la API anterior, que sigue leyendo italia_orders; la vista
+base y los pedidos no se alteraron. No restaurar bases históricas.
+
+Validación al aplicar: 6.286 registros conservados (6.281 Shopify/5 Woo), 4.647
+coincidencias de seguimiento, 14 diferencias (10 estados protegidos y 4 importes),
+1.620 sin seguimiento conciliable. Shopify: 2.787 entregados, 1.621 devueltos,
+160 en devolución, 98 enviados, 26 en reparto, 24 incidencias, 14 en preparación,
+306 pendientes y 1.245 anulados. Son una instantánea del espejo; el cron existente
+continúa actualizándolo. La pantalla indica última lectura y último recorrido
+completo; no promete un histórico completamente refrescado cada cinco minutos.
+
+Pruebas: 47 comprobaciones SQL reproducibles con PostgreSQL 17 aislado, red none,
+sin datos reales; 1.418 pruebas de proyecto, TypeScript, lint y build. La batería
+incluye referencias ambiguas, estado desconocido, regresiones, importes/monedas,
+actualización del espejo, persistencia original, límites por tienda y permisos.
+Navegador y despliegue se documentan al verificar la publicación.
+
+QA de navegador local con datos reales y autenticación normal: filtros de entregados,
+cola de 14 diferencias con detalle y ambos importes, búsqueda exacta por guía,
+paginación sin repetir contadores, móvil sin overflow, interfaz México conservada
+y API anónima protegida. Cero errores JS y cero escrituras de pedidos. Evidencia
+privada en output/playwright/kenkuit/pedidos-conciliados-local-qa.json y capturas.
+Los campos ADMIN_PASSWORD/AUTH_SECRET vacíos del .env de PC se completaron solo
+en el proceso efímero de QA con la alternativa APP_SECRET prevista por la app;
+no se modificó autenticación ni configuración productiva. 47 casos SQL y 1.418
+pruebas verificados al cierre; publicación y smoke productivo se registran después.

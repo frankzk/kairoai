@@ -1,0 +1,80 @@
+begin;
+create temp table checks(label text);
+create function pg_temp.check_it(ok boolean,label text) returns void language plpgsql as $$
+begin if ok is distinct from true then raise exception 'FAIL: %',label;end if;insert into checks values(label);end $$;
+create function pg_temp.fixture(i integer,ref text,provider_state text,base_state text default 'pending',manual_state text default null,sid bigint default 5,src text default 'shopify') returns void language plpgsql as $$
+begin
+ insert into public.reconciliation_test_orders(store_id,source,source_id,order_number,status,search_text) values(sid,src,i::text,ref,base_state,ref);
+ if src='shopify' then insert into public.italia_shopify_index values(sid,i::text,ref);else insert into public.woo_orders values(sid,i,ref);end if;
+ if manual_state is not null then insert into public.italia_shopify_management values(sid,i::text,manual_state);end if;
+ if provider_state is not null then insert into public.italia_elogy_records(store_id,resource,record_id,order_ref,data) values(sid,'shipments',i::text,upper(regexp_replace(trim(ref),'^#+','')),jsonb_build_object('state',provider_state,'state_label',provider_state,'guide','GUIDE-'||i,'carrier','gls','state_at','2026-10-29T11:00:00Z','currency','EUR','total_cents',3900));end if;
+end $$;
+select pg_temp.fixture(1,'#KITA1','delivered');
+select pg_temp.fixture(2,'#KITA2','returned');
+select pg_temp.fixture(3,'#KITA3','returning');
+select pg_temp.fixture(4,'#KITA4','out_for_delivery');
+select pg_temp.fixture(5,'#KITA5','incident');
+select pg_temp.fixture(6,'#KITA6','created');
+select pg_temp.fixture(7,'#KITA7','in_transit');
+select pg_temp.fixture(8,'#KITA8','cancelled');
+select pg_temp.fixture(9,'#KITA9','delivered','cancelled');
+select pg_temp.fixture(10,'#KITA10','returned','refunded');
+select pg_temp.fixture(11,'#KITA11','created','delivered');
+select pg_temp.fixture(12,'#KITA12','delivered','cancelled','cancelled');
+select pg_temp.fixture(13,'#KITA13','in_transit','confirmed','confirmed');
+select pg_temp.fixture(14,'#KITA14',null);
+select pg_temp.fixture(15,'#DUP','delivered');
+select pg_temp.fixture(16,'dup',null);
+select pg_temp.fixture(17,'#KITA17','delivered');
+insert into public.italia_elogy_records select store_id,resource,'second-shipment',order_ref,data,observed_at from public.italia_elogy_records where record_id='17';
+select pg_temp.fixture(18,'#KITA18','unknown');
+select pg_temp.fixture(19,'#KITA19','delivered');
+update public.italia_elogy_records set data=data-'state_at' where record_id='19';
+select pg_temp.fixture(20,'#KITA20','delivered','confirmed',null,5,'woocommerce');
+select pg_temp.fixture(21,'#KITA21',null);
+select pg_temp.fixture(22,'#KITA21','delivered','pending',null,1);
+select pg_temp.fixture(23,'#KITA23','delivered');
+update public.italia_elogy_records set data=jsonb_set(data,'{total_cents}','4000') where record_id='23';
+select pg_temp.fixture(24,'#KITA24','delivered');
+update public.italia_elogy_records set data=jsonb_set(data,'{currency}','"USD"') where record_id='24';
+select pg_temp.fixture(25,'#KITA25','returned','delivered');
+select pg_temp.fixture(26,'#KITA26','created','dispatched');
+select pg_temp.fixture(27,'#KITA27','in_transit');
+update public.reconciliation_test_orders set management_note='kept',managed_at=now(),courier='manual courier',tracking_number='manual guide' where source_id='27';
+
+do $$
+declare pair record;before_rows jsonb;before_management jsonb;
+begin
+ select jsonb_agg(to_jsonb(o)) into before_rows from public.reconciliation_test_orders o;
+ select jsonb_agg(to_jsonb(o)) into before_management from public.italia_shopify_management o;
+ for pair in select * from (values('1','delivered'),('2','returned'),('3','returning'),('4','out_for_delivery'),('5','incident'),('6','preparing'),('7','dispatched'),('8','cancelled'),('9','cancelled'),('10','refunded'),('11','delivered'),('12','cancelled'),('13','dispatched'),('14','pending'),('18','pending'),('19','pending'),('20','confirmed'),('21','pending'),('23','pending'),('24','pending'),('25','returned'),('26','dispatched'),('27','dispatched')) v(id,expected) loop
+  perform pg_temp.check_it((select status=pair.expected from public.italia_orders_reconciled where source_id=pair.id and store_id=5),'status '||pair.id);
+ end loop;
+ perform pg_temp.check_it((select count(*) from public.italia_orders_reconciled)=(select count(*) from public.italia_orders),'cardinality unchanged');
+ perform pg_temp.check_it((select count(*) from public.italia_orders_reconciled where store_id=1)=0,'other stores excluded');
+ perform pg_temp.check_it((select count(*) from public.italia_orders_reconciled where reconciliation_state='ambiguous')=3,'duplicate source or shipment never chosen');
+ perform pg_temp.check_it((select reconciliation_state='unknown' from public.italia_orders_reconciled where source_id='19'),'missing tracking date not applied');
+ perform pg_temp.check_it((select reconciliation_state='unmatched' from public.italia_orders_reconciled where source_id='21'),'no cross-store join');
+ perform pg_temp.check_it((select reconciliation_state='not_applicable' from public.italia_orders_reconciled where source_id='20'),'Woo workflow stays independent');
+ perform pg_temp.check_it((select reconciliation_state='review' and reconciliation->>'reason'='amount' from public.italia_orders_reconciled where source_id='23'),'amount difference review');
+ perform pg_temp.check_it((select reconciliation_state='review' from public.italia_orders_reconciled where source_id='24'),'currency difference review');
+ perform pg_temp.check_it((select reconciliation_state='review' from public.italia_orders_reconciled where source_id='9'),'cancelled versus delivered review');
+ perform pg_temp.check_it((select management_note='kept' and courier='manual courier' and tracking_number='manual guide' and reconciliation->>'guide'='GUIDE-27' from public.italia_orders_reconciled where source_id='27'),'manual fields preserved independently');
+ perform pg_temp.check_it((select search_text ilike '%GUIDE-1%' from public.italia_orders_reconciled where source_id='1'),'search includes guide');
+ perform pg_temp.check_it((select payload->>'financial_status'='pending' and base_status='pending' and status='delivered' from public.italia_orders_reconciled where source_id='1'),'payment and base status preserved');
+ perform pg_temp.check_it((select jsonb_agg(to_jsonb(o))=before_rows from public.reconciliation_test_orders o),'source records never changed');
+ perform pg_temp.check_it((select jsonb_agg(to_jsonb(o))=before_management from public.italia_shopify_management o),'manual records never changed');
+ update public.italia_elogy_records set data=jsonb_set(data,'{state}','"returned"') where record_id='1' and store_id=5;
+ perform pg_temp.check_it((select status='returned' from public.italia_orders_reconciled where source_id='1'),'provider update reflected without another copy');
+ perform pg_temp.check_it(not has_table_privilege('anon','public.italia_orders_reconciled','select'),'anon cannot read');
+ perform pg_temp.check_it(not has_table_privilege('authenticated','public.italia_orders_reconciled','select'),'authenticated cannot read');
+ perform pg_temp.check_it(has_table_privilege('service_role','public.italia_orders_reconciled','select'),'server can read');
+ perform pg_temp.check_it((select reloptions @> array['security_invoker=true'] from pg_class where oid='public.italia_orders_reconciled'::regclass),'invoker security');
+ perform pg_temp.check_it((public.italia_reconciled_counts(5,'shopify','%GUIDE-1%',null,null,'matched')->>'returned')::int=1,'guide and reconciliation in atomic count');
+ perform pg_temp.check_it(public.italia_reconciled_counts(1,'all','',null,null,'all')='{}'::jsonb,'count cannot cross stores');
+ perform pg_temp.check_it(public.italia_reconciled_counts(5,'all','',now()+interval '1 day',now()+interval '2 day','all')='{}'::jsonb,'date range applied in count');
+ perform pg_temp.check_it(not has_function_privilege('anon','public.italia_reconciled_counts(bigint,text,text,timestamptz,timestamptz,text)','execute'),'anon cannot count');
+ perform pg_temp.check_it(not has_function_privilege('authenticated','public.italia_reconciled_counts(bigint,text,text,timestamptz,timestamptz,text)','execute'),'authenticated cannot count');
+end $$;
+select 'PASS: '||count(*)||' SQL checks' as result from checks;
+rollback;

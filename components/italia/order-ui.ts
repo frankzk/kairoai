@@ -6,10 +6,13 @@ export const statusTone: Record<ItaliaStatus,string> = {
   dispatched:"bg-cyan-500/15 text-cyan-300", partial:"bg-blue-500/15 text-blue-300",
   delivered:"bg-emerald-500/15 text-emerald-300", cancelled:"bg-red-500/15 text-red-300",
   returned:"bg-orange-500/15 text-orange-300", refunded:"bg-slate-500/15 text-slate-300",
+  preparing:"bg-blue-500/15 text-blue-300",out_for_delivery:"bg-cyan-500/15 text-cyan-300",
+  incident:"bg-red-500/15 text-red-300",returning:"bg-orange-500/15 text-orange-300",
 };
 export const countLabel: Record<ItaliaStatus,string> = {
   pending:"Pendientes", confirmed:"Confirmados", dispatched:"Enviados", partial:"Envío parcial",
   delivered:"Entregados", cancelled:"Anulados", returned:"Devueltos", refunded:"Reembolsados",
+  preparing:"En preparación",out_for_delivery:"En reparto",incident:"Incidencias",returning:"En devolución",
 };
 export const date = (value:string) => new Date(value).toLocaleString("es-ES",{timeZone:"Europe/Rome"});
 export const shortDate = (value:string) => new Date(value).toLocaleDateString("es-ES",{timeZone:"Europe/Rome"});
