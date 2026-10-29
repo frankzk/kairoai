@@ -16,8 +16,13 @@ let fallaMarcar = false;
 let claveDeOtraTienda = false;
 let visible=true;
 let creationTimeout=false;
+let storeWebSeq:string|null="210";
+let verificationFails=false;
 const receipts: import("../lib/icomfly-receipts").Receipt[]=[];
-vi.mock("@/lib/icomfly-confirmation",()=>({verifyCreatedIcomflyOrder:async()=>visible?{id:"729032",orderNumber:"MANUAL-123-ABC",total:1110}:null}));
+vi.mock("@/lib/icomfly-confirmation",()=>({verifyCreatedIcomflyOrder:async()=>{
+ if(verificationFails)throw new Error("iComfly no disponible");
+ return visible?{id:"729032",orderNumber:"MANUAL-123-ABC",storeWebSeq,total:1110}:null;
+}}));
 vi.mock("@/lib/icomfly-receipts",()=>({
  findReceipt:async(store:number,lead:number,key:string)=>receipts.find(r=>r.store_id===store&&r.lead_id===lead&&(r.request_id===key||!r.confirmed_at))??null,
  reserveReceipt:async(r:import("../lib/icomfly-receipts").Receipt)=>{if(receipts.some(x=>x.store_id===r.store_id&&x.lead_id===r.lead_id&&!x.confirmed_at))return false;receipts.push(r);return true;},
@@ -78,6 +83,8 @@ beforeEach(() => {
   receipts.length=0;
   visible=true;
   creationTimeout=false;
+  storeWebSeq="210";
+  verificationFails=false;
   llamadas.length = 0;
   ganados.length = 0;
   shopifyCreados = 0;
@@ -89,7 +96,7 @@ describe("Crear en iComfly", () => {
   it("crea el pedido en iComfly de la tienda del lead, no en Shopify, y devuelve su número", async () => {
     const res = await crear("mireva-hn");
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, destino: "icomfly", order_name: "IC-729032", icomfly_id: "729032" });
+    expect(await res.json()).toMatchObject({ ok: true, destino: "icomfly", order_name: "IC-729032", order_display_name: "#210", store_web_seq: "210", icomfly_id: "729032" });
     expect(shopifyCreados).toBe(0);
     const crearPedido = llamadas.find((l) => l.nombre === "crear_pedido")!;
     expect(crearPedido.tienda).toBe("mireva-hn");
@@ -159,6 +166,24 @@ describe("Crear en iComfly", () => {
   });
 });
 describe("Confirmación independiente y reintentos",()=>{
+ it("recupera el correlativo al consultar un intento ya confirmado sin repetir creación ni Ganados",async()=>{
+  storeWebSeq=null;
+  const first=await crear("mireva-cr");
+  expect(await first.json()).toMatchObject({verified:true,order_name:"IC-729032",order_display_name:"IC-729032",store_web_seq:null});
+  storeWebSeq="196";
+  const retry=await crear("mireva-cr");
+  expect(await retry.json()).toMatchObject({verified:true,order_name:"IC-729032",order_display_name:"#196",store_web_seq:"196"});
+  expect(llamadas.filter(l=>l.nombre==="crear_pedido")).toHaveLength(1);
+  expect(ganados).toHaveLength(1);
+ });
+ it("si falla consultar el correlativo conserva una confirmación previa sin inventar el número",async()=>{
+  await crear("mireva-cr");
+  verificationFails=true;
+  const retry=await crear("mireva-cr");
+  expect(await retry.json()).toMatchObject({verified:true,order_name:"IC-729032",order_display_name:"IC-729032",store_web_seq:null});
+  expect(llamadas.filter(l=>l.nombre==="crear_pedido")).toHaveLength(1);
+  expect(ganados).toHaveLength(1);
+ });
  it("el ID de creación por sí solo no confirma ni marca Ganado",async()=>{
   visible=false;
   const r=await crear("mireva-cr");
