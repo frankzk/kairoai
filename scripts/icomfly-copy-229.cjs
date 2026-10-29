@@ -89,6 +89,9 @@ async function main() {
  const order=after.pedido||{};
  if(!verified || order.status!=='Pendiente' || order.tracking_number || order.carrier_name ||
   Number(order.total)!==33830 || Number(order.valor_a_recaudar)!==33830)throw Error('Copia sin verificación final: revisar el ID existente, no repetir.');
+ try {
+  await load('lib/icomfly-sync.ts').runIcomflySync({store:'mireva-cr',maxPages:1});
+ } catch { console.log('KAIRO_COPY229_SYNC_PENDING'); }
  console.log('KAIRO_COPY229_RESULT '+JSON.stringify({id:String(id),reference:verified.orderNumber,store_web_seq:verified.storeWebSeq,status:order.status,
   item_count:after.items.length,subtotal:39800,discount:5970,total:33830,cod:33830,tracking:null,dispatch_executed:false}));
 }
