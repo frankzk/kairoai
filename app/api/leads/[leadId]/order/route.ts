@@ -4,7 +4,8 @@ import { getLead, markLeadWonByAdvisor, type LeadRecord } from "@/lib/leads";
 import { vendedoraEfectiva } from "@/lib/identidad";
 import { getStoreRegions, type FinanceStoreCode } from "@/lib/store-config";
 import { llamarHerramientaIcomfly, verificarTiendaMcp } from "@/lib/icomfly-mcp";
-import { getIcomflyExternalStoreId } from "@/lib/icomfly";
+import { getIcomflyExternalStoreId, getIcomflyCatalogProduct, createManualIcomflyOrder } from "@/lib/icomfly";
+import { buildManualOrder, resolveManualOrderLine } from "@/lib/icomfly-manual-order";
 import {
   argumentosCrearPedido,
   creaEnIcomfly,
@@ -12,6 +13,7 @@ import {
   faltanParaIcomfly,
   palabraDeBusqueda,
   type ProductoIcomfly,
+  type PedidoLead,
 } from "@/lib/icomfly-pedido-lead";
 import { nombrePedidoIcomfly } from "@/lib/icomfly-pedidos";
 import { runIcomflySync } from "@/lib/icomfly-sync";
@@ -142,12 +144,12 @@ async function crearEnIcomfly(ctx: {
   const productos = await Promise.all(
     items.map((it) => buscarProductoIcomfly(storeCode, String(it.product_title || it.title || "")))
   );
-  const args = argumentosCrearPedido(
-    {
+  const pedidoLead: PedidoLead = {
       items: items.map((it) => ({
         title: String(it.title || "Producto"),
         product_title: it.product_title,
         variant_title: it.variant_title,
+        sku: it.sku,
         price: Number(it.price) || 0,
         quantity: Number(it.quantity) || 1,
       })),
@@ -160,18 +162,32 @@ async function crearEnIcomfly(ctx: {
           ? { value: body.discount.value, type: body.discount.type === "fixed_amount" ? "fixed_amount" : "percentage" }
           : undefined,
       nota: body.note,
-    },
-    productos
-  );
-  const receipt: Receipt={request_id:body.request_id!,store_id:storeId,lead_id:leadId,advisor_id:vendedoraId,icomfly_id:null,confirmed_at:null};
+    };
+  let manual: ReturnType<typeof buildManualOrder> | undefined;
+  if (items.length > 1) {
+    try {
+      const externalStoreId = getIcomflyExternalStoreId(storeCode)!;
+      const lines = await Promise.all(pedidoLead.items.map(async (item, i) => {
+        const found = productos[i];
+        if (!found) throw new Error(`No se encontró "${item.product_title || item.title}" en el catálogo de iComfly. No se creó el pedido.`);
+        return resolveManualOrderLine(item, await getIcomflyCatalogProduct(storeCode, found.id), externalStoreId);
+      }));
+      manual = buildManualOrder(pedidoLead, lines, externalStoreId, body.request_id!);
+    } catch (error) {
+      return NextResponse.json({error: error instanceof Error ? error.message : "No se pudieron vincular los productos de iComfly."}, {status:422});
+    }
+  }
+  const args = manual ? manual.body : argumentosCrearPedido(pedidoLead, productos);
+  const receipt: Receipt={request_id:body.request_id!,store_id:storeId,lead_id:leadId,advisor_id:vendedoraId,icomfly_id:null,confirmed_at:null,...(manual?{expected_order:manual.expected}:{})};
   if(!await reserveReceipt(receipt)){
     const existing=await findReceipt(storeId,leadId,body.request_id!);
     if(!existing)throw new Error("No se pudo recuperar el intento. Revisa iComfly antes de repetir.");
     return verificarRecibo(existing,storeCode);
   }
   try{
-    const r=await llamarHerramientaIcomfly(storeCode,"crear_pedido",args);
-    const pedido=(r.pedido??{}) as {id?:unknown};
+    const pedido = manual ? await createManualIcomflyOrder(storeCode,args) :
+      (await llamarHerramientaIcomfly(storeCode,"crear_pedido",args)).pedido as {id?:unknown};
+    if(!pedido)return pendiente(receipt);
     if(!/^\d+$/.test(String(pedido.id??"")))return pendiente(receipt);
     await saveReceiptId(receipt,String(pedido.id));
   }catch{
@@ -189,7 +205,7 @@ async function verificarRecibo(receipt:Receipt,storeCode:FinanceStoreCode):Promi
  if(!receipt.icomfly_id)return pendiente(receipt);
  const nombre=nombrePedidoIcomfly(null,receipt.icomfly_id);
  let verified;
- try{verified=await verifyCreatedIcomflyOrder(storeCode,receipt.icomfly_id);}catch{
+ try{verified=await verifyCreatedIcomflyOrder(storeCode,receipt.icomfly_id,receipt.expected_order);}catch{
   if(!receipt.confirmed_at)return pendiente(receipt);
  }
  if(!verified&&!receipt.confirmed_at)return pendiente(receipt);

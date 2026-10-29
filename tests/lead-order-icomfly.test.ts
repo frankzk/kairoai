@@ -18,8 +18,12 @@ let visible=true;
 let creationTimeout=false;
 let storeWebSeq:string|null="210";
 let verificationFails=false;
+const nativeOrders: Record<string,unknown>[]=[];
+const verifiedExpectations: unknown[]=[];
+let foreignCatalog=false;
 const receipts: import("../lib/icomfly-receipts").Receipt[]=[];
-vi.mock("@/lib/icomfly-confirmation",()=>({verifyCreatedIcomflyOrder:async()=>{
+vi.mock("@/lib/icomfly-confirmation",()=>({verifyCreatedIcomflyOrder:async(_store:string,_id:string,expected:unknown)=>{
+ verifiedExpectations.push(expected);
  if(verificationFails)throw new Error("iComfly no disponible");
  return visible?{id:"729032",orderNumber:"MANUAL-123-ABC",storeWebSeq,total:1110}:null;
 }}));
@@ -36,11 +40,20 @@ vi.mock("@/lib/icomfly-mcp", () => ({
   llamarHerramientaIcomfly: async (tienda: string, nombre: string, args: Record<string, unknown>) => {
     llamadas.push({ tienda, nombre, args });
     if (nombre === "consultar_producto") {
-      return { encontrados: 1, productos: [{ id: "3456", name: "Fat‑Burn Shorts" }] };
+      return { encontrados: 2, productos: [{ id: "3456", name: "Fat‑Burn Shorts" }, {id:"3595",name:"Gomitas de Shilajit"}] };
     }
     if(creationTimeout)throw new Error("timeout");
     return { ok: true, pedido: { id: 729032, order_number: "EXCEL-MVMPVFBE-1UNUD", total: "1110.00" } };
   },
+}));
+vi.mock("@/lib/icomfly",()=>({
+ getIcomflyExternalStoreId:(store:string)=>store==="mireva-cr"?71:90,
+ getIcomflyCatalogProduct:async(store:string,id:number)=>({id,store_id:foreignCatalog?999:(store==="mireva-cr"?71:90),name:id===3456?"Fat‑Burn Shorts":"Gomitas de Shilajit",variants:[]}),
+ createManualIcomflyOrder:async(_store:string,body:Record<string,unknown>)=>{
+  nativeOrders.push(body);
+  if(creationTimeout)throw new Error("timeout después de escribir");
+  return {id:729032};
+ },
 }));
 vi.mock("@/lib/icomfly-sync", () => ({ runIcomflySync: async () => ({}) }));
 vi.mock("@/lib/shopify", () => ({
@@ -64,13 +77,13 @@ vi.mock("@/lib/identidad", () => ({
 
 const ENVIO = { name: "Marvin Enrique Guzmán", province: "Cortés", canton: "San Pedro Sula", address: "Col. Trejo" };
 
-async function crear(store: string, shipping: Record<string, string> = ENVIO) {
+async function crear(store: string, shipping: Record<string, string> = ENVIO, items?: Array<Record<string,unknown>>) {
   const { POST } = await import("../app/api/leads/[leadId]/order/route");
   const body = {
     store,
     request_id:"12345678-1234-4234-8234-123456789abc",
     destino: "icomfly",
-    items: [{ variant_id: 1, title: "Fat-Burn Shorts - Negro / L", product_title: "Fat-Burn Shorts", variant_title: "Negro / L", price: "1110", quantity: 1 }],
+    items: items ?? [{ variant_id: 1, title: "Fat-Burn Shorts - Negro / L", product_title: "Fat-Burn Shorts", variant_title: "Negro / L", price: "1110", quantity: 1 }],
     shipping,
   };
   return POST(new NextRequest("http://localhost/api/leads/5/order", { method: "POST", body: JSON.stringify(body) }), {
@@ -85,6 +98,9 @@ beforeEach(() => {
   creationTimeout=false;
   storeWebSeq="210";
   verificationFails=false;
+  nativeOrders.length=0;
+  verifiedExpectations.length=0;
+  foreignCatalog=false;
   llamadas.length = 0;
   ganados.length = 0;
   shopifyCreados = 0;
@@ -166,6 +182,60 @@ describe("Crear en iComfly", () => {
   });
 });
 describe("Confirmación independiente y reintentos",()=>{
+
+const MULTI_ITEMS=[
+ {title:"Fat-Burn Shorts",product_title:"Fat-Burn Shorts",price:1110,quantity:1,sku:"SHORTS"},
+ {title:"Gomitas de Shilajit",product_title:"Gomitas de Shilajit",price:19900,quantity:1,sku:"GOMITAS/SHILAJIT"},
+];
+describe("Varios productos con vínculo real al catálogo",()=>{
+ it("usa dos líneas nativas sin concatenarlas ni llamar crear_pedido",async()=>{
+  const response=await crear("mireva-cr",ENVIO,MULTI_ITEMS);
+  expect(response.status).toBe(200);
+  expect(nativeOrders).toHaveLength(1);
+  expect(nativeOrders[0]).toMatchObject({
+   store_id:71,isCartOrder:true,quantity:2,total:21010,send_confirmation:false,send_to_shopify:false,
+   products:[
+    {id:3456,name:"Fat‑Burn Shorts",price:1110,quantity:1},
+    {id:3595,name:"Gomitas de Shilajit",price:19900,quantity:1},
+   ],
+  });
+  expect(llamadas.filter(l=>l.nombre==="crear_pedido")).toHaveLength(0);
+  expect(receipts[0].expected_order).toEqual({items:[
+   {product_id:3456,variant_id:null,quantity:1},{product_id:3595,variant_id:null,quantity:1}
+  ],total:21010});
+  expect(verifiedExpectations[0]).toEqual(receipts[0].expected_order);
+ });
+ it("rechaza antes de reservar si falta un producto del catálogo",async()=>{
+  const response=await crear("mireva-cr",ENVIO,[MULTI_ITEMS[0],{title:"Producto inexistente",price:10,quantity:1}]);
+  expect(response.status).toBe(422);
+  expect(nativeOrders).toHaveLength(0);
+  expect(receipts).toHaveLength(0);
+ });
+ it("rechaza antes de reservar un producto de otra tienda",async()=>{
+  foreignCatalog=true;
+  const response=await crear("mireva-cr",ENVIO,MULTI_ITEMS);
+  expect(response.status).toBe(422);
+  expect(nativeOrders).toHaveLength(0);
+  expect(receipts).toHaveLength(0);
+ });
+ it("un timeout no repite el POST nativo ni marca Ganados",async()=>{
+  creationTimeout=true;
+  expect((await crear("mireva-cr",ENVIO,MULTI_ITEMS)).status).toBe(202);
+  expect((await crear("mireva-cr",ENVIO,MULTI_ITEMS)).status).toBe(202);
+  expect(nativeOrders).toHaveLength(1);
+  expect(ganados).toHaveLength(0);
+ });
+ it("conserva el detalle esperado al volver a consultar el mismo intento",async()=>{
+  visible=false;
+  expect((await crear("mireva-cr",ENVIO,MULTI_ITEMS)).status).toBe(202);
+  visible=true;
+  expect((await crear("mireva-cr")).status).toBe(200);
+  expect(nativeOrders).toHaveLength(1);
+  expect(verifiedExpectations).toHaveLength(2);
+  expect(verifiedExpectations[1]).toEqual(receipts[0].expected_order);
+ });
+});
+
  it("recupera el correlativo al consultar un intento ya confirmado sin repetir creación ni Ganados",async()=>{
   storeWebSeq=null;
   const first=await crear("mireva-cr");

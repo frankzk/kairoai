@@ -63,21 +63,15 @@ describe("lo que se manda a iComfly", () => {
     expect(args).not.toHaveProperty("product_id");
   });
 
-  it("varios productos van en una línea por el total (crear_pedido lleva uno)", () => {
-    const args = argumentosCrearPedido(
+  it("impide volver a concatenar varios productos en una línea sin catálogo", () => {
+    expect(() => argumentosCrearPedido(
       pedido({
         items: [
           { title: "Auto Wash Water Gun", price: 890, quantity: 2 },
           { title: "Lymphatic Drainage", price: 890, quantity: 1 },
         ],
       })
-    );
-    expect(args).toMatchObject({
-      producto_nombre: "2x Auto Wash Water Gun + 1x Lymphatic Drainage",
-      producto_precio: 2670,
-      cantidad: 1,
-      total: 2670,
-    });
+    )).toThrow(/líneas de catálogo/);
   });
 
   it("el descuento va en el total, y en la nota", () => {

@@ -1,5 +1,5 @@
-// Cliente READ-ONLY de la API de iComfly. Obtiene pedidos con atribucion y el
-// catalogo de agentes. Multi-tienda: cada llamada recibe storeId.
+// Cliente de la API de iComfly: lecturas y creación manual con líneas de
+// catálogo. Multi-tienda: cada llamada recibe la tienda explícitamente.
 //
 // Autenticacion: si ICOMFLY_TOKEN esta definido se usa directo; si no, se hace
 // login con ICOMFLY_EMAIL/ICOMFLY_PASSWORD (POST /auth/login) y se cachea el
@@ -184,6 +184,27 @@ export interface IcomflyOrdersPage {
   orders: NormalizedIcomflyOrder[];
   raw: Array<Record<string, unknown>>;
   hasMore: boolean;
+}
+
+export async function getIcomflyCatalogProduct(storeCode: FinanceStoreCode, productId: number) {
+  const response = await icomflyFetch(`/products/${productId}`, storeCode) as Record<string, unknown>;
+  return (response.data ?? response) as import("./icomfly-manual-order").IcomflyCatalogProduct;
+}
+
+/** Creación nativa: un único POST. Nunca reintentar una escritura tras timeout. */
+export async function createManualIcomflyOrder(storeCode: FinanceStoreCode, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const storeId = getIcomflyExternalStoreId(storeCode);
+  if (storeId == null || Number(payload.store_id) !== storeId) throw new Error("La tienda del pedido no corresponde al conector.");
+  const token = await getToken(storeCode);
+  const response = await fetch(`${BASE}/orders`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-Active-Store-Ids": String(storeId) },
+    body: JSON.stringify(payload), cache: "no-store", signal: AbortSignal.timeout(20000),
+  });
+  if (!response.ok) throw new Error(`iComfly rechazó la creación del pedido (HTTP ${response.status}).`);
+  const result = await response.json() as Record<string, unknown>;
+  if (result.success === false) throw new Error("iComfly no confirmó la creación del pedido.");
+  return (result.data ?? result) as Record<string, unknown>;
 }
 
 export async function listOrdersWithAttribution(opts: {

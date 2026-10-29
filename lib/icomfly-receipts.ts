@@ -1,5 +1,6 @@
 import { getDB } from "@/lib/db";
-export interface Receipt { request_id: string; store_id: number; lead_id: number; advisor_id: number; icomfly_id: string | null; confirmed_at: string | null }
+import type { ExpectedIcomflyOrder } from "@/lib/icomfly-manual-order";
+export interface Receipt { request_id: string; store_id: number; lead_id: number; advisor_id: number; icomfly_id: string | null; confirmed_at: string | null; expected_order?: ExpectedIcomflyOrder | null }
 export async function findReceipt(storeId: number, leadId: number, requestId: string): Promise<Receipt | null> {
  const db=getDB();
  const exact=await db.from("lead_icomfly_receipts").select("*").eq("store_id",storeId).eq("lead_id",leadId).eq("request_id",requestId).maybeSingle();
