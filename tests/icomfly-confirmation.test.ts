@@ -22,6 +22,16 @@ describe("Verificación real del listado",()=>{
   list.mockResolvedValue({raw:[{id:123,store_id:71,order_number:"MANUAL-123",store_web_seq:seq}],hasMore:false});
   expect(await verifyCreatedIcomflyOrder("mireva-cr","123")).toMatchObject({id:"123",storeWebSeq:String(seq)});
  });
+ it("no confirma un pedido nativo que perdió una línea aunque exista el ID",async()=>{
+  const expected={items:[{product_id:1561,variant_id:null,quantity:1},{product_id:3595,variant_id:null,quantity:1}],total:39800};
+  list.mockResolvedValue({raw:[{id:123,store_id:71,order_number:"MANUAL-KAIRO-123",total:39800,items:[{product_id:1561,quantity:1}]}],hasMore:false});
+  expect(await verifyCreatedIcomflyOrder("mireva-cr","123",expected)).toBeNull();
+ });
+ it("confirma al devolver ambas líneas con sus cantidades y total correctos",async()=>{
+  const expected={items:[{product_id:1561,variant_id:null,quantity:1},{product_id:3595,variant_id:null,quantity:1}],total:39800};
+  list.mockResolvedValue({raw:[{id:123,store_id:71,order_number:"MANUAL-KAIRO-123",total:39800,items:expected.items}],hasMore:false});
+  expect(await verifyCreatedIcomflyOrder("mireva-cr","123",expected)).toMatchObject({id:"123"});
+ });
  it.each([undefined,null,"",0,-1,"MANUAL-123","196.5"])("no inventa un correlativo cuando recibe %s",async seq=>{
   list.mockResolvedValue({raw:[{id:123,store_id:71,order_number:"MANUAL-123",store_web_seq:seq}],hasMore:false});
   expect(await verifyCreatedIcomflyOrder("mireva-cr","123")).toMatchObject({id:"123",storeWebSeq:null});

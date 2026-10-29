@@ -1,10 +1,8 @@
 // El pedido que la asesora arma en Leads, como lo pide crear_pedido de iComfly
 // (lib/icomfly-mcp.ts). Mismo formulario que el de Shopify (CreateOrderPanel).
 //
-// crear_pedido lleva UN producto. Con varios (3% de los pedidos de asesora en
-// Costa Rica desde julio, ninguno en Honduras, medido el 24/10/2026) van en una
-// sola linea: "1x A + 2x B" por el total, para que el monto a cobrar sea el
-// correcto. El descuento va en el total.
+// crear_pedido del MCP lleva UN producto. Los pedidos de varios productos
+// usan la API nativa con sus líneas de catálogo (icomfly-manual-order.ts).
 //
 // Puro: se prueba en tests/icomfly-pedido-lead.test.ts.
 
@@ -21,6 +19,7 @@ export function creaEnIcomfly(storeCode: string): boolean {
 }
 
 export interface ItemPedidoLead {
+  sku?: string;
   /** Nombre que se muestra: producto + variante ("Shorts - Negro / L"). */
   title: string;
   /** Producto sin variante, para buscarlo en el catalogo de iComfly. */
@@ -116,6 +115,7 @@ export function argumentosCrearPedido(
   productos: Array<ProductoIcomfly | null> = []
 ): Record<string, unknown> {
   const items = pedido.items.filter((it) => Number(it.quantity) > 0 && it.title);
+  if (items.length !== 1) throw new Error("Los pedidos con varios productos deben enviarse como líneas de catálogo.");
   const total = totalPedidoLead(items, pedido.descuento);
   const pagoTexto = pedido.pago === "sinpe" ? "SINPE" : "Contraentrega";
   const d = Number(pedido.descuento?.value) || 0;
@@ -126,18 +126,11 @@ export function argumentosCrearPedido(
     pedido.nota?.trim() ? `Nota: ${pedido.nota.trim()}` : "",
   ].filter(Boolean);
 
-  const producto =
-    items.length === 1
-      ? {
+  const producto = {
           producto_nombre: nombreItem(items[0], productos[0]),
           producto_precio: Number(items[0].price) || 0,
           cantidad: Number(items[0].quantity) || 1,
           ...(productos[0] ? { product_id: productos[0].id } : {}),
-        }
-      : {
-          producto_nombre: items.map((it, i) => `${Number(it.quantity) || 1}x ${nombreItem(it, productos[i])}`).join(" + "),
-          producto_precio: redondear(items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0)),
-          cantidad: 1,
         };
 
   const envio = pedido.envio;
