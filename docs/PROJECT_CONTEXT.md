@@ -1464,3 +1464,7 @@ filtro/paginación/conteos a SQL:
   seven `delivered`, one `returned`, five `en_route`, eleven `pending`, and three
   `unknown`. Guide `MLCR000131292SD` is the returned shipment and therefore remains
   `No entregado`; it is not included in the seven effective deliveries.
+
+### Marketing: dashboard del PDF (2026-10-29)
+
+Dashboard con tres vistas, fechas en Costa Rica (hoy, ayer, esta semana, este mes, mes anterior, 7/14/28/30 días y rango hasta 93 días), comparación previa, tendencias de pedidos y productos, alertas y reposición. Campañas: asignación editable a un producto del catálogo persistida por tienda/plataforma/cuenta/campaña; presupuesto diario actual de campaña o suma de conjuntos activos. CPA principal = inversión consultada / pedidos creados; CPA por producto usa gasto asignado / pedidos con ese producto, sin atribución por campaña. Compras Meta reportadas se muestran aparte. Prioridad de productos, CPA USD 8.50 y stock mínimo 100, sin metas manuales adicionales. Planificación por proveedor, plazo, cobertura y entrantes, sin emitir compras; exige stock real para sugerir cantidad. Tablas marketing_campaign_products y marketing_product_plans, migración 20261029212108 aplicada, RLS y acceso exclusivo del servidor. GET/PATCH /api/marketing/settings exige Marketing y Mireva Costa Rica. TikTok y ShipHero siguen pendientes. Ver docs/marketing-mireva-cr.md para fórmulas y verificación.

@@ -4,6 +4,17 @@ export interface MarketingCampaign {
   spend: number;
   impressions: number;
   clicks: number;
+  purchases?: number | null;
+  daily?: Array<{
+    date: string;
+    spend: number;
+    impressions: number;
+    clicks: number;
+    purchases: number | null;
+  }>;
+  dailyBudget?: number | null;
+  budgetKind?: "campaign" | "adsets" | "lifetime" | "mixed" | "unavailable";
+  effectiveStatus?: string;
 }
 
 export interface MarketingStock {
@@ -27,6 +38,7 @@ export interface MarketingAdsData {
   currency: string;
   timezone: string;
   campaigns: MarketingCampaign[];
+  budgetMessage?: string;
 }
 
 export interface MarketingAdsAccounts {
