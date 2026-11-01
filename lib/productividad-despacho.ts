@@ -41,6 +41,8 @@ export interface PersonaDespacho {
   despachados: number;
   /** Entregados actualmente, entre sus despachos del rango seleccionado. */
   entregados: number;
+  /** Devoluciones/no entregados finales; no incluye cancelaciones ni novedades abiertas. */
+  no_entregados: number;
   confirmados: number;
   upsells: number;
   /** Despachados por dia local (YYYY-MM-DD). */
@@ -53,6 +55,7 @@ export interface ResumenDespacho {
   dias: string[];
   despachados: number;
   entregados: number;
+  no_entregados: number;
   confirmados: number;
   upsells: number;
 }
@@ -88,7 +91,7 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
     const clave = nombre.toLowerCase();
     let p = personas.get(clave);
     if (!p) {
-      p = { nombre, esIa: IA.test(nombre), despachados: 0, entregados: 0, confirmados: 0, upsells: 0, porDia: {} };
+      p = { nombre, esIa: IA.test(nombre), despachados: 0, entregados: 0, no_entregados: 0, confirmados: 0, upsells: 0, porDia: {} };
       personas.set(clave, p);
     }
     return p;
@@ -96,6 +99,7 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
 
   let despachados = 0;
   let entregados = 0;
+  let no_entregados = 0;
   let confirmados = 0;
   let upsells = 0;
   for (const fila of filas) {
@@ -105,6 +109,9 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
       if (String(fila.estado_actual ?? "").trim().toLowerCase() === "entregado") {
         p.entregados += 1;
         entregados += 1;
+      } else if (esNoEntregadoCerrado(fila.estado_actual)) {
+        p.no_entregados += 1;
+        no_entregados += 1;
       }
       const dia = localDateKey(fila.guide_final_at);
       if (dia) p.porDia[dia] = (p.porDia[dia] ?? 0) + 1;
@@ -129,10 +136,20 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
   const lista = Array.from(personas.values()).sort(
     (a, b) => orden(a) - orden(b) || b.despachados - a.despachados || b.confirmados - a.confirmados || b.upsells - a.upsells || a.nombre.localeCompare(b.nombre)
   );
-  return { personas: lista, dias: diasDelRango(desdeIso, hastaIso), despachados, entregados, confirmados, upsells };
+  return { personas: lista, dias: diasDelRango(desdeIso, hastaIso), despachados, entregados, no_entregados, confirmados, upsells };
 }
 
 /** Denominator includes all dispatched orders, including those still in transit. */
 export function tasaEntregaDespacho(entregados: number, despachados: number): string {
   return despachados > 0 ? `${(100 * entregados / despachados).toLocaleString("es-CR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : "–";
+}
+
+/** Only explicit final outcomes. A failed attempt or cancellation is not a return. */
+export function esNoEntregadoCerrado(estado: string | null | undefined): boolean {
+  const value = String(estado ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\s_-]+/g, "");
+  return ["devolucion", "devuelto", "devuelta", "noentregado", "noentregada"].includes(value);
+}
+
+export function tasaEntregaCerrados(entregados: number, noEntregados: number): string {
+  return tasaEntregaDespacho(entregados, entregados + noEntregados);
 }
