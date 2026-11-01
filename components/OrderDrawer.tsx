@@ -46,6 +46,7 @@ import { getVendedoraId, setVendedoraId as persistVendedoraId, vendedoraBloquead
 import type { ChatLeadSummary } from "@/lib/leads-types";
 import type { CustomerOrder, CustomerSummary } from "@/lib/customer-history";
 import type { OrderAlert } from "@/lib/order-risk";
+import type { LlamadaHistorial } from "@/lib/llamadas-historial";
 import {
   ORDER_EVENT_CANALES,
   ORDER_EVENT_OUTCOME_LABEL,
@@ -90,6 +91,8 @@ interface DetailResponse {
   events?: OrderEvent[];
   chat_lead?: ChatLeadSummary | null;
   confirmacion_config?: ConfigConfirmacion;
+  /** Llamadas a este cliente (Zadarma y Telnyx), para la bitacora. */
+  llamadas?: LlamadaHistorial[];
   error?: string;
 }
 
@@ -333,6 +336,16 @@ export default function OrderDrawer({
     load();
   }, [load]);
 
+  // Al colgar una llamada hecha desde esta ficha, la bitacora la muestra: se
+  // recarga cuando Telnyx ya aviso como termino (unos segundos despues).
+  useEffect(
+    () =>
+      onResultadoLlamada((r) => {
+        if (r.contexto.orderName === target.order_name) window.setTimeout(() => void load(), 4_000);
+      }),
+    [load, target.order_name]
+  );
+
   // Misma vendedora que ya eligio en Leads: no se le vuelve a preguntar.
   useEffect(() => {
     (async () => {
@@ -397,6 +410,12 @@ export default function OrderDrawer({
 
   const alerts = detail?.alerts ?? [];
   const events = detail?.events ?? [];
+  // Bitacora: las gestiones y las llamadas al cliente, de la mas nueva a la
+  // mas vieja.
+  const bitacora = [
+    ...events.map((e) => ({ key: `e${e.id}`, at: e.created_at, evento: e, llamada: null })),
+    ...(detail?.llamadas ?? []).map((l) => ({ key: `l${l.id}`, at: l.at, evento: null, llamada: l })),
+  ].sort((a, b) => b.at.localeCompare(a.at));
   const hoy = fechaLocal(new Date(), tz);
   // La cola del pedido, recalculada con la bitacora: lo que se registra aca se
   // ve al instante. Mientras carga, lo que ya calculo la tabla.
@@ -742,20 +761,31 @@ export default function OrderDrawer({
               <div>
                 <p className="mb-1 flex items-center gap-1 text-xs font-medium text-muted-foreground">
                   <History className="h-3.5 w-3.5" /> Bitácora
-                  {events.length > 0 && <span>({events.length})</span>}
+                  {bitacora.length > 0 && <span>({bitacora.length})</span>}
                 </p>
                 <div className="max-h-72 space-y-1 overflow-y-auto">
-                  {loading && events.length === 0 ? (
+                  {loading && bitacora.length === 0 ? (
                     <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                       <RefreshCw className="h-3 w-3 animate-spin" /> Cargando bitácora…
                     </p>
-                  ) : events.length === 0 ? (
+                  ) : bitacora.length === 0 ? (
                     <p className="text-xs text-muted-foreground">
                       Sin gestión registrada. Lo que anotes acá queda como respaldo de lo que se hizo.
                     </p>
                   ) : (
-                    events.map((e) => (
-                      <div key={e.id} className="flex gap-2 border-b border-border/30 py-1 text-xs">
+                    bitacora.map(({ key, evento: e, llamada: l }) =>
+                      l ? (
+                        // Llamada de la centralita: lo que paso en la linea.
+                        <div key={key} className="flex gap-2 border-b border-border/30 py-1 text-xs">
+                          <span className="whitespace-nowrap text-muted-foreground">{whenCR(l.at)}</span>
+                          <span className="inline-flex items-center gap-1 font-medium">
+                            <Phone className="h-3 w-3" /> Llamada
+                          </span>
+                          <span className="flex-1 text-muted-foreground">{l.descripcion}</span>
+                          {l.asesora && <span className="whitespace-nowrap text-muted-foreground">{l.asesora}</span>}
+                        </div>
+                      ) : e ? (
+                      <div key={key} className="flex gap-2 border-b border-border/30 py-1 text-xs">
                         <span className="whitespace-nowrap text-muted-foreground">
                           {whenCR(e.created_at)}
                         </span>
@@ -769,7 +799,8 @@ export default function OrderDrawer({
                           <span className="whitespace-nowrap text-muted-foreground">{e.staff_name}</span>
                         )}
                       </div>
-                    ))
+                      ) : null
+                    )
                   )}
                 </div>
               </div>

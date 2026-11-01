@@ -23,6 +23,7 @@ import { findChatLeadForCustomer } from "@/lib/leads";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import type { Incident, IncidentCategory, IncidentSource, IncidentStatus, TrackingEvent } from "@/lib/incidents-types";
 import { INCIDENT_CATEGORIES, INCIDENT_SOURCES, INCIDENT_STATUSES } from "@/lib/incidents-types";
+import { llamadasDelTelefono } from "@/lib/llamadas-historial";
 
 export const runtime = "nodejs";
 
@@ -89,7 +90,7 @@ export async function GET(req: NextRequest) {
       const id = Number(idParam);
       const incident = await getIncident(id, store.id);
       if (!incident) return NextResponse.json({ error: "Novedad no encontrada" }, { status: 404 });
-      const [events, tracking_events, order_products, chat_lead] = await Promise.all([
+      const [events, tracking_events, order_products, chat_lead, llamadas] = await Promise.all([
         listIncidentEvents(id),
         trackingEventsFor(incident),
         getIncidentOrderProducts(
@@ -103,6 +104,10 @@ export async function GET(req: NextRequest) {
           phone: incident.customer_phone,
           orderName: incident.order_name,
         }).catch(() => null),
+        // Las llamadas a este cliente (Zadarma y Telnyx).
+        incident.customer_phone
+          ? llamadasDelTelefono({ storeCode: store.code, phone: incident.customer_phone }).catch(() => [])
+          : Promise.resolve([]),
       ]);
       return NextResponse.json({
         incident,
@@ -110,6 +115,7 @@ export async function GET(req: NextRequest) {
         tracking_events,
         order_products,
         chat_lead,
+        llamadas,
       });
     }
 
