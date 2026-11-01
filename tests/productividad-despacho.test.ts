@@ -6,7 +6,7 @@
 // de iComfly contado como una persona dan otro reporte.
 
 import { describe, expect, it, vi } from "vitest";
-import { diasDelRango, resumenDespacho, SIN_NOMBRE, type AtribucionPedido } from "../lib/productividad-despacho";
+import { diasDelRango, resumenDespacho, tasaEntregaDespacho, SIN_NOMBRE, type AtribucionPedido } from "../lib/productividad-despacho";
 import { exigenciaDe, cumple } from "../lib/permisos";
 
 // Cadena de supabase-js simulada: registra cada llamada y responde vacio.
@@ -99,6 +99,30 @@ describe("quién despacha y quién confirma", () => {
   });
 });
 
+describe("tasa de entrega sobre los despachos de cada asesora", () => {
+  it("cuenta la entrega para quien despachó, dentro de la misma cohorte, y mantiene los envíos abiertos en la base", () => {
+    const r = resumenDespacho([
+      fila({ guide_final_at: DESDE, guia_por: "Ana", estado_actual: "Entregado", confirmed_at: DESDE, confirmo_por: "Bea" }),
+      fila({ guide_final_at: DESDE, guia_por: "Ana", estado_actual: "En_Reparto" }),
+      fila({ guide_final_at: DESDE, guia_por: "Ana", estado_actual: "Devolucion" }),
+      fila({ guide_final_at: DESDE, guia_por: "Bea", estado_actual: " entregado " }),
+      fila({ guide_final_at: HASTA, guia_por: "Ana", estado_actual: "Entregado", confirmed_at: DESDE, confirmo_por: "Ana" }),
+      fila({ confirmed_at: DESDE, confirmo_por: "Solo confirma", estado_actual: "Entregado" }),
+    ], DESDE, HASTA);
+    expect(r.personas.find((p) => p.nombre === "Ana")).toMatchObject({ despachados: 3, entregados: 1 });
+    expect(r.personas.find((p) => p.nombre === "Bea")).toMatchObject({ despachados: 1, entregados: 1, confirmados: 1 });
+    expect(r.personas.find((p) => p.nombre === "Solo confirma")).toMatchObject({ despachados: 0, entregados: 0 });
+    expect(r).toMatchObject({ despachados: 4, entregados: 2 });
+    expect(tasaEntregaDespacho(r.entregados, r.despachados)).toBe("50,0%");
+    expect(tasaEntregaDespacho(1, 3)).toBe("33,3%");
+    expect(tasaEntregaDespacho(0, 0)).toBe("–");
+  });
+  it("un estado desconocido o una devolución no se cuentan como entrega", () => {
+    const r = resumenDespacho([null, "", "Devolución", "Cancelado", "Entregado a Distribuidor"].map((estado_actual) => fila({ guide_final_at: DESDE, guia_por: "Ana", estado_actual })), DESDE, HASTA);
+    expect(r).toMatchObject({ despachados: 5, entregados: 0 });
+  });
+});
+
 describe("los días del rango", () => {
   it("ayer es un día; 7 días son 8 fechas (hoy incluido, hasta ahora)", () => {
     expect(diasDelRango(DESDE, HASTA)).toEqual(["2026-10-23"]);
@@ -159,6 +183,7 @@ describe("lo que se lee de la base", () => {
     const { listAtribucionDespacho } = await import("../lib/finance");
     await listAtribucionDespacho(2, DESDE, HASTA);
     expect(llamadas).toContain("from:icomfly_orders");
+    expect(llamadas.some((l) => l.startsWith("select:") && l.includes("estado_actual:status"))).toBe(true);
     expect(llamadas).toContain("eq:store_id|2");
     // Una consulta por fecha de guia y otra por fecha de confirmacion.
     expect(llamadas).toEqual(
