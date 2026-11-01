@@ -101,6 +101,8 @@ export interface UpsellDependencies {
   patch: (changes: Partial<UpsellReceipt>) => Promise<void>;
   setTotal: (id: string, total: number) => Promise<void>;
   setCod: (id: string) => Promise<void>;
+  /** Recover the catalog check missing from attempts saved before price reconciliation. */
+  catalogTotals?: (replacement: RemoteOrder) => Promise<number[]>;
   changeStatus: (id: string, status: string, reason: string) => Promise<void>;
   finish: (original: RemoteOrder, replacement: RemoteOrder) => Promise<void>;
 }
@@ -142,6 +144,14 @@ export async function runUpsellReplacement(r: UpsellReceipt, d: UpsellDependenci
     const gross = (r.payload.products as Array<{ price: number; quantity: number }>).reduce((n, l) => n + cents(l.price) * l.quantity, 0) + cents(r.payload.shippingCost ?? 0);
     const allowedTotals = [gross];
     if (r.expected.catalog_subtotal != null && Number.isFinite(cents(r.expected.catalog_subtotal))) allowedTotals.push(cents(r.expected.catalog_subtotal));
+    if (!allowedTotals.includes(cents(replacement.total)) && d.catalogTotals && replacement.status === "Pendiente") {
+      const totals = await d.catalogTotals(replacement);
+      const matched = totals.find(total => Number.isFinite(cents(total)) && total >= 0 && cents(total) === cents(replacement.total));
+      if (matched != null) {
+        await save({ expected: { ...r.expected, catalog_subtotal: matched } });
+        allowedTotals.push(cents(matched));
+      }
+    }
     if (replacement.status !== "Pendiente" || !allowedTotals.includes(cents(replacement.total))) throw new Error("El total del nuevo pedido cambió. Revisa el importe sin volver a crearlo.");
     await d.setTotal(r.replacement_id!, r.expected.total);
   }

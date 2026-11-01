@@ -33,3 +33,24 @@ export function catalogSubtotalForUpsell(lines: ManualOrderLine[], products: Arr
     return sum + Math.round(option.price * 100) * line.quantity;
   }, 0) / 100;
 }
+
+/** Native order creation can apply an exact quantity offer to a catalog line. */
+export function catalogTotalsForUpsell(lines: ManualOrderLine[], products: Array<IcomflyCatalogProduct & Record<string, unknown>>): number[] {
+  const gross = catalogSubtotalForUpsell(lines, products);
+  const offered = lines.reduce((sum, line, i) => {
+    const product = products[i];
+    const unit = upsellProductOptions(product).find(p => p.variant_id === line.variantId)!.price;
+    const base = Math.round(unit * 100) * line.quantity;
+    let offers = product.quantity_offers;
+    if (typeof offers === "string") offers = JSON.parse(offers);
+    const prices = Array.isArray(offers) ? offers.flatMap(offer => {
+      const o = offer as Record<string, unknown>;
+      const price = Number(o.fixed_price);
+      // Only the exact quantity and an explicit fixed total are authoritative.
+      return Number(o.quantity) === line.quantity && o.fixed_price != null && o.fixed_price !== "" && Number.isFinite(price) && price >= 0 && Math.round(price * 100) <= base
+        ? [Math.round(price * 100)] : [];
+    }) : [];
+    return sum + Math.min(base, ...prices);
+  }, 0) / 100;
+  return [...new Set([gross, offered])];
+}
