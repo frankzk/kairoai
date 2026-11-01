@@ -18,7 +18,7 @@ export async function recordPresence(userId: number, storeId: number, signal: Pr
   if (error) throw new Error("No se pudo registrar la presencia en Leads.");
 }
 
-export async function readPresence(yo: Identidad, storeId: number, storeCode: string, now: number): Promise<PresenceRow[]> {
+export async function readPresence(yo: Identidad, storeId: number, storeCode: string, now: number, period?: { fromIso: string; toIso: string }): Promise<PresenceRow[]> {
   const db = getDB();
   let usersQuery = db.from("kairo_users").select("id,nombre,staff_id")
     .eq("activo", true).contains("tiendas", [storeCode]).overlaps("permisos", ["leads", "leads_equipo"]);
@@ -26,7 +26,15 @@ export async function readPresence(yo: Identidad, storeId: number, storeCode: st
   const { data: users, error: usersError } = await usersQuery.order("nombre");
   if (usersError) throw new Error("No se pudo consultar el equipo de Leads.");
   if (!users?.length) return [];
-  const ids = users.map((u) => u.id);
+  const periodByUser = new Map<number, { period_last_seen_at: string; period_last_activity_at: string | null }>();
+  if (period) {
+    const { data, error } = await db.rpc("lead_presence_in_period", { p_store_id: storeId, p_from: period.fromIso, p_to: period.toIso });
+    if (error) throw new Error("No se pudieron consultar las conexiones del período.");
+    for (const row of data ?? []) periodByUser.set(row.user_id, row);
+  }
+  const participants = period ? users.filter((u) => periodByUser.has(u.id)) : users;
+  if (!participants.length) return [];
+  const ids = participants.map((u) => u.id);
   const [summary, tabs] = await Promise.all([
     db.from("lead_presence").select("user_id,last_activity_at,last_seen_at").eq("store_id", storeId).in("user_id", ids),
     db.from("lead_presence_tabs").select("user_id,last_seen_at,last_activity_at,visible,closed")
@@ -41,10 +49,11 @@ export async function readPresence(yo: Identidad, storeId: number, storeCode: st
     list.push(tab);
     tabsByUser.set(tab.user_id, list);
   }
-  return users.map((u) => ({
+  return participants.map((u) => ({
     user_id: u.id, name: u.nombre, staff_id: u.staff_id,
     last_activity_at: byUser.get(u.id)?.last_activity_at ?? null,
     last_seen_at: byUser.get(u.id)?.last_seen_at ?? null,
     ...presenceDeadlines(tabsByUser.get(u.id) ?? [], now),
+    ...(period ? periodByUser.get(u.id) : {}),
   }));
 }

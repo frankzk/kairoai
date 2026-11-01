@@ -42,12 +42,23 @@ describe("crDateRange", () => {
 const getProductivity = vi.fn();
 vi.mock("@/lib/leads", () => ({ getProductivity: (...a: unknown[]) => getProductivity(...a) }));
 
-// Quien consulta (null = proceso sin persona, como en los tests de rango).
+// Quien consulta. Los tests de rango usan un administrador autenticado.
 let yo: { id: number; nombre: string; permisos: string[]; tiendas: string[]; staffId: number | null } | null = null;
 vi.mock("@/lib/identidad", () => ({
   identidadActual: () => yo,
   tiendasPermitidas: () => (yo ? yo.tiendas : null),
 }));
+// Estas pruebas cubren rangos/permisos. Sus asesoras de ejemplo tienen conexión
+// en el período; el filtrado del historial se prueba en leads-presence-server.
+vi.mock("@/lib/leads-presence-server", () => ({ readPresence: async () => {
+  const metrics = await getProductivity.mock.results.at(-1)?.value ?? [];
+  const team = yo?.permisos.some((p) => ["leads_equipo", "leads_productividad", "usuarios"].includes(p));
+  return metrics.filter((r: { vendedora_id: number }) => team || r.vendedora_id === yo?.staffId).map((r: { vendedora_id: number; name: string }) => ({
+    user_id: r.vendedora_id === yo?.staffId ? yo.id : r.vendedora_id + 1000,
+    staff_id: r.vendedora_id, name: r.name, last_activity_at: null, last_seen_at: null,
+    active_until: null, connected_until: null, period_last_seen_at: "2026-10-05T12:00:00Z",
+  }));
+} }));
 
 async function pedir(qs: string) {
   const { GET } = await import("../app/api/leads/productivity/route");
@@ -56,7 +67,7 @@ async function pedir(qs: string) {
 
 describe("/api/leads/productivity", () => {
   beforeEach(() => {
-    yo = null;
+    yo = { id: 0, nombre: "Administrador", permisos: ["leads", "leads_equipo"], tiendas: ["mireva-cr"], staffId: null };
     getProductivity.mockReset();
     getProductivity.mockResolvedValue([{ vendedora_id: 1, name: "Susan", gestiones: 10, leads: 8, pedidos: 2 }]);
   });

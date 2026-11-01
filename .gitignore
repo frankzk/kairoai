@@ -33,6 +33,8 @@ supabase/.temp/
 __pycache__/
 *.pyc
 output/backups/
+output/playwright/
+.playwright-cli/
 
 # Private customer/catalog backups; never publish these in the source repository.
 backups/

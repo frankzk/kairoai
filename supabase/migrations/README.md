@@ -12,6 +12,12 @@ Reglas:
 
 Estado actual:
 
+Presencia por período: `20261101015201_leads_presence_periods.sql` aplicada el
+31/10/2026 (hora de Lima). Agrega historial diario privado y consulta de conexiones
+para Productividad. Solo importa las fechas observadas; no reconstruye conexiones
+anteriores. Probada con días locales, conexiones posteriores, separación por tienda
+y permisos en una transacción revertida.
+
 Presencia de Leads: `20261101012902_leads_presence.sql` aplicada el 31/10/2026
 (hora de Lima). Tablas privadas `lead_presence` y `lead_presence_tabs`, RLS activa
 sin políticas públicas y RPC solo para service role. Conserva la última actividad

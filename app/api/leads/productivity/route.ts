@@ -3,6 +3,8 @@ import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { getProductivity } from "@/lib/leads";
 import { identidadActual } from "@/lib/identidad";
 import { veProductividadDelEquipo } from "@/lib/permisos";
+import { readPresence } from "@/lib/leads-presence-server";
+import { connectedProductivityRows } from "@/lib/leads-productivity-presence";
 import { crDateRange, crRange, MAX_CUSTOM_RANGE_DAYS, parseRange, RANGE_LABELS } from "@/lib/leads-metrics";
 
 export const runtime = "nodejs";
@@ -13,6 +15,8 @@ export const maxDuration = 30;
 // ?from=YYYY-MM-DD&to=YYYY-MM-DD (dias locales, inclusivos). Si vienen fechas,
 // mandan sobre `range`.
 export async function GET(req: NextRequest) {
+  const yo = identidadActual();
+  if (!yo) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const sp = req.nextUrl.searchParams;
   const store = getRequiredStoreFromSearchParams(sp);
   if (!store) {
@@ -44,18 +48,20 @@ export async function GET(req: NextRequest) {
 
   try {
     const { fromIso, toIso } = bounds;
-    const todas = await getProductivity(store.id, fromIso, toIso);
+    const [todas, presence] = await Promise.all([
+      getProductivity(store.id, fromIso, toIso),
+      readPresence(yo, store.id, store.code, Date.now(), bounds),
+    ]);
     // Una asesora sin supervision ni "ver productividad del equipo" ve solo su
     // propia fila (y los totales salen de esa fila). Las otras ven a todo el
     // equipo.
-    const yo = identidadActual();
-    const soloPropia = Boolean(yo?.staffId) && !veProductividadDelEquipo(yo!.permisos);
-    const rows = soloPropia ? todas.filter((r) => r.vendedora_id === yo!.staffId) : todas;
+    const soloPropia = !veProductividadDelEquipo(yo.permisos) && !yo.permisos.includes("usuarios");
+    const rows = connectedProductivityRows(presence, soloPropia ? todas.filter((r) => r.vendedora_id === yo.staffId) : todas);
     const totals = rows.reduce(
       (acc, r) => ({
-        gestiones: acc.gestiones + r.gestiones,
-        leads: acc.leads + r.leads,
-        pedidos: acc.pedidos + r.pedidos,
+        gestiones: acc.gestiones + (r.gestiones ?? 0),
+        leads: acc.leads + (r.leads ?? 0),
+        pedidos: acc.pedidos + (r.pedidos ?? 0),
       }),
       { gestiones: 0, leads: 0, pedidos: 0 }
     );
@@ -67,7 +73,8 @@ export async function GET(req: NextRequest) {
       rows,
       totals,
       solo_propia: soloPropia,
-    });
+      server_time: new Date().toISOString(),
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al leer productividad";
     return NextResponse.json({ rows: [], totals: null, error: message }, { status: 500 });
