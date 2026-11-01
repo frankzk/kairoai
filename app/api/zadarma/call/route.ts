@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody } from "@/lib/stores";
-import { normalizePhone, phoneConfigForStore } from "@/lib/phone-cr";
-import { getLead } from "@/lib/leads";
-import { getAgentById, getOrderPhone } from "@/lib/zadarma-calls";
+import { destinoDeLlamada } from "@/lib/llamada-destino";
+import { getAgentById } from "@/lib/zadarma-calls";
 import { isZadarmaConfigured, requestCallback, ZadarmaError } from "@/lib/zadarma";
 import { vendedoraEfectiva } from "@/lib/identidad";
 
@@ -20,11 +19,8 @@ interface Body {
 
 /**
  * Click-to-call: Zadarma timbra la extension de la asesora (su navegador, por
- * el widget WebRTC) y al contestar marca al cliente.
- *
- * El telefono NO se toma del cuerpo cuando viene lead_id u order_name: se lee
- * de la base, para que el navegador no pueda pedir una llamada a un numero
- * arbitrario a costa de la cuenta.
+ * el widget WebRTC) y al contestar marca al cliente. El numero lo decide
+ * lib/llamada-destino.ts (de la base, no de la pantalla).
  */
 export async function POST(req: NextRequest) {
   if (!isZadarmaConfigured()) {
@@ -59,33 +55,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Origen del numero, por orden de confianza: el lead, el pedido y, solo
-    // como respaldo, lo que mande la pantalla.
-    let rawPhone = String(body?.phone ?? "");
-    const leadId = Number(body?.lead_id);
-    const orderName = String(body?.order_name ?? "").trim();
-    if (Number.isFinite(leadId) && leadId > 0) {
-      const lead = await getLead(store.id, leadId);
-      if (!lead) return NextResponse.json({ error: "lead no encontrado" }, { status: 404 });
-      rawPhone = lead.phone;
-    } else if (orderName) {
-      const order = await getOrderPhone(store.id, orderName);
-      if (!order) {
-        return NextResponse.json(
-          { error: `El pedido ${orderName} no tiene teléfono guardado en ${store.shortLabel}.` },
-          { status: 404 }
-        );
-      }
-      rawPhone = order.phone;
-    }
-
-    const phone = normalizePhone(rawPhone, phoneConfigForStore(store.code));
-    if (!phone) {
-      return NextResponse.json(
-        { error: `Teléfono inválido para ${store.shortLabel}: ${rawPhone || "(vacío)"}` },
-        { status: 400 }
-      );
-    }
+    const destino = await destinoDeLlamada(store, body);
+    if (!destino.ok) return NextResponse.json({ error: destino.error }, { status: destino.status });
+    const phone = destino.phone;
 
     const result = await requestCallback({ from: agent.sip, to: phone });
     // El CDR (duracion, estado, grabacion) lo escribe el webhook cuando la

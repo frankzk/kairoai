@@ -5,11 +5,14 @@ import { Loader2, PhoneCall } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
 import { showWebphone } from "@/lib/webphone";
+import { marcarTelnyx, proveedorTelefoniaCliente } from "@/lib/telefonia-cliente";
 
-// Boton "Llamar" del lead. No marca desde el navegador: le pide a la centralita
-// que timbre la extension de la asesora (su propio navegador, por el widget
-// WebRTC) y enseguida marque al cliente. Asi el audio va por la laptop y la
-// llamada queda en el CDR aunque la asesora conteste desde el celular.
+// Boton "Llamar" del lead. Dos telefonias, segun TELEFONIA en el servidor:
+//   - Zadarma: no marca desde el navegador. Le pide a la centralita que timbre
+//     la extension de la asesora (su propio navegador, por el widget WebRTC) y
+//     enseguida marque al cliente.
+//   - Telnyx: Kairo decide el numero y el caller ID (/api/telnyx/llamada) y el
+//     navegador marca al cliente directo (components/TelnyxPhone.tsx).
 
 export default function CallButton({
   leadId,
@@ -40,6 +43,10 @@ export default function CallButton({
     }
     setCalling(true);
     setFeedback(null);
+    if ((await proveedorTelefoniaCliente()) === "telnyx") {
+      await llamarConTelnyx(vendedoraId);
+      return;
+    }
     // El telefono web vive oculto; se abre aqui para que este a la vista
     // cuando la centralita timbre en unos segundos.
     showWebphone();
@@ -79,6 +86,26 @@ export default function CallButton({
       // empieza a timbrar (tarda unos segundos) y mientras dura el timbre. Si
       // desaparece antes, la asesora ve sonar algo sin la instruccion al lado.
       setTimeout(() => setFeedback(null), 15_000);
+    }
+  }
+
+  async function llamarConTelnyx(vendedora: number) {
+    try {
+      const res = await fetch("/api/telnyx/llamada", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store, vendedora_id: vendedora, lead_id: leadId, order_name: orderName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "No se pudo iniciar la llamada");
+      marcarTelnyx({ destino: data.destino, callerNumber: data.caller_number, clientState: data.client_state });
+      // El estado de la llamada lo muestra la barra del telefono (abajo a la
+      // derecha); aqui no hace falta instruccion: no hay nada que contestar.
+    } catch (err) {
+      setFeedback({ kind: "error", text: err instanceof Error ? err.message : "No se pudo iniciar la llamada" });
+      setTimeout(() => setFeedback(null), 15_000);
+    } finally {
+      setCalling(false);
     }
   }
 

@@ -197,6 +197,8 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/retell/llm", exige: PUB },
   { ruta: "/api/retell/webhook", exige: PUB },
   { ruta: "/api/zadarma/webhook", exige: PUB },
+  // Firmado con Ed25519 (TELNYX_PUBLIC_KEY): lo verifica la ruta.
+  { ruta: "/api/telnyx/webhook", exige: PUB },
   // OAuth de Shopify: vuelve desde Shopify sin nuestra cookie de primera parte
   { ruta: "/api/shopify/auth", exige: PUB },
 
@@ -283,6 +285,10 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/zadarma/webphone", exige: P(...LEADS, ...OPERACION) },
   { ruta: "/api/zadarma/last-call", exige: P(...LEADS, ...OPERACION) },
   { ruta: "/api/zadarma/extensions", exige: P("finanzas", "usuarios", "config") },
+  { ruta: "/api/telefonia", exige: P(...LEADS, ...OPERACION) },
+  { ruta: "/api/telnyx", exige: P("config") },
+  { ruta: "/api/telnyx/llamada", exige: P(...LEADS, "pedidos") },
+  { ruta: "/api/telnyx/token", exige: P(...LEADS, ...OPERACION) },
 ];
 
 /** Exigencia para lo que no tiene regla: solo quien administra usuarios. */
