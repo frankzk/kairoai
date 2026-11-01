@@ -5,6 +5,7 @@ import { AlertTriangle, Check, Copy, Loader2, MapPin, Package, ShoppingCart } fr
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getVendedoraId } from "@/lib/vendedora";
+import { simboloDeMoneda } from "@/lib/store-config";
 import LeadHistory from "@/components/LeadHistory";
 import GestionBar from "@/components/GestionBar";
 import {
@@ -28,8 +29,7 @@ interface CartRow {
 }
 
 function fmtMoney(total: number, currency: string): string {
-  const symbol = currency === "HNL" ? "L" : "₡";
-  return `${symbol}${Math.round(total).toLocaleString("es-CR")}`;
+  return `${simboloDeMoneda(currency)}${Math.round(total).toLocaleString("es-CR")}`;
 }
 
 function fmtDate(iso: string | null): string {

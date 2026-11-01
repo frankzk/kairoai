@@ -3,7 +3,7 @@ import { DEFAULT_FINANCE_STORE_ID, FINANCE_STORES } from "./store-config";
 import { isC807Guide, normalizeC807Guide } from "./c807";
 import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "./cargo-expreso";
 import type { ShipmentTracking } from "./courier-tracking";
-import { COLUMNAS_PEDIDO_ICOMFLY, CORTE_PEDIDOS_ICOMFLY, nombreCliente, type PedidoIcomflyCrudo } from "./icomfly-pedidos";
+import { COLUMNAS_PEDIDO_ICOMFLY, corteIcomflyDe, nombreCliente, type PedidoIcomflyCrudo } from "./icomfly-pedidos";
 import type { AtribucionPedido } from "./productividad-despacho";
 import { normalizeForzaGuide } from "./forza";
 import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
@@ -1907,7 +1907,7 @@ export async function listWynSyncCandidates(
   }
   // Desde el 28/10/2026 las guias nuevas solo estan en iComfly (lo anterior al
   // corte ya llego a Shopify).
-  for (const g of await listIcomflyGuides(storeId, CORTE_PEDIDOS_ICOMFLY)) {
+  for (const g of await listIcomflyGuides(storeId, corteIcomflyDe(storeId))) {
     for (const guide of extractWynGuides(g.guide)) guides.add(guide);
   }
 

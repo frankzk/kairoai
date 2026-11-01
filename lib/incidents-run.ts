@@ -15,7 +15,7 @@ import {
 import { FINANCE_STORES } from "@/lib/store-config";
 import type { LogisticsRow } from "@/lib/finance-types";
 import { persistedOrderToSummary, type ShopifyOrderSummary } from "@/lib/finance-orders";
-import { CORTE_PEDIDOS_ICOMFLY, pedidosDeIcomfly } from "@/lib/icomfly-pedidos";
+import { corteIcomflyDe, pedidosDeIcomfly } from "@/lib/icomfly-pedidos";
 import type { DetectedIncident } from "@/lib/incidents-types";
 import {
   detectC807Incident,
@@ -93,14 +93,14 @@ function lookupShopify(
 export async function loadShopifyByGuide(storeId: number): Promise<Map<string, ShopifyOrderSummary>> {
   const [persisted, crudos] = await Promise.all([
     listPersistedShopifyOrders(20000, 0, storeId),
-    listIcomflyPedidosDesde(storeId, CORTE_PEDIDOS_ICOMFLY).catch((err) => {
+    listIcomflyPedidosDesde(storeId, corteIcomflyDe(storeId)).catch((err) => {
       console.warn("[incidents] pedidos de iComfly:", err instanceof Error ? err.message : err);
       return [];
     }),
   ]);
   const deShopify = persisted.map((order) => persistedOrderToSummary(order as unknown as Record<string, unknown>));
   const currency = FINANCE_STORES.find((s) => s.id === storeId)?.currency ?? "CRC";
-  return indexShopifyByGuide([...deShopify, ...pedidosDeIcomfly(crudos, deShopify, { currency })]);
+  return indexShopifyByGuide([...deShopify, ...pedidosDeIcomfly(crudos, deShopify, { currency, corte: corteIcomflyDe(storeId) })]);
 }
 
 // Maximo checked_at de un lote. Viene en ISO-UTC consistente desde Supabase, asi

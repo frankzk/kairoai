@@ -19,6 +19,8 @@
 //
 // Puro (sin base ni reloj implicito): se prueba en tests/confirmacion.test.ts.
 
+import { getFinanceStore } from "./store-config";
+
 export type Subetapa =
   | "sin_llamar"
   | "por_confirmar"
@@ -73,7 +75,7 @@ export interface ConfigConfirmacion {
 export const CONFIRMACION_DEFAULT: Omit<ConfigConfirmacion, "tz"> = { activacion: "2026-09-15", cicloDias: 3 };
 
 export function tzDeTienda(storeCode: string): string {
-  return storeCode === "mireva-hn" ? "America/Tegucigalpa" : "America/Costa_Rica";
+  return getFinanceStore(storeCode).timezone;
 }
 
 export function configDeTienda(storeCode: string, metadata?: unknown): ConfigConfirmacion {

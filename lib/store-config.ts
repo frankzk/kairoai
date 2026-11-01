@@ -1,15 +1,31 @@
 export type FinanceStoreCode = "mireva-cr" | "mireva-hn";
 export type LogisticsProviderCode = "moovin" | "forza";
+/**
+ * Paises y monedas que Kairo sabe atender (regiones, telefonos, simbolo). Una
+ * tienda nueva de uno de estos paises entra con solo su fila en FINANCE_STORES.
+ * Mexico esta listo para Kenku Mexico (que hoy es solo respaldo, lib/stores.ts).
+ */
+export type CountryCode = "CR" | "HN" | "MX";
+export type CurrencyCode = "CRC" | "HNL" | "MXN";
 
 export interface FinanceStorePublic {
   id: number;
   code: FinanceStoreCode;
   label: string;
   shortLabel: string;
-  countryCode: "CR" | "HN";
-  currency: "CRC" | "HNL";
+  countryCode: CountryCode;
+  currency: CurrencyCode;
   locale: string;
+  /** Zona horaria IANA de la tienda: el dia y la hora de sus pedidos y su cola. */
+  timezone: string;
   logisticsProvider: LogisticsProviderCode;
+  /**
+   * Desde que dia (YYYY-MM-DD) se toman los pedidos que estan SOLO en iComfly.
+   * Sin valor, CORTE_PEDIDOS_ICOMFLY (lib/icomfly-pedidos.ts): Mireva los tiene
+   * en Shopify hasta el 05/10/2026. Una tienda sin historia en Shopify (Kenku
+   * Mexico) los toma desde el principio.
+   */
+  pedidosIcomflyDesde?: string;
   // Link del catalogo que las asesoras comparten por WhatsApp. Viene de
   // NEXT_PUBLIC_CATALOG_URL_{CR|HN} (build-time); sin env el boton se oculta.
   catalogUrl?: string;
@@ -27,6 +43,7 @@ export const FINANCE_STORES: FinanceStorePublic[] = [
     countryCode: "CR",
     currency: "CRC",
     locale: "es-CR",
+    timezone: "America/Costa_Rica",
     logisticsProvider: "moovin",
     catalogUrl: process.env.NEXT_PUBLIC_CATALOG_URL_CR || undefined,
   },
@@ -38,6 +55,7 @@ export const FINANCE_STORES: FinanceStorePublic[] = [
     countryCode: "HN",
     currency: "HNL",
     locale: "es-HN",
+    timezone: "America/Tegucigalpa",
     logisticsProvider: "forza",
     catalogUrl: process.env.NEXT_PUBLIC_CATALOG_URL_HN || undefined,
   },
@@ -85,13 +103,70 @@ const HN_REGIONS: StoreRegions = {
   ],
 };
 
-export function getStoreRegions(value?: string | null): StoreRegions {
-  return getFinanceStore(value).countryCode === "HN" ? HN_REGIONS : CR_REGIONS;
+// Mexico: estados y municipio (Kenku Mexico).
+const MX_REGIONS: StoreRegions = {
+  label: "Estado",
+  subLabel: "Municipio",
+  options: [
+    "Aguascalientes",
+    "Baja California",
+    "Baja California Sur",
+    "Campeche",
+    "Chiapas",
+    "Chihuahua",
+    "Ciudad de México",
+    "Coahuila",
+    "Colima",
+    "Durango",
+    "Estado de México",
+    "Guanajuato",
+    "Guerrero",
+    "Hidalgo",
+    "Jalisco",
+    "Michoacán",
+    "Morelos",
+    "Nayarit",
+    "Nuevo León",
+    "Oaxaca",
+    "Puebla",
+    "Querétaro",
+    "Quintana Roo",
+    "San Luis Potosí",
+    "Sinaloa",
+    "Sonora",
+    "Tabasco",
+    "Tamaulipas",
+    "Tlaxcala",
+    "Veracruz",
+    "Yucatán",
+    "Zacatecas",
+  ],
+};
+
+// Por pais, no "Honduras o si no Costa Rica": una tienda de otro pais caia en
+// las provincias de Costa Rica y "Crear en iComfly" mandaba departamento
+// "San José".
+const REGIONES_POR_PAIS: Record<CountryCode, StoreRegions> = { CR: CR_REGIONS, HN: HN_REGIONS, MX: MX_REGIONS };
+
+export function regionesDePais(pais: CountryCode): StoreRegions {
+  return REGIONES_POR_PAIS[pais];
 }
 
-/** Simbolo de moneda de la tienda (colon o lempira). */
+export function getStoreRegions(value?: string | null): StoreRegions {
+  return regionesDePais(getFinanceStore(value).countryCode);
+}
+
+const SIMBOLO_MONEDA: Record<string, string> = { CRC: "₡", HNL: "L", MXN: "$", USD: "$", EUR: "€", ARS: "$", PEN: "S/" };
+
+/** Simbolo de una moneda (codigo ISO). Uno desconocido se muestra con su codigo. */
+export function simboloDeMoneda(currency?: string | null): string {
+  const codigo = String(currency ?? "").trim().toUpperCase();
+  return SIMBOLO_MONEDA[codigo] ?? (codigo ? `${codigo} ` : "");
+}
+
+/** Simbolo de moneda de la tienda (colon, lempira, peso). */
 export function getCurrencySymbol(value?: string | null): string {
-  return getFinanceStore(value).currency === "HNL" ? "L" : "₡";
+  return simboloDeMoneda(getFinanceStore(value).currency);
 }
 
 export function normalizeFinanceStoreCode(value?: string | null): FinanceStoreCode {

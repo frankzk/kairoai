@@ -21,7 +21,7 @@ import {
   listShipmentTracking,
 } from "@/lib/finance";
 import { resolveDispatchState } from "@/lib/dispatch";
-import { CORTE_PEDIDOS_ICOMFLY, nombrePedidoIcomfly, pedidosDeIcomfly, skusPorProducto } from "@/lib/icomfly-pedidos";
+import { corteIcomflyDe, nombrePedidoIcomfly, pedidosDeIcomfly, skusPorProducto } from "@/lib/icomfly-pedidos";
 import { normalizeMatchKey } from "@/lib/order-matching";
 import type { IcomflyOrderRecord } from "@/lib/finance-types";
 import {
@@ -365,7 +365,7 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
     listIcomflyOrders({ storeId: store.id, limit: MAX_PEDIDOS_DATASET }),
     // Pedidos que existen solo en iComfly (desde el 28/10/2026, todos los
     // nuevos). Best-effort: si la tabla falla, el dataset se arma con Shopify.
-    listIcomflyPedidosDesde(store.id, CORTE_PEDIDOS_ICOMFLY).catch((err) => {
+    listIcomflyPedidosDesde(store.id, corteIcomflyDe(store.id)).catch((err) => {
       console.warn("[orders-dataset] pedidos de iComfly:", err);
       return [];
     }),
@@ -379,6 +379,7 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
   // El SKU sale de los pedidos que estan en los dos: con el, el costo del producto.
   const soloIcomfly = pedidosDeIcomfly(crudosIcomfly, deShopify, {
     currency: store.currency,
+    corte: corteIcomflyDe(store.id),
     skus: skusPorProducto(crudosIcomfly, deShopify),
   });
   const shopifyOrders = [...deShopify, ...soloIcomfly];

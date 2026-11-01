@@ -33,8 +33,14 @@
 
 import type { ProductLineItem, ShopifyOrderSummary } from "@/lib/finance-orders";
 import { normalizeMatchKey } from "@/lib/order-matching";
+import { getFinanceStoreById } from "@/lib/store-config";
 
 export const CORTE_PEDIDOS_ICOMFLY = "2026-10-05";
+
+/** Desde cuando una tienda toma los pedidos que estan solo en iComfly. */
+export function corteIcomflyDe(storeId: number): string {
+  return getFinanceStoreById(storeId)?.pedidosIcomflyDesde ?? CORTE_PEDIDOS_ICOMFLY;
+}
 
 /** Lo que el dataset lee de cada pedido completo (columnas JSON, no el objeto entero). */
 export interface PedidoIcomflyCrudo {

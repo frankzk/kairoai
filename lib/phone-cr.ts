@@ -6,6 +6,8 @@
 // Icomfly ya entrega el telefono como '506########' (verificado en Fase 0),
 // pero normalizamos defensivamente porque los CRM cambian de forma sin avisar.
 
+import { getFinanceStore, type CountryCode } from "./store-config";
+
 export interface PhoneCountryConfig {
   /** Codigo de pais sin '+', p.ej. "506". */
   countryCode: string;
@@ -13,6 +15,12 @@ export interface PhoneCountryConfig {
   nationalLength: number;
   /** Digitos iniciales validos del numero nacional (moviles). Vacio = no valida. */
   mobilePrefixes: string[];
+  /**
+   * Digito que algunos sistemas meten entre el codigo de pais y el numero de un
+   * movil y que hoy sobra: Mexico "52 1 55..." (formato de WhatsApp anterior a
+   * 2020). Se quita para que el mismo cliente no quede como dos numeros.
+   */
+  legacyMobileInfix?: string;
 }
 
 export const CR_PHONE: PhoneCountryConfig = {
@@ -47,6 +55,7 @@ export const EXPLICIT_COUNTRY_CODES: Record<string, number> = {
   "507": 8, // Panama
   "502": 8, // Guatemala
   "503": 8, // El Salvador
+  "52": 10, // Mexico
 };
 
 export const HN_PHONE: PhoneCountryConfig = {
@@ -55,13 +64,21 @@ export const HN_PHONE: PhoneCountryConfig = {
   mobilePrefixes: ["3", "8", "9"],
 };
 
-const PHONE_BY_STORE_CODE: Record<string, PhoneCountryConfig> = {
-  "mireva-cr": CR_PHONE,
-  "mireva-hn": HN_PHONE,
+// Mexico: 10 digitos desde 2019 (lada + numero, fijos y moviles iguales), asi
+// que no se valida prefijo. WhatsApp y algunos CRM todavia mandan "521" + 10.
+export const MX_PHONE: PhoneCountryConfig = {
+  countryCode: "52",
+  nationalLength: 10,
+  mobilePrefixes: [],
+  legacyMobileInfix: "1",
 };
 
+// Por el pais de la tienda: una tienda de un pais nuevo tomaba el telefono de
+// Costa Rica y descartaba a todos sus clientes como "sin telefono".
+const PHONE_BY_COUNTRY: Record<CountryCode, PhoneCountryConfig> = { CR: CR_PHONE, HN: HN_PHONE, MX: MX_PHONE };
+
 export function phoneConfigForStore(storeCode?: string | null): PhoneCountryConfig {
-  return PHONE_BY_STORE_CODE[String(storeCode || "").toLowerCase()] ?? CR_PHONE;
+  return PHONE_BY_COUNTRY[getFinanceStore(storeCode).countryCode] ?? CR_PHONE;
 }
 
 /** Deja solo digitos y quita un prefijo internacional "00" si viene. */
@@ -84,9 +101,18 @@ export function normalizePhone(
   cfg: PhoneCountryConfig = CR_PHONE
 ): string | null {
   if (!raw) return null;
-  const { countryCode, nationalLength, mobilePrefixes } = cfg;
+  const { countryCode, nationalLength, mobilePrefixes, legacyMobileInfix } = cfg;
   let d = digitsOnly(raw);
   if (!d) return null;
+
+  // "52 1 5512345678" -> "52 5512345678".
+  if (
+    legacyMobileInfix &&
+    d.startsWith(countryCode + legacyMobileInfix) &&
+    d.length === countryCode.length + legacyMobileInfix.length + nationalLength
+  ) {
+    d = countryCode + d.slice(countryCode.length + legacyMobileInfix.length);
+  }
 
   // Trae el codigo de OTRO pais que conocemos, con la longitud exacta de ese
   // pais: se devuelve tal cual. No se le exige prefijo movil, porque no hay
