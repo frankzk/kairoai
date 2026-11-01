@@ -11,6 +11,7 @@ import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
 import TelefonoWeb from "@/components/TelefonoWeb";
 import { onResultadoLlamada, type SugerenciaLlamada } from "@/lib/telefonia-cliente";
+import type { LlamadaHistorial } from "@/lib/llamadas-historial";
 import ProductividadNovedades from "@/components/ProductividadNovedades";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -650,6 +651,7 @@ export default function IncidenciasPage() {
   const [selected, setSelected] = useState<Incident | null>(null);
   const [events, setEvents] = useState<IncidentEvent[]>([]);
   const [trackingEvents, setTrackingEvents] = useState<TrackingEvent[]>([]);
+  const [llamadas, setLlamadas] = useState<LlamadaHistorial[]>([]);
   const [orderProducts, setOrderProducts] = useState("");
   const [chatLead, setChatLead] = useState<ChatLeadSummary | null | undefined>(undefined);
   const [reprogFecha, setReprogFecha] = useState("");
@@ -695,11 +697,23 @@ export default function IncidenciasPage() {
     setSelected(incident);
     setEvents([]);
     setTrackingEvents([]);
+    setLlamadas([]);
     setOrderProducts("");
     setChatLead(undefined);
     setReprogFecha(incident.reprogramada_para ?? "");
     void loadDetail(incident.id);
   }
+
+  // Al colgar una llamada hecha desde la novedad abierta, sus llamadas se
+  // recargan cuando Telnyx ya aviso como termino (unos segundos despues).
+  useEffect(() => {
+    if (!selected) return;
+    const id = selected.id;
+    return onResultadoLlamada((r) => {
+      if (r.contexto.incidentId === id) window.setTimeout(() => void loadDetail(id), 4_000);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
 
   // Trae eventos + tracking del courier + productos y refresca el incidente.
   // Tolerante a fallos: marca detailError para que el popup ofrezca "Reintentar"
@@ -719,6 +733,7 @@ export default function IncidenciasPage() {
       setSelected(json.incident);
       setEvents(json.events ?? []);
       setTrackingEvents(json.tracking_events ?? []);
+      setLlamadas(json.llamadas ?? []);
       setOrderProducts(json.order_products ?? "");
       setChatLead(json.chat_lead ?? null);
       setReprogFecha(json.incident.reprogramada_para ?? "");
@@ -1191,6 +1206,7 @@ export default function IncidenciasPage() {
           incident={selected}
           events={events}
           trackingEvents={trackingEvents}
+          llamadas={llamadas}
           orderProducts={orderProducts}
           chatLead={chatLead}
           busy={busy}
@@ -1215,10 +1231,12 @@ export default function IncidenciasPage() {
 }
 
 function DetailModal({
-  storeCode, incident, events, trackingEvents, orderProducts, chatLead, busy, detailLoading, detailError, onRetry, reprogFecha, setReprogFecha, onClose, onPatch, onAction, onAddNote, onEditNote,
+  storeCode, incident, events, trackingEvents, llamadas, orderProducts, chatLead, busy, detailLoading, detailError, onRetry, reprogFecha, setReprogFecha, onClose, onPatch, onAction, onAddNote, onEditNote,
 }: {
   storeCode: FinanceStoreCode;
   incident: Incident; events: IncidentEvent[]; trackingEvents: TrackingEvent[]; orderProducts: string; busy: boolean;
+  /** Llamadas a este cliente (Zadarma y Telnyx). */
+  llamadas: LlamadaHistorial[];
   chatLead: ChatLeadSummary | null | undefined;
   detailLoading: boolean; detailError: boolean; onRetry: () => void;
   reprogFecha: string; setReprogFecha: (v: string) => void;
@@ -1539,6 +1557,24 @@ function DetailModal({
               </Button>
             </div>
           </div>
+
+          {/* Llamadas al cliente: lo que paso en la linea (Zadarma y Telnyx). */}
+          {llamadas.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                <Phone className="h-3.5 w-3.5" /> Llamadas ({llamadas.length})
+              </p>
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {llamadas.map((l) => (
+                  <div key={l.id} className="text-xs flex gap-2 border-b border-border/30 py-1">
+                    <span className="text-muted-foreground whitespace-nowrap">{fmtDate(l.at)}</span>
+                    <span className="text-muted-foreground flex-1">{l.descripcion}</span>
+                    {l.asesora && <span className="text-muted-foreground whitespace-nowrap">{l.asesora}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Historial */}
           <div>

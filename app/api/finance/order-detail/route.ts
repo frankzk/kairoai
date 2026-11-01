@@ -13,6 +13,7 @@ import {
 import { configDeTienda, problemaFechaPactada, recordatorioPara, requiereFechaPactada, tzDeTienda } from "@/lib/confirmacion";
 import { identidadActual, vendedoraEfectiva } from "@/lib/identidad";
 import { orderAlerts, riskInputFromHistory } from "@/lib/order-risk";
+import { llamadasDelTelefono } from "@/lib/llamadas-historial";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
   try {
     // Cada pieza es best-effort: que falle el chat no puede dejar sin alertas
     // a la asesora, que es lo que de verdad necesita para decidir.
-    const [history, events, chatLead, confirmacionConfig] = await Promise.all([
+    const [history, events, chatLead, confirmacionConfig, llamadas] = await Promise.all([
       phone
         ? loadCustomerOrdersByPhone({
             storeId: store.id,
@@ -59,6 +60,8 @@ export async function GET(req: NextRequest) {
       }).catch(() => null),
       // Con esto la ficha calcula la cola igual que la tabla (lib/confirmacion.ts).
       leerConfigConfirmacion(store.id, store.code).catch(() => configDeTienda(store.code, null)),
+      // Las llamadas a este cliente (Zadarma y Telnyx), para la bitacora.
+      phone ? llamadasDelTelefono({ storeCode: store.code, phone }).catch(() => []) : Promise.resolve([]),
     ]);
 
     const alerts = orderAlerts(
@@ -79,6 +82,7 @@ export async function GET(req: NextRequest) {
       events,
       chat_lead: chatLead,
       confirmacion_config: confirmacionConfig,
+      llamadas,
     });
   } catch (err) {
     const message = toFriendlyErrorMessage(err, "Error al abrir el pedido");
