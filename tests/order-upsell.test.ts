@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { assertReplaceable, buildUpsellReplacement, hasLogistics, matchesReplacement, runUpsellReplacement, sourceFingerprint, type RemoteOrder, type UpsellDependencies, type UpsellReceipt } from "../lib/order-upsell";
-import { catalogSubtotalForUpsell, selectedUpsellLine } from "../lib/order-upsell-catalog";
+import { catalogSubtotalForUpsell, catalogTotalsForUpsell, selectedUpsellLine } from "../lib/order-upsell-catalog";
 
 function source(): RemoteOrder {
   return { id: 10, store_id: 71, status: "Pendiente", order_number: "WEB123", total: 16915,
@@ -79,6 +79,14 @@ describe("preparar un upsell", () => {
     expect(subtotal).toBe(39800);
     expect(() => catalogSubtotalForUpsell([original], [{ id: 100, store_id: 71, name: "Original", variants: [{ id: "blue", price: 19900 }] }])).toThrow(/catálogo/);
   });
+  it("reconoce la oferta de tres unidades sin cambiar el precio negociado", () => {
+    const lines = [{ ...extra, productId: 6231, quantity: 3, price: 13333 }, { ...extra, productId: 3595, quantity: 1, price: 10900 }];
+    const products = [{ id: 6231, store_id: 71, name: "NAD", price: 19900, quantity_offers: [{ quantity: 3, fixed_price: 39800 }] },
+      { id: 3595, store_id: 71, name: "Gomitas", price: 19900 }];
+    expect(catalogTotalsForUpsell(lines, products)).toEqual([79600, 59700]);
+    expect(catalogTotalsForUpsell(lines.map(l => ({ ...l, quantity: 1 })), products)).toEqual([39800]);
+    expect(lines[1].price).toBe(10900);
+  });
 });
 
 describe("reemplazar y confirmar sin duplicar", () => {
@@ -118,6 +126,30 @@ describe("reemplazar y confirmar sin duplicar", () => {
     const f = fixture(); f.replacement.total = 12345;
     await expect(runUpsellReplacement(f.r, f.deps)).rejects.toThrow(/total/);
     expect(f.deps.setTotal).not.toHaveBeenCalled(); expect(f.deps.changeStatus).not.toHaveBeenCalled();
+  });
+  it("recupera un intento anterior sin crear otro pedido y lo completa una sola vez", async () => {
+    const f = fixture({ sourceTotal: 39999, upsellPrice: 10900, upsellQuantity: 1 });
+    f.r.creation_started_at = "2026-11-01T02:13:22Z"; f.r.replacement_id = "20";
+    f.replacement.total = 59700; f.replacement.collection_value = 59700;
+    f.deps.catalogTotals = vi.fn(async () => [79600, 59700]);
+    expect((await runUpsellReplacement(f.r, f.deps)).complete).toBe(true);
+    expect(f.r.expected.total).toBe(50899);
+    expect(f.deps.patch).toHaveBeenCalledWith({ expected: { ...f.r.expected, catalog_subtotal: 59700 } });
+    expect(f.deps.setTotal).toHaveBeenCalledWith("20", 50899);
+    expect(f.deps.setCod).toHaveBeenCalledWith("20");
+    expect(f.deps.create).not.toHaveBeenCalled();
+    await runUpsellReplacement(f.r, f.deps);
+    expect(f.deps.finish).toHaveBeenCalledTimes(1);
+  });
+  it("no permite que recuperar catálogo salte la verificación de productos o importes", async () => {
+    const f = fixture(); f.r.replacement_id = "20"; f.replacement.total = 12345;
+    f.deps.catalogTotals = vi.fn(async () => [39800]);
+    await expect(runUpsellReplacement(f.r, f.deps)).rejects.toThrow(/total/);
+    expect(f.deps.setTotal).not.toHaveBeenCalled(); expect(f.deps.changeStatus).not.toHaveBeenCalled();
+    f.replacement.items = [{ product_id: 999, quantity: 1 }];
+    vi.mocked(f.deps.catalogTotals).mockClear();
+    await expect(runUpsellReplacement(f.r, f.deps)).rejects.toThrow(/no coinciden/);
+    expect(f.deps.catalogTotals).not.toHaveBeenCalled();
   });
   it("reconcilia el total de catálogo que Icomfly calcula aunque sí conserve el precio reducido en la línea", async () => {
     const f = fixture({ sourceTotal: 19900, upsellPrice: 10990, upsellQuantity: 1, catalogSubtotal: 39800 });

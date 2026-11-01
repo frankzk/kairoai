@@ -9,7 +9,7 @@ import { llamarHerramientaIcomfly, tiendaDeLaConexion } from "@/lib/icomfly-mcp"
 import { buildIcomflyOrderRow } from "@/lib/dispatch";
 import { nombrePedidoIcomfly } from "@/lib/icomfly-pedidos";
 import { assertReplaceable, buildUpsellReplacement, hasLogistics, matchesReplacement, originalLines, runUpsellReplacement, sourceFingerprint, type UpsellSelection } from "@/lib/order-upsell";
-import { catalogSubtotalForUpsell, selectedUpsellLine, upsellProductOptions } from "@/lib/order-upsell-catalog";
+import { catalogSubtotalForUpsell, catalogTotalsForUpsell, selectedUpsellLine, upsellProductOptions } from "@/lib/order-upsell-catalog";
 import { archiveCancelledOrderUpsell, findOrderUpsell, lockOrderUpsell, patchOrderUpsell, reserveOrderUpsell, resolveUpsellOriginal, unlockOrderUpsell, type StoredUpsell } from "@/lib/order-upsell-db";
 import { isValidCanal } from "@/lib/order-events";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
@@ -113,6 +113,12 @@ export async function POST(req: NextRequest) {
       patch: changes => patchOrderUpsell(r, lock, changes),
       setTotal: async (id, total) => { await llamarHerramientaIcomfly(store.code, "actualizar_pedido", { order_id: Number(id), total }); },
       setCod: async id => { await llamarHerramientaIcomfly(store.code, "definir_tipo_recaudo", { order_id: Number(id), tipo_recaudo: "contra_entrega" }); },
+      catalogTotals: async replacement => {
+        const lines = originalLines(replacement);
+        const products = await Promise.all(lines.map(line => getIcomflyCatalogProduct(store.code, line.productId)));
+        return catalogTotalsForUpsell(lines, products as Array<typeof products[number] & Record<string, unknown>>)
+          .map(subtotal => Math.round((subtotal + Number(r.payload.shippingCost ?? 0)) * 100) / 100);
+      },
       changeStatus: async (id, status, reason) => { await llamarHerramientaIcomfly(store.code, "cambiar_estado_pedido", { order_id: Number(id), nuevo_estado: status, motivo: reason }); },
       finish: async (original, replacement) => {
         // Persist both exact orders so the original also disappears from the pending queue.
