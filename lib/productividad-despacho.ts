@@ -25,12 +25,20 @@ export interface AtribucionPedido {
   confirmo_por: string | null;
 }
 
+/** One completed replacement counts as one upsell, regardless of units sold. */
+export interface UpsellCompletado {
+  id: string;
+  advisor_name: string | null;
+  completed_at: string | null;
+}
+
 export interface PersonaDespacho {
   nombre: string;
   /** El asistente de IA de iComfly, no una persona. */
   esIa: boolean;
   despachados: number;
   confirmados: number;
+  upsells: number;
   /** Despachados por dia local (YYYY-MM-DD). */
   porDia: Record<string, number>;
 }
@@ -41,6 +49,7 @@ export interface ResumenDespacho {
   dias: string[];
   despachados: number;
   confirmados: number;
+  upsells: number;
 }
 
 const IA = /asistente\s+log[ií]stico/i;
@@ -65,7 +74,7 @@ export function diasDelRango(desdeIso: string, hastaIso: string): string[] {
   }
 }
 
-export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, hastaIso: string): ResumenDespacho {
+export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, hastaIso: string, ventasAdicionales: UpsellCompletado[] = []): ResumenDespacho {
   const desde = new Date(desdeIso).getTime();
   const hasta = new Date(hastaIso).getTime();
   const personas = new Map<string, PersonaDespacho>();
@@ -74,7 +83,7 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
     const clave = nombre.toLowerCase();
     let p = personas.get(clave);
     if (!p) {
-      p = { nombre, esIa: IA.test(nombre), despachados: 0, confirmados: 0, porDia: {} };
+      p = { nombre, esIa: IA.test(nombre), despachados: 0, confirmados: 0, upsells: 0, porDia: {} };
       personas.set(clave, p);
     }
     return p;
@@ -82,6 +91,7 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
 
   let despachados = 0;
   let confirmados = 0;
+  let upsells = 0;
   for (const fila of filas) {
     if (enRango(fila.guide_final_at, desde, hasta)) {
       const p = persona(fila.guia_por);
@@ -96,10 +106,18 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
     }
   }
 
+  const contados = new Set<string>();
+  for (const venta of ventasAdicionales) {
+    if (!venta.id || contados.has(venta.id) || !enRango(venta.completed_at, desde, hasta)) continue;
+    contados.add(venta.id);
+    persona(venta.advisor_name).upsells += 1;
+    upsells += 1;
+  }
+
   // Primero quien mas despacha; la IA y "Sin nombre" al final.
   const orden = (p: PersonaDespacho) => (p.esIa || p.nombre === SIN_NOMBRE ? 1 : 0);
   const lista = Array.from(personas.values()).sort(
-    (a, b) => orden(a) - orden(b) || b.despachados - a.despachados || b.confirmados - a.confirmados || a.nombre.localeCompare(b.nombre)
+    (a, b) => orden(a) - orden(b) || b.despachados - a.despachados || b.confirmados - a.confirmados || b.upsells - a.upsells || a.nombre.localeCompare(b.nombre)
   );
-  return { personas: lista, dias: diasDelRango(desdeIso, hastaIso), despachados, confirmados };
+  return { personas: lista, dias: diasDelRango(desdeIso, hastaIso), despachados, confirmados, upsells };
 }

@@ -1,0 +1,25 @@
+import type { IcomflyCatalogProduct, ManualOrderLine } from "./icomfly-manual-order";
+import type { UpsellSelection } from "./order-upsell";
+
+export interface UpsellProductOption { product_id: number; variant_id: string | null; name: string; price: number }
+export function upsellProductOptions(product: IcomflyCatalogProduct & Record<string, unknown>): UpsellProductOption[] {
+  let variants = product.variants;
+  if (typeof variants === "string") variants = JSON.parse(variants);
+  if (variants && !Array.isArray(variants) && typeof variants === "object") variants = (variants as Record<string, unknown>).generatedVariants;
+  const rows = Array.isArray(variants) ? variants as Array<Record<string, unknown>> : [];
+  if (!rows.length) return [{ product_id: Number(product.id), variant_id: null, name: product.name, price: Number(product.price) || 0 }];
+  return rows.filter(v => v.id != null).map(v => ({
+    product_id: Number(product.id), variant_id: String(v.id),
+    name: `${product.name} · ${v.name || v.title || Object.values((v.combination ?? {}) as object).join(" / ") || v.id}`,
+    price: Number(v.price ?? product.price) || 0,
+  }));
+}
+export function selectedUpsellLine(product: IcomflyCatalogProduct & Record<string, unknown>, input: UpsellSelection): ManualOrderLine {
+  if (Number(product.id) !== input.product_id || !Number.isSafeInteger(input.quantity) || input.quantity < 1 || input.quantity > 100 || !Number.isFinite(input.price) || input.price <= 0 || Math.round(input.price * 100) / 100 !== input.price) {
+    throw new Error("El upsell requiere un producto, cantidad entera y precio mayor que cero con hasta dos decimales.");
+  }
+  const option = upsellProductOptions(product).find(o => o.variant_id === input.variant_id);
+  if (!option) throw new Error("Selecciona una variante válida del producto.");
+  return { productId: input.product_id, productName: product.name, variantId: input.variant_id,
+    variantName: input.variant_id ? option.name.slice(product.name.length + 3) : null, price: input.price, quantity: input.quantity };
+}

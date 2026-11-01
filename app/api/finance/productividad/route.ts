@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { listAtribucionDespacho } from "@/lib/finance";
 import { resumenDespacho } from "@/lib/productividad-despacho";
+import { listUpsellsCompletados } from "@/lib/productividad-upsells-db";
 import { crDateRange, crRange, MAX_CUSTOM_RANGE_DAYS, parseRange, RANGE_LABELS } from "@/lib/leads-metrics";
 
 export const runtime = "nodejs";
@@ -29,13 +30,16 @@ export async function GET(req: NextRequest) {
     );
   }
   try {
-    const filas = await listAtribucionDespacho(store.id, bounds.fromIso, bounds.toIso);
+    const [filas, upsells] = await Promise.all([
+      listAtribucionDespacho(store.id, bounds.fromIso, bounds.toIso),
+      listUpsellsCompletados(store.id, bounds.fromIso, bounds.toIso),
+    ]);
     return NextResponse.json({
       range: custom ? "custom" : range,
       range_label: custom ? `${fromDate || toDate} a ${toDate || fromDate}` : RANGE_LABELS[range],
       from: bounds.fromIso,
       to: bounds.toIso,
-      ...resumenDespacho(filas, bounds.fromIso, bounds.toIso),
+      ...resumenDespacho(filas, bounds.fromIso, bounds.toIso, upsells),
     });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Error al leer la productividad" }, { status: 500 });

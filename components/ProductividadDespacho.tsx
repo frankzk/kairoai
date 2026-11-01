@@ -15,6 +15,7 @@ interface Respuesta {
   dias: string[];
   despachados: number;
   confirmados: number;
+  upsells: number;
 }
 
 export default function ProductividadDespacho({ storeCode }: { storeCode: string }) {
@@ -53,27 +54,29 @@ export default function ProductividadDespacho({ storeCode }: { storeCode: string
         <p className="mb-3 text-xs text-muted-foreground">
           <strong className="font-medium text-foreground/80">Despachados</strong>: pedidos a los que esa persona les generó la guía en
           iComfly, por el día en que quedaron con guía. <strong className="font-medium text-foreground/80">Confirmados</strong>: pedidos
-          que confirmó, por el día en que los confirmó.
+          que confirmó, por el día en que los confirmó. <strong className="font-medium text-foreground/80">Upsells</strong>: pedidos
+          con venta adicional completada desde Gestión, por la asesora y el día en que se completó.
         </p>
 
         {error ? (
           <p className="py-4 text-center text-sm text-destructive">{error}</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[560px] text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
                   <th className="py-2 pr-4 font-medium">Persona</th>
                   <th className="py-2 pr-4 text-right font-medium">Despachados</th>
                   <th className="py-2 pr-4 text-right font-medium">% del total</th>
-                  <th className="py-2 text-right font-medium">Confirmados</th>
+                  <th className="py-2 pr-4 text-right font-medium">Confirmados</th>
+                  <th className="py-2 text-right font-medium">Upsells</th>
                 </tr>
               </thead>
               <tbody>
                 {personas.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="py-4 text-center text-muted-foreground">
-                      {loading ? "Cargando..." : "Sin despachos ni confirmaciones en este periodo."}
+                    <td colSpan={5} className="py-4 text-center text-muted-foreground">
+                      {loading ? "Cargando..." : "Sin despachos, confirmaciones ni upsells en este periodo."}
                     </td>
                   </tr>
                 ) : (
@@ -84,7 +87,8 @@ export default function ProductividadDespacho({ storeCode }: { storeCode: string
                       </td>
                       <td className="py-2 pr-4 text-right font-semibold tabular-nums">{p.despachados}</td>
                       <td className="py-2 pr-4 text-right tabular-nums">{pct(p.despachados, data?.despachados ?? 0)}</td>
-                      <td className="py-2 text-right tabular-nums">{p.confirmados}</td>
+                      <td className="py-2 pr-4 text-right tabular-nums">{p.confirmados}</td>
+                      <td className="py-2 text-right tabular-nums">{p.upsells}</td>
                     </tr>
                   ))
                 )}
@@ -95,7 +99,8 @@ export default function ProductividadDespacho({ storeCode }: { storeCode: string
                     <td className="py-2 pr-4">Total</td>
                     <td className="py-2 pr-4 text-right tabular-nums">{data.despachados}</td>
                     <td className="py-2 pr-4 text-right tabular-nums">{data.despachados ? "100%" : "—"}</td>
-                    <td className="py-2 text-right tabular-nums">{data.confirmados}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{data.confirmados}</td>
+                    <td className="py-2 text-right tabular-nums">{data.upsells}</td>
                   </tr>
                 </tfoot>
               )}

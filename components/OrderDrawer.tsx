@@ -38,7 +38,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
+import OrderUpsellPanel from "@/components/OrderUpsellPanel";
 import { hideWebphone } from "@/lib/webphone";
+import { useOrderUpsellAccess } from "@/lib/use-order-upsell-access";
 import { getVendedoraId, setVendedoraId as persistVendedoraId, vendedoraBloqueada } from "@/lib/vendedora";
 import type { ChatLeadSummary } from "@/lib/leads-types";
 import type { CustomerOrder, CustomerSummary } from "@/lib/customer-history";
@@ -270,11 +272,16 @@ export default function OrderDrawer({
   const [vendedoraId, setVendedoraId] = useState<number | null>(null);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
+  const [upsellCompleted, setUpsellCompleted] = useState(false);
+  const [upsellInProgress, setUpsellInProgress] = useState(false);
   const [canal, setCanal] = useState<Exclude<OrderEventCanal, "">>("llamada");
   // Acuerdo que espera su fecha pactada antes de guardarse.
   const [pactando, setPactando] = useState<string | null>(null);
   const [fechaPactada, setFechaPactada] = useState("");
   const tz = tzDeTienda(storeCode);
+  const puedeUpsell = useOrderUpsellAccess();
+
+  useEffect(() => { setUpsellCompleted(false); setUpsellInProgress(false); }, [storeCode, target.order_name]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -338,6 +345,7 @@ export default function OrderDrawer({
   };
 
   async function registrar(kind: OrderEventKind, outcome: string, message = "", fecha = "") {
+    if (kind !== "nota" && (upsellCompleted || upsellInProgress)) return;
     setSaving(outcome || kind);
     setError("");
     try {
@@ -409,7 +417,7 @@ export default function OrderDrawer({
         variant="outline"
         size="sm"
         className={`gap-2 ${b.tone ?? ""} ${pactando === b.outcome ? "border-violet-500 bg-violet-500/10" : ""}`}
-        disabled={saving !== null}
+        disabled={saving !== null || upsellCompleted || upsellInProgress}
         aria-pressed={pactando === b.outcome || undefined}
         onClick={() => {
           // Un acuerdo no se guarda sin la fecha pactada: primero se elige.
@@ -442,13 +450,15 @@ export default function OrderDrawer({
         {/* Cabecera minima: estado + pedido. El resto de los datos vive en la
             primera columna, como en Novedades. */}
         <div className="flex items-center justify-between border-b border-border p-4">
-          <div className="flex items-center gap-2">
-            {target.guide_number ? (
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {upsellCompleted ? (
+              <Badge variant="muted">Reemplazado</Badge>
+            ) : target.guide_number ? (
               <Badge variant="muted">Guía {target.guide_number}</Badge>
             ) : (
               <Badge variant="warning">Sin despachar</Badge>
             )}
-            <span className="font-semibold">{target.order_name || "Pedido"}</span>
+            <span className="whitespace-nowrap font-semibold">{target.order_name || "Pedido"}</span>
           </div>
           <div className="flex items-center gap-2">
             {/* El numero sale del pedido en la base, no de esta pantalla. */}
@@ -647,7 +657,7 @@ export default function OrderDrawer({
                     <Button
                       size="sm"
                       className="gap-2"
-                      disabled={!fechaPactada || fechaPactada < hoy || saving !== null}
+                      disabled={!fechaPactada || fechaPactada < hoy || saving !== null || upsellCompleted || upsellInProgress}
                       onClick={() => registrar("contacto", pactando, "", fechaPactada)}
                     >
                       {saving === pactando && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
@@ -667,6 +677,17 @@ export default function OrderDrawer({
                   </p>
                 )}
               </div>
+
+              {puedeUpsell && !target.guide_number && (
+                <OrderUpsellPanel
+                  key={`${storeCode}:${target.order_name}`}
+                  store={storeCode} orderName={target.order_name} symbol={currencySymbol}
+                  advisorId={vendedoraId} canal={canal} disabled={saving !== null && saving !== "upsell"}
+                  onBusy={(busy) => setSaving(busy ? "upsell" : null)}
+                  onPending={setUpsellInProgress}
+                  onComplete={() => { setUpsellCompleted(true); load(); onRegistrado?.(); }}
+                />
+              )}
 
               {/* Notas: se registran como eventos de la bitacora */}
               <div>
