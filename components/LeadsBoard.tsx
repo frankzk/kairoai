@@ -24,7 +24,7 @@ import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
 import { hideWebphone } from "@/lib/webphone";
 import { creaEnIcomfly } from "@/lib/icomfly-pedido-lead";
-import ZadarmaWebphone from "@/components/ZadarmaWebphone";
+import TelefonoWeb from "@/components/TelefonoWeb";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -919,9 +919,10 @@ export default function LeadsBoard() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* Telefono web: registra el navegador como la extension de la asesora
-          para que "Llamar" suene aqui y no en un telefono aparte. */}
-      <ZadarmaWebphone />
+      {/* Telefono web (Zadarma o Telnyx, segun TELEFONIA): el navegador es el
+          telefono de la asesora, para que "Llamar" suene aqui y no en un
+          telefono aparte. */}
+      <TelefonoWeb />
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-4">
           <Link href="/" className="text-muted-foreground hover:text-foreground">

@@ -32,6 +32,7 @@ This document is the onboarding source for future devs and dev agents. Keep it u
   - Google Gemini
   - Supabase
   - Zadarma (centralita virtual: las asesoras llaman desde el navegador)
+  - Telnyx (reemplazo de Zadarma desde noviembre 2026, detras de TELEFONIA=telnyx)
 
 ## Multi-store Platform Architecture
 
@@ -934,6 +935,54 @@ Supervisa el despacho de pedidos COD en dos momentos atribuibles a personas:
   **Ver chat**. El rango actualiza lista, etapas, Agenda y gráfico.
 - “Sin llamar” se deriva de `status_source = 'auto'`; no se hace una consulta
   extra a `lead_calls`, Supabase o Icomfly para pintar el gráfico.
+
+## Telefonía Telnyx (reemplazo de Zadarma, noviembre 2026)
+
+Se cambia con `TELEFONIA=telnyx` en Vercel (sin la variable sigue Zadarma). Solo
+se monta UN teléfono por página (`components/TelefonoWeb.tsx`): con los dos, la
+asesora quedaría registrada en dos centralitas a la vez.
+
+### Por qué Telnyx
+
+Con Zadarma el botón "Llamar" pide un callback: la centralita timbra primero el
+navegador de la asesora y solo cuando ella contesta marca al cliente. Casi todos
+los problemas de telefonía salieron de esa primera pata (ver abajo: "el cliente
+nunca sonó", la extensión que sale pero no entra, el widget que tapa la
+pantalla). Con Telnyx el navegador marca al cliente **directo**, una sola
+llamada, con `@telnyx/webrtc` y una barra de llamada nuestra.
+
+### Cómo funciona
+
+1. Cada asesora tiene una credencial en la Credential Connection
+   (`TELNYX_CONNECTION_ID`). Kairo la crea sola la primera vez que abre Leads
+   y la guarda en `payroll_staff.telnyx_credential_id`: no hay extensiones que
+   asignar a mano.
+2. `components/TelnyxPhone.tsx` pide un token (`/api/telnyx/token`, JWT de esa
+   credencial) y se conecta.
+3. "Llamar" pide `/api/telnyx/llamada`: el número sale del lead o del pedido
+   (`lib/llamada-destino.ts`, el mismo que usa Zadarma; nunca de la pantalla),
+   el caller ID del país de la tienda (`TELNYX_CALLER_ID_CR`, `_HN`, `_MX`), y
+   se crea la fila de la llamada. El navegador marca con un `clientState` que
+   lleva solo el id aleatorio de esa fila.
+4. Telnyx avisa `call.initiated / answered / hangup / recording.saved` a
+   `/api/telnyx/webhook`, firmado con Ed25519 (`TELNYX_PUBLIC_KEY`; sin llave
+   no se acepta nada). El webhook encuentra la fila por el `clientState` y la
+   completa.
+
+Las llamadas van a la **misma tabla** que las de Zadarma (`zadarma_calls`,
+`provider = 'telnyx'`) y con las mismas palabras de estado (`answered`, `busy`,
+`no answer`, `cancel`...): el historial del lead, la "última llamada" y la
+productividad no cambian. La duración se cuenta desde `answered_at` (cuando
+contestó el cliente) hasta el colgado.
+
+Grabar: `TELNYX_GRABAR=1` (apagado por defecto: hay que avisarle al cliente).
+Arranca con `record_start` al contestar.
+
+El número que ve el cliente tiene que ser local: un +1 de Estados Unidos en
+Costa Rica u Honduras se contesta mucho menos.
+
+Diagnóstico: tarjeta "Telefonía Telnyx" en `/admin/settings` (qué variable
+falta, qué número ve cada tienda, si graba).
 
 ## Telefonía Zadarma (llamadas desde la laptop de la asesora)
 

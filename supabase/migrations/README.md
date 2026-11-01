@@ -12,6 +12,11 @@ Reglas:
 
 Estado actual:
 
+Telnyx: `20261101120000_telnyx.sql` aplicada el 01/11/2026. Agrega
+`payroll_staff.telnyx_credential_id` (única) y en `zadarma_calls` las columnas
+`provider` (default `'zadarma'`, las llamadas viejas quedan como estaban) y
+`answered_at`. Solo agrega columnas: no cambia nada de Zadarma.
+
 Presencia por período: `20261101015201_leads_presence_periods.sql` aplicada el
 31/10/2026 (hora de Lima). Agrega historial diario privado y consulta de conexiones
 para Productividad. Solo importa las fechas observadas; no reconstruye conexiones

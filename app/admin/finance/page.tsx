@@ -92,7 +92,7 @@ import {
   type FinanceStorePublic,
 } from "@/lib/store-config";
 import OrderDrawer, { type OrderDrawerTarget } from "@/components/OrderDrawer";
-import ZadarmaWebphone from "@/components/ZadarmaWebphone";
+import TelefonoWeb from "@/components/TelefonoWeb";
 import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
 import { leerYo, tienePermiso } from "@/lib/sesion-cliente";
 import { sanitizeExternalError } from "@/lib/api-errors";
@@ -3044,9 +3044,9 @@ function OrdersTable({
 
   return (
     <>
-      {/* Telefono web: sin esto el boton "Llamar" del drawer timbraria una
-          extension que ningun navegador tiene registrada. */}
-      <ZadarmaWebphone />
+      {/* Telefono web (Zadarma o Telnyx): sin esto el boton "Llamar" del
+          drawer no tendria desde donde sonar. */}
+      <TelefonoWeb />
 
       {openOrder && (
         <OrderDrawer
