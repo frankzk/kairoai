@@ -13,6 +13,7 @@ interface Props {
   onPending: (pending: boolean) => void;
 }
 const inputClass = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const orderReference = (name: string) => /^IC-W\d+$/.test(name) ? `#${name.slice(4)}` : /^IC-\d+$/.test(name) ? `#${name.slice(3)}` : name;
 
 export default function OrderUpsellPanel({ store, orderName, symbol, advisorId, canal, disabled, onBusy, onComplete, onPending }: Props) {
   const [open, setOpen] = useState(false);
@@ -51,6 +52,34 @@ export default function OrderUpsellPanel({ store, orderName, symbol, advisorId, 
     // onComplete is a notification; reloading when its identity changes would restart the form.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [endpoint, orderName]);
+
+  // A pending operation may finish in another request while this drawer stays open.
+  useEffect(() => {
+    if (!receipt || receipt.completed || receipt.cancelled || busy) return;
+    const controller = new AbortController();
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing || document.visibilityState === "hidden") return;
+      refreshing = true;
+      try {
+        const response = await fetch(`${endpoint}&order=${encodeURIComponent(orderName)}&receipt_only=1`, { cache: "no-store", signal: controller.signal });
+        const body = await response.json();
+        if (!controller.signal.aborted && response.ok && body.receipt?.completed) {
+          setReceipt(body.receipt); setError(""); setMessage(""); onPending(false); onComplete();
+        }
+      } catch { /* The saved attempt and its continuation remain available. */ }
+      finally { refreshing = false; }
+    };
+    const timer = window.setInterval(refresh, 15_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      controller.abort(); window.clearInterval(timer);
+      window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh);
+    };
+    // Notifications must not restart the observer when the parent renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endpoint, orderName, receipt?.id, receipt?.completed, receipt?.cancelled, busy]);
 
   useEffect(() => {
     if (!open || receipt || query.trim().length < 3) { setProducts([]); return; }
@@ -103,9 +132,10 @@ export default function OrderUpsellPanel({ store, orderName, symbol, advisorId, 
   const valid = Boolean(selected) && Number.isInteger(Number(quantity)) && Number(quantity) > 0 && Number(quantity) <= 100 && Number(price) > 0 && Number.isFinite(extra);
   if (receipt?.completed) return (
     <div role="status" className="space-y-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
-      <p className="flex items-center gap-2 font-medium text-emerald-300"><CheckCircle2 className="h-4 w-4" />Pedido con upsell confirmado</p>
-      <p>Nuevo pedido <strong>{receipt.replacement_name || receipt.replacement_id}</strong> · {money(receipt.total)}.</p>
-      <p className="text-xs text-muted-foreground">{orderName} quedó anulado. Ambos pedidos están vinculados en la bitácora.</p>
+      <p className="flex items-center gap-2 font-medium text-emerald-300"><CheckCircle2 className="h-4 w-4" />Upsell completado</p>
+      <p>Ya se generó el nuevo pedido <strong>{orderReference(receipt.replacement_name || receipt.replacement_id || "")}</strong> con el upsell y quedó <strong>Confirmado</strong>.</p>
+      <p>El pedido original <strong>{orderReference(orderName)}</strong> quedó <strong>Cancelado</strong>.</p>
+      <p className="text-xs text-muted-foreground">Total del nuevo pedido: {money(receipt.total)}.</p>
       {message && <p className="text-xs">{message}</p>}
     </div>
   );

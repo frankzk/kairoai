@@ -94,6 +94,14 @@ describe("API de upsell", () => {
     expect((await response.json()).receipt.cancelled).toBe(true);
     expect(mocks.create).not.toHaveBeenCalled();
   });
+  it("consulta el cierre guardado sin releer ni modificar pedidos en Icomfly", async () => {
+    mocks.find.mockResolvedValue(structuredClone(receipt));
+    const request = () => new NextRequest("http://localhost/api/finance/order-upsell?store=mireva-cr&order=IC-W23&receipt_only=1");
+    expect((await (await GET(request())).json()).receipt.completed).toBe(false);
+    mocks.find.mockResolvedValue({ ...receipt, completed_at: "now", replacement_name: "IC-W24" });
+    expect((await (await GET(request())).json()).receipt).toMatchObject({ completed: true, original_name: "IC-W23", replacement_name: "IC-W24" });
+    expect(mocks.remoteRead).not.toHaveBeenCalled(); expect(mocks.create).not.toHaveBeenCalled();
+  });
   it("archiva únicamente el intento cancelado después de verificar ambos pedidos, sin reactivarlo ni crear otro", async () => {
     const r = { ...receipt, payload: { ...original, orderNumber: "MANUAL-test" },
       expected: { total: 150, items: [{ product_id: 100, variant_id: null, quantity: 1 }] } };
