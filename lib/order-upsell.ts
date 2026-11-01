@@ -52,7 +52,7 @@ export function originalLines(o: RemoteOrder): ManualOrderLine[] {
       variantId: i.variant_id == null ? null : String(i.variant_id), variantName: i.variant_name == null ? null : String(i.variant_name), quantity, price };
   });
 }
-export function buildUpsellReplacement(o: RemoteOrder, line: ManualOrderLine, requestId: string, advisor: string) {
+export function buildUpsellReplacement(o: RemoteOrder, line: ManualOrderLine, requestId: string, advisor: string, catalogSubtotal?: number) {
   assertReplaceable(o);
   // A paid order requires an additional collection arrangement. Do not silently charge it twice.
   if (o.is_no_collection === true || o.collection_type === "sin_recaudo" || !/contra\s*entrega|contraentrega|cod/i.test(String(o.payment_method))) {
@@ -74,12 +74,17 @@ export function buildUpsellReplacement(o: RemoteOrder, line: ManualOrderLine, re
   const total = (cents(o.total) + cents(line.price) * line.quantity) / 100;
   const subtotal = lines.reduce((n, l) => n + l.price * l.quantity, 0);
   result.body.total = total;
-  result.body.notes = [String(o.notes || ""), `Upsell cerrado por ${advisor} en Gestión de Kairo. Reemplaza el pedido ${o.order_number} (ID ${o.id}).`, `Nuevo total acordado: ${total}.`].filter(Boolean).join("\n");
+  result.body.notes = [String(o.notes || ""), `Upsell cerrado por ${advisor} en Gestión de Kairo. Reemplaza el pedido ${o.order_number} (ID ${o.id}).`,
+    `Importe original: ${Number(o.total)}. Upsell: ${line.quantity} x ${line.productName} a ${line.price} por unidad. Nuevo total acordado: ${total}.`].filter(Boolean).join("\n");
   result.body.shippingCost = Number(o.order_shipping_cost) || 0;
   for (const key of ["shipping_district", "shipping_province", "shipping_zip", "shipping_lat", "shipping_lng"]) {
     if (o[key] != null) result.body[key] = o[key];
   }
   result.expected.total = total;
+  if (catalogSubtotal != null) {
+    if (!Number.isFinite(catalogSubtotal) || catalogSubtotal < 0) throw new Error("El subtotal de catálogo no es válido.");
+    result.expected.catalog_subtotal = Math.round((catalogSubtotal + Number(result.body.shippingCost)) * 100) / 100;
+  }
   return { ...result, gross: Math.round(subtotal * 100) / 100 };
 }
 export function matchesReplacement(o: RemoteOrder, receipt: UpsellReceipt, checkTotal = true): boolean {
@@ -135,7 +140,9 @@ export async function runUpsellReplacement(r: UpsellReceipt, d: UpsellDependenci
   const target = cents(r.expected.total);
   if (cents(replacement.total) !== target) {
     const gross = (r.payload.products as Array<{ price: number; quantity: number }>).reduce((n, l) => n + cents(l.price) * l.quantity, 0) + cents(r.payload.shippingCost ?? 0);
-    if (replacement.status !== "Pendiente" || cents(replacement.total) !== gross) throw new Error("El total del nuevo pedido cambió. Revisa el importe sin volver a crearlo.");
+    const allowedTotals = [gross];
+    if (r.expected.catalog_subtotal != null && Number.isFinite(cents(r.expected.catalog_subtotal))) allowedTotals.push(cents(r.expected.catalog_subtotal));
+    if (replacement.status !== "Pendiente" || !allowedTotals.includes(cents(replacement.total))) throw new Error("El total del nuevo pedido cambió. Revisa el importe sin volver a crearlo.");
     await d.setTotal(r.replacement_id!, r.expected.total);
   }
   if (replacement.collection_type !== "con_recaudo" || cents(replacement.collection_value) !== target || cents(replacement.total) !== target) {

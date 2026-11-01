@@ -23,3 +23,13 @@ export function selectedUpsellLine(product: IcomflyCatalogProduct & Record<strin
   return { productId: input.product_id, productName: product.name, variantId: input.variant_id,
     variantName: input.variant_id ? option.name.slice(product.name.length + 3) : null, price: input.price, quantity: input.quantity };
 }
+
+export function catalogSubtotalForUpsell(lines: ManualOrderLine[], products: Array<IcomflyCatalogProduct & Record<string, unknown>>): number {
+  if (lines.length !== products.length) throw new Error("Falta verificar el catálogo del pedido.");
+  return lines.reduce((sum, line, i) => {
+    const product = products[i];
+    const option = Number(product.id) === line.productId ? upsellProductOptions(product).find(p => p.variant_id === line.variantId) : null;
+    if (!option || !Number.isFinite(option.price) || option.price < 0) throw new Error("No se pudo verificar el precio de catálogo de un producto del pedido.");
+    return sum + Math.round(option.price * 100) * line.quantity;
+  }, 0) / 100;
+}

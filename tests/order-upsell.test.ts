@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { assertReplaceable, buildUpsellReplacement, hasLogistics, matchesReplacement, runUpsellReplacement, sourceFingerprint, type RemoteOrder, type UpsellDependencies, type UpsellReceipt } from "../lib/order-upsell";
-import { selectedUpsellLine } from "../lib/order-upsell-catalog";
+import { catalogSubtotalForUpsell, selectedUpsellLine } from "../lib/order-upsell-catalog";
 
 function source(): RemoteOrder {
   return { id: 10, store_id: 71, status: "Pendiente", order_number: "WEB123", total: 16915,
@@ -10,14 +10,16 @@ function source(): RemoteOrder {
     items: [{ product_id: 100, product_name: "Producto original", variant_id: "red", variant_name: "Rojo", quantity: 1, product_price: 19900 }] };
 }
 const extra = { productId: 200, productName: "Upsell", variantId: null, variantName: null, price: 5000, quantity: 2 };
-function fixture() {
+function fixture(options: { sourceTotal?: number; upsellPrice?: number; upsellQuantity?: number; catalogSubtotal?: number } = {}) {
   const original = source();
-  const built = buildUpsellReplacement(original, extra, "a8e6f043-4e50-402c-89b3-b78e33a64532", "Asesora");
+  if (options.sourceTotal != null) { original.total = options.sourceTotal; original.collection_value = options.sourceTotal; }
+  const upsell = { ...extra, price: options.upsellPrice ?? extra.price, quantity: options.upsellQuantity ?? extra.quantity };
+  const built = buildUpsellReplacement(original, upsell, "a8e6f043-4e50-402c-89b3-b78e33a64532", "Asesora", options.catalogSubtotal);
   const r: UpsellReceipt = { id: "request", store_id: 1, original_id: "10", original_name: "IC-W23", advisor_id: 2, advisor_name: "Asesora", canal: "llamada",
     source_fingerprint: sourceFingerprint(original), payload: built.body, expected: built.expected, creation_started_at: null, replacement_id: null, cancel_started_at: null, completed_at: null };
   const replacement: RemoteOrder = { ...built.body, id: 20, order_number: built.body.orderNumber, total: built.expected.total,
     collection_type: "con_recaudo", collection_value: built.expected.total,
-    items: [original.items as RemoteOrder[]].flat().concat([{ product_id: 200, product_name: "Upsell", variant_id: null, quantity: 2, product_price: 5000 }]) };
+    items: [original.items as RemoteOrder[]].flat().concat([{ product_id: 200, product_name: "Upsell", variant_id: null, quantity: upsell.quantity, product_price: upsell.price }]) };
   const log: string[] = [];
   const deps: UpsellDependencies = {
     read: vi.fn(async id => structuredClone(id === "10" ? original : replacement)),
@@ -62,6 +64,21 @@ describe("preparar un upsell", () => {
     expect(sourceFingerprint({ ...o, customer: { ...(o.customer as object), updated_at: "later" } })).toBe(sourceFingerprint(o));
     expect(sourceFingerprint({ ...o, shipping_address: "Otra dirección" })).not.toBe(sourceFingerprint(o));
   });
+  it("captura el precio de catálogo sin reemplazar el precio negociado del upsell", () => {
+    const f = fixture({ sourceTotal: 19900, upsellPrice: 10990, upsellQuantity: 1, catalogSubtotal: 39800 });
+    expect(f.r.expected).toMatchObject({ total: 30890, catalog_subtotal: 39800 });
+    expect((f.r.payload.products as Array<{ price: number }>)[1].price).toBe(10990);
+    expect(f.r.payload.notes).toContain("10990 por unidad");
+  });
+  it("verifica producto y variante al calcular el subtotal de catálogo", () => {
+    const original = { ...extra, productId: 100, variantId: "red", quantity: 1 };
+    const subtotal = catalogSubtotalForUpsell([original, { ...extra, quantity: 1 }], [
+      { id: 100, store_id: 71, name: "Original", variants: [{ id: "red", name: "Rojo", price: 19900 }] },
+      { id: 200, store_id: 71, name: "Upsell", price: 19900 },
+    ]);
+    expect(subtotal).toBe(39800);
+    expect(() => catalogSubtotalForUpsell([original], [{ id: 100, store_id: 71, name: "Original", variants: [{ id: "blue", price: 19900 }] }])).toThrow(/catálogo/);
+  });
 });
 
 describe("reemplazar y confirmar sin duplicar", () => {
@@ -100,6 +117,25 @@ describe("reemplazar y confirmar sin duplicar", () => {
   it("no sobrescribe un importe ajeno", async () => {
     const f = fixture(); f.replacement.total = 12345;
     await expect(runUpsellReplacement(f.r, f.deps)).rejects.toThrow(/total/);
+    expect(f.deps.setTotal).not.toHaveBeenCalled(); expect(f.deps.changeStatus).not.toHaveBeenCalled();
+  });
+  it("reconcilia el total de catálogo que Icomfly calcula aunque sí conserve el precio reducido en la línea", async () => {
+    const f = fixture({ sourceTotal: 19900, upsellPrice: 10990, upsellQuantity: 1, catalogSubtotal: 39800 });
+    f.replacement.total = 39800; f.replacement.collection_value = 39800;
+    expect((await runUpsellReplacement(f.r, f.deps)).complete).toBe(true);
+    expect(f.deps.setTotal).toHaveBeenCalledWith("20", 30890);
+    expect(f.deps.setCod).toHaveBeenCalledWith("20");
+    expect(f.original.status).toBe("Cancelado");
+    expect(f.replacement.status).toBe("Confirmada");
+  });
+  it("el subtotal de catálogo no autoriza a sobrescribir otro total desconocido", async () => {
+    const f = fixture({ catalogSubtotal: 39800 }); f.replacement.total = 35000;
+    await expect(runUpsellReplacement(f.r, f.deps)).rejects.toThrow(/total/);
+    expect(f.deps.setTotal).not.toHaveBeenCalled(); expect(f.deps.changeStatus).not.toHaveBeenCalled();
+  });
+  it("un reemplazo cancelado por una persona no se reactiva ni provoca la anulación del original", async () => {
+    const f = fixture({ catalogSubtotal: 39800 }); f.r.replacement_id = "20"; f.r.creation_started_at = "now"; f.replacement.status = "Cancelado";
+    await expect(runUpsellReplacement(f.r, f.deps)).rejects.toThrow(/cambió/);
     expect(f.deps.setTotal).not.toHaveBeenCalled(); expect(f.deps.changeStatus).not.toHaveBeenCalled();
   });
   it("relee el original antes de anular por si cambió durante la creación", async () => {

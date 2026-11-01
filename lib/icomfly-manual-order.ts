@@ -18,6 +18,8 @@ export interface ManualOrderLine {
 export interface ExpectedIcomflyOrder {
   items: Array<{ product_id: number; variant_id: string | null; quantity: number }>;
   total: number;
+  /** Catalog subtotal verified before upsell creation, for native total reconciliation. */
+  catalog_subtotal?: number;
   discount_adjustment?: { subtotal: number; order_number: string; cod: boolean };
 }
 
