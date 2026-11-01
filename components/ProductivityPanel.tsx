@@ -25,13 +25,15 @@ export default function ProductivityPanel({ store }: { store: string }) {
   const clock = useRef({ server: 0, local: 0 });
   const request = useRef(0);
   const pending = useRef<AbortController | null>(null);
+  const currentRows = useRef<ConnectedProductivityRow[]>([]);
+  const metricsAt = useRef(0);
   const cancel = useCallback(() => {
     request.current += 1;
     pending.current?.abort();
     pending.current = null;
   }, []);
 
-  const load = useCallback(async (foreground = true) => {
+  const load = useCallback(async (foreground = true, presenceOnly = false): Promise<boolean> => {
     const id = ++request.current;
     pending.current?.abort();
     const controller = new AbortController();
@@ -40,6 +42,7 @@ export default function ProductivityPanel({ store }: { store: string }) {
     if (foreground) setLoading(true);
     try {
       const params = new URLSearchParams({ store });
+      if (presenceOnly) params.set("presence_only", "1");
       if (custom) {
         if (fromDate) params.set("from", fromDate);
         if (toDate) params.set("to", toDate);
@@ -48,11 +51,22 @@ export default function ProductivityPanel({ store }: { store: string }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "No se pudo actualizar la productividad.");
       if (!Array.isArray(data.rows) || !Number.isFinite(Date.parse(data.server_time))) throw new Error("Respuesta de productividad incompleta.");
-      if (id !== request.current) return;
+      if (id !== request.current) return false;
+      // A new participant needs their real metrics, not invented zeros.
+      if (presenceOnly && (data.rows.length !== currentRows.current.length || data.rows.some((r: ConnectedProductivityRow) => !currentRows.current.some((old) => old.user_id === r.user_id && old.staff_id === r.staff_id)))) return true;
       clock.current = { server: Date.parse(data.server_time), local: performance.now() };
       setNow(clock.current.server);
-      setRows(data.rows);
-      setTotals(data.totals ?? null);
+      if (presenceOnly) {
+        const byUser = new Map<number, ConnectedProductivityRow>(currentRows.current.map((r) => [r.user_id, r]));
+        const updated = data.rows.map((r: ConnectedProductivityRow) => ({ ...byUser.get(r.user_id)!, ...r }));
+        currentRows.current = updated;
+        setRows(updated);
+      } else {
+        metricsAt.current = performance.now();
+        currentRows.current = data.rows;
+        setRows(data.rows);
+        setTotals(data.totals ?? null);
+      }
       setError(null);
     } catch (err) {
       if (id === request.current) setError(err instanceof Error && err.name !== "AbortError" ? err.message : "La consulta tardó demasiado. Reintentando…");
@@ -60,12 +74,19 @@ export default function ProductivityPanel({ store }: { store: string }) {
       clearTimeout(timeout);
       if (id === request.current) { pending.current = null; setLoading(false); }
     }
+    return false;
   }, [store, range, custom, fromDate, toDate]);
 
   useEffect(() => {
-    setRows([]); setTotals(null); setError(null); clock.current = { server: 0, local: 0 };
+    let disposed = false;
+    setRows([]); currentRows.current = []; metricsAt.current = 0;
+    setTotals(null); setError(null); clock.current = { server: 0, local: 0 };
     void load();
-    const resume = () => { if (document.visibilityState === "visible" && !pending.current) void load(false); };
+    const refresh = async () => {
+      const needsMetrics = await load(false, performance.now() - metricsAt.current < 60_000);
+      if (needsMetrics && !disposed) void load(false);
+    };
+    const resume = () => { if (document.visibilityState === "visible" && !pending.current) void refresh(); };
     const poll = setInterval(resume, PRESENCE_POLL_MS);
     const tick = setInterval(() => {
       if (clock.current.server) setNow(clock.current.server + performance.now() - clock.current.local);
@@ -73,6 +94,7 @@ export default function ProductivityPanel({ store }: { store: string }) {
     document.addEventListener("visibilitychange", resume);
     window.addEventListener("online", resume);
     return () => {
+      disposed = true;
       cancel();
       clearInterval(poll); clearInterval(tick);
       document.removeEventListener("visibilitychange", resume);

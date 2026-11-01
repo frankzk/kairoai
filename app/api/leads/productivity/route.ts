@@ -48,10 +48,12 @@ export async function GET(req: NextRequest) {
 
   try {
     const { fromIso, toIso } = bounds;
+    const presenceOnly = sp.get("presence_only") === "1";
     const [todas, presence] = await Promise.all([
-      getProductivity(store.id, fromIso, toIso),
+      presenceOnly ? Promise.resolve([]) : getProductivity(store.id, fromIso, toIso),
       readPresence(yo, store.id, store.code, Date.now(), bounds),
     ]);
+    if (presenceOnly) return NextResponse.json({ rows: presence, server_time: new Date().toISOString() }, { headers: { "Cache-Control": "private, no-store" } });
     // Una asesora sin supervision ni "ver productividad del equipo" ve solo su
     // propia fila (y los totales salen de esa fila). Las otras ven a todo el
     // equipo.

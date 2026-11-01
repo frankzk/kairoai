@@ -39,6 +39,13 @@ describe("Rango de conexiones y productividad", () => {
     expect(body.rows).toEqual([]);
     expect(body.totals).toEqual({ gestiones: 0, leads: 0, pedidos: 0 });
   });
+  it("actualiza presencia sin volver a leer todo el historial de gestiones", async () => {
+    const body = await (await GET(req("range=hoy&presence_only=1"))).json();
+    expect(state.metrics).not.toHaveBeenCalled();
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].user_id).toBe(5);
+    expect(body).not.toHaveProperty("totals");
+  });
   it("rechaza fechas inválidas y no convierte un fallo de historial en cero conexiones", async () => {
     expect((await GET(req("from=2026-10-31&to=2026-10-30"))).status).toBe(400);
     expect(state.presence).not.toHaveBeenCalled();
