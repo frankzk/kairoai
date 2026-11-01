@@ -12,7 +12,7 @@ Reglas:
 
 Estado actual:
 
-Presencia de Leads: `20261101012055_leads_presence.sql` aplicada el 31/10/2026
+Presencia de Leads: `20261101012902_leads_presence.sql` aplicada el 31/10/2026
 (hora de Lima). Tablas privadas `lead_presence` y `lead_presence_tabs`, RLS activa
 sin políticas públicas y RPC solo para service role. Conserva la última actividad
 del usuario real por tienda; limpia sus pestañas vencidas al recibir nuevas señales.
