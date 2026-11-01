@@ -2837,7 +2837,7 @@ function OrdersTab({
 
       {productividadAbierta && (
         <ModalOverlay onClose={() => setProductividadAbierta(false)} labelledBy="productividad-title">
-          <div className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
+          <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-lg border border-border bg-card p-5 shadow-2xl">
             <div className="mb-3 flex items-start justify-between gap-4">
               <div className="space-y-1">
                 <h3 id="productividad-title" className="text-base font-semibold">

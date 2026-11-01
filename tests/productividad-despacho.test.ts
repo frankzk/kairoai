@@ -6,7 +6,7 @@
 // de iComfly contado como una persona dan otro reporte.
 
 import { describe, expect, it, vi } from "vitest";
-import { diasDelRango, resumenDespacho, tasaEntregaDespacho, SIN_NOMBRE, type AtribucionPedido } from "../lib/productividad-despacho";
+import { diasDelRango, resumenDespacho, tasaEntregaDespacho, tasaEntregaCerrados, esNoEntregadoCerrado, SIN_NOMBRE, type AtribucionPedido } from "../lib/productividad-despacho";
 import { exigenciaDe, cumple } from "../lib/permisos";
 
 // Cadena de supabase-js simulada: registra cada llamada y responde vacio.
@@ -121,6 +121,30 @@ describe("tasa de entrega sobre los despachos de cada asesora", () => {
     const r = resumenDespacho([null, "", "Devolución", "Cancelado", "Entregado a Distribuidor"].map((estado_actual) => fila({ guide_final_at: DESDE, guia_por: "Ana", estado_actual })), DESDE, HASTA);
     expect(r).toMatchObject({ despachados: 5, entregados: 0 });
   });
+});
+
+describe("tasa de operaciones cerradas", () => {
+  it("excluye operaciones abiertas y cancelados sin alterar la tasa sobre todos los despachos", () => {
+    const r = resumenDespacho([
+      ...["Entregado", "Devolución", "Devuelto", "En_Reparto", "Novedad", "Cancelado"].map((estado_actual) => fila({ guide_final_at: DESDE, guia_por: "Ana", estado_actual })),
+      fila({ guide_final_at: DESDE, guia_por: "Bea", estado_actual: "Entregado" }),
+      fila({ guide_final_at: HASTA, guia_por: "Ana", estado_actual: "Devuelto", confirmed_at: DESDE, confirmo_por: "Ana" }),
+    ], DESDE, HASTA);
+    expect(r.personas.find((p) => p.nombre === "Ana")).toMatchObject({ despachados: 6, entregados: 1, no_entregados: 2 });
+    expect(r.personas.find((p) => p.nombre === "Bea")).toMatchObject({ despachados: 1, entregados: 1, no_entregados: 0 });
+    expect(r).toMatchObject({ despachados: 7, entregados: 2, no_entregados: 2 });
+    expect(tasaEntregaDespacho(1, 6)).toBe("16,7%");
+    expect(tasaEntregaCerrados(1, 2)).toBe("33,3%");
+    // Total ponderado: 2/4 = 50%, no el promedio de 33,3% y 100%.
+    expect(tasaEntregaCerrados(r.entregados, r.no_entregados)).toBe("50,0%");
+  });
+  it("muestra un guion sin cerrados y cero cuando todos los cerrados fallaron", () => {
+    expect(tasaEntregaCerrados(0, 0)).toBe("–");
+    expect(tasaEntregaCerrados(0, 2)).toBe("0,0%");
+    expect(tasaEntregaCerrados(3, 0)).toBe("100,0%");
+  });
+  it.each(["Devolucion", "DEVOLUCIÓN", " Devuelto ", "Devuelta", "No_Entregado", "no entregada"])("reconoce el cierre explícito %s", (status) => expect(esNoEntregadoCerrado(status)).toBe(true));
+  it.each([null, "", "Cancelado", "Novedad", "En_Reparto", "Reprogramada", "Entregado a Distribuidor", "Intento fallido"])("no convierte %s en un no entregado definitivo", (status) => expect(esNoEntregadoCerrado(status)).toBe(false));
 });
 
 describe("los días del rango", () => {
