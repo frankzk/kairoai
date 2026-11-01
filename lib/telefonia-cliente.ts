@@ -24,6 +24,13 @@ export function proveedorTelefoniaCliente(): Promise<ProveedorTelefonia> {
   return proveedor;
 }
 
+/** Desde donde se llamo: cada panel reconoce SU llamada con esto. */
+export interface ContextoLlamada {
+  leadId?: number;
+  orderName?: string;
+  incidentId?: number;
+}
+
 export interface LlamadaTelnyx {
   /** Numero del cliente en E.164 con '+'. */
   destino: string;
@@ -31,6 +38,58 @@ export interface LlamadaTelnyx {
   callerNumber: string;
   /** Id de la llamada de Kairo, para el webhook. */
   clientState: string;
+  contexto?: ContextoLlamada;
+}
+
+// ─── Como termino: para premarcar "Contestó" / "No contestó" ────────────────
+
+/**
+ * Segundos que tiene que sonar el telefono del CLIENTE para premarcar "No
+ * contestó": unos 3 timbres (cada uno dura ~5 s). Si la asesora corta antes,
+ * no se premarca nada: no seria justo darlo por no contestado al primer timbre.
+ */
+export const SEGUNDOS_TIMBRE_NO_CONTESTO = 15;
+
+export type SugerenciaLlamada = "contesto" | "no_contesto";
+
+/**
+ * Que premarcar al colgar. Solo premarca: la asesora lo confirma con un clic.
+ * - Contesto el cliente → "Contestó".
+ * - Ocupado o rechazada → "No contestó" (el cliente corto, no la asesora).
+ * - Sono al menos SEGUNDOS_TIMBRE_NO_CONTESTO sin contestar → "No contestó".
+ * - Cualquier otra cosa (se corto antes, no llego a sonar) → nada.
+ */
+export function sugerenciaDeLlamada(r: {
+  contestada: boolean;
+  segundosTimbre: number;
+  causa?: string | null;
+}): SugerenciaLlamada | null {
+  if (r.contestada) return "contesto";
+  const causa = String(r.causa ?? "").toUpperCase();
+  if (causa === "USER_BUSY" || causa === "CALL_REJECTED") return "no_contesto";
+  return r.segundosTimbre >= SEGUNDOS_TIMBRE_NO_CONTESTO ? "no_contesto" : null;
+}
+
+export interface ResultadoLlamada {
+  contexto: ContextoLlamada;
+  sugerencia: SugerenciaLlamada | null;
+  segundosTimbre: number;
+}
+
+const RESULTADO_EVENT = "kairo:resultado-llamada";
+
+/** Lo emite el telefono de Telnyx al colgar. */
+export function avisarResultadoLlamada(resultado: ResultadoLlamada): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<ResultadoLlamada>(RESULTADO_EVENT, { detail: resultado }));
+}
+
+/** Lo escucha cada panel; filtra por su lead, pedido o novedad. */
+export function onResultadoLlamada(callback: (resultado: ResultadoLlamada) => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const handler = (e: Event) => callback((e as CustomEvent<ResultadoLlamada>).detail);
+  window.addEventListener(RESULTADO_EVENT, handler);
+  return () => window.removeEventListener(RESULTADO_EVENT, handler);
 }
 
 const MARCAR_EVENT = "kairo:telnyx-marcar";

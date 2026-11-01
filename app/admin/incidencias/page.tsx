@@ -10,6 +10,7 @@ import {
 import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
 import TelefonoWeb from "@/components/TelefonoWeb";
+import { onResultadoLlamada, type SugerenciaLlamada } from "@/lib/telefonia-cliente";
 import ProductividadNovedades from "@/components/ProductividadNovedades";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1231,6 +1232,20 @@ function DetailModal({
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [editNoteText, setEditNoteText] = useState("");
   const [reopened, setReopened] = useState(false);
+  // "Contesto" / "No contesto" premarcado por la llamada hecha desde este
+  // panel (Telnyx). Solo resalta: la asesora lo confirma con un clic.
+  const [sugerida, setSugerida] = useState<SugerenciaLlamada | null>(null);
+  useEffect(() => {
+    setSugerida(null);
+    return onResultadoLlamada((r) => {
+      if (r.contexto.incidentId === incident.id) setSugerida(r.sugerencia);
+    });
+  }, [incident.id]);
+  const registrarLlamada = (resultado: SugerenciaLlamada) => {
+    setSugerida(null);
+    onAction("registrar_llamada", { resultado });
+  };
+  const resaltada = (s: SugerenciaLlamada) => (sugerida === s ? "border-violet-500 bg-violet-500/10 ring-1 ring-violet-500" : "");
   const showResultView = incident.status === "reprogramada" && !reopened;
   const intentosEntrega = trackingEvents.filter((e) => e.group === "failed").length;
   const trackingOrdenado = [...trackingEvents].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -1444,15 +1459,22 @@ function DetailModal({
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
               <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Llamada</span>
-              <Button variant="outline" size="sm" disabled={busy} className="gap-2"
-                onClick={() => onAction("registrar_llamada", { resultado: "contesto" })}>
+              <Button variant="outline" size="sm" disabled={busy} className={`gap-2 ${resaltada("contesto")}`}
+                onClick={() => registrarLlamada("contesto")}>
                 <Phone className="h-3.5 w-3.5 text-emerald-500" /> Contesto
               </Button>
-              <Button variant="outline" size="sm" disabled={busy} className="gap-2"
-                onClick={() => onAction("registrar_llamada", { resultado: "no_contesto" })}>
+              <Button variant="outline" size="sm" disabled={busy} className={`gap-2 ${resaltada("no_contesto")}`}
+                onClick={() => registrarLlamada("no_contesto")}>
                 <PhoneOff className="h-3.5 w-3.5 text-rose-500" /> No contesto
               </Button>
             </div>
+            {sugerida && (
+              <p className="pl-[5.5rem] text-[11px] text-violet-300">
+                {sugerida === "contesto"
+                  ? "La llamada fue contestada: confirma con «Contesto»."
+                  : "El cliente no contestó la llamada: confirma con «No contesto»."}
+              </p>
+            )}
             <div className="flex flex-wrap gap-2 items-center">
               <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Reprogramar</span>
               <Input type="date" className="h-9 w-auto" value={reprogFecha} disabled={!puedeReprogramar}

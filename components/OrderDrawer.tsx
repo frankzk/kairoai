@@ -40,6 +40,7 @@ import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
 import OrderUpsellPanel from "@/components/OrderUpsellPanel";
 import { hideWebphone } from "@/lib/webphone";
+import { onResultadoLlamada, type SugerenciaLlamada } from "@/lib/telefonia-cliente";
 import { useOrderUpsellAccess } from "@/lib/use-order-upsell-access";
 import { getVendedoraId, setVendedoraId as persistVendedoraId, vendedoraBloqueada } from "@/lib/vendedora";
 import type { ChatLeadSummary } from "@/lib/leads-types";
@@ -283,6 +284,17 @@ export default function OrderDrawer({
 
   useEffect(() => { setUpsellCompleted(false); setUpsellInProgress(false); }, [storeCode, target.order_name]);
 
+  // "Contestó" / "No contestó" premarcado por la llamada que se hizo desde esta
+  // ficha (Telnyx). Solo resalta el boton: la asesora lo confirma con un clic.
+  const [sugerida, setSugerida] = useState<SugerenciaLlamada | null>(null);
+  useEffect(() => {
+    setSugerida(null);
+    return onResultadoLlamada((r) => {
+      if (r.contexto.orderName === target.order_name) setSugerida(r.sugerencia);
+    });
+  }, [target.order_name]);
+  const outcomeSugerido = sugerida === "contesto" ? "contesto" : sugerida === "no_contesto" ? "no_contesta" : null;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -370,6 +382,7 @@ export default function OrderDrawer({
         return;
       }
       if (body.event) {
+        if (kind === "contacto") setSugerida(null);
         setDetail((cur) => ({ ...(cur ?? {}), events: [body.event as OrderEvent, ...(cur?.events ?? [])] }));
         if (kind === "nota") setNote("");
         setPactando(null);
@@ -416,7 +429,9 @@ export default function OrderDrawer({
         key={b.outcome}
         variant="outline"
         size="sm"
-        className={`gap-2 ${b.tone ?? ""} ${pactando === b.outcome ? "border-violet-500 bg-violet-500/10" : ""}`}
+        className={`gap-2 ${b.tone ?? ""} ${pactando === b.outcome ? "border-violet-500 bg-violet-500/10" : ""} ${
+          kind === "contacto" && outcomeSugerido === b.outcome ? "border-violet-500 bg-violet-500/10 ring-1 ring-violet-500" : ""
+        }`}
         disabled={saving !== null || upsellCompleted || upsellInProgress}
         aria-pressed={pactando === b.outcome || undefined}
         onClick={() => {
@@ -641,6 +656,13 @@ export default function OrderDrawer({
                 <ActionRow label="Intento">
                   {CALL_BUTTONS.map((b) => renderAction(b, "contacto"))}
                 </ActionRow>
+                {sugerida && (
+                  <p className="text-[11px] text-violet-300">
+                    {sugerida === "contesto"
+                      ? "La llamada fue contestada: confirma con «Contestó»."
+                      : "El cliente no contestó la llamada: confirma con «No contestó»."}
+                  </p>
+                )}
                 <ActionRow label="Resultado">
                   {RESULT_BUTTONS.map((b) => renderAction(b, "contacto"))}
                 </ActionRow>

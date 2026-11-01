@@ -5,6 +5,7 @@ import { Check, Loader2, Undo2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { DISPOSITION_OPTIONS, DISPOSITION_QUICK } from "@/lib/leads-classify";
 import { getVendedoraId, setVendedoraId as persistVendedoraId, vendedoraBloqueada } from "@/lib/vendedora";
+import { onResultadoLlamada, type SugerenciaLlamada } from "@/lib/telefonia-cliente";
 
 interface Staff {
   id: number;
@@ -39,6 +40,16 @@ export default function GestionBar({
   // asesora vea que el reintento existe sin ir a la Agenda.
   const [savedFollowup, setSavedFollowup] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Lo que premarca la llamada hecha desde esta ficha (Telnyx). En Leads no hay
+  // un unico "Contestó" (puede ser "Casi cierra", "Contactado"...): si contesto
+  // solo se avisa; si no, se resalta "No contesto". La asesora confirma.
+  const [sugerida, setSugerida] = useState<SugerenciaLlamada | null>(null);
+  useEffect(() => {
+    setSugerida(null);
+    return onResultadoLlamada((r) => {
+      if (r.contexto.leadId === leadId) setSugerida(r.sugerencia);
+    });
+  }, [leadId]);
 
   useEffect(() => {
     (async () => {
@@ -62,6 +73,7 @@ export default function GestionBar({
 
   async function register(status: string) {
     if (!status) return;
+    setSugerida(null);
     if (!vendedoraId) {
       setError("Selecciona quien eres antes de gestionar.");
       return;
@@ -204,13 +216,24 @@ export default function GestionBar({
             key={d.code}
             disabled={saving != null}
             onClick={() => register(d.code)}
-            className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs hover:bg-accent disabled:opacity-50"
+            className={`inline-flex items-center gap-1 rounded-full border bg-background px-2.5 py-1 text-xs hover:bg-accent disabled:opacity-50 ${
+              sugerida === "no_contesto" && d.code === "no_responde"
+                ? "border-violet-500 bg-violet-500/10 ring-1 ring-violet-500"
+                : "border-border"
+            }`}
           >
             {saving === d.code ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
             {d.label}
           </button>
         ))}
       </div>
+      {sugerida && (
+        <p className="text-[11px] text-violet-300">
+          {sugerida === "no_contesto"
+            ? "El cliente no contestó la llamada: confirma con «No contesto»."
+            : "La llamada fue contestada: elige cómo quedó."}
+        </p>
+      )}
 
       {/* Desplegable completo + nota */}
       <div className="flex gap-2">
