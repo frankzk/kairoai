@@ -8,6 +8,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import LeadChatPanel from "@/components/LeadChatPanel";
+import CallButton from "@/components/CallButton";
+import TelefonoWeb from "@/components/TelefonoWeb";
 import ProductividadNovedades from "@/components/ProductividadNovedades";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -914,6 +916,9 @@ export default function IncidenciasPage() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Telefono web (Zadarma o Telnyx): para el boton "Llamar" del panel de
+          cada novedad. */}
+      <TelefonoWeb />
       {/* Header */}
       <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
@@ -1308,7 +1313,11 @@ function DetailModal({
             <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[incident.status].badge}`}>{STATUS_META[incident.status].label}</span>
             <span className="font-semibold">{incident.order_name || incident.guide_number || "Novedad"}</span>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
+          <div className="flex items-start gap-2">
+            {/* El numero lo saca el servidor de la novedad guardada, no de la pantalla. */}
+            {incident.customer_phone && <CallButton incidentId={incident.id} store={storeCode} />}
+            <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
+          </div>
         </div>
 
         <CardContent className="min-h-0 flex-1 overflow-y-auto p-0 xl:overflow-hidden">

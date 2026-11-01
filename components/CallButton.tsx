@@ -17,13 +17,16 @@ import { marcarTelnyx, proveedorTelefoniaCliente } from "@/lib/telefonia-cliente
 export default function CallButton({
   leadId,
   orderName,
+  incidentId,
   store,
   size = "sm",
 }: {
   /** Lead del tablero de WhatsApp. */
   leadId?: number;
-  /** Pedido de Shopify (#MCRC20388), para el drawer de Gestion de pedidos. */
+  /** Pedido de Shopify (#MCRC20388) o de iComfly (IC-...), para el drawer de Gestion de pedidos. */
   orderName?: string;
+  /** Novedad de entrega, para su panel en Novedades. */
+  incidentId?: number;
   store: string;
   size?: "sm" | "default";
 }) {
@@ -59,6 +62,7 @@ export default function CallButton({
           vendedora_id: vendedoraId,
           lead_id: leadId,
           order_name: orderName,
+          incident_id: incidentId,
         }),
       });
       const data = await res.json();
@@ -94,7 +98,13 @@ export default function CallButton({
       const res = await fetch("/api/telnyx/llamada", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ store, vendedora_id: vendedora, lead_id: leadId, order_name: orderName }),
+        body: JSON.stringify({
+          store,
+          vendedora_id: vendedora,
+          lead_id: leadId,
+          order_name: orderName,
+          incident_id: incidentId,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "No se pudo iniciar la llamada");

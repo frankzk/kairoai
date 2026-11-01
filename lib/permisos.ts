@@ -281,14 +281,14 @@ export const REGLAS: Regla[] = [
 
   // Telefonia
   { ruta: "/api/zadarma", exige: P("config") },
-  { ruta: "/api/zadarma/call", exige: P(...LEADS, "pedidos") },
-  { ruta: "/api/zadarma/webphone", exige: P(...LEADS, ...OPERACION) },
-  { ruta: "/api/zadarma/last-call", exige: P(...LEADS, ...OPERACION) },
+  { ruta: "/api/zadarma/call", exige: P(...LEADS, "pedidos", "novedades") },
+  { ruta: "/api/zadarma/webphone", exige: P(...LEADS, ...OPERACION, "novedades") },
+  { ruta: "/api/zadarma/last-call", exige: P(...LEADS, ...OPERACION, "novedades") },
   { ruta: "/api/zadarma/extensions", exige: P("finanzas", "usuarios", "config") },
-  { ruta: "/api/telefonia", exige: P(...LEADS, ...OPERACION) },
+  { ruta: "/api/telefonia", exige: P(...LEADS, ...OPERACION, "novedades") },
   { ruta: "/api/telnyx", exige: P("config") },
-  { ruta: "/api/telnyx/llamada", exige: P(...LEADS, "pedidos") },
-  { ruta: "/api/telnyx/token", exige: P(...LEADS, ...OPERACION) },
+  { ruta: "/api/telnyx/llamada", exige: P(...LEADS, "pedidos", "novedades") },
+  { ruta: "/api/telnyx/token", exige: P(...LEADS, ...OPERACION, "novedades") },
 ];
 
 /** Exigencia para lo que no tiene regla: solo quien administra usuarios. */
