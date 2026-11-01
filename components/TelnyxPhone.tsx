@@ -3,7 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic, MicOff, Phone, PhoneOff } from "lucide-react";
 import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
-import { onMarcarTelnyx, type LlamadaTelnyx } from "@/lib/telefonia-cliente";
+import {
+  avisarResultadoLlamada,
+  onMarcarTelnyx,
+  sugerenciaDeLlamada,
+  type ContextoLlamada,
+  type LlamadaTelnyx,
+} from "@/lib/telefonia-cliente";
 
 // Telefono de Telnyx en el navegador (@telnyx/webrtc). A diferencia del widget
 // de Zadarma, no inyecta nada en la pagina: la libreria solo maneja el audio y
@@ -90,6 +96,12 @@ export default function TelnyxPhone() {
   const [silenciado, setSilenciado] = useState(false);
   const cliente = useRef<ClienteRTC | null>(null);
   const llamada = useRef<LlamadaRTC | null>(null);
+  // Para premarcar "Contestó" / "No contestó" al colgar: desde donde se llamo,
+  // desde cuando suena el telefono DEL CLIENTE (no desde que se marco) y si
+  // llego a contestar.
+  const contexto = useRef<ContextoLlamada>({});
+  const timbreDesde = useRef<number | null>(null);
+  const contestada = useRef(false);
 
   useEffect(() => {
     setVendedora(getVendedoraId());
@@ -144,8 +156,24 @@ export default function TelnyxPhone() {
           const visible = estadoVisible(dato.call.state);
           if (!visible) return;
           setEstado(visible);
-          if (visible === "en_llamada") setDesde((d) => d ?? Date.now());
+          if (visible === "timbrando" && timbreDesde.current === null) timbreDesde.current = Date.now();
+          if (visible === "en_llamada") {
+            contestada.current = true;
+            setDesde((d) => d ?? Date.now());
+          }
           if (visible === "terminada") {
+            const segundosTimbre = timbreDesde.current
+              ? Math.round((Date.now() - timbreDesde.current) / 1000)
+              : 0;
+            avisarResultadoLlamada({
+              contexto: contexto.current,
+              segundosTimbre,
+              sugerencia: sugerenciaDeLlamada({
+                contestada: contestada.current,
+                segundosTimbre,
+                causa: dato.call.cause,
+              }),
+            });
             llamada.current = null;
             setSilenciado(false);
             // El aviso queda unos segundos para que se lea, y se va.
@@ -192,6 +220,9 @@ export default function TelnyxPhone() {
         setSilenciado(false);
         setDesde(null);
         setEstado("marcando");
+        contexto.current = pedido.contexto ?? {};
+        timbreDesde.current = null;
+        contestada.current = false;
         llamada.current = c.newCall({
           destinationNumber: pedido.destino,
           callerNumber: pedido.callerNumber,

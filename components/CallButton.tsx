@@ -108,7 +108,13 @@ export default function CallButton({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "No se pudo iniciar la llamada");
-      marcarTelnyx({ destino: data.destino, callerNumber: data.caller_number, clientState: data.client_state });
+      marcarTelnyx({
+        destino: data.destino,
+        callerNumber: data.caller_number,
+        clientState: data.client_state,
+        // Para que el panel que llamo premarque "Contestó" / "No contestó".
+        contexto: { leadId, orderName, incidentId },
+      });
       // El estado de la llamada lo muestra la barra del telefono (abajo a la
       // derecha); aqui no hace falta instruccion: no hay nada que contestar.
     } catch (err) {
