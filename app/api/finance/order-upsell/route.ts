@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     const name = (req.nextUrl.searchParams.get("order") ?? "").trim();
     const receipt = await findOrderUpsell(store.id, name);
     if (receipt) {
-      const replacement = receipt.replacement_id && !receipt.completed_at ? await getIcomflyOrder(store.code, receipt.replacement_id) : null;
+      const replacement = receipt.replacement_id && !receipt.completed_at && req.nextUrl.searchParams.get("receipt_only") !== "1" ? await getIcomflyOrder(store.code, receipt.replacement_id) : null;
       return NextResponse.json({ receipt: publicReceipt(receipt, replacement?.status === "Cancelado") });
     }
     const original = await resolveUpsellOriginal(store.id, store.code, name);
