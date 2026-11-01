@@ -23,6 +23,8 @@ export interface AtribucionPedido {
   guia_por: string | null;
   /** Quien confirmo (raw_attribution.confirmo.name). */
   confirmo_por: string | null;
+  /** Estado actual de ese mismo pedido en iComfly. */
+  estado_actual?: string | null;
 }
 
 /** One completed replacement counts as one upsell, regardless of units sold. */
@@ -37,6 +39,8 @@ export interface PersonaDespacho {
   /** El asistente de IA de iComfly, no una persona. */
   esIa: boolean;
   despachados: number;
+  /** Entregados actualmente, entre sus despachos del rango seleccionado. */
+  entregados: number;
   confirmados: number;
   upsells: number;
   /** Despachados por dia local (YYYY-MM-DD). */
@@ -48,6 +52,7 @@ export interface ResumenDespacho {
   /** Los dias locales del rango, en orden. */
   dias: string[];
   despachados: number;
+  entregados: number;
   confirmados: number;
   upsells: number;
 }
@@ -83,19 +88,24 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
     const clave = nombre.toLowerCase();
     let p = personas.get(clave);
     if (!p) {
-      p = { nombre, esIa: IA.test(nombre), despachados: 0, confirmados: 0, upsells: 0, porDia: {} };
+      p = { nombre, esIa: IA.test(nombre), despachados: 0, entregados: 0, confirmados: 0, upsells: 0, porDia: {} };
       personas.set(clave, p);
     }
     return p;
   };
 
   let despachados = 0;
+  let entregados = 0;
   let confirmados = 0;
   let upsells = 0;
   for (const fila of filas) {
     if (enRango(fila.guide_final_at, desde, hasta)) {
       const p = persona(fila.guia_por);
       p.despachados += 1;
+      if (String(fila.estado_actual ?? "").trim().toLowerCase() === "entregado") {
+        p.entregados += 1;
+        entregados += 1;
+      }
       const dia = localDateKey(fila.guide_final_at);
       if (dia) p.porDia[dia] = (p.porDia[dia] ?? 0) + 1;
       despachados += 1;
@@ -119,5 +129,10 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
   const lista = Array.from(personas.values()).sort(
     (a, b) => orden(a) - orden(b) || b.despachados - a.despachados || b.confirmados - a.confirmados || b.upsells - a.upsells || a.nombre.localeCompare(b.nombre)
   );
-  return { personas: lista, dias: diasDelRango(desdeIso, hastaIso), despachados, confirmados, upsells };
+  return { personas: lista, dias: diasDelRango(desdeIso, hastaIso), despachados, entregados, confirmados, upsells };
+}
+
+/** Denominator includes all dispatched orders, including those still in transit. */
+export function tasaEntregaDespacho(entregados: number, despachados: number): string {
+  return despachados > 0 ? `${(100 * entregados / despachados).toLocaleString("es-CR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : "–";
 }

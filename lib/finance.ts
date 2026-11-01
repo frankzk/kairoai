@@ -1342,7 +1342,7 @@ export async function listAtribucionDespacho(
       const { data, error } = await getDB()
         .from("icomfly_orders")
         .select(
-          "icomfly_order_id,guide_final_at,confirmed_at,guia_por:raw_attribution->genero_guia->>name,confirmo_por:raw_attribution->confirmo->>name"
+          "icomfly_order_id,guide_final_at,confirmed_at,estado_actual:status,guia_por:raw_attribution->genero_guia->>name,confirmo_por:raw_attribution->confirmo->>name"
         )
         .eq("store_id", storeId)
         .gte(columna, desdeIso)

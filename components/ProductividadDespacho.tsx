@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { PersonaDespacho } from "@/lib/productividad-despacho";
+import { tasaEntregaDespacho } from "@/lib/productividad-despacho";
 import { NombrePersona, pct, SelectorPeriodo, TablaPorDia, usePeriodo } from "@/components/productividad-comun";
 
 interface Respuesta {
@@ -14,6 +15,7 @@ interface Respuesta {
   personas: PersonaDespacho[];
   dias: string[];
   despachados: number;
+  entregados: number;
   confirmados: number;
   upsells: number;
 }
@@ -57,16 +59,22 @@ export default function ProductividadDespacho({ storeCode }: { storeCode: string
           que confirmó, por el día en que los confirmó. <strong className="font-medium text-foreground/80">Upsells</strong>: pedidos
           con venta adicional completada desde Gestión, por la asesora y el día en que se completó.
         </p>
+        <p className="mb-3 text-xs text-muted-foreground">
+          <strong className="font-medium text-foreground/80">Tasa de entrega</strong>: entregados actualmente en iComfly ÷ despachados
+          por esa persona en el período. Incluye en el denominador los pedidos que siguen en ruta.
+        </p>
 
         {error ? (
           <p className="py-4 text-center text-sm text-destructive">{error}</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-sm">
+            <table className="w-full min-w-[700px] text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
                   <th className="py-2 pr-4 font-medium">Persona</th>
                   <th className="py-2 pr-4 text-right font-medium">Despachados</th>
+                  <th className="py-2 pr-4 text-right font-medium">Entregados</th>
+                  <th className="py-2 pr-4 text-right font-medium" title="Entregados ÷ despachados de la misma persona y período">Tasa de entrega</th>
                   <th className="py-2 pr-4 text-right font-medium">% del total</th>
                   <th className="py-2 pr-4 text-right font-medium">Confirmados</th>
                   <th className="py-2 text-right font-medium">Upsells</th>
@@ -75,7 +83,7 @@ export default function ProductividadDespacho({ storeCode }: { storeCode: string
               <tbody>
                 {personas.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-4 text-center text-muted-foreground">
+                    <td colSpan={7} className="py-4 text-center text-muted-foreground">
                       {loading ? "Cargando..." : "Sin despachos, confirmaciones ni upsells en este periodo."}
                     </td>
                   </tr>
@@ -86,6 +94,8 @@ export default function ProductividadDespacho({ storeCode }: { storeCode: string
                         <NombrePersona nombre={p.nombre} esIa={p.esIa} />
                       </td>
                       <td className="py-2 pr-4 text-right font-semibold tabular-nums">{p.despachados}</td>
+                      <td className="py-2 pr-4 text-right tabular-nums">{p.entregados}</td>
+                      <td className="py-2 pr-4 text-right font-semibold tabular-nums">{tasaEntregaDespacho(p.entregados, p.despachados)}</td>
                       <td className="py-2 pr-4 text-right tabular-nums">{pct(p.despachados, data?.despachados ?? 0)}</td>
                       <td className="py-2 pr-4 text-right tabular-nums">{p.confirmados}</td>
                       <td className="py-2 text-right tabular-nums">{p.upsells}</td>
@@ -98,6 +108,8 @@ export default function ProductividadDespacho({ storeCode }: { storeCode: string
                   <tr className="font-semibold">
                     <td className="py-2 pr-4">Total</td>
                     <td className="py-2 pr-4 text-right tabular-nums">{data.despachados}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{data.entregados}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{tasaEntregaDespacho(data.entregados, data.despachados)}</td>
                     <td className="py-2 pr-4 text-right tabular-nums">{data.despachados ? "100%" : "—"}</td>
                     <td className="py-2 pr-4 text-right tabular-nums">{data.confirmados}</td>
                     <td className="py-2 text-right tabular-nums">{data.upsells}</td>
