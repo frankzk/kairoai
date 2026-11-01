@@ -180,9 +180,10 @@ export async function resolveCallContext(opts: {
 }
 
 /**
- * Telefono de un pedido de Shopify, leido de la base por nombre (#MCRC20388)
- * dentro de la tienda. El drawer de Gestion de pedidos llama desde aqui, y el
- * numero tiene que salir del pedido guardado, no de lo que mande el navegador.
+ * Telefono de un pedido, leido de la base por nombre dentro de la tienda: de
+ * Shopify (#MCRC20388) y, si no esta ahi, de iComfly (IC-...). El drawer de
+ * Gestion de pedidos llama desde aqui, y el numero tiene que salir del pedido
+ * guardado, no de lo que mande el navegador.
  */
 export async function getOrderPhone(
   storeId: number,
@@ -200,8 +201,52 @@ export async function getOrderPhone(
   if (error) throw new Error(`getOrderPhone: ${error.message}`);
 
   const row = data?.[0] as { phone: string | null; customer_name: string | null } | undefined;
-  if (!row?.phone) return null;
-  return { phone: String(row.phone), customerName: String(row.customer_name ?? "") };
+  if (row?.phone) return { phone: String(row.phone), customerName: String(row.customer_name ?? "") };
+  return getIcomflyOrderPhone(storeId, name);
+}
+
+/**
+ * Telefono de un pedido de iComfly. Desde el 28/10/2026 Shopify esta cerrado y
+ * los pedidos nuevos solo existen en iComfly: sin esto, "Llamar" en Gestion
+ * decia que el pedido no tenia telefono. El nombre es el que les pone Kairo
+ * (nombrePedidoIcomfly en lib/icomfly-pedidos.ts): IC-W<secuencia web>,
+ * IC-<numero o id> o el numero de Shopify que traiga.
+ */
+export async function getIcomflyOrderPhone(
+  storeId: number,
+  orderName: string
+): Promise<{ phone: string; customerName: string } | null> {
+  const name = orderName.trim();
+  // Se valida antes de interpolar en el filtro `or` de PostgREST.
+  if (!/^#?[A-Za-z0-9-]{2,40}$/.test(name)) return null;
+
+  const filtros: string[] = [];
+  const web = /^IC-W(\d+)$/i.exec(name);
+  const ic = /^IC-(.+)$/i.exec(name);
+  if (web) {
+    filtros.push(`payload->>store_web_seq.eq.${web[1]}`);
+  } else if (ic) {
+    const valor = ic[1];
+    if (/^\d+$/.test(valor)) filtros.push(`icomfly_order_id.eq.${valor}`);
+    filtros.push(`payload->>order_number.eq.${valor}`, `payload->>order_number.eq.#${valor}`);
+  } else {
+    filtros.push(`payload->>shopify_display_number.eq.${name}`);
+  }
+
+  const { data, error } = await getDB()
+    .from("icomfly_order_payloads")
+    .select(
+      "customer_phone:payload->customer->>phone, shipping_phone:payload->>shipping_phone, whatsapp:payload->customer->>whatsapp, shipping_name:payload->>shipping_name, customer_name:payload->customer->>fullName"
+    )
+    .eq("store_id", storeId)
+    .or(filtros.join(","))
+    .limit(1);
+  if (error) throw new Error(`getIcomflyOrderPhone: ${error.message}`);
+
+  const row = data?.[0] as Record<string, string | null> | undefined;
+  const phone = row?.customer_phone || row?.shipping_phone || row?.whatsapp;
+  if (!phone) return null;
+  return { phone: String(phone), customerName: String(row?.shipping_name || row?.customer_name || "") };
 }
 
 /** Normaliza los campos de tiempo de un evento a ISO. */

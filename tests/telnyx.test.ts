@@ -63,6 +63,10 @@ vi.mock("@/lib/db", () => {
 vi.mock("@/lib/leads", () => ({
   getLead: async (_store: number, id: number) => (id === 5 ? { id: 5, name: "Sonia", phone: "63567891" } : null),
 }));
+vi.mock("@/lib/incidents", () => ({
+  getIncident: async (id: number, storeId: number) =>
+    id === 9 && storeId === 1 ? { id: 9, store_id: 1, customer_phone: "8888-1234" } : null,
+}));
 vi.mock("@/lib/identidad", () => ({
   vendedoraEfectiva: (v: unknown) => (Number(v) > 0 ? Number(v) : null),
   tiendasPermitidas: () => null,
@@ -131,6 +135,7 @@ beforeEach(() => {
   process.env.TELNYX_PUBLIC_KEY = PUB_B64;
   process.env.TELNYX_CALLER_ID_CR = "+506 4000 1234";
   delete process.env.TELNYX_GRABAR;
+  delete process.env.TELNYX_CALLER_ID_HN;
   tablas.payroll_staff = [{ id: 7, name: "Daleska", active: true, telnyx_credential_id: null }];
 });
 
@@ -217,6 +222,15 @@ describe("preparar la llamada", () => {
       status: "calling",
     });
     expect(leerEstadoCliente(data.client_state)).toBe(String(llamada().pbx_call_id).replace("telnyx:", ""));
+  });
+
+  it("desde Novedades, el numero sale de la novedad guardada en esa tienda", async () => {
+    const res = await prepararLlamada({ store: "mireva-cr", vendedora_id: 7, incident_id: 9, phone: "+15550001111" });
+    expect(await res.json()).toMatchObject({ destino: "+50688881234" });
+    expect(llamada()).toMatchObject({ lead_id: null, phone: "50688881234" });
+    // La de otra tienda no se encuentra.
+    process.env.TELNYX_CALLER_ID_HN = "+504 2200 0000";
+    expect((await prepararLlamada({ store: "mireva-hn", vendedora_id: 7, incident_id: 9 })).status).toBe(404);
   });
 
   it("sin numero de la tienda no prepara nada y dice que variable falta", async () => {

@@ -12,8 +12,10 @@ interface Body {
   store?: string;
   vendedora_id?: number;
   lead_id?: number;
-  /** Pedido de Shopify (#MCRC20388), para el drawer de Gestion de pedidos. */
+  /** Pedido de Shopify (#MCRC20388) o de iComfly (IC-...), para el drawer de Gestion de pedidos. */
   order_name?: string;
+  /** Novedad de entrega, para su panel en Novedades. */
+  incident_id?: number;
   phone?: string;
 }
 
