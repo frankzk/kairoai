@@ -47,4 +47,15 @@ describe("Separación de presencia por equipo y tienda", () => {
     state.rpc.mockResolvedValue({ error: { message: "not allowed" } });
     await expect(recordPresence(5, 1, signal)).rejects.toThrow("No se pudo registrar");
   });
+  it("el período se consulta en el historial, no comparando solo la última conexión", async () => {
+    const period = { fromIso: "2026-10-30T06:00:00Z", toIso: "2026-10-31T06:00:00Z" };
+    state.rpc.mockResolvedValue({ error: null, data: [{ user_id: 5, period_last_seen_at: "2026-10-30T17:00:00Z", period_last_activity_at: "2026-10-30T16:58:00Z" }] });
+    const rows = await readPresence(yo, 1, "mireva-cr", Date.now(), period);
+    expect(state.rpc).toHaveBeenCalledWith("lead_presence_in_period", { p_store_id: 1, p_from: period.fromIso, p_to: period.toIso });
+    expect(rows[0]).toMatchObject({ user_id: 5, period_last_seen_at: "2026-10-30T17:00:00Z" });
+    state.rpc.mockResolvedValue({ error: null, data: [{ user_id: 999, period_last_seen_at: "2026-10-30T17:00:00Z" }] });
+    expect(await readPresence(yo, 1, "mireva-cr", Date.now(), period)).toEqual([]);
+    state.rpc.mockResolvedValue({ error: { message: "missing relation" } });
+    await expect(readPresence(yo, 1, "mireva-cr", Date.now(), period)).rejects.toThrow("conexiones del período");
+  });
 });

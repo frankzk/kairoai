@@ -20,6 +20,8 @@ export interface PresenceRow {
   last_seen_at: string | null;
   active_until: string | null;
   connected_until: string | null;
+  period_last_seen_at?: string | null;
+  period_last_activity_at?: string | null;
 }
 
 const millis = (iso: string | null) => iso ? Date.parse(iso) : NaN;
