@@ -1499,3 +1499,11 @@ rango y tienda del reporte; cada reemplazo completado cuenta una vez, sin sumar
 unidades adicionales ni intentos pendientes. Una asesora con solo upsells también
 aparece en el resumen. La consulta pagina los cierres y conserva los contadores
 existentes de despachos y confirmaciones.
+
+El detalle REST de iComfly puede omitir `items` aunque el listado sí incluya las
+líneas vinculadas. La lectura del upsell recupera el pedido completo por ID y
+tienda desde ese listado en vivo, con paginación acotada; no reconstruye carritos
+con la cabecera ni usa líneas de una caché antigua. La búsqueda del pedido
+original también acepta `order_number` con `#` inicial y conserva las referencias
+largas como texto. Casos de regresión: `IC-74456` y la referencia larga del pedido
+interno `821191`.

@@ -194,7 +194,18 @@ export async function getIcomflyOrder(store: FinanceStoreCode, id: string): Prom
   if (String(order.id) !== id || Number(order.store_id) !== getIcomflyExternalStoreId(store)) {
     throw new Error("El pedido no pertenece a esta tienda.");
   }
-  return order;
+  if (Array.isArray(order.items) && order.items.length > 0) return order;
+  // The detail endpoint can omit the joined catalog lines. Read the complete
+  // current order from the same live listing used by sync, never stale cache.
+  for (let page = 1; page <= 20; page++) {
+    const result = await listOrdersWithAttribution({
+      storeId: getFinanceStore(store).id, externalStoreId: getIcomflyExternalStoreId(store)!, page, limit: 100,
+    });
+    const found = result.raw.find(row => String(row.id) === id && Number(row.store_id) === Number(order.store_id));
+    if (found && Array.isArray(found.items) && found.items.length > 0) return found;
+    if (found || !result.hasMore) break;
+  }
+  throw new Error("iComfly no devolvió las líneas completas de este pedido en su listado. Actualiza la gestión y vuelve a intentarlo.");
 }
 
 export async function getIcomflyCatalogProduct(storeCode: FinanceStoreCode, productId: number) {

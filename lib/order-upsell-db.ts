@@ -48,6 +48,7 @@ export async function resolveUpsellOriginal(storeId: number, store: FinanceStore
   else if (internal) queries = [
     db.from("icomfly_order_payloads").select("icomfly_order_id").eq("store_id", storeId).eq("icomfly_order_id", internal[1]).limit(2),
     db.from("icomfly_order_payloads").select("icomfly_order_id").eq("store_id", storeId).eq("payload->>order_number", internal[1]).limit(2),
+    db.from("icomfly_order_payloads").select("icomfly_order_id").eq("store_id", storeId).eq("payload->>order_number", `#${internal[1]}`).limit(2),
   ];
   else queries = [db.from("icomfly_order_payloads").select("icomfly_order_id").eq("store_id", storeId).eq("payload->>shopify_display_number", name).limit(2)];
   const results = await Promise.all(queries);
