@@ -186,9 +186,25 @@ export interface IcomflyOrdersPage {
   hasMore: boolean;
 }
 
+/** Read the exact internal ID independently and reject another store's order. */
+export async function getIcomflyOrder(store: FinanceStoreCode, id: string): Promise<Record<string, unknown>> {
+  if (!/^[1-9]\d*$/.test(id)) throw new Error("ID de pedido inválido.");
+  const result = await icomflyFetch(`/orders/${id}`, store) as Record<string, unknown>;
+  const order = (result.data ?? result) as Record<string, unknown>;
+  if (String(order.id) !== id || Number(order.store_id) !== getIcomflyExternalStoreId(store)) {
+    throw new Error("El pedido no pertenece a esta tienda.");
+  }
+  return order;
+}
+
 export async function getIcomflyCatalogProduct(storeCode: FinanceStoreCode, productId: number) {
+  if (!Number.isSafeInteger(productId) || productId <= 0) throw new Error("Producto inválido.");
   const response = await icomflyFetch(`/products/${productId}`, storeCode) as Record<string, unknown>;
-  return (response.data ?? response) as import("./icomfly-manual-order").IcomflyCatalogProduct;
+  const product = (response.data ?? response) as import("./icomfly-manual-order").IcomflyCatalogProduct;
+  if (Number(product.id) !== productId || Number(product.store_id) !== getIcomflyExternalStoreId(storeCode)) {
+    throw new Error("El producto no pertenece a esta tienda.");
+  }
+  return product;
 }
 
 /** Creación nativa: un único POST. Nunca reintentar una escritura tras timeout. */

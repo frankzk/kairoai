@@ -115,6 +115,45 @@ describe("los días del rango", () => {
   });
 });
 
+describe("upsells completados desde Gestión", () => {
+  it("suma por asesora y total sin alterar despachos ni confirmaciones", () => {
+    const r = resumenDespacho([
+      fila({ guide_final_at: "2026-10-23T15:00:00Z", guia_por: "Jeanny Linares", confirmed_at: "2026-10-23T14:00:00Z", confirmo_por: "Jeanny Linares" }),
+    ], DESDE, HASTA, [
+      { id: "1", advisor_name: " jeanny  linares ", completed_at: "2026-10-23T16:00:00Z" },
+      { id: "2", advisor_name: "Jeanny Linares", completed_at: "2026-10-23T18:00:00Z" },
+      { id: "3", advisor_name: "Leonor Valle", completed_at: "2026-10-24T05:30:00Z" },
+    ]);
+    expect(r.personas).toMatchObject([
+      { nombre: "Jeanny Linares", despachados: 1, confirmados: 1, upsells: 2 },
+      { nombre: "Leonor Valle", despachados: 0, confirmados: 0, upsells: 1 },
+    ]);
+    expect(r).toMatchObject({ despachados: 1, confirmados: 1, upsells: 3 });
+    expect(r.personas[0].porDia).toEqual({ "2026-10-23": 1 });
+  });
+
+  it("cuenta cada reemplazo una sola vez y excluye pendientes y cierres fuera del periodo", () => {
+    const r = resumenDespacho([], DESDE, HASTA, [
+      { id: "1", advisor_name: "Leonor", completed_at: DESDE },
+      { id: "1", advisor_name: "Leonor", completed_at: DESDE },
+      { id: "2", advisor_name: "Leonor", completed_at: null },
+      { id: "3", advisor_name: "Leonor", completed_at: HASTA },
+      { id: "4", advisor_name: "Leonor", completed_at: "2026-10-23T05:59:59Z" },
+      { id: "5", advisor_name: "Leonor", completed_at: "invalid" },
+    ]);
+    expect(r.upsells).toBe(1);
+    expect(r.personas).toHaveLength(1);
+    expect(r.personas[0]).toMatchObject({ nombre: "Leonor", upsells: 1, despachados: 0, confirmados: 0 });
+  });
+
+  it("muestra cero para personas sin upsells y admite periodos sin actividad", () => {
+    const r = resumenDespacho([fila({ confirmed_at: DESDE, confirmo_por: "Susan" })], DESDE, HASTA);
+    expect(r.upsells).toBe(0);
+    expect(r.personas[0].upsells).toBe(0);
+    expect(resumenDespacho([], DESDE, HASTA)).toMatchObject({ personas: [], upsells: 0 });
+  });
+});
+
 describe("lo que se lee de la base", () => {
   it("solo la tienda pedida, con guía o confirmación en el rango", async () => {
     const { listAtribucionDespacho } = await import("../lib/finance");

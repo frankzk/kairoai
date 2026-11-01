@@ -1472,3 +1472,30 @@ Dashboard con tres vistas, fechas en Costa Rica (hoy, ayer, esta semana, este me
 ### Marketing Charlie (2026-10-29)
 
 Cuatro vistas principales en Marketing CR: Decisión financiera, Matriz 4Pi, Control/Testing y Sustracción. Todos los importes del panel en USD con referencia Hacienda vigente y alternativa manual. Ingreso de pedidos creados siempre potencial, no efectivo/utilidad. Roles por nombre con corrección interna; Hero Offer indefinida. Harvest no verificable por combinación en la consulta actual de Meta. Ver docs/marketing-charlie.md. Migración 20261029214847 aplicada con RLS y acceso exclusivamente service_role. No cambiar publicidad automáticamente.
+
+
+## Upsell durante la confirmación (2026-10-31)
+
+Gestión incorpora «Añadir upsell» en `OrderDrawer`, con producto y variante de
+iComfly, cantidad, precio y vista del nuevo total. `POST /api/finance/order-upsell`
+crea un pedido nativo con las líneas originales y el upsell, verifica productos,
+dirección, total y recaudo, anula el original y confirma el nuevo. Conserva el
+importe original (incluidos descuentos) y añade solo el precio acordado del upsell.
+El flujo inicial admite contraentrega, antes de cualquier envío a logística.
+Exige acceso a Gestión y creación de pedidos según el modelo de permisos activo; rechaza solo lectura.
+
+`order_upsell_replacements` guarda el intento antes de llamar a iComfly, con una
+llave única por original y un bloqueo de diez minutos para solicitudes concurrentes.
+Tras una respuesta incierta se recupera el pedido por su referencia exacta, sin
+repetir la creación. «Continuar y verificar upsell» retoma los pasos pendientes.
+`finish_order_upsell` escribe las dos entradas de bitácora y el cierre en una sola
+transacción. Tabla y función son exclusivas del servidor/service role. Las pruebas
+SQL usan datos ficticios con rollback; la comprobación del navegador usa un
+servidor aislado de iComfly. La implementación se publica junto con el conteo de productividad.
+
+El popup «Productividad de despacho» incluye una columna `Upsells` por asesora
+y su total. Lee únicamente los reemplazos con `completed_at` dentro del mismo
+rango y tienda del reporte; cada reemplazo completado cuenta una vez, sin sumar
+unidades adicionales ni intentos pendientes. Una asesora con solo upsells también
+aparece en el resumen. La consulta pagina los cierres y conserva los contadores
+existentes de despachos y confirmaciones.
