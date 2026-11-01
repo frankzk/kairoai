@@ -52,5 +52,5 @@ export function catalogTotalsForUpsell(lines: ManualOrderLine[], products: Array
     }) : [];
     return sum + Math.min(base, ...prices);
   }, 0) / 100;
-  return [...new Set([gross, offered])];
+  return Array.from(new Set([gross, offered]));
 }
