@@ -8,9 +8,9 @@ import { createManualIcomflyOrder, getIcomflyCatalogProduct, getIcomflyExternalS
 import { llamarHerramientaIcomfly, tiendaDeLaConexion } from "@/lib/icomfly-mcp";
 import { buildIcomflyOrderRow } from "@/lib/dispatch";
 import { nombrePedidoIcomfly } from "@/lib/icomfly-pedidos";
-import { assertReplaceable, buildUpsellReplacement, originalLines, runUpsellReplacement, sourceFingerprint, type UpsellSelection } from "@/lib/order-upsell";
-import { selectedUpsellLine, upsellProductOptions } from "@/lib/order-upsell-catalog";
-import { findOrderUpsell, lockOrderUpsell, patchOrderUpsell, reserveOrderUpsell, resolveUpsellOriginal, unlockOrderUpsell, type StoredUpsell } from "@/lib/order-upsell-db";
+import { assertReplaceable, buildUpsellReplacement, hasLogistics, matchesReplacement, originalLines, runUpsellReplacement, sourceFingerprint, type UpsellSelection } from "@/lib/order-upsell";
+import { catalogSubtotalForUpsell, selectedUpsellLine, upsellProductOptions } from "@/lib/order-upsell-catalog";
+import { archiveCancelledOrderUpsell, findOrderUpsell, lockOrderUpsell, patchOrderUpsell, reserveOrderUpsell, resolveUpsellOriginal, unlockOrderUpsell, type StoredUpsell } from "@/lib/order-upsell-db";
 import { isValidCanal } from "@/lib/order-events";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
@@ -19,9 +19,11 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
 const errorMessage = (e: unknown) => e instanceof Error ? e.message : "No se pudo procesar el upsell.";
-const publicReceipt = (r: StoredUpsell) => ({ id: r.id, completed: Boolean(r.completed_at), replacement_id: r.replacement_id,
+const publicReceipt = (r: StoredUpsell, cancelled = false) => ({ id: r.id, completed: Boolean(r.completed_at), replacement_id: r.replacement_id, cancelled,
   replacement_name: r.replacement_name, original_name: r.original_name, total: r.expected.total, selection: r.selection,
-  message: r.completed_at ? "Pedido con upsell confirmado." : "Hay un upsell en curso. Continúa esta operación para verificar ambos pedidos." });
+  message: r.completed_at ? "Pedido con upsell confirmado." : cancelled ? "El pedido adicional se canceló en iComfly. Puedes archivar este intento e iniciar otro upsell." : "Hay un upsell en curso. Continúa esta operación para verificar ambos pedidos." });
+const originalPreview = (original: Record<string, unknown>, name: string) => ({ id: String(original.id), name, total: Number(original.total),
+  fingerprint: sourceFingerprint(original), items: originalLines(original).map(l => ({ name: l.variantName ? `${l.productName} · ${l.variantName}` : l.productName, quantity: l.quantity, price: l.price })) });
 function canWrite() { const yo = identidadActual(); return !yo || canManageOrderUpsell(yo.permisos); }
 
 export async function GET(req: NextRequest) {
@@ -39,11 +41,13 @@ export async function GET(req: NextRequest) {
     }
     const name = (req.nextUrl.searchParams.get("order") ?? "").trim();
     const receipt = await findOrderUpsell(store.id, name);
-    if (receipt) return NextResponse.json({ receipt: publicReceipt(receipt) });
+    if (receipt) {
+      const replacement = receipt.replacement_id && !receipt.completed_at ? await getIcomflyOrder(store.code, receipt.replacement_id) : null;
+      return NextResponse.json({ receipt: publicReceipt(receipt, replacement?.status === "Cancelado") });
+    }
     const original = await resolveUpsellOriginal(store.id, store.code, name);
     assertReplaceable(original);
-    return NextResponse.json({ original: { id: String(original.id), name, total: Number(original.total),
-      fingerprint: sourceFingerprint(original), items: originalLines(original).map(l => ({ name: l.variantName ? `${l.productName} · ${l.variantName}` : l.productName, quantity: l.quantity, price: l.price })) } });
+    return NextResponse.json({ original: originalPreview(original, name) });
   } catch (e) { return NextResponse.json({ error: errorMessage(e) }, { status: 422 }); }
 }
 
@@ -58,6 +62,7 @@ export async function POST(req: NextRequest) {
     const name = typeof body.order_name === "string" ? body.order_name.trim() : "";
     if (!name || name.length > 150) return NextResponse.json({ error: "Pedido requerido." }, { status: 400 });
     receipt = await findOrderUpsell(store.id, name);
+    if (body.action === "restart_cancelled" && !receipt) return NextResponse.json({ error: "El intento ya se archivó. Actualiza el formulario." }, { status: 409 });
     if (!receipt) {
       const advisorId = vendedoraEfectiva(body.staff_id);
       if (!advisorId || !Number.isSafeInteger(advisorId)) return NextResponse.json({ error: "Selecciona la asesora que cerró el upsell." }, { status: 400 });
@@ -69,8 +74,11 @@ export async function POST(req: NextRequest) {
       const selection: UpsellSelection = { product_id: Number(body.product_id), variant_id: body.variant_id == null ? null : String(body.variant_id), quantity: Number(body.quantity), price: Number(body.price) };
       const product = await getIcomflyCatalogProduct(store.code, selection.product_id);
       const line = selectedUpsellLine(product as typeof product & Record<string, unknown>, selection);
+      const lines = [...originalLines(original), line];
+      const catalogs = await Promise.all(lines.map(l => l.productId === selection.product_id ? product : getIcomflyCatalogProduct(store.code, l.productId)));
+      const catalogSubtotal = catalogSubtotalForUpsell(lines, catalogs as Array<typeof product & Record<string, unknown>>);
       const id = randomUUID();
-      const built = buildUpsellReplacement(original, line, id, staff.data.name);
+      const built = buildUpsellReplacement(original, line, id, staff.data.name, catalogSubtotal);
       receipt = await reserveOrderUpsell({ id, store_id: store.id, original_id: String(original.id), original_name: name,
         advisor_id: advisorId, advisor_name: staff.data.name, canal: body.canal, source_fingerprint: sourceFingerprint(original),
         payload: built.body, expected: built.expected, selection, creation_started_at: null, replacement_id: null,
@@ -84,6 +92,15 @@ export async function POST(req: NextRequest) {
     const connection = await tiendaDeLaConexion(store.code);
     if (connection.id !== getIcomflyExternalStoreId(store.code)) throw new Error("No se pudo verificar que el conector corresponda a esta tienda.");
     const r = receipt, lock = token;
+    if (body.action === "restart_cancelled") {
+      if (!r.replacement_id || r.cancel_started_at || r.completed_at) throw new Error("Este intento requiere revisión antes de iniciar otro upsell.");
+      const [original, replacement] = await Promise.all([getIcomflyOrder(store.code, r.original_id), getIcomflyOrder(store.code, r.replacement_id)]);
+      assertReplaceable(original);
+      if (replacement.status !== "Cancelado" || hasLogistics(replacement) || !matchesReplacement(replacement, r, false)) throw new Error("El pedido adicional no está cancelado o cambió. No se inició otro intento.");
+      const preview = originalPreview(original, name);
+      await archiveCancelledOrderUpsell(r, lock);
+      return NextResponse.json({ reset: true, original: preview, message: "Intento cancelado archivado. Selecciona el upsell para iniciar otro." });
+    }
     const result = await runUpsellReplacement(r, {
       read: id => getIcomflyOrder(store.code, id),
       findCreated: async reference => {

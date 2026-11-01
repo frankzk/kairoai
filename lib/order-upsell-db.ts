@@ -7,9 +7,15 @@ import type { UpsellReceipt, UpsellSelection } from "./order-upsell";
 
 export interface StoredUpsell extends UpsellReceipt { selection: UpsellSelection; replacement_name: string | null }
 export async function findOrderUpsell(storeId: number, name: string): Promise<StoredUpsell | null> {
-  const { data, error } = await getDB().from("order_upsell_replacements").select("*").eq("store_id", storeId).eq("original_name", name).maybeSingle();
+  const { data, error } = await getDB().from("order_upsell_replacements").select("*").eq("store_id", storeId).eq("original_name", name).is("abandoned_at", null).maybeSingle();
   if (error) throw new Error("No se pudo consultar el upsell pendiente.");
   return data;
+}
+export async function archiveCancelledOrderUpsell(r: UpsellReceipt, token: string): Promise<void> {
+  const { data, error } = await getDB().from("order_upsell_replacements").update({ abandoned_at: new Date().toISOString() })
+    .eq("store_id", r.store_id).eq("id", r.id).eq("lock_token", token)
+    .is("completed_at", null).is("abandoned_at", null).select("id").maybeSingle();
+  if (error || !data) throw new Error("No se pudo archivar el intento cancelado. No se creó otro pedido.");
 }
 export async function reserveOrderUpsell(receipt: StoredUpsell): Promise<StoredUpsell> {
   const { error } = await getDB().from("order_upsell_replacements").insert(receipt);

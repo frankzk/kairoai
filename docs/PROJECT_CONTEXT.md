@@ -1507,3 +1507,16 @@ con la cabecera ni usa líneas de una caché antigua. La búsqueda del pedido
 original también acepta `order_number` con `#` inicial y conserva las referencias
 largas como texto. Casos de regresión: `IC-74456` y la referencia larga del pedido
 interno `821191`.
+
+El subtotal de catálogo se verifica por producto y variante antes de crear cada
+upsell y se guarda en `expected.catalog_subtotal`. iComfly puede conservar el
+precio negociado en las líneas y recalcular el total con precios de catálogo;
+solo ese subtotal previamente verificado (o el subtotal solicitado) autoriza
+reconciliar total y recaudo antes de anular el original. Otros importes siguen
+bloqueando el reemplazo.
+
+Si alguien cancela el reemplazo en iComfly, no se reactiva automáticamente.
+«Iniciar otro upsell» verifica que el reemplazo esté cancelado y sin logística,
+y que el original siga siendo reemplazable; archiva el intento con `abandoned_at`
+y muestra un formulario nuevo sin crear otro pedido todavía. Índices únicos
+parciales conservan un solo intento activo por original y mantienen el historial.

@@ -5,7 +5,7 @@ import { CheckCircle2, Loader2, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { UpsellProductOption } from "@/lib/order-upsell-catalog";
 
-interface Receipt { id: string; completed: boolean; replacement_name: string | null; replacement_id: string | null; total: number; message: string }
+interface Receipt { id: string; completed: boolean; cancelled?: boolean; replacement_name: string | null; replacement_id: string | null; total: number; message: string }
 interface Preview { id: string; name: string; total: number; fingerprint: string; items: Array<{ name: string; quantity: number; price: number }> }
 interface Props {
   store: string; orderName: string; symbol: string; advisorId: number | null; canal: string;
@@ -75,10 +75,15 @@ export default function OrderUpsellPanel({ store, orderName, symbol, advisorId, 
       const response = await fetch(endpoint, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ order_name: orderName, staff_id: advisorId, canal,
+          action: receipt?.cancelled ? "restart_cancelled" : undefined,
           fingerprint: preview?.fingerprint, product_id: selected?.product_id, variant_id: selected?.variant_id,
           quantity: Number(quantity), price: Number(price) }),
       });
       const body = await response.json();
+      if (response.ok && body.reset) {
+        setReceipt(null); setPreview(body.original); setSelected(null); setQuery(""); setQuantity("1"); setPrice("");
+        onPending(false); setMessage(body.message); return;
+      }
       if (body.receipt) { setReceipt(body.receipt); onPending(!body.receipt.completed); }
       if (!response.ok) throw new Error(body.error || "No se pudo completar el upsell.");
       setMessage(body.warning || body.message || "");
@@ -138,7 +143,7 @@ export default function OrderUpsellPanel({ store, orderName, symbol, advisorId, 
         {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
         {message && <p role="status" className="text-xs text-muted-foreground">{message}</p>}
         {(preview || receipt) && <Button size="sm" className="gap-2" disabled={disabled || busy || loading || (!receipt && (!valid || !advisorId))} onClick={submit}>
-          {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{busy ? "Verificando operación…" : receipt ? "Continuar y verificar upsell" : "Añadir upsell y confirmar"}
+          {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{busy ? "Verificando operación…" : receipt?.cancelled ? "Iniciar otro upsell" : receipt ? "Continuar y verificar upsell" : "Añadir upsell y confirmar"}
         </Button>}
       </div>}
     </div>
