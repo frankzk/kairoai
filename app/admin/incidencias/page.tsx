@@ -14,6 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { pctResueltas } from "@/lib/incidents-trend";
+import { incidentCourier, matchesIncidentCourier } from "@/lib/incidents-courier";
 import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentCausaStat, type IncidentPeriodTotal, type TrackingEvent } from "@/lib/incidents-types";
 import { FINANCE_STORES, getCurrencySymbol, getFinanceStore, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
@@ -627,6 +628,7 @@ export default function IncidenciasPage() {
   const [busy, setBusy] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [courierFilter, setCourierFilter] = useState("");
   const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
   const tiendasPermitidas = useTiendasPermitidas();
   const [search, setSearch] = useState("");
@@ -675,11 +677,12 @@ export default function IncidenciasPage() {
   }, [selectedStoreCode]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { setCourierFilter(""); }, [selectedStoreCode]);
 
   // Al cambiar cualquier filtro/busqueda, vuelve a mostrar desde el inicio.
   useEffect(() => {
     setVisibleCount(120);
-  }, [statusFilter, categoryFilter, intentosFilter, edadFilter, search]);
+  }, [statusFilter, categoryFilter, courierFilter, intentosFilter, edadFilter, search]);
 
   // Abre el popup al instante con los datos que ya tiene la lista (sin esperar
   // red) y carga el detalle pesado (historial + tracking + producto) en segundo
@@ -833,13 +836,22 @@ export default function IncidenciasPage() {
   // tabla. Todo en un useMemo para compartir el mismo Date.now() con la edad.
   const facetCounts = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const baseEstado = incidents.filter((i) =>
+    const byCourier = incidents.filter((i) => matchesIncidentCourier(i, courierFilter));
+    const baseTransportadora = incidents.filter((i) =>
+      matchEstado(i, statusFilter) && matchCausa(i, categoryFilter) && matchIntentos(i.intentos_llamada || 0, intentosFilter) && matchEdad(i.created_at, edadFilter) && matchSearch(i, q));
+    const couriers = new Map<string, { key: string; label: string; count: number }>();
+    for (const i of incidents) {
+      const courier = incidentCourier(i);
+      if (!couriers.has(courier.key)) couriers.set(courier.key, { ...courier, count: 0 });
+    }
+    for (const i of baseTransportadora) couriers.get(incidentCourier(i).key)!.count++;
+    const baseEstado = byCourier.filter((i) =>
       matchCausa(i, categoryFilter) && matchIntentos(i.intentos_llamada || 0, intentosFilter) && matchEdad(i.created_at, edadFilter) && matchSearch(i, q));
-    const baseCausa = incidents.filter((i) =>
+    const baseCausa = byCourier.filter((i) =>
       matchEstado(i, statusFilter) && matchIntentos(i.intentos_llamada || 0, intentosFilter) && matchEdad(i.created_at, edadFilter) && matchSearch(i, q));
-    const baseIntentos = incidents.filter((i) =>
+    const baseIntentos = byCourier.filter((i) =>
       matchEstado(i, statusFilter) && matchCausa(i, categoryFilter) && matchEdad(i.created_at, edadFilter) && matchSearch(i, q));
-    const baseEdad = incidents.filter((i) =>
+    const baseEdad = byCourier.filter((i) =>
       matchEstado(i, statusFilter) && matchCausa(i, categoryFilter) && matchIntentos(i.intentos_llamada || 0, intentosFilter) && matchSearch(i, q));
 
     const byStatus = Object.fromEntries(STATUS_ORDER.map((s) => [s, 0])) as Record<IncidentStatus, number>;
@@ -853,21 +865,23 @@ export default function IncidenciasPage() {
     for (const i of baseEdad) { const h = ageHours(i.created_at); if (h < 3) e1++; else if (h < 6) e2++; else e3++; }
 
     return {
+      transportadora: { all: baseTransportadora.length, options: Array.from(couriers.values()).sort((a, b) => a.label.localeCompare(b.label, "es")) },
       estado: { all: baseEstado.length, byStatus },
       causa: { all: baseCausa.length, byCategory },
       intentos: { todos: baseIntentos.length, cero: i0, uno: i1, dosMas: i2 },
       edad: { todos: baseEdad.length, c0a3: e1, c3a6: e2, c6mas: e3 },
     };
-  }, [incidents, statusFilter, categoryFilter, intentosFilter, edadFilter, search]);
+  }, [incidents, statusFilter, categoryFilter, courierFilter, intentosFilter, edadFilter, search]);
 
   // Tabla: aplica TODAS las facetas + busqueda -> orden por columna -> recorte.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return incidents.filter((i) =>
+      matchesIncidentCourier(i, courierFilter) &&
       matchEstado(i, statusFilter) && matchCausa(i, categoryFilter) &&
       matchIntentos(i.intentos_llamada || 0, intentosFilter) && matchEdad(i.created_at, edadFilter) &&
       matchSearch(i, q));
-  }, [incidents, statusFilter, categoryFilter, intentosFilter, edadFilter, search]);
+  }, [incidents, statusFilter, categoryFilter, courierFilter, intentosFilter, edadFilter, search]);
   const sorted = useMemo(() => {
     if (!sortKey) return filtered;
     const arr = [...filtered];
@@ -960,9 +974,24 @@ export default function IncidenciasPage() {
           <EstadoCausasPanel exec={exec} onVerTodas={() => setShowCausas(true)} />
         </div>
 
-        {/* Filtros en 2 filas: (Estado + Intentos) y (Causa + Edad), + busqueda */}
+        {/* Filtros de la lista y su exportacion. El resumen superior es de la tienda. */}
         <Card>
           <CardContent className="p-3 space-y-2">
+            <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filtrar por transportadora">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Transportadora</span>
+              <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
+                <FilterPill active={courierFilter === ""} count={facetCounts.transportadora.all}
+                  onClick={() => setCourierFilter("")}>Todas</FilterPill>
+                {facetCounts.transportadora.options.map((courier) => (
+                  <FilterPill key={courier.key} active={courierFilter === courier.key} count={courier.count}
+                    disabled={courier.count === 0 && courierFilter !== courier.key}
+                    onClick={() => setCourierFilter(courierFilter === courier.key ? "" : courier.key)}>
+                    {courier.label}
+                  </FilterPill>
+                ))}
+              </div>
+              <span className="text-[11px] text-muted-foreground">Filtra la lista y su exportación.</span>
+            </div>
             {/* Fila 1: Estado (color por estado) + Intentos */}
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
               <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -1095,7 +1124,7 @@ export default function IncidenciasPage() {
                       <span className="inline-flex flex-col items-center gap-2">
                         No hay novedades que coincidan con los filtros.
                         <Button variant="outline" size="sm" onClick={() => {
-                          setStatusFilter(""); setCategoryFilter(""); setIntentosFilter("todos"); setEdadFilter("todos"); setSearch("");
+                          setStatusFilter(""); setCategoryFilter(""); setCourierFilter(""); setIntentosFilter("todos"); setEdadFilter("todos"); setSearch("");
                         }}>Limpiar filtros</Button>
                       </span>
                     )}
