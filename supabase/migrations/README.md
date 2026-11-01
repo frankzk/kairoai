@@ -12,6 +12,13 @@ Reglas:
 
 Estado actual:
 
+Presencia de Leads: `20261101012902_leads_presence.sql` aplicada el 31/10/2026
+(hora de Lima). Tablas privadas `lead_presence` y `lead_presence_tabs`, RLS activa
+sin políticas públicas y RPC solo para service role. Conserva la última actividad
+del usuario real por tienda; limpia sus pestañas vencidas al recibir nuevas señales.
+La verificación SQL de permisos, varias pestañas y señales fuera de orden pasó en
+una transacción revertida, sin crear usuarios ni actividad de prueba persistentes.
+
 | Archivo | Contenido | Aplicada en produccion |
 | --- | --- | --- |
 | `0001_schema.sql` | Tablas base del agente de voz (calls, retries, upsell, settings) | Si |

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import CreateOrderPanel from "@/components/CreateOrderPanel";
 import ProductivityPanel from "@/components/ProductivityPanel";
+import LeadsPresence from "@/components/LeadsPresence";
 import CustomerPanel from "@/components/CustomerPanel";
 import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
@@ -975,6 +976,7 @@ export default function LeadsBoard() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
+        <LeadsPresence key={store} store={store} />
         {error && (
           <Card className="mb-4 border-destructive/50">
             <CardContent className="py-3 text-sm text-destructive">{error}</CardContent>
