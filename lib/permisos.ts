@@ -221,6 +221,7 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/leads/media", exige: P(...CHAT) },
   { ruta: "/api/leads/chat-snapshots", exige: P("leads_equipo", "usuarios") },
   { ruta: "/api/leads/productivity", exige: P(...LEADS, "leads_productividad") },
+  { ruta: "/api/leads/presence", exige: P(...LEADS) },
   { ruta: "/api/leads/*/disposition", exige: P(...LEADS) },
   { ruta: "/api/leads/*/order", exige: P(...LEADS) },
   { ruta: "/api/leads/*/customer", exige: P(...LEADS) },
