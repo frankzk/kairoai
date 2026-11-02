@@ -11,6 +11,7 @@ import { getDB } from "@/lib/db";
 import {
   claveLlamadaTelnyx,
   crearCredencial,
+  ESTADO_NO_MARCADA,
   estadoDeColgado,
   iniciarGrabacion,
   leerEstadoCliente,
@@ -73,7 +74,20 @@ export async function crearLlamadaTelnyx(opts: {
   phone: string;
 }): Promise<string> {
   const llamadaId = crypto.randomUUID();
-  const { error } = await getDB()
+  const db = getDB();
+  // Las de esta asesora que quedaron preparadas y sin ningun aviso de Telnyx
+  // hace mas de un minuto no salieron: una asesora no tiene dos llamadas a la
+  // vez. Si Telnyx avisa despues, el webhook pone el estado real.
+  const { error: errViejas } = await db
+    .from("zadarma_calls")
+    .update({ status: ESTADO_NO_MARCADA })
+    .eq("provider", "telnyx")
+    .eq("vendedora", opts.vendedoraId)
+    .eq("status", "calling")
+    .lt("started_at", new Date(Date.now() - 60_000).toISOString());
+  if (errViejas) console.warn(`[telnyx] no se pudieron cerrar llamadas sin marcar: ${errViejas.message}`);
+
+  const { error } = await db
     .from("zadarma_calls")
     .insert({
       pbx_call_id: claveLlamadaTelnyx(llamadaId),

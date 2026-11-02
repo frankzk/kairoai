@@ -50,6 +50,7 @@ vi.mock("@/lib/db", () => {
       select: () => api,
       eq: (col: string, v: unknown) => (filtros.push((f) => String(f[col]) === String(v)), api),
       is: (col: string, v: unknown) => (filtros.push((f) => (f[col] ?? null) === v), api),
+      lt: (col: string, v: string) => (filtros.push((f) => String(f[col] ?? "") < v), api),
       maybeSingle: () => ((una = true), api),
       insert: (fila: Fila) => ((cambio = { tipo: "insert", fila }), api),
       update: (fila: Fila) => ((cambio = { tipo: "update", fila }), api),
@@ -231,6 +232,31 @@ describe("preparar la llamada", () => {
     // La de otra tienda no se encuentra.
     process.env.TELNYX_CALLER_ID_HN = "+504 2200 0000";
     expect((await prepararLlamada({ store: "mireva-hn", vendedora_id: 7, incident_id: 9 })).status).toBe(404);
+  });
+
+  it("una llamada anterior de la asesora que nunca se marco queda como no marcada", async () => {
+    const vieja = new Date(Date.now() - 5 * 60_000).toISOString();
+    tablas.zadarma_calls = [
+      { id: 90, provider: "telnyx", vendedora: 7, status: "calling", started_at: vieja },
+      { id: 91, provider: "telnyx", vendedora: 8, status: "calling", started_at: vieja },
+      { id: 92, provider: "telnyx", vendedora: 7, status: "answered", started_at: vieja },
+    ];
+    siguienteId = 100;
+    await prepararLlamada();
+    const estado = (id: number) => tablas.zadarma_calls.find((f) => f.id === id)?.status;
+    expect(estado(90)).toBe("not_dialed");
+    expect(estado(91)).toBe("calling"); // otra asesora
+    expect(estado(92)).toBe("answered");
+    expect(estado(100)).toBe("calling"); // la nueva
+  });
+
+  it("los historiales no muestran las que nunca salieron", async () => {
+    const { esLlamadaReal } = await import("../lib/telnyx");
+    const ahora = Date.parse("2026-11-02T03:00:00Z");
+    expect(esLlamadaReal({ status: "not_dialed", started_at: "2026-11-02T02:59:00Z" }, ahora)).toBe(false);
+    expect(esLlamadaReal({ status: "calling", started_at: "2026-11-02T02:50:00Z" }, ahora)).toBe(false);
+    expect(esLlamadaReal({ status: "calling", started_at: "2026-11-02T02:59:00Z" }, ahora)).toBe(true);
+    expect(esLlamadaReal({ status: "cancel", started_at: "2026-11-01T02:00:00Z" }, ahora)).toBe(true);
   });
 
   it("sin numero de la tienda no prepara nada y dice que variable falta", async () => {

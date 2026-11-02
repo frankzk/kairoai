@@ -6,6 +6,7 @@ import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
 import {
   avisarResultadoLlamada,
   onMarcarTelnyx,
+  publicarEstadoTelefono,
   sugerenciaDeLlamada,
   type ContextoLlamada,
   type LlamadaTelnyx,
@@ -233,6 +234,11 @@ export default function TelnyxPhone() {
     [listo]
   );
 
+  // Lo que consulta el boton "Llamar" antes de pedir una llamada.
+  const enCurso = estado !== null && estado !== "terminada";
+  useEffect(() => publicarEstadoTelefono({ listo, enCurso }), [listo, enCurso]);
+  useEffect(() => () => publicarEstadoTelefono({ listo: false, enCurso: false }), []);
+
   // Reloj de la llamada en curso.
   useEffect(() => {
     if (estado !== "en_llamada") return;
@@ -250,7 +256,6 @@ export default function TelnyxPhone() {
     else l.muteAudio();
     setSilenciado(!silenciado);
   };
-  const enCurso = estado !== null && estado !== "terminada";
 
   return (
     <>

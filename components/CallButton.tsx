@@ -5,7 +5,13 @@ import { Loader2, PhoneCall } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
 import { showWebphone } from "@/lib/webphone";
-import { marcarTelnyx, proveedorTelefoniaCliente } from "@/lib/telefonia-cliente";
+import {
+  estadoTelefonoTelnyx,
+  marcarTelnyx,
+  motivoParaNoLlamar,
+  onEstadoTelefono,
+  proveedorTelefoniaCliente,
+} from "@/lib/telefonia-cliente";
 
 // Boton "Llamar" del lead. Dos telefonias, segun TELEFONIA en el servidor:
 //   - Zadarma: no marca desde el navegador. Le pide a la centralita que timbre
@@ -37,6 +43,14 @@ export default function CallButton({
   useEffect(() => {
     setVendedora(getVendedoraId());
     return onVendedoraChange(setVendedora);
+  }, []);
+
+  // Con Telnyx, mientras hay una llamada en curso el boton queda apagado: un
+  // segundo clic creaba una llamada que el telefono nunca marcaba.
+  const [enCurso, setEnCurso] = useState(false);
+  useEffect(() => {
+    setEnCurso(estadoTelefonoTelnyx().enCurso);
+    return onEstadoTelefono((e) => setEnCurso(e.enCurso));
   }, []);
 
   async function call() {
@@ -94,6 +108,15 @@ export default function CallButton({
   }
 
   async function llamarConTelnyx(vendedora: number) {
+    // Antes de pedir la llamada: si el telefono no puede marcar, no se crea
+    // nada (si no, quedaba en el historial como "marcando" para siempre).
+    const motivo = motivoParaNoLlamar(estadoTelefonoTelnyx());
+    if (motivo) {
+      setFeedback({ kind: "error", text: motivo });
+      setTimeout(() => setFeedback(null), 15_000);
+      setCalling(false);
+      return;
+    }
     try {
       const res = await fetch("/api/telnyx/llamada", {
         method: "POST",
@@ -127,7 +150,7 @@ export default function CallButton({
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button size={size} variant="outline" onClick={call} disabled={calling}>
+      <Button size={size} variant="outline" onClick={call} disabled={calling || enCurso}>
         {calling ? (
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
         ) : (
