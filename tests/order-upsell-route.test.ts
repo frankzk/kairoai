@@ -39,6 +39,24 @@ beforeEach(() => {
   mocks.db.mockReturnValue(staffQuery);
 });
 describe("API de upsell", () => {
+  it("conserva el importe con miles hasta el pedido enviado a iComfly", async () => {
+    let saved: unknown;
+    mocks.reserve.mockImplementation(async r => { saved = r; return r; });
+    mocks.find.mockImplementation(async () => saved ?? null);
+    expect((await POST(request({ price: 10900, price_input: "10.900" }))).status).toBe(202);
+    expect(mocks.reserve.mock.calls[0][0]).toMatchObject({ selection: { price: 10900 }, expected: { total: 11000 } });
+    expect(mocks.run.mock.calls[0][0].payload.products.at(-1)).toMatchObject({ price: 10900 });
+  });
+  it.each([
+    { price: 10.9, price_input: "10.900" },
+    { price: 10900, price_input: "10.900abc" },
+    { price: "10.900" },
+  ])("bloquea precios mal interpretados antes de reservar o crear: %j", async input => {
+    expect((await POST(request(input))).status).toBe(400);
+    expect(mocks.reserve).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
   it.each((PERMISOS as readonly string[]).includes("pedidos_anular") ? ["pedidos", "pedidos_anular", "leads_crear_pedido"] : ["pedidos", "leads"])("exige %s antes de tocar Icomfly", async permission => {
     mocks.identity.permisos = mocks.identity.permisos.filter(p => p !== permission);
     expect((await POST(request({}))).status).toBe(403);

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, Loader2, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { UpsellProductOption } from "@/lib/order-upsell-catalog";
+import { parseUpsellPrice } from "@/lib/upsell-price";
 
 interface Receipt { id: string; completed: boolean; cancelled?: boolean; replacement_name: string | null; replacement_id: string | null; total: number; message: string }
 interface Preview { id: string; name: string; total: number; fingerprint: string; items: Array<{ name: string; quantity: number; price: number }> }
@@ -98,7 +99,7 @@ export default function OrderUpsellPanel({ store, orderName, symbol, advisorId, 
   }, [open, receipt, query, endpoint]);
 
   async function submit() {
-    if (busy || disabled || (!receipt && (!preview || !selected || !advisorId))) return;
+    if (busy || disabled || (!receipt && (!preview || !selected || !advisorId || !valid))) return;
     setBusy(true); onBusy(true); setError(""); setMessage("");
     try {
       const response = await fetch(endpoint, {
@@ -106,7 +107,7 @@ export default function OrderUpsellPanel({ store, orderName, symbol, advisorId, 
         body: JSON.stringify({ order_name: orderName, staff_id: advisorId, canal,
           action: receipt?.cancelled ? "restart_cancelled" : undefined,
           fingerprint: preview?.fingerprint, product_id: selected?.product_id, variant_id: selected?.variant_id,
-          quantity: Number(quantity), price: Number(price) }),
+          quantity: Number(quantity), price: parsedPrice, price_input: price }),
       });
       const body = await response.json();
       if (response.ok && body.reset) {
@@ -128,8 +129,9 @@ export default function OrderUpsellPanel({ store, orderName, symbol, advisorId, 
     } finally { setBusy(false); onBusy(false); }
   }
 
-  const extra = Math.round(Number(price) * Number(quantity) * 100) / 100;
-  const valid = Boolean(selected) && Number.isInteger(Number(quantity)) && Number(quantity) > 0 && Number(quantity) <= 100 && Number(price) > 0 && Number.isFinite(extra);
+  const parsedPrice = parseUpsellPrice(price);
+  const extra = Math.round(parsedPrice * Number(quantity) * 100) / 100;
+  const valid = Boolean(selected) && Number.isInteger(Number(quantity)) && Number(quantity) > 0 && Number(quantity) <= 100 && Number.isFinite(parsedPrice) && Number.isSafeInteger(Math.round(extra * 100));
   if (receipt?.completed) return (
     <div role="status" className="space-y-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
       <p className="flex items-center gap-2 font-medium text-emerald-300"><CheckCircle2 className="h-4 w-4" />Upsell completado</p>
@@ -164,7 +166,9 @@ export default function OrderUpsellPanel({ store, orderName, symbol, advisorId, 
           </label>}
           {selected && <div className="grid grid-cols-2 gap-2">
             <label className="space-y-1 text-xs"><span>Cantidad</span><input className={inputClass} type="number" min="1" max="100" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} disabled={busy} /></label>
-            <label className="space-y-1 text-xs"><span>Precio por unidad ({symbol})</span><input className={inputClass} type="number" min="0.01" step="0.01" value={price} onChange={e => setPrice(e.target.value)} disabled={busy} /></label>
+            <label className="space-y-1 text-xs"><span>Precio por unidad ({symbol})</span><input className={inputClass} type="text" inputMode="decimal" aria-describedby="upsell-price-help" aria-invalid={Boolean(price) && !Number.isFinite(parsedPrice)} value={price} onChange={e => setPrice(e.target.value)} disabled={busy} />
+              <span id="upsell-price-help" className="block text-muted-foreground">{Number.isFinite(parsedPrice) ? `Por unidad: ${money(parsedPrice)}` : price ? "Revisa el importe. Ejemplo: 10900 o 10.900; decimales: 10900,50." : "Ejemplo: 10900 o 10.900"}</span>
+            </label>
           </div>}
           {valid && <div className="flex flex-wrap justify-between gap-1 text-sm"><span>Upsell: +{money(extra)}</span><strong>Nuevo total: {money(Math.round((preview.total + extra) * 100) / 100)}</strong></div>}
           <p className="text-xs text-muted-foreground">Al confirmar, se creará el pedido completo, se anulará {orderName} y el nuevo quedará confirmado en iComfly.</p>

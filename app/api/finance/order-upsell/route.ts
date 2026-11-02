@@ -13,6 +13,7 @@ import { catalogSubtotalForUpsell, catalogTotalsForUpsell, selectedUpsellLine, u
 import { archiveCancelledOrderUpsell, findOrderUpsell, lockOrderUpsell, patchOrderUpsell, reserveOrderUpsell, resolveUpsellOriginal, unlockOrderUpsell, type StoredUpsell } from "@/lib/order-upsell-db";
 import { isValidCanal } from "@/lib/order-events";
 import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
+import { parseUpsellPrice } from "@/lib/upsell-price";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -71,7 +72,11 @@ export async function POST(req: NextRequest) {
       if (!isValidCanal(body.canal) || !body.canal) return NextResponse.json({ error: "Canal de confirmación inválido." }, { status: 400 });
       const original = await resolveUpsellOriginal(store.id, store.code, name);
       if (body.fingerprint !== sourceFingerprint(original)) return NextResponse.json({ error: "El pedido cambió. Recarga el upsell y revisa el nuevo total." }, { status: 409 });
-      const selection: UpsellSelection = { product_id: Number(body.product_id), variant_id: body.variant_id == null ? null : String(body.variant_id), quantity: Number(body.quantity), price: Number(body.price) };
+      const price = body.price_input === undefined ? body.price : parseUpsellPrice(body.price_input);
+      if (typeof price !== "number" || !Number.isFinite(price) || price <= 0 || price !== body.price) {
+        return NextResponse.json({ error: "El precio del upsell no coincide con el importe escrito. Revisa el precio por unidad." }, { status: 400 });
+      }
+      const selection: UpsellSelection = { product_id: Number(body.product_id), variant_id: body.variant_id == null ? null : String(body.variant_id), quantity: Number(body.quantity), price };
       const product = await getIcomflyCatalogProduct(store.code, selection.product_id);
       const line = selectedUpsellLine(product as typeof product & Record<string, unknown>, selection);
       const lines = [...originalLines(original), line];
