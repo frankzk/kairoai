@@ -101,6 +101,8 @@ export class TelnyxError extends Error {
 
 type Fetch = typeof fetch;
 
+const TIMEOUT_TELNYX_MS = 8_000;
+
 async function telnyxFetch(
   cfg: TelnyxConfig,
   path: string,
@@ -116,6 +118,9 @@ async function telnyxFetch(
     },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     cache: "no-store",
+    // Telnyx lento no puede colgar la ruta hasta su limite (20 s): mejor un
+    // error rapido que el navegador reintenta.
+    signal: AbortSignal.timeout(TIMEOUT_TELNYX_MS),
   });
   const texto = await res.text();
   if (!res.ok) {
@@ -168,6 +173,26 @@ export async function tokenDeCredencial(cfg: TelnyxConfig, credentialId: string,
   ).trim();
   if (!token) throw new TelnyxError("Telnyx no devolvió el token", 502);
   return token;
+}
+
+/**
+ * Hasta cuando sirve un token (el `exp` del JWT, en ms), o null si no se puede
+ * leer. Con esto el servidor y el navegador reutilizan el mismo token mientras
+ * siga vigente, en vez de pedirlo en cada carga de pagina (02/11/2026: con la
+ * base saturada, pedirlo de nuevo dejaba el telefono "conectandose").
+ */
+export function vencimientoToken(token: string): number | null {
+  const partes = token.split(".");
+  if (partes.length !== 3) return null;
+  try {
+    const json = JSON.parse(Buffer.from(partes[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")) as {
+      exp?: unknown;
+    };
+    const exp = Number(json.exp);
+    return Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
 }
 
 /** POST /calls/{id}/actions/record_start: graba la conversacion (las dos voces, por separado). */

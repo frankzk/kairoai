@@ -79,7 +79,48 @@ const ETIQUETA: Record<EstadoLlamada, string> = {
 // Telnyx caido dejaria un lazo pidiendo tokens para siempre (paso con
 // /api/zadarma/last-call el 29/08/2026, ver ZadarmaWebphone).
 const MAX_RECONEXIONES = 5;
+// Si pedir el token falla (el 02/11/2026 la base saturada lo dejaba 20 s sin
+// respuesta), se reintenta solo: 3 s, 6 s, 12 s... hasta 1 minuto entre
+// intentos, unos 5 minutos en total. Antes no se reintentaba y el telefono se
+// quedaba "conectandose" hasta recargar la pagina.
+const MAX_REINTENTOS_TOKEN = 8;
 const AUDIO_ID = "kairo-telnyx-audio";
+
+// El token se guarda en la pestaña mientras le queden mas de 10 minutos: una
+// pagina recargada se conecta sin pedirle nada a Kairo.
+const MARGEN_TOKEN_MS = 10 * 60_000;
+const claveToken = (staffId: number) => `kairo:telnyx-token:${staffId}`;
+
+function vencimientoJwt(token: string): number | null {
+  try {
+    const parte = token.split(".")[1] ?? "";
+    const exp = Number((JSON.parse(atob(parte.replace(/-/g, "+").replace(/_/g, "/"))) as { exp?: unknown }).exp);
+    return Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function tokenGuardado(staffId: number): string | null {
+  try {
+    const raw = window.sessionStorage.getItem(claveToken(staffId));
+    if (!raw) return null;
+    const { token, vence } = JSON.parse(raw) as { token?: string; vence?: number };
+    return token && vence && vence - MARGEN_TOKEN_MS > Date.now() ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+function guardarToken(staffId: number, token: string | null): void {
+  try {
+    const vence = token ? vencimientoJwt(token) : null;
+    if (token && vence) window.sessionStorage.setItem(claveToken(staffId), JSON.stringify({ token, vence }));
+    else window.sessionStorage.removeItem(claveToken(staffId));
+  } catch {
+    // Almacenamiento bloqueado: se pide el token cada vez, como antes.
+  }
+}
 
 function duracion(segundos: number): string {
   const m = Math.floor(segundos / 60);
@@ -114,37 +155,66 @@ export default function TelnyxPhone() {
     if (!vendedoraId) return;
     let cancelado = false;
     let reconexiones = 0;
+    let reintentosToken = 0;
     let timer: number | undefined;
 
-    const conectar = async () => {
+    const pedirToken = async (forzar: boolean): Promise<string> => {
+      const guardado = forzar ? null : tokenGuardado(vendedoraId);
+      if (guardado) return guardado;
+      const res = await fetch("/api/telnyx/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vendedora_id: vendedoraId }),
+        signal: AbortSignal.timeout(25_000),
+      });
+      const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
+      if (!res.ok || !data.token) throw new Error(data.error || "No se pudo conectar el teléfono");
+      guardarToken(vendedoraId, data.token);
+      return data.token;
+    };
+
+    const conectar = async (forzarToken = false) => {
+      let token: string;
       try {
-        const res = await fetch("/api/telnyx/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ vendedora_id: vendedoraId }),
-        });
-        const data = (await res.json()) as { token?: string; error?: string };
-        if (!res.ok || !data.token) throw new Error(data.error || "No se pudo conectar el teléfono");
+        token = await pedirToken(forzarToken);
+        reintentosToken = 0;
+      } catch {
+        if (cancelado) return;
+        if (reintentosToken >= MAX_REINTENTOS_TOKEN) {
+          setError("No se pudo conectar el teléfono: recarga la página (F5).");
+          return;
+        }
+        reintentosToken += 1;
+        setError("Conectando el teléfono… reintentando.");
+        timer = window.setTimeout(() => void conectar(forzarToken), Math.min(3_000 * 2 ** (reintentosToken - 1), 60_000));
+        return;
+      }
+      try {
         const { TelnyxRTC } = await import("@telnyx/webrtc");
         if (cancelado) return;
-        const c = new TelnyxRTC({ login_token: data.token }) as unknown as ClienteRTC;
+        const c = new TelnyxRTC({ login_token: token }) as unknown as ClienteRTC;
         c.remoteElement = AUDIO_ID;
+        let estuvoListo = false;
         c.on("telnyx.ready", () => {
+          estuvoListo = true;
           reconexiones = 0;
           setListo(true);
           setError(null);
         });
         c.on("telnyx.error", (e) => {
           setListo(false);
+          // Puede ser el token guardado (vencido o revocado): el proximo
+          // intento pide uno nuevo.
+          guardarToken(vendedoraId, null);
           setError(e instanceof Error ? e.message : "Error del teléfono");
         });
-        // Se cayo la conexion (token vencido, red): token nuevo y de nuevo,
-        // espaciando cada intento.
+        // Se cayo la conexion (token vencido, red): de nuevo, espaciando cada
+        // intento. Si nunca llego a estar listo, el token no sirvio: uno nuevo.
         c.on("telnyx.socket.close", () => {
           setListo(false);
           if (cancelado || reconexiones >= MAX_RECONEXIONES) return;
           reconexiones += 1;
-          timer = window.setTimeout(() => void conectar(), Math.min(2_000 * 2 ** reconexiones, 60_000));
+          timer = window.setTimeout(() => void conectar(!estuvoListo), Math.min(2_000 * 2 ** reconexiones, 60_000));
         });
         c.on("telnyx.notification", (n) => {
           const dato = n as { type?: string; call?: LlamadaRTC };

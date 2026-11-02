@@ -16,6 +16,8 @@ import {
   iniciarGrabacion,
   leerEstadoCliente,
   segundosDeConversacion,
+  tokenDeCredencial,
+  vencimientoToken,
   type EventoTelnyx,
   type TelnyxConfig,
 } from "@/lib/telnyx";
@@ -41,6 +43,8 @@ export async function credencialDeAsesora(
     .from("payroll_staff")
     .select("id, name, active, telnyx_credential_id")
     .eq("id", staffId)
+    // Con la base saturada, mejor fallar rapido: el navegador reintenta.
+    .abortSignal(AbortSignal.timeout(8_000))
     .maybeSingle();
   if (error) throw new Error(`credencialDeAsesora: ${error.message}`);
   const row = data as { id: number; name: string; active: boolean | null; telnyx_credential_id: string | null } | null;
@@ -60,6 +64,36 @@ export async function credencialDeAsesora(
   const { data: final } = await db.from("payroll_staff").select("telnyx_credential_id").eq("id", row.id).maybeSingle();
   const credentialId = (final as { telnyx_credential_id: string | null } | null)?.telnyx_credential_id ?? nueva.id;
   return { id: row.id, name: String(row.name), credentialId };
+}
+
+// Token por asesora, mientras le queden mas de 10 minutos. El 02/11/2026, con
+// la base saturada, pedir credencial y token en cada carga de pagina hacia que
+// /api/telnyx/token llegara a su limite de 20 s y el telefono no se conectara.
+// Con esto, una pagina recargada no toca ni la base ni Telnyx.
+const MARGEN_TOKEN_MS = 10 * 60_000;
+const tokens = new Map<number, { token: string; vence: number; asesora: string }>();
+
+/** El token del navegador de la asesora (reutilizado si sigue vigente). */
+export async function tokenDeAsesora(
+  staffId: number,
+  cfg: TelnyxConfig,
+  fetchImpl?: typeof fetch
+): Promise<{ token: string; asesora: string } | null> {
+  const guardado = tokens.get(staffId);
+  if (guardado && guardado.vence - MARGEN_TOKEN_MS > Date.now()) {
+    return { token: guardado.token, asesora: guardado.asesora };
+  }
+  const asesora = await credencialDeAsesora(staffId, cfg, fetchImpl);
+  if (!asesora) return null;
+  const token = await tokenDeCredencial(cfg, asesora.credentialId, fetchImpl);
+  const vence = vencimientoToken(token);
+  if (vence) tokens.set(staffId, { token, vence, asesora: asesora.name });
+  return { token, asesora: asesora.name };
+}
+
+/** Solo para tests. */
+export function olvidarTokensTelnyx(): void {
+  tokens.clear();
 }
 
 /**

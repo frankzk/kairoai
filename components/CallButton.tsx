@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, PhoneCall } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
+import { getVendedoraId, onVendedoraChange, setVendedoraId } from "@/lib/vendedora";
 import { showWebphone } from "@/lib/webphone";
 import {
   estadoTelefonoTelnyx,
@@ -45,6 +45,25 @@ export default function CallButton({
     return onVendedoraChange(setVendedora);
   }, []);
 
+  const [planilla, setPlanilla] = useState<Array<{ id: number; name: string }> | null>(null);
+  async function cargarPlanilla() {
+    if (planilla) return;
+    try {
+      const res = await fetch("/api/finance/payroll-staff", { cache: "no-store" });
+      const data = (await res.json()) as { staff?: Array<{ id: number; name: string; active?: boolean }> };
+      setPlanilla((data.staff ?? []).filter((p) => p.active !== false));
+    } catch {
+      setFeedback({ kind: "error", text: "No se pudo cargar la lista de asesoras." });
+    }
+  }
+  function elegirAsesora(id: number) {
+    setVendedoraId(id);
+    setPlanilla(null);
+    // El telefono de esa asesora se conecta en unos segundos.
+    setFeedback({ kind: "ok", text: "Listo: en unos segundos toca «Llamar»." });
+    setTimeout(() => setFeedback(null), 8_000);
+  }
+
   // Con Telnyx, mientras hay una llamada en curso el boton queda apagado: un
   // segundo clic creaba una llamada que el telefono nunca marcaba.
   const [enCurso, setEnCurso] = useState(false);
@@ -55,7 +74,11 @@ export default function CallButton({
 
   async function call() {
     if (!vendedoraId) {
-      setFeedback({ kind: "error", text: "Selecciona quién eres (abajo) antes de llamar." });
+      // Quien no esta vinculada a la planilla (supervision, logistica) elige
+      // aqui mismo desde que telefono llama. Antes solo se le decia "Selecciona
+      // quien eres (abajo)", y en Novedades no habia donde elegir.
+      void cargarPlanilla();
+      setFeedback(null);
       return;
     }
     setCalling(true);
@@ -158,6 +181,24 @@ export default function CallButton({
         )}
         Llamar
       </Button>
+      {!vendedoraId && planilla && (
+        <select
+          autoFocus
+          defaultValue=""
+          onChange={(e) => e.target.value && elegirAsesora(Number(e.target.value))}
+          aria-label="Quién llama"
+          className="h-8 max-w-[16rem] rounded-md border border-input bg-background px-2 text-xs"
+        >
+          <option value="" disabled>
+            ¿Quién llama?
+          </option>
+          {planilla.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      )}
       {feedback && (
         // El aviso de exito es una INSTRUCCION, no una confirmacion: si no se
         // lee, la llamada no llega al cliente. Por eso va mas grande que el
