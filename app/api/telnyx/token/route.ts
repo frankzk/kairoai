@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { vendedoraEfectiva } from "@/lib/identidad";
-import { getTelnyxConfig, tokenDeCredencial, TelnyxError } from "@/lib/telnyx";
-import { credencialDeAsesora } from "@/lib/telnyx-calls";
+import { getTelnyxConfig, TelnyxError } from "@/lib/telnyx";
+import { tokenDeAsesora } from "@/lib/telnyx-calls";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
 
 // POST: el token (JWT) con que el navegador de la asesora se conecta a Telnyx.
 // La credencial se crea sola la primera vez (lib/telnyx-calls.ts).
+//
+// El token se reutiliza mientras siga vigente (ver tokenDeAsesora).
 export async function POST(req: NextRequest) {
   const { config, faltan } = getTelnyxConfig();
   if (!config) {
@@ -22,10 +24,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const asesora = await credencialDeAsesora(vendedoraId, config);
-    if (!asesora) return NextResponse.json({ error: "Asesora no encontrada o inactiva." }, { status: 404 });
-    const token = await tokenDeCredencial(config, asesora.credentialId);
-    return NextResponse.json({ token, asesora: asesora.name });
+    const r = await tokenDeAsesora(vendedoraId, config);
+    if (!r) return NextResponse.json({ error: "Asesora no encontrada o inactiva." }, { status: 404 });
+    return NextResponse.json({ token: r.token, asesora: r.asesora });
   } catch (err) {
     const message = err instanceof Error ? err.message : "No se pudo conectar el teléfono";
     return NextResponse.json({ error: message }, { status: err instanceof TelnyxError ? 502 : 500 });

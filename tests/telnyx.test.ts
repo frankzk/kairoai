@@ -52,6 +52,7 @@ vi.mock("@/lib/db", () => {
       is: (col: string, v: unknown) => (filtros.push((f) => (f[col] ?? null) === v), api),
       lt: (col: string, v: string) => (filtros.push((f) => String(f[col] ?? "") < v), api),
       maybeSingle: () => ((una = true), api),
+      abortSignal: () => api,
       insert: (fila: Fila) => ((cambio = { tipo: "insert", fila }), api),
       update: (fila: Fila) => ((cambio = { tipo: "update", fila }), api),
       then: (ok: (v: unknown) => unknown, mal: (e: unknown) => unknown) => Promise.resolve(correr()).then(ok, mal),
@@ -74,6 +75,9 @@ vi.mock("@/lib/identidad", () => ({
   identidadActual: () => null,
 }));
 
+// Un JWT como el de Telnyx: vence en 24 h.
+const TOKEN = `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 86_400 })).toString("base64url")}.firma`;
+
 // Telnyx simulado: guarda lo que se le pidio.
 const pedidos: Array<{ url: string; body: unknown }> = [];
 let credencialesCreadas = 0;
@@ -84,7 +88,7 @@ const fetchTelnyx = vi.fn(async (url: string | URL | Request, init?: RequestInit
     credencialesCreadas++;
     return new Response(JSON.stringify({ data: { id: `cred-${credencialesCreadas}`, sip_username: "gencred1" } }), { status: 201 });
   }
-  if (u.includes("/token")) return new Response("eyJ.token.jwt", { status: 201 });
+  if (u.includes("/token")) return new Response(TOKEN, { status: 201 });
   return new Response(JSON.stringify({ data: { result: "ok" } }), { status: 200 });
 });
 
@@ -125,7 +129,8 @@ async function prepararLlamada(body: Record<string, unknown> = { store: "mireva-
 
 const llamada = () => tablas.zadarma_calls?.[0] as Fila;
 
-beforeEach(() => {
+beforeEach(async () => {
+  (await import("../lib/telnyx-calls")).olvidarTokensTelnyx();
   for (const k of Object.keys(tablas)) delete tablas[k];
   siguienteId = 1;
   pedidos.length = 0;
@@ -274,12 +279,35 @@ describe("token del navegador", () => {
     const pedir = () =>
       POST(new NextRequest("http://localhost/api/telnyx/token", { method: "POST", body: JSON.stringify({ vendedora_id: 7 }) }));
     const r1 = await pedir();
-    expect(await r1.json()).toMatchObject({ token: "eyJ.token.jwt" });
-    await pedir();
+    expect(await r1.json()).toMatchObject({ token: TOKEN });
     expect(credencialesCreadas).toBe(1);
     expect(tablas.payroll_staff[0].telnyx_credential_id).toBe("cred-1");
     expect(pedidos.find((p) => p.url.endsWith("/telephony_credentials"))?.body).toMatchObject({ connection_id: "conn-1" });
+
+    // Vencido el token en el servidor, se pide otro con la MISMA credencial.
+    (await import("../lib/telnyx-calls")).olvidarTokensTelnyx();
+    await pedir();
+    expect(credencialesCreadas).toBe(1);
     expect(pedidos.filter((p) => p.url.endsWith("/telephony_credentials/cred-1/token"))).toHaveLength(2);
+  });
+
+  it("mientras el token sigue vigente, una pagina recargada no toca ni la base ni Telnyx", async () => {
+    const { POST } = await import("../app/api/telnyx/token/route");
+    const pedir = () =>
+      POST(new NextRequest("http://localhost/api/telnyx/token", { method: "POST", body: JSON.stringify({ vendedora_id: 7 }) }));
+    await pedir();
+    const antes = pedidos.length;
+    tablas.payroll_staff = []; // si se consultara la base, no encontraria a la asesora
+    const r = await pedir();
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ token: TOKEN });
+    expect(pedidos.length).toBe(antes);
+  });
+
+  it("lee el vencimiento del token (exp del JWT)", async () => {
+    const { vencimientoToken } = await import("../lib/telnyx");
+    expect(vencimientoToken(TOKEN)).toBeGreaterThan(Date.now() + 23 * 3_600_000);
+    expect(vencimientoToken("no-es-un-jwt")).toBeNull();
   });
 });
 

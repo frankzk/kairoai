@@ -19,7 +19,7 @@
     },
     {
       "path": "/api/cron/wyn",
-      "schedule": "20,50 * * * *"
+      "schedule": "20,45 * * * *"
     },
     {
       "path": "/api/cron/shopify-archivo",
@@ -31,11 +31,11 @@
     },
     {
       "path": "/api/cron/shopify-refresh",
-      "schedule": "0 */3 * * *"
+      "schedule": "55 */3 * * *"
     },
     {
       "path": "/api/cron/shopify-recheck-stale",
-      "schedule": "45 2,14 * * *"
+      "schedule": "22 2,14 * * *"
     },
     {
       "path": "/api/cron/finance-index",
@@ -43,11 +43,11 @@
     },
     {
       "path": "/api/cron/incidencias",
-      "schedule": "15 * * * *"
+      "schedule": "10 * * * *"
     },
     {
       "path": "/api/cron/icomfly",
-      "schedule": "*/30 * * * *"
+      "schedule": "5,35 * * * *"
     },
     {
       "path": "/api/cron/icomfly-historial",
@@ -68,6 +68,10 @@
     {
       "path": "/api/cron/leads-shopify-match",
       "schedule": "7 * * * *"
+    },
+    {
+      "path": "/api/cron/finance-pendientes",
+      "schedule": "*/3 * * * *"
     }
   ],
   "functions": {

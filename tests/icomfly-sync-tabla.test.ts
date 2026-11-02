@@ -25,6 +25,7 @@ vi.mock("@/lib/icomfly-sync", () => ({
   summarizeRows: () => null,
 }));
 vi.mock("@/app/api/finance/_shared/orders-dataset", () => ({
+  EN_COLA: -1,
   refreshFinanceDatasetCache: async (store: { code: string }) => {
     rearmadas.push(store.code);
     if (fallaHonduras && store.code === "mireva-hn") throw new Error("timeout");

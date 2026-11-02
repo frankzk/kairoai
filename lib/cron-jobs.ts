@@ -23,6 +23,12 @@ export interface CronJob {
   scheduler?: "external";
 }
 
+// Los pesados (mas de ~40 s) tienen cada uno su minuto en vercel.json, para no
+// cargar la base a la vez (el 02/11/2026 Postgres se reinicio por eso):
+//   :00 moovin (~3 min) · :05/:35 icomfly · :10 incidencias · :15 finance-index (~2 min)
+//   :20/:45 wyn · :22 shopify-recheck-stale · :25 icomfly-historial · :30 forza (~2 min)
+//   :40 cargo-expreso · :50 c807 · :55 shopify-refresh
+// Al agregar uno pesado, busca un minuto libre.
 export const CRON_JOBS: CronJob[] = [
   { name: "woo-status", label: "Estados de Kenku Italia", everyMinutes: 5, scheduler: "external" },
   { name: "elogy", label: "Logística y cobros Elogy Italia", everyMinutes: 5, scheduler: "external" },
@@ -41,6 +47,8 @@ export const CRON_JOBS: CronJob[] = [
   // Respaldo completo antes de que se suspendan las tiendas (28/10/2026).
   { name: "shopify-archivo", label: "Respaldo de Shopify", everyMinutes: 5 },
   { name: "finance-index", label: "Índice de Finanzas", everyMinutes: 60 },
+  // Reconstrucciones del dataset que quedaron en cola (una a la vez).
+  { name: "finance-pendientes", label: "Tabla de Gestión en cola", everyMinutes: 3 },
   { name: "incidencias", label: "Novedades", everyMinutes: 60 },
   { name: "moovin", label: "Tracking Moovin", everyMinutes: 60 },
   { name: "forza", label: "Tracking Forza (Honduras)", everyMinutes: 60 },

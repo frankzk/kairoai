@@ -671,12 +671,93 @@ async function writeFinanceOrderIndex(store: FinanceStorePublic, data: OrdersDat
   if (deleteError) throw new Error(deleteError.message);
 }
 
+// ─── Una reconstruccion a la vez ─────────────────────────────────────────────
+//
+// El 02/11/2026 a las 15:52 UTC Postgres (2 GB) se reinicio por memoria: se
+// juntaron varias reconstrucciones completas (crons de Shopify, iComfly,
+// Moovin, Forza, WYN, y "Actualizar Moovin", que reconstruia una vez por cada
+// lote de 50 guias). Cada una lee todas las tablas del dataset (~70 s). Ese
+// minuto cayeron Gestion, Finanzas, Leads y el telefono de las asesoras.
+//
+// Ahora hay UN turno para toda la plataforma (finance_dataset_turno, migracion
+// 20261102120000). Quien pide reconstruir mientras otra corre deja su tienda
+// pendiente y vuelve enseguida; el cron finance-pendientes (cada 5 min) las
+// hace despues, una vez por tienda. Si el turno no se puede consultar, se
+// reconstruye como antes: el turno protege, no puede dejar la cache sin hacer.
+
+/** Vence solo por si la funcion que lo tenia muere: build (45 s) + escrituras. */
+const TURNO_SEGUNDOS = 150;
+
+/** Filas del dataset, o EN_COLA si quedo pendiente porque otra reconstruccion corria. */
+export const EN_COLA = -1;
+
+async function tomarTurno(store: FinanceStorePublic): Promise<boolean | null> {
+  try {
+    const { data, error } = await withTimeout(
+      getDB().rpc("finance_dataset_tomar_turno", { p_store: store.id, p_segundos: TURNO_SEGUNDOS }),
+      L2_WRITE_TIMEOUT_MS,
+      `orders-dataset turno ${store.code}`
+    );
+    if (error) throw new Error(error.message);
+    return data === true;
+  } catch (err) {
+    console.warn(`[orders-dataset turno] ${store.code}: ${err instanceof Error ? err.message : err} — se reconstruye sin turno`);
+    return null;
+  }
+}
+
+async function soltarTurno(store: FinanceStorePublic, fallo: boolean): Promise<void> {
+  try {
+    if (fallo) await getDB().rpc("finance_dataset_marcar_pendiente", { p_store: store.id });
+    await getDB().rpc("finance_dataset_soltar_turno");
+  } catch (err) {
+    // Si no se pudo soltar, vence solo en TURNO_SEGUNDOS.
+    console.warn(`[orders-dataset turno] ${store.code}: no se pudo soltar: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+/**
+ * Reconstruye el dataset de una tienda y refresca ambas caches (L2 + L1), con
+ * turno: devuelve las filas ensambladas, o EN_COLA si otra reconstruccion
+ * estaba en curso (la tienda queda pendiente y la hace el cron
+ * finance-pendientes). Es lo que llaman los crons y las mutaciones.
+ */
+export async function refreshFinanceDatasetCache(
+  store: FinanceStorePublic,
+  options: { writeOrderIndex?: boolean } = {}
+): Promise<number> {
+  const turno = await tomarTurno(store);
+  if (turno === false) {
+    console.warn(`[orders-dataset] ${store.code}: otra reconstruccion en curso; queda pendiente`);
+    return EN_COLA;
+  }
+  let fallo = false;
+  try {
+    return await reconstruirDataset(store, options);
+  } catch (err) {
+    fallo = true;
+    throw err;
+  } finally {
+    if (turno) await soltarTurno(store, fallo);
+  }
+}
+
+/** Las tiendas que quedaron pendientes, para el cron finance-pendientes. */
+export async function tiendasConDatasetPendiente(): Promise<number[]> {
+  const { data, error } = await getDB()
+    .from("finance_dataset_turno")
+    .select("store_id")
+    .eq("pendiente", true)
+    .neq("store_id", 0);
+  if (error) throw new Error(`finance_dataset_turno: ${error.message}`);
+  return ((data ?? []) as Array<{ store_id: number }>).map((r) => Number(r.store_id));
+}
+
 // Reconstruye el dataset de una tienda y refresca ambas caches (L2 upsert por
-// seccion + L1). Es lo que llaman el cron (app/api/cron/finance-index) y las
-// mutaciones para mantener la cache fresca FUERA del path del request.
+// seccion + L1), SIN turno (ver refreshFinanceDatasetCache).
 // Devuelve el numero de filas ensambladas. Defensivo: si la escritura L2 falla,
 // igual deja L1 al dia y devuelve el conteo (no lanza por culpa de la cache).
-export async function refreshFinanceDatasetCache(
+async function reconstruirDataset(
   store: FinanceStorePublic,
   options: { writeOrderIndex?: boolean } = {}
 ): Promise<number> {

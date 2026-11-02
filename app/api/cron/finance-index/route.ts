@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FINANCE_STORES, getStoreConfig } from "@/lib/stores";
-import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
+import { EN_COLA, refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 import { withCronRun } from "@/lib/cron-runs";
 
 export const runtime = "nodejs";
@@ -21,7 +21,7 @@ async function run(storeFilter: string | null) {
   const targets = storeFilter
     ? FINANCE_STORES.filter((publicStore) => publicStore.code === storeFilter)
     : FINANCE_STORES;
-  const results: Array<{ store: string; row_count: number; error?: string }> = [];
+  const results: Array<{ store: string; row_count: number; error?: string; en_cola?: boolean }> = [];
 
   for (const publicStore of targets) {
     const store = getStoreConfig(publicStore.code);
@@ -29,7 +29,8 @@ async function run(storeFilter: string | null) {
       // El cron es el único que puebla el índice por pedido (finance_order_index,
       // Fase 1): 1 vez/hora/tienda, fuera del path del request y de las mutaciones.
       const rowCount = await refreshFinanceDatasetCache(store, { writeOrderIndex: true });
-      results.push({ store: store.code, row_count: rowCount });
+      // EN_COLA: otra reconstruccion corria; la hace finance-pendientes.
+      results.push({ store: store.code, row_count: rowCount === EN_COLA ? 0 : rowCount, ...(rowCount === EN_COLA ? { en_cola: true } : {}) });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error";
       results.push({ store: store.code, row_count: 0, error: message });
