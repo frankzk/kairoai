@@ -41,6 +41,8 @@ describe("llamadas de un telefono", () => {
       { id: 2, direction: "outgoing", status: "answered", duration_seconds: 80, started_at: "2026-11-01T15:00:00Z", vendedora: 1, provider: "telnyx" },
       { id: 1, direction: "outgoing", status: "agent_answered", duration_seconds: 5, started_at: "2026-11-01T14:00:00Z", vendedora: 1, provider: "zadarma" },
       { id: 0, direction: "outgoing", status: "no answer", duration_seconds: 0, started_at: "2026-10-31T14:00:00Z", vendedora: null, provider: "zadarma" },
+      // Preparada y nunca marcada (doble clic del 01/11/2026): no va.
+      { id: -1, direction: "outgoing", status: "not_dialed", duration_seconds: 0, started_at: "2026-10-31T13:00:00Z", vendedora: 1, provider: "telnyx" },
     ];
     filas.payroll_staff = [{ id: 1, name: "Daleska Urbina" }];
     const r = await llamadasDelTelefono({ storeCode: "mireva-cr", phone: "6120-4473" });

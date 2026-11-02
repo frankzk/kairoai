@@ -15,6 +15,7 @@ import {
 } from "./leads-undo";
 import { normalizePhone, phoneConfigForStore } from "./phone-cr";
 import { AGENT_LEG_ANSWERED, describeZadarmaCall } from "./zadarma";
+import { esLlamadaReal } from "./telnyx";
 
 export interface LeadRecord {
   id: number;
@@ -1074,8 +1075,9 @@ export async function getLeadHistory(storeId: number, leadId: number): Promise<L
   // llamada en el historial. La que NO contesto si se muestra: es la unica
   // forma de ver que se intento llamar y el telefono de la asesora nunca
   // descolgo, o sea que el cliente jamas sono.
+  // Tampoco las de Telnyx que Kairo preparo y nunca se marcaron (lib/telnyx.ts).
   const calls = ((callData ?? []) as ZadarmaCallHistoryRow[]).filter(
-    (r) => r.started_at && r.status !== AGENT_LEG_ANSWERED
+    (r) => r.started_at && r.status !== AGENT_LEG_ANSWERED && esLlamadaReal(r)
   );
 
   const ids = Array.from(

@@ -311,6 +311,30 @@ export function estadoDeColgado(causa: string | null | undefined, contestada: bo
   }
 }
 
+// ─── Llamadas que nunca salieron ─────────────────────────────────────────────
+
+/**
+ * Estado de una llamada que Kairo preparo pero el navegador nunca marco (se
+ * cerro la pagina, se nego el microfono, un doble clic). No se muestra en
+ * ningun historial: no hubo llamada.
+ */
+export const ESTADO_NO_MARCADA = "not_dialed";
+
+/** Pasado esto sin ningun aviso de Telnyx, una llamada "calling" no salio. */
+export const MINUTOS_SIN_MARCAR = 5;
+
+/** Si una fila del CDR es una llamada de verdad (para los historiales). */
+export function esLlamadaReal(
+  fila: { status?: string | null; started_at?: string | null },
+  ahora: number = Date.now()
+): boolean {
+  if (fila.status === ESTADO_NO_MARCADA) return false;
+  if (fila.status === "calling" && fila.started_at) {
+    return ahora - Date.parse(fila.started_at) < MINUTOS_SIN_MARCAR * 60_000;
+  }
+  return true;
+}
+
 /** Segundos de conversacion: desde que contesto el cliente hasta que se colgo. */
 export function segundosDeConversacion(contestoEn: string | null | undefined, colgoEn: string | null | undefined): number {
   if (!contestoEn || !colgoEn) return 0;

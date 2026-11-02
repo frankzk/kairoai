@@ -9,6 +9,7 @@
 import { getDB } from "@/lib/db";
 import { normalizePhone, phoneConfigForStore } from "@/lib/phone-cr";
 import { AGENT_LEG_ANSWERED, describeZadarmaCall } from "@/lib/zadarma";
+import { esLlamadaReal } from "@/lib/telnyx";
 
 export interface LlamadaHistorial {
   id: number;
@@ -49,7 +50,10 @@ export async function llamadasDelTelefono(opts: {
 
   // La pata de timbrado de Zadarma que SI contesto no aporta: la llamada al
   // cliente viene como su propia fila (igual que en getLeadHistory).
-  const filas = ((data ?? []) as Fila[]).filter((r) => r.started_at && r.status !== AGENT_LEG_ANSWERED);
+  // Tampoco las que Kairo preparo y nunca se marcaron (lib/telnyx.ts).
+  const filas = ((data ?? []) as Fila[]).filter(
+    (r) => r.started_at && r.status !== AGENT_LEG_ANSWERED && esLlamadaReal(r)
+  );
 
   const ids = Array.from(new Set(filas.map((r) => r.vendedora).filter((v): v is number => v != null)));
   const nombres = new Map<number, string>();

@@ -92,6 +92,48 @@ export function onResultadoLlamada(callback: (resultado: ResultadoLlamada) => vo
   return () => window.removeEventListener(RESULTADO_EVENT, handler);
 }
 
+// ─── Estado del telefono de Telnyx ──────────────────────────────────────────
+//
+// El boton "Llamar" lo consulta ANTES de pedirle la llamada al servidor: si el
+// telefono no esta conectado o ya hay una llamada en curso, no se crea nada.
+// Antes el servidor creaba la llamada y el telefono la rechazaba despues, y
+// quedaba en el historial como "marcando" para siempre (01/11/2026).
+
+export interface EstadoTelefono {
+  /** Conectado a Telnyx y listo para marcar. */
+  listo: boolean;
+  /** Hay una llamada marcando, timbrando o en curso. */
+  enCurso: boolean;
+}
+
+let estadoTelefono: EstadoTelefono = { listo: false, enCurso: false };
+const ESTADO_EVENT = "kairo:telnyx-estado";
+
+/** Lo publica el telefono de Telnyx cada vez que cambia. */
+export function publicarEstadoTelefono(estado: EstadoTelefono): void {
+  estadoTelefono = estado;
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<EstadoTelefono>(ESTADO_EVENT, { detail: estado }));
+}
+
+export function estadoTelefonoTelnyx(): EstadoTelefono {
+  return estadoTelefono;
+}
+
+export function onEstadoTelefono(callback: (estado: EstadoTelefono) => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const handler = (e: Event) => callback((e as CustomEvent<EstadoTelefono>).detail);
+  window.addEventListener(ESTADO_EVENT, handler);
+  return () => window.removeEventListener(ESTADO_EVENT, handler);
+}
+
+/** Por que no se puede llamar ahora con Telnyx, o null si se puede. */
+export function motivoParaNoLlamar(estado: EstadoTelefono): string | null {
+  if (estado.enCurso) return "Ya hay una llamada en curso: cuélgala antes de llamar a otro cliente.";
+  if (!estado.listo) return "El teléfono todavía se está conectando: espera unos segundos y vuelve a llamar.";
+  return null;
+}
+
 const MARCAR_EVENT = "kairo:telnyx-marcar";
 
 /** Pide al telefono de Telnyx de la pagina que marque. */
