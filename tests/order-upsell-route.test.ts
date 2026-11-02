@@ -25,7 +25,7 @@ const original = { id: 10, store_id: 71, order_number: "123", status: "Pendiente
   items: [{ product_id: 100, product_name: "Original", product_price: 100, quantity: 1 }] };
 const receipt = { id: "request", store_id: 1, original_id: "10", original_name: "IC-W23", advisor_id: 2, advisor_name: "Asesora", canal: "llamada", payload: {}, expected: { total: 150, items: [] }, completed_at: null, replacement_name: null, replacement_id: "20" };
 function request(body: object, store = "mireva-cr") {
-  return new NextRequest(`http://localhost/api/finance/order-upsell?store=${store}`, { method: "POST", body: JSON.stringify({ order_name: "IC-W23", staff_id: 999, canal: "llamada", fingerprint: sourceFingerprint(original), product_id: 200, quantity: 1, price: 50, ...body }) });
+  return new NextRequest(`http://localhost/api/finance/order-upsell?store=${store}`, { method: "POST", body: JSON.stringify({ order_name: "IC-W23", staff_id: 999, canal: "llamada", fingerprint: sourceFingerprint(original), product_id: 200, quantity: 1, price: 50, price_input: String((body as {price?: unknown}).price ?? 50), ...body }) });
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -48,6 +48,7 @@ describe("API de upsell", () => {
     expect(mocks.run.mock.calls[0][0].payload.products.at(-1)).toMatchObject({ price: 10900 });
   });
   it.each([
+    { price: 10.9, price_input: undefined },
     { price: 10.9, price_input: "10.900" },
     { price: 10900, price_input: "10.900abc" },
     { price: "10.900" },

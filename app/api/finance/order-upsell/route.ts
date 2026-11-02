@@ -72,7 +72,10 @@ export async function POST(req: NextRequest) {
       if (!isValidCanal(body.canal) || !body.canal) return NextResponse.json({ error: "Canal de confirmación inválido." }, { status: 400 });
       const original = await resolveUpsellOriginal(store.id, store.code, name);
       if (body.fingerprint !== sourceFingerprint(original)) return NextResponse.json({ error: "El pedido cambió. Recarga el upsell y revisa el nuevo total." }, { status: 409 });
-      const price = body.price_input === undefined ? body.price : parseUpsellPrice(body.price_input);
+      if (body.price_input === undefined) {
+        return NextResponse.json({ error: "Recarga Gestión para usar el campo de precio actualizado. No se creó el upsell." }, { status: 400 });
+      }
+      const price = parseUpsellPrice(body.price_input);
       if (typeof price !== "number" || !Number.isFinite(price) || price <= 0 || price !== body.price) {
         return NextResponse.json({ error: "El precio del upsell no coincide con el importe escrito. Revisa el precio por unidad." }, { status: 400 });
       }
