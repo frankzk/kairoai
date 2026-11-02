@@ -23,6 +23,12 @@ export interface CronJob {
   scheduler?: "external";
 }
 
+// Los pesados (mas de ~40 s) tienen cada uno su minuto en vercel.json, para no
+// cargar la base a la vez (el 02/11/2026 Postgres se reinicio por eso):
+//   :00 moovin (~3 min) · :05/:35 icomfly · :10 incidencias · :15 finance-index (~2 min)
+//   :20/:45 wyn · :22 shopify-recheck-stale · :25 icomfly-historial · :30 forza (~2 min)
+//   :40 cargo-expreso · :50 c807 · :55 shopify-refresh
+// Al agregar uno pesado, busca un minuto libre.
 export const CRON_JOBS: CronJob[] = [
   { name: "woo-status", label: "Estados de Kenku Italia", everyMinutes: 5, scheduler: "external" },
   { name: "elogy", label: "Logística y cobros Elogy Italia", everyMinutes: 5, scheduler: "external" },
