@@ -6,7 +6,7 @@ import {
 } from "@/lib/finance";
 import { getRequiredStoreFromBody, getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { runIcomflySync, summarizeRows } from "@/lib/icomfly-sync";
-import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
+import { EN_COLA, refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -57,7 +57,8 @@ export async function POST(req: NextRequest) {
     });
     if (payload.refrescar !== true) return NextResponse.json(result);
     const tabla = await refreshFinanceDatasetCache(store)
-      .then((filas) => ({ ok: true, filas }))
+      // EN_COLA: otra reconstruccion corria; la tabla se rearma en minutos.
+      .then((filas) => (filas === EN_COLA ? { ok: true, en_cola: true } : { ok: true, filas }))
       .catch((err) => ({ ok: false, error: err instanceof Error ? err.message : String(err) }));
     return NextResponse.json({ ...result, tabla });
   } catch (err) {

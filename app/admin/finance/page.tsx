@@ -2136,7 +2136,9 @@ function OrdersTab({
       setIcomflyMessage(
         json.tabla?.ok === false
           ? `iComfly al dia (${Number(json.synced ?? 0)} pedidos revisados), pero la tabla no se pudo rearmar: ${json.tabla.error}`
-          : `iComfly al dia: ${Number(json.synced ?? 0)} pedidos revisados.`
+          : json.tabla?.en_cola
+            ? `iComfly al dia: ${Number(json.synced ?? 0)} pedidos revisados. La tabla se actualiza en unos minutos.`
+            : `iComfly al dia: ${Number(json.synced ?? 0)} pedidos revisados.`
       );
     } catch (err) {
       setIcomflyMessage(err instanceof Error ? err.message : "No se pudo sincronizar iComfly");

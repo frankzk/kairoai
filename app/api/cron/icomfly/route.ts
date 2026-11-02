@@ -3,7 +3,7 @@ import { listConfiguredIcomflyStoreContexts } from "@/lib/icomfly";
 import { errorDeTienda, runIcomflySync } from "@/lib/icomfly-sync";
 import { withCronRun } from "@/lib/cron-runs";
 import { getFinanceStore } from "@/lib/store-config";
-import { refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
+import { EN_COLA, refreshFinanceDatasetCache } from "@/app/api/finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
 // Nunca pre-ejecutar en el build: un cron solo corre cuando lo llaman.
@@ -33,7 +33,7 @@ async function handle() {
     const tablas: Record<string, string> = {};
     for (const target of targets) {
       tablas[target.store.code] = await refreshFinanceDatasetCache(getFinanceStore(target.store.code))
-        .then((filas) => `${filas} filas`)
+        .then((filas) => (filas === EN_COLA ? "en cola" : `${filas} filas`))
         .catch((err) => `error: ${err instanceof Error ? err.message : err}`);
     }
     return NextResponse.json({

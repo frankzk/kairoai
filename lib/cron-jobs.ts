@@ -41,6 +41,8 @@ export const CRON_JOBS: CronJob[] = [
   // Respaldo completo antes de que se suspendan las tiendas (28/10/2026).
   { name: "shopify-archivo", label: "Respaldo de Shopify", everyMinutes: 5 },
   { name: "finance-index", label: "Índice de Finanzas", everyMinutes: 60 },
+  // Reconstrucciones del dataset que quedaron en cola (una a la vez).
+  { name: "finance-pendientes", label: "Tabla de Gestión en cola", everyMinutes: 3 },
   { name: "incidencias", label: "Novedades", everyMinutes: 60 },
   { name: "moovin", label: "Tracking Moovin", everyMinutes: 60 },
   { name: "forza", label: "Tracking Forza (Honduras)", everyMinutes: 60 },

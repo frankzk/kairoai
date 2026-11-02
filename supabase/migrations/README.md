@@ -12,6 +12,13 @@ Reglas:
 
 Estado actual:
 
+Turno del dataset: `20261102120000_finance_dataset_turno.sql` aplicada el
+02/11/2026. Tabla `finance_dataset_turno` (RLS sin políticas) y tres funciones
+solo para service role: una reconstrucción del dataset de Gestión a la vez en
+toda la plataforma; las demás quedan pendientes para el cron
+`finance-pendientes`. Motivo: el 02/11 a las 15:52 UTC Postgres se reinició por
+memoria con varias reconstrucciones juntas.
+
 Telnyx: `20261101120000_telnyx.sql` aplicada el 01/11/2026. Agrega
 `payroll_staff.telnyx_credential_id` (única) y en `zadarma_calls` las columnas
 `provider` (default `'zadarma'`, las llamadas viejas quedan como estaban) y
