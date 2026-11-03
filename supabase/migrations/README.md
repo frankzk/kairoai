@@ -12,6 +12,11 @@ Reglas:
 
 Estado actual:
 
+Costo de llamadas Telnyx: `20261103120000_telnyx_costo_llamada.sql` aplicada el
+03/11/2026. Agrega a `zadarma_calls` `cost`, `cost_currency`, `billed_seconds`
+(los llena el evento `call.cost` de Telnyx) y `telnyx_call_control_id` (con
+índice parcial). Solo agrega columnas: Zadarma queda en NULL.
+
 Turno del dataset: `20261102120000_finance_dataset_turno.sql` aplicada el
 02/11/2026. Tabla `finance_dataset_turno` (RLS sin políticas) y tres funciones
 solo para service role: una reconstrucción del dataset de Gestión a la vez en

@@ -698,6 +698,9 @@ export function describeZadarmaCall(row: {
   direction?: string | null;
   status?: string | null;
   duration_seconds?: number | null;
+  /** Solo Telnyx (evento call.cost); Zadarma no lo informa. */
+  cost?: number | string | null;
+  cost_currency?: string | null;
 }): string {
   const direction = row.direction === "incoming" ? "Entrante" : "Saliente";
   const raw = String(row.status ?? "");
@@ -708,5 +711,15 @@ export function describeZadarmaCall(row: {
   if (isAgentLegStatus(raw)) return status;
   const seconds = row.duration_seconds ?? 0;
   const duration = seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
-  return [direction, status, seconds > 0 ? duration : null].filter(Boolean).join(" · ");
+  return [direction, status, seconds > 0 ? duration : null, formatoCostoLlamada(row.cost, row.cost_currency)]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** "0.0125 USD": lo que costo la llamada, o null si no se sabe. */
+export function formatoCostoLlamada(cost: number | string | null | undefined, moneda?: string | null): string | null {
+  if (cost == null || cost === "") return null;
+  const n = Number(cost);
+  if (!Number.isFinite(n)) return null;
+  return `${n.toFixed(4)} ${(moneda || "USD").toUpperCase()}`;
 }

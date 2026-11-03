@@ -144,6 +144,7 @@ interface FilaLlamada {
   answered_at: string | null;
   ended_at: string | null;
   status: string | null;
+  telnyx_call_control_id: string | null;
 }
 
 /**
@@ -157,19 +158,22 @@ export async function aplicarEventoTelnyx(
   opts: { cfg: TelnyxConfig | null; grabar: boolean; fetchImpl?: typeof fetch }
 ): Promise<"aplicado" | "ignorado"> {
   const llamadaId = leerEstadoCliente(ev.clientState);
-  if (!llamadaId) return "ignorado";
+  // Sin client_state solo se reconoce por el id de Telnyx guardado en un
+  // evento anterior (pasa si call.cost llega sin el client_state).
+  if (!llamadaId && !ev.callControlId) return "ignorado";
 
   const db = getDB();
-  const { data, error } = await db
-    .from("zadarma_calls")
-    .select("id, answered_at, ended_at, status")
-    .eq("pbx_call_id", claveLlamadaTelnyx(llamadaId))
-    .maybeSingle();
+  const consulta = db.from("zadarma_calls").select("id, answered_at, ended_at, status, telnyx_call_control_id");
+  const { data, error } = await (llamadaId
+    ? consulta.eq("pbx_call_id", claveLlamadaTelnyx(llamadaId))
+    : consulta.eq("provider", "telnyx").eq("telnyx_call_control_id", ev.callControlId as string)
+  ).maybeSingle();
   if (error) throw new Error(`aplicarEventoTelnyx: ${error.message}`);
   const fila = data as FilaLlamada | null;
   if (!fila) return "ignorado";
 
   const cambios: Record<string, unknown> = {};
+  if (ev.callControlId && !fila.telnyx_call_control_id) cambios.telnyx_call_control_id = ev.callControlId;
   switch (ev.tipo) {
     case "call.initiated":
       // Solo si nada mas avanzado llego antes.
@@ -198,6 +202,14 @@ export async function aplicarEventoTelnyx(
     case "call.recording.saved":
       cambios.is_recorded = true;
       if (ev.recordingUrl) cambios.record_url = ev.recordingUrl;
+      break;
+    case "call.cost":
+      // Sin costo calculable (status error) no se escribe nada: vacio, no 0.
+      if (ev.costo) {
+        cambios.cost = ev.costo.total;
+        cambios.cost_currency = ev.costo.moneda;
+        cambios.billed_seconds = ev.costo.segundosCobrados;
+      }
       break;
   }
   if (!Object.keys(cambios).length) return "aplicado";

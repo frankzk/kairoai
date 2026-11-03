@@ -29,6 +29,8 @@ interface Fila {
   started_at: string | null;
   vendedora: number | null;
   provider: string | null;
+  cost: number | string | null;
+  cost_currency: string | null;
 }
 
 export async function llamadasDelTelefono(opts: {
@@ -42,7 +44,7 @@ export async function llamadasDelTelefono(opts: {
   const db = getDB();
   const { data, error } = await db
     .from("zadarma_calls")
-    .select("id,direction,status,duration_seconds,started_at,vendedora,provider")
+    .select("id,direction,status,duration_seconds,started_at,vendedora,provider,cost,cost_currency")
     .eq("phone", phone)
     .order("started_at", { ascending: false, nullsFirst: false })
     .limit(opts.limit ?? 30);
