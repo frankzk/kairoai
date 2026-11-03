@@ -79,7 +79,7 @@ async function rpc(
   storeCode: FinanceStoreCode,
   metodo: string,
   params: Record<string, unknown>,
-  opts: { fetchImpl?: typeof fetch; env?: Record<string, string | undefined> }
+  opts: { fetchImpl?: typeof fetch; env?: Record<string, string | undefined>; timeoutMs?: number }
 ): Promise<Record<string, unknown>> {
   const cred = credencialMcp(storeCode, opts.env);
   if (!cred.url || !cred.token) {
@@ -93,7 +93,7 @@ async function rpc(
       Accept: "application/json, text/event-stream",
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: metodo, params }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? TIMEOUT_MS),
     cache: "no-store",
   });
   const cuerpo = await res.text();
@@ -108,7 +108,7 @@ export async function llamarHerramientaIcomfly(
   storeCode: FinanceStoreCode,
   nombre: string,
   args: Record<string, unknown>,
-  opts: { fetchImpl?: typeof fetch; env?: Record<string, string | undefined> } = {}
+  opts: { fetchImpl?: typeof fetch; env?: Record<string, string | undefined>; timeoutMs?: number } = {}
 ): Promise<Record<string, unknown>> {
   return resultadoHerramienta(await rpc(storeCode, "tools/call", { name: nombre, arguments: args }, opts));
 }

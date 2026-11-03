@@ -15,6 +15,7 @@ import { identidadActual, vendedoraEfectiva } from "@/lib/identidad";
 import { orderAlerts, riskInputFromHistory } from "@/lib/order-risk";
 import { llamadasDelTelefono } from "@/lib/llamadas-historial";
 import { notasIcomflyDelPedido } from "@/lib/icomfly-comentarios-db";
+import { copiarGestionAIcomfly } from "@/lib/icomfly-nota-kairo";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -170,7 +171,11 @@ export async function POST(req: NextRequest) {
       recordatorioAt: recordatorioPara(outcome, ahora, tz),
     });
 
-    return NextResponse.json({ event });
+    // La misma gestion, como nota interna del pedido en iComfly: asi no se
+    // escribe dos veces. Si iComfly falla, la gestion igual quedo en Kairo.
+    const icomfly = await copiarGestionAIcomfly(store, orderName, event);
+
+    return NextResponse.json({ event, icomfly });
   } catch (err) {
     const message = toFriendlyErrorMessage(err, "Error al registrar la gestion");
     return NextResponse.json({ error: message }, { status: 500 });

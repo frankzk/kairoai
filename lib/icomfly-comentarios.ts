@@ -73,3 +73,18 @@ export function fechaComentarioIso(fecha: string | null, tz: string): string | n
   const desfase = Number.isFinite(enZona) ? enZona - comoUtc : 0;
   return new Date(comoUtc - desfase).toISOString();
 }
+
+// ─── Lo que Kairo escribe en iComfly ─────────────────────────────────────────
+//
+// Cada gestion de la ficha del pedido (intento, decision o nota) se copia como
+// nota interna del pedido en iComfly (lib/icomfly-nota-kairo.ts), con esta
+// marca al principio. iComfly le agrega fecha y firma (la del conector), por
+// eso el nombre de la asesora va en el texto. Al volver a Kairo, lo que lleva
+// la marca no se muestra: ya esta en la bitacora como gestion.
+
+export const MARCA_KAIRO = "Kairo ·";
+
+/** true si el comentario lo escribio Kairo (no se muestra dos veces). */
+export function esNotaDeKairo(texto: string | null | undefined): boolean {
+  return String(texto ?? "").trimStart().startsWith(MARCA_KAIRO);
+}
