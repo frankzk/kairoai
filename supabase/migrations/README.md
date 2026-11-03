@@ -12,6 +12,11 @@ Reglas:
 
 Estado actual:
 
+TikTok por anuncio: `20261103230000_tiktok_anuncios_diario.sql` aplicada el
+03/11/2026. Tabla `tiktok_anuncios_diario` (una fila por tienda, anunciante,
+anuncio y día; RLS sin políticas). La llena POST `/api/marketing/tiktok-anuncios`
+(clave `KAIRO_MAKE_SECRET`) y la Matriz 4Pi de Marketing la suma a Meta.
+
 Gasto de TikTok desde Make: `20261103200000_tiktok_ads_diario.sql` aplicada el
 03/11/2026. Tabla `tiktok_ads_diario` (una fila por tienda, anunciante,
 campaña y día; RLS sin políticas). La llena POST `/api/marketing/tiktok-diario`

@@ -261,6 +261,11 @@ export async function getCharlieReport(
   env: Record<string, string | undefined> = process.env,
   fetcher: typeof fetch = fetch,
   now = new Date(),
+  /**
+   * Cuentas de TikTok por anuncio (lib/tiktok-anuncios.ts, enviadas por Make).
+   * Si fallan, el reporte sigue con Meta: no se pierde la matriz por TikTok.
+   */
+  tiktok?: (from: string, to: string) => Promise<CharlieAccount[]>,
 ): Promise<CharlieReport> {
   const checkedAt = now.toISOString();
   if (
@@ -290,15 +295,24 @@ export async function getCharlieReport(
     };
   try {
     const signal = AbortSignal.timeout(40_000);
-    const accounts = await Promise.all(
-      metaAccountIds(env).map((id) =>
-        account(id, expanded, env, fetcher, signal),
+    const [meta, deTiktok] = await Promise.all([
+      Promise.all(
+        metaAccountIds(env).map((id) =>
+          account(id, expanded, env, fetcher, signal),
+        ),
       ),
-    );
+      tiktok
+        ? tiktok(expanded.from, expanded.to).catch(() => null)
+        : Promise.resolve([] as CharlieAccount[]),
+    ]);
+    const accounts = [...meta, ...(deTiktok ?? [])];
     return {
       status: "ready",
       checkedAt,
-      message: "Lectura de anuncios y estructura completada.",
+      message:
+        deTiktok === null
+          ? "Lectura de anuncios de Meta completada; TikTok no se pudo leer."
+          : "Lectura de anuncios y estructura completada.",
       data: { accounts, from: period.from, to: period.to, trailFrom, trailTo },
     };
   } catch {

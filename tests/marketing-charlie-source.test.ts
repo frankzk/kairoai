@@ -151,6 +151,33 @@ describe("Charlie Meta reader", () => {
       purchases: 2,
     });
   });
+  it("suma las cuentas de TikTok por anuncio y, si TikTok falla, sigue con Meta", async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("act_123"))
+        return json({ id: "act_123", currency: "USD", timezone_name: "America/Costa_Rica" });
+      if (url.pathname.endsWith("/insights")) return json({ data: [reportRow] });
+      return json({ data: [] });
+    });
+    const tiktok = {
+      id: "7557",
+      name: "TikTok · KENKU HEAL1010",
+      currency: "PEN",
+      timezone: "",
+      ads: [],
+      adsets: [],
+    };
+    const conTiktok = await getCharlieReport(period, env, fetcher, now, async () => [tiktok]);
+    expect(conTiktok.status).toBe("ready");
+    expect(conTiktok.data?.accounts.map((a) => a.currency)).toEqual(["USD", "PEN"]);
+
+    const caido = await getCharlieReport(period, env, fetcher, now, async () => {
+      throw new Error("base caida");
+    });
+    expect(caido.status).toBe("ready");
+    expect(caido.data?.accounts).toHaveLength(1);
+    expect(caido.message).toContain("TikTok no se pudo leer");
+  });
   it("rejects a duplicate day, incomplete pagination or inaccessible configured account instead of partial totals", async () => {
     for (const mode of ["duplicate", "pagination", "account"]) {
       const fetcher = vi.fn(async (input: string | URL | Request) => {
