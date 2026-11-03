@@ -176,7 +176,11 @@ export async function leerCuentasTiktok(storeId: number, desde: string, hasta: s
     filas.push(...pagina);
     if (pagina.length < 1000) break;
   }
-  return cuentasTiktok(filas);
+  // Make no sabe la zona horaria de la cuenta: se configura aparte. Sin ella
+  // Marketing no da el CPA combinado (no sabe si los dias coinciden con los
+  // de los pedidos en Costa Rica).
+  const zona = process.env.TIKTOK_CR_TIMEZONE?.trim() ?? "";
+  return cuentasTiktok(filas.map((f) => (f.timezone ? f : { ...f, timezone: zona })));
 }
 
 /** Los anunciantes de TikTok de los que Make ya mando gasto para la tienda. */

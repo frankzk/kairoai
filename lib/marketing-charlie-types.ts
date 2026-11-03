@@ -58,12 +58,20 @@ export interface AdsetRole {
   role: "control" | "testing" | "other";
   updated_at?: string;
 }
+/** Soles por dolar (TikTok Costa Rica cobra en PEN): venta SBS publicada por el BCRP. */
+export interface PenRate {
+  rate: number;
+  date: string;
+  source: "bcrp";
+}
 export interface UsdRate {
   rate: number | null;
   date: string | null;
   source: "hacienda" | "manual" | "unavailable";
   checkedAt: string;
   message: string;
+  /** null si no se pudo verificar: los importes en PEN quedan sin convertir. */
+  pen?: PenRate | null;
 }
 export interface CharlieSettings {
   config: CharlieConfig;

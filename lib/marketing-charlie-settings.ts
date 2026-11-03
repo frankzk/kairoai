@@ -1,5 +1,5 @@
 import { getDB } from "./db";
-import { getMarketingUsdRate } from "./marketing-usd-rate";
+import { getMarketingPenRate, getMarketingUsdRate } from "./marketing-usd-rate";
 import type {
   AdsetRole,
   CharlieConfig,
@@ -37,10 +37,12 @@ export async function readCharlieSettings(
     }
     throw new Error("Roles pagination limit");
   };
-  const [config, roles, official] = await Promise.all([
+  const [config, roles, official, pen] = await Promise.all([
     readCharlieConfig(storeId),
     readRoles(),
     getMarketingUsdRate(),
+    // TikTok Costa Rica cobra en soles: sin esto su gasto no entra al CPA combinado.
+    getMarketingPenRate(),
   ]);
   const fx =
     config.crc_per_usd && config.rate_date
@@ -51,7 +53,8 @@ export async function readCharlieSettings(
           checkedAt: new Date().toISOString(),
           message:
             "Referencia manual de planificación, no tipo de cambio histórico ni liquidación bancaria.",
+          pen,
         }
-      : official;
+      : { ...official, pen };
   return { config, roles, fx };
 }

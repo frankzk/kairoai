@@ -39,7 +39,7 @@ export function CharlieCurrency({
           {loading
             ? "Consultando referencia USD…"
             : settings?.fx.rate
-              ? `Todos los reportes en USD. Referencia ${settings.fx.source === "hacienda" ? "Hacienda, venta" : "manual"}: ${count(settings.fx.rate)} CRC por USD, ${settings.fx.date}. Períodos históricos reexpresados a esta tasa, no a tasas históricas.`
+              ? `Todos los reportes en USD. Referencia ${settings.fx.source === "hacienda" ? "Hacienda, venta" : "manual"}: ${count(settings.fx.rate)} CRC por USD, ${settings.fx.date}.${settings.fx.pen ? ` TikTok (PEN): ${settings.fx.pen.rate} soles por USD, venta SBS del BCRP, ${settings.fx.pen.date}.` : " TikTok (PEN): sin tipo de cambio verificado, queda sin convertir."} Períodos históricos reexpresados a esta tasa, no a tasas históricas.`
               : "La referencia USD no está disponible. Los importes originalmente en CRC permanecen pendientes de conversión."}{" "}
           {settings?.fx.source === "hacienda" && (
             <a
