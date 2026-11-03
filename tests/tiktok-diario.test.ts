@@ -99,6 +99,13 @@ describe("POST /api/marketing/tiktok-diario", () => {
     expect(Array.from(guardado.values())[0]).toMatchObject({ spend: 24.31, store_id: 1 });
   });
 
+  it("un dia sin campañas (lista vacia) responde bien y no guarda nada", async () => {
+    const r = await enviar({ store: "mireva-cr", rows: [] });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ ok: true, guardadas: 0 });
+    expect(guardado.size).toBe(0);
+  });
+
   it("una tienda desconocida o una fila mala no se guarda", async () => {
     expect((await enviar({ store: "kenku-pe", ...fila() })).status).toBe(400);
     const r = await enviar({ store: "mireva-cr", rows: [fila(), fila({ spend: "x" })] });

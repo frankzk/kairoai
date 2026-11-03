@@ -35,8 +35,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "store invalido: usa mireva-cr o mireva-hn" }, { status: 400 });
   }
   const crudas = Array.isArray(cuerpo.rows) ? (cuerpo.rows as unknown[]) : [cuerpo];
-  if (!crudas.length || crudas.length > MAX_FILAS_POR_ENVIO) {
-    return NextResponse.json({ error: `entre 1 y ${MAX_FILAS_POR_ENVIO} filas por envio` }, { status: 400 });
+  // Un dia sin campañas activas: Make manda la lista vacia. No es un error
+  // (antes respondia 400 y Make mandaba correos de error).
+  if (!crudas.length) return NextResponse.json({ ok: true, guardadas: 0 });
+  if (crudas.length > MAX_FILAS_POR_ENVIO) {
+    return NextResponse.json({ error: `hasta ${MAX_FILAS_POR_ENVIO} filas por envio` }, { status: 400 });
   }
 
   const filas: FilaTiktok[] = [];
