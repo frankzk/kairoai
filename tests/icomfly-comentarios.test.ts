@@ -69,12 +69,14 @@ describe("notas de un pedido", () => {
     const { notasIcomflyDelPedido } = await import("../lib/icomfly-comentarios-db");
     const vivo = vi.fn(async () => ({
       id: 84457,
-      internal_note: "[2026-11-02 09:00 · Leny Aniuska] viejo\n[2026-11-02 11:00 · Leny Aniuska] nuevo",
+      internal_note:
+        "[2026-11-02 09:00 · Leny Aniuska] viejo\n[2026-11-02 10:00 · Mireva] Kairo · Leny Aniuska: No contestó\n[2026-11-02 11:00 · Leny Aniuska] nuevo",
       labels: [{ id: 9, name: "Posible duplicado" }],
     }));
     const r = await notasIcomflyDelPedido({ id: 1, code: "mireva-cr" }, "IC-84457", vivo);
     expect(vivo).toHaveBeenCalledWith("mireva-cr", "84457");
     expect(r).toMatchObject({ origen: "vivo", etiquetas: ["Posible duplicado"] });
+    // Lo que copio Kairo ya esta en la bitacora como gestion: no se repite.
     expect(r?.comentarios.map((c) => c.texto)).toEqual(["viejo", "nuevo"]);
     expect(filtrosUsados[0]).toContain("icomfly_order_id.eq.84457");
   });

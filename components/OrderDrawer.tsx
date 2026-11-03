@@ -192,6 +192,26 @@ function detalleEvento(e: OrderEvent, tz: string): string {
     .join(" · ");
 }
 
+// Si la gestion se copio a la nota del pedido en iComfly (lib/icomfly-nota-kairo.ts).
+function EstadoCopiaIcomfly({ evento }: { evento: OrderEvent }) {
+  const copia = (evento.metadata ?? {}).icomfly_nota as { estado?: string; error?: string } | undefined;
+  if (copia?.estado === "copiado") {
+    return (
+      <span className="whitespace-nowrap text-sky-300" title="Copiado a la nota del pedido en iComfly">
+        ✓ iComfly
+      </span>
+    );
+  }
+  if (copia?.estado === "error") {
+    return (
+      <span className="whitespace-nowrap text-amber-300" title={copia.error ?? "No se pudo copiar a iComfly"}>
+        no se copió a iComfly
+      </span>
+    );
+  }
+  return null;
+}
+
 function money(value: number, symbol: string): string {
   return `${symbol}${Math.round(Number(value) || 0).toLocaleString("es-CR")}`;
 }
@@ -392,14 +412,25 @@ export default function OrderDrawer({
           staff_name: staff.find((s) => s.id === vendedoraId)?.name ?? "",
         }),
       });
-      const body = (await res.json()) as { event?: OrderEvent; error?: string };
+      const body = (await res.json()) as {
+        event?: OrderEvent;
+        error?: string;
+        icomfly?: { estado: "copiado" | "sin_pedido" | "error"; error?: string };
+      };
       if (body.error) {
         setError(body.error);
         return;
       }
+      // Quedo en Kairo; solo avisa si no se pudo copiar a iComfly.
+      if (body.icomfly?.estado === "error") {
+        setError(`Quedó registrado en Kairo, pero no se copió a iComfly: ${body.icomfly.error ?? "error"}`);
+      }
       if (body.event) {
         if (kind === "contacto") setSugerida(null);
-        setDetail((cur) => ({ ...(cur ?? {}), events: [body.event as OrderEvent, ...(cur?.events ?? [])] }));
+        const nuevo: OrderEvent = body.icomfly
+          ? { ...body.event, metadata: { ...(body.event.metadata ?? {}), icomfly_nota: body.icomfly } }
+          : body.event;
+        setDetail((cur) => ({ ...(cur ?? {}), events: [nuevo, ...(cur?.events ?? [])] }));
         if (kind === "nota") setNote("");
         setPactando(null);
         onRegistrado?.();
@@ -846,6 +877,7 @@ export default function OrderDrawer({
                         {e.staff_name && (
                           <span className="whitespace-nowrap text-muted-foreground">{e.staff_name}</span>
                         )}
+                        <EstadoCopiaIcomfly evento={e} />
                       </div>
                       ) : null
                     )

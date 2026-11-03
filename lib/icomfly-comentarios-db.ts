@@ -6,12 +6,17 @@
 
 import { getDB } from "@/lib/db";
 import { getIcomflyOrderDetalle } from "@/lib/icomfly";
-import { leerComentariosIcomfly, leerEtiquetasIcomfly, type NotasIcomfly } from "@/lib/icomfly-comentarios";
+import { esNotaDeKairo, leerComentariosIcomfly, leerEtiquetasIcomfly, type NotasIcomfly } from "@/lib/icomfly-comentarios";
 import type { FinanceStoreCode } from "@/lib/store-config";
 import { filtrosPedidoIcomfly } from "@/lib/zadarma-calls";
 
+// Lo que Kairo copio a iComfly ya esta en la bitacora como gestion: no se repite.
 function notasDe(pedido: { internal_note?: unknown; labels?: unknown }, origen: NotasIcomfly["origen"]): NotasIcomfly {
-  return { comentarios: leerComentariosIcomfly(pedido.internal_note), etiquetas: leerEtiquetasIcomfly(pedido.labels), origen };
+  return {
+    comentarios: leerComentariosIcomfly(pedido.internal_note).filter((c) => !esNotaDeKairo(c.texto)),
+    etiquetas: leerEtiquetasIcomfly(pedido.labels),
+    origen,
+  };
 }
 
 /**
