@@ -4,6 +4,7 @@
 // server-side la usen sin que el navegador tenga que cargar todos los pedidos.
 // El de-duplicado contra page.tsx es un paso posterior.
 
+import { tasaConfirmacion } from "./anulacion-motivos";
 import { FINANCE_STORES, type FinanceStorePublic } from "@/lib/store-config";
 import type {
   BusinessExpense,
@@ -124,6 +125,10 @@ export interface TrackableOrderRow {
   dispatch_confirmed_by?: string;
   /** "icomfly": el pedido no esta en Shopify, viene de iComfly (lib/icomfly-pedidos.ts). */
   origen?: "icomfly";
+  /** Motivo de anulacion en iComfly (icomfly_orders.cancellation_reason). */
+  anulacion_motivo?: string;
+  /** Si anulado, NO cuenta para las tasas (lib/anulacion-motivos.ts). */
+  anulacion_excluida?: boolean;
 }
 
 export interface OpMetrics {
@@ -139,6 +144,10 @@ export interface OpMetrics {
   returnRate: number;
   dispatchRate: number;
   annulRate: number;
+  /** Anulados que no cuentan (duplicado, lista negra, upsell...): fuera de todo lo de arriba. */
+  annulledExcluded: number;
+  /** Despachados / (despachados + anulados que cuentan); null sin pedidos decididos. */
+  confirmRate: number | null;
   leadAvg: number | null;
   leadSamples: number;
   ticket: number;
@@ -490,6 +499,7 @@ export function computeOpMetricsFromTrackableRows(
   let delivered = 0;
   let notDelivered = 0;
   let annulled = 0;
+  let annulledExcluded = 0;
   let enRoute = 0;
   let enRouteRetry = 0;
   let revenue = 0;
@@ -497,9 +507,15 @@ export function computeOpMetricsFromTrackableRows(
   const leadDays: number[] = [];
 
   for (const row of rows) {
-    generated += 1;
     const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
     const status = getEffectiveTrackingStatus(row, traces);
+    // Duplicados, lista negra, cambios en la orden, upsell...: no eran pedidos
+    // que se pudieran confirmar. No cuentan ni como generados ni como anulados.
+    if (status === "annulled" && row.anulacion_excluida) {
+      annulledExcluded += 1;
+      continue;
+    }
+    generated += 1;
     if (Boolean(row.guide_number) || isDispatchedStatus(status)) dispatched += 1;
     if (status === "delivered") delivered += 1;
     else if (status === "not_delivered" || status === "returned") notDelivered += 1;
@@ -535,6 +551,8 @@ export function computeOpMetricsFromTrackableRows(
     returnRate: dispatched ? (notDelivered / dispatched) * 100 : 0,
     dispatchRate: generated ? (dispatched / generated) * 100 : 0,
     annulRate: generated ? (annulled / generated) * 100 : 0,
+    annulledExcluded,
+    confirmRate: tasaConfirmacion(dispatched, annulled),
     leadAvg: leadDays.length ? leadDays.reduce((acc, value) => acc + value, 0) / leadDays.length : null,
     leadSamples: leadDays.length,
     ticket: valueOrders ? revenue / valueOrders : 0,

@@ -56,6 +56,9 @@ export interface NormalizedIcomflyOrder {
   shippedAt: string | null;
   createdAt: string | null;
   attribution: Partial<Record<"creo" | "confirmo" | "genero_guia" | "envio" | "cancelo", AttributionActor>>;
+  /** Cuando y por que se anulo en iComfly (lib/anulacion-motivos.ts decide si cuenta). */
+  cancelledAt?: string | null;
+  cancellationReason?: string | null;
 }
 
 export type DispatchState = "pendiente" | "despacho_solicitado" | "despachado";
@@ -94,6 +97,8 @@ export interface IcomflyOrderRow {
   guide_final_at: string | null;
   guide_final_source: "" | "icomfly" | "boxful";
   raw_attribution: Record<string, unknown>;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
 }
 
 // ─── Normalizacion de nombres (match con planilla) ───────────────────────────
@@ -277,6 +282,8 @@ export function buildIcomflyOrderRow(
     guide_final_at: guideFinal.at,
     guide_final_source: guideFinal.source,
     raw_attribution: (order.attribution ?? {}) as Record<string, unknown>,
+    cancelled_at: order.cancelledAt ?? null,
+    cancellation_reason: order.cancellationReason ?? null,
   };
 }
 

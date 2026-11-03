@@ -15,6 +15,7 @@
 // Puro: se prueba en tests/productividad-despacho.test.ts.
 
 import { localDateKey } from "@/lib/leads-metrics";
+import { anulacionExcluida } from "@/lib/anulacion-motivos";
 
 export interface AtribucionPedido {
   guide_final_at: string | null;
@@ -25,6 +26,10 @@ export interface AtribucionPedido {
   confirmo_por: string | null;
   /** Estado actual de ese mismo pedido en iComfly. */
   estado_actual?: string | null;
+  /** Cuando se anulo en iComfly, quien (raw_attribution.cancelo.name) y por que. */
+  cancelled_at?: string | null;
+  anulo_por?: string | null;
+  motivo_anulacion?: string | null;
 }
 
 /** One completed replacement counts as one upsell, regardless of units sold. */
@@ -44,6 +49,10 @@ export interface PersonaDespacho {
   /** Devoluciones/no entregados finales; no incluye cancelaciones ni novedades abiertas. */
   no_entregados: number;
   confirmados: number;
+  /** Anulados por esta persona que cuentan para la tasa de confirmacion. */
+  anulados: number;
+  /** Anulados que no cuentan: duplicado, lista negra, cambio en la orden, upsell... */
+  anuladosExcluidos: number;
   upsells: number;
   /** Despachados por dia local (YYYY-MM-DD). */
   porDia: Record<string, number>;
@@ -57,6 +66,8 @@ export interface ResumenDespacho {
   entregados: number;
   no_entregados: number;
   confirmados: number;
+  anulados: number;
+  anuladosExcluidos: number;
   upsells: number;
 }
 
@@ -91,7 +102,18 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
     const clave = nombre.toLowerCase();
     let p = personas.get(clave);
     if (!p) {
-      p = { nombre, esIa: IA.test(nombre), despachados: 0, entregados: 0, no_entregados: 0, confirmados: 0, upsells: 0, porDia: {} };
+      p = {
+        nombre,
+        esIa: IA.test(nombre),
+        despachados: 0,
+        entregados: 0,
+        no_entregados: 0,
+        confirmados: 0,
+        anulados: 0,
+        anuladosExcluidos: 0,
+        upsells: 0,
+        porDia: {},
+      };
       personas.set(clave, p);
     }
     return p;
@@ -101,6 +123,8 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
   let entregados = 0;
   let no_entregados = 0;
   let confirmados = 0;
+  let anulados = 0;
+  let anuladosExcluidos = 0;
   let upsells = 0;
   for (const fila of filas) {
     if (enRango(fila.guide_final_at, desde, hasta)) {
@@ -121,6 +145,18 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
       persona(fila.confirmo_por).confirmados += 1;
       confirmados += 1;
     }
+    // Para la tasa de confirmacion: los anulados por duplicado, lista negra,
+    // cambio en la orden, upsell... van aparte (lib/anulacion-motivos.ts).
+    if (enRango(fila.cancelled_at ?? null, desde, hasta)) {
+      const p = persona(fila.anulo_por ?? null);
+      if (anulacionExcluida(fila.motivo_anulacion)) {
+        p.anuladosExcluidos += 1;
+        anuladosExcluidos += 1;
+      } else {
+        p.anulados += 1;
+        anulados += 1;
+      }
+    }
   }
 
   const contados = new Set<string>();
@@ -136,7 +172,26 @@ export function resumenDespacho(filas: AtribucionPedido[], desdeIso: string, has
   const lista = Array.from(personas.values()).sort(
     (a, b) => orden(a) - orden(b) || b.despachados - a.despachados || b.confirmados - a.confirmados || b.upsells - a.upsells || a.nombre.localeCompare(b.nombre)
   );
-  return { personas: lista, dias: diasDelRango(desdeIso, hastaIso), despachados, entregados, no_entregados, confirmados, upsells };
+  return {
+    personas: lista,
+    dias: diasDelRango(desdeIso, hastaIso),
+    despachados,
+    entregados,
+    no_entregados,
+    confirmados,
+    anulados,
+    anuladosExcluidos,
+    upsells,
+  };
+}
+
+/**
+ * Confirmados / (confirmados + anulados que cuentan), de lo que esa persona
+ * resolvio en el rango. Los anulados por duplicado, lista negra, cambio en la
+ * orden, upsell... no entran (lib/anulacion-motivos.ts).
+ */
+export function tasaConfirmacionPersona(confirmados: number, anulados: number): string {
+  return tasaEntregaDespacho(confirmados, confirmados + anulados);
 }
 
 /** Denominator includes all dispatched orders, including those still in transit. */

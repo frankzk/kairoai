@@ -6,7 +6,7 @@
 // de iComfly contado como una persona dan otro reporte.
 
 import { describe, expect, it, vi } from "vitest";
-import { diasDelRango, resumenDespacho, tasaEntregaDespacho, tasaEntregaCerrados, esNoEntregadoCerrado, SIN_NOMBRE, type AtribucionPedido } from "../lib/productividad-despacho";
+import { diasDelRango, resumenDespacho, tasaConfirmacionPersona, tasaEntregaDespacho, tasaEntregaCerrados, esNoEntregadoCerrado, SIN_NOMBRE, type AtribucionPedido } from "../lib/productividad-despacho";
 import { exigenciaDe, cumple } from "../lib/permisos";
 
 // Cadena de supabase-js simulada: registra cada llamada y responde vacio.
@@ -202,23 +202,49 @@ describe("upsells completados desde Gestión", () => {
   });
 });
 
+describe("tasa de confirmación por persona", () => {
+  it("los anulados por duplicado, lista negra, cambio en la orden o upsell no bajan la tasa", () => {
+    const r = resumenDespacho(
+      [
+        fila({ confirmed_at: DESDE, confirmo_por: "Leny" }),
+        fila({ confirmed_at: DESDE, confirmo_por: "Leny" }),
+        fila({ confirmed_at: DESDE, confirmo_por: "Leny" }),
+        fila({ cancelled_at: DESDE, anulo_por: "Leny", motivo_anulacion: "Cliente canceló" }),
+        fila({ cancelled_at: DESDE, anulo_por: "Leny", motivo_anulacion: "Duplicado" }),
+        fila({ cancelled_at: DESDE, anulo_por: "Leny", motivo_anulacion: "lista negra ya tiene 2 devoluciones " }),
+        fila({ cancelled_at: DESDE, anulo_por: "Leny", motivo_anulacion: "Error en el pedido" }),
+        fila({ cancelled_at: DESDE, anulo_por: "Leny", motivo_anulacion: "Reemplazado por pedido con upsell MANUAL-1 (ID 2)" }),
+      ],
+      DESDE,
+      HASTA
+    );
+    const leny = r.personas.find((p) => p.nombre === "Leny")!;
+    expect(leny).toMatchObject({ confirmados: 3, anulados: 1, anuladosExcluidos: 4 });
+    expect(tasaConfirmacionPersona(leny.confirmados, leny.anulados)).toBe("75,0%");
+    expect(r).toMatchObject({ anulados: 1, anuladosExcluidos: 4 });
+  });
+});
+
 describe("lo que se lee de la base", () => {
-  it("solo la tienda pedida, con guía o confirmación en el rango", async () => {
+  it("solo la tienda pedida, con guía, confirmación o anulación en el rango", async () => {
     const { listAtribucionDespacho } = await import("../lib/finance");
     await listAtribucionDespacho(2, DESDE, HASTA);
     expect(llamadas).toContain("from:icomfly_orders");
     expect(llamadas.some((l) => l.startsWith("select:") && l.includes("estado_actual:status"))).toBe(true);
     expect(llamadas).toContain("eq:store_id|2");
-    // Una consulta por fecha de guia y otra por fecha de confirmacion.
+    // Una consulta por fecha de guia, otra por confirmacion y otra por anulacion.
     expect(llamadas).toEqual(
       expect.arrayContaining([
         `gte:guide_final_at|${DESDE}`,
         `lt:guide_final_at|${HASTA}`,
         `gte:confirmed_at|${DESDE}`,
         `lt:confirmed_at|${HASTA}`,
+        `gte:cancelled_at|${DESDE}`,
+        `lt:cancelled_at|${HASTA}`,
       ])
     );
-    expect(llamadas.filter((l) => l === "eq:store_id|2")).toHaveLength(2);
+    expect(llamadas.some((l) => l.startsWith("select:") && l.includes("anulo_por:raw_attribution->cancelo->>name"))).toBe(true);
+    expect(llamadas.filter((l) => l === "eq:store_id|2")).toHaveLength(3);
     expect(llamadas.some((l) => l.startsWith("range:0|999"))).toBe(true);
   });
 });

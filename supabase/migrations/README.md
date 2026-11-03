@@ -12,6 +12,12 @@ Reglas:
 
 Estado actual:
 
+Motivo de anulación: `20261103180000_icomfly_motivo_anulacion.sql` aplicada el
+03/11/2026. Agrega a `icomfly_orders` `cancelled_at` y `cancellation_reason`
+(copiados del pedido completo; el sync los mantiene) con índice parcial por
+tienda y fecha de anulación. Con eso la tasa de confirmación deja fuera los
+anulados que no eran un pedido real (`lib/anulacion-motivos.ts`).
+
 Costo de llamadas Telnyx: `20261103120000_telnyx_costo_llamada.sql` aplicada el
 03/11/2026. Agrega a `zadarma_calls` `cost`, `cost_currency`, `billed_seconds`
 (los llena el evento `call.cost` de Telnyx) y `telnyx_call_control_id` (con

@@ -206,16 +206,12 @@ export async function getOrderPhone(
 }
 
 /**
- * Telefono de un pedido de iComfly. Desde el 28/10/2026 Shopify esta cerrado y
- * los pedidos nuevos solo existen en iComfly: sin esto, "Llamar" en Gestion
- * decia que el pedido no tenia telefono. El nombre es el que les pone Kairo
- * (nombrePedidoIcomfly en lib/icomfly-pedidos.ts): IC-W<secuencia web>,
- * IC-<numero o id> o el numero de Shopify que traiga.
+ * Filtro `or` de PostgREST sobre icomfly_order_payloads para encontrar un
+ * pedido por el nombre que le pone Kairo (nombrePedidoIcomfly en
+ * lib/icomfly-pedidos.ts): IC-W<secuencia web>, IC-<numero o id> o el numero
+ * de Shopify que traiga. null si el nombre no es valido.
  */
-export async function getIcomflyOrderPhone(
-  storeId: number,
-  orderName: string
-): Promise<{ phone: string; customerName: string } | null> {
+export function filtrosPedidoIcomfly(orderName: string): string | null {
   const name = orderName.trim();
   // Se valida antes de interpolar en el filtro `or` de PostgREST.
   if (!/^#?[A-Za-z0-9-]{2,40}$/.test(name)) return null;
@@ -232,6 +228,22 @@ export async function getIcomflyOrderPhone(
   } else {
     filtros.push(`payload->>shopify_display_number.eq.${name}`);
   }
+  return filtros.join(",");
+}
+
+/**
+ * Telefono de un pedido de iComfly. Desde el 28/10/2026 Shopify esta cerrado y
+ * los pedidos nuevos solo existen en iComfly: sin esto, "Llamar" en Gestion
+ * decia que el pedido no tenia telefono. El nombre es el que les pone Kairo
+ * (nombrePedidoIcomfly en lib/icomfly-pedidos.ts): IC-W<secuencia web>,
+ * IC-<numero o id> o el numero de Shopify que traiga.
+ */
+export async function getIcomflyOrderPhone(
+  storeId: number,
+  orderName: string
+): Promise<{ phone: string; customerName: string } | null> {
+  const filtros = filtrosPedidoIcomfly(orderName);
+  if (!filtros) return null;
 
   const { data, error } = await getDB()
     .from("icomfly_order_payloads")
@@ -239,7 +251,7 @@ export async function getIcomflyOrderPhone(
       "customer_phone:payload->customer->>phone, shipping_phone:payload->>shipping_phone, whatsapp:payload->customer->>whatsapp, shipping_name:payload->>shipping_name, customer_name:payload->customer->>fullName"
     )
     .eq("store_id", storeId)
-    .or(filtros.join(","))
+    .or(filtros)
     .limit(1);
   if (error) throw new Error(`getIcomflyOrderPhone: ${error.message}`);
 

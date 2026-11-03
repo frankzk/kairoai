@@ -149,12 +149,12 @@ async function getToken(storeCode: FinanceStoreCode): Promise<string> {
   return token;
 }
 
-async function icomflyFetch(path: string, storeCode: FinanceStoreCode): Promise<unknown> {
+async function icomflyFetch(path: string, storeCode: FinanceStoreCode, timeoutMs = 15000): Promise<unknown> {
   const token = await getToken(storeCode);
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (res.status === 401) {
     // Token expirado: invalida cache y reintenta una vez.
@@ -163,7 +163,7 @@ async function icomflyFetch(path: string, storeCode: FinanceStoreCode): Promise<
     const retry = await fetch(`${BASE}${path}`, {
       headers: { Authorization: `Bearer ${retryToken}` },
       cache: "no-store",
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!retry.ok) throw new Error(`iComfly API error ${retry.status}: ${(await retry.text()).slice(0, 200)}`);
     return retry.json();
@@ -184,6 +184,24 @@ export interface IcomflyOrdersPage {
   orders: NormalizedIcomflyOrder[];
   raw: Array<Record<string, unknown>>;
   hasMore: boolean;
+}
+
+/**
+ * El pedido tal como esta AHORA en iComfly (solo el detalle, sin completar las
+ * lineas): para leer notas y etiquetas al abrir la ficha. Rechaza el de otra tienda.
+ */
+export async function getIcomflyOrderDetalle(
+  store: FinanceStoreCode,
+  id: string,
+  timeoutMs = 4000
+): Promise<Record<string, unknown>> {
+  if (!/^[1-9]\d*$/.test(id)) throw new Error("ID de pedido inválido.");
+  const result = (await icomflyFetch(`/orders/${id}`, store, timeoutMs)) as Record<string, unknown>;
+  const order = (result.data ?? result) as Record<string, unknown>;
+  if (String(order.id) !== id || Number(order.store_id) !== getIcomflyExternalStoreId(store)) {
+    throw new Error("El pedido no pertenece a esta tienda.");
+  }
+  return order;
 }
 
 /** Read the exact internal ID independently and reject another store's order. */
@@ -348,5 +366,7 @@ export function normalizeIcomflyOrder(
     shippedAt: pickString(raw, ["shipped_at", "fecha_envio", "sent_at", "dispatched_at"]) || null,
     createdAt: pickString(raw, ["created_at", "createdAt", "fecha", "fecha_creacion", "date"]) || null,
     attribution,
+    cancelledAt: pickString(raw, ["cancelled_at", "canceled_at"]) || null,
+    cancellationReason: pickString(raw, ["cancellation_reason", "cancel_reason"]).trim() || null,
   };
 }
