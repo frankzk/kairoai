@@ -31,6 +31,22 @@ export function ultimoTipoBcrp(body: unknown): { rate: number; date: string } | 
 }
 
 /**
+ * El BCRP a veces pega un aviso de PHP (HTML "<br />...xdebug...") DESPUES del
+ * JSON cuando el rango incluye dias sin dato (visto el 03/11/2026): se lee el
+ * JSON hasta donde empieza el HTML. null si no hay JSON valido.
+ */
+export function jsonBcrp(texto: string): unknown {
+  for (const candidato of [texto, texto.slice(0, texto.indexOf("<") >= 0 ? texto.indexOf("<") : texto.length)]) {
+    try {
+      return JSON.parse(candidato);
+    } catch {
+      // Siguiente intento: sin el HTML del final.
+    }
+  }
+  return null;
+}
+
+/**
  * Soles por dolar: venta del sistema bancario (SBS) publicada por el Banco
  * Central de Reserva del Peru, serie PD04640PD. Sin dato de los ultimos 7
  * dias, null: mejor sin convertir que con una tasa vieja.
@@ -50,7 +66,7 @@ export async function getMarketingPenRate(
       { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(8_000) },
     );
     if (!response.ok) throw new Error();
-    const ultimo = ultimoTipoBcrp(await response.json());
+    const ultimo = ultimoTipoBcrp(jsonBcrp(await response.text()));
     const age = ultimo ? (dateTime(hoy) - dateTime(ultimo.date)) / MARKETING_DAY : NaN;
     if (ultimo && Number.isFinite(age) && age >= 0 && age <= 7) value = { ...ultimo, source: "bcrp" };
   } catch {

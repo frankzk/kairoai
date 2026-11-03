@@ -5,7 +5,7 @@
 // leida convertiria mal todo el gasto: mejor sin convertir que inventado.
 
 import { describe, expect, it } from "vitest";
-import { asUsd, fechaBcrp, getMarketingPenRate, ultimoTipoBcrp } from "../lib/marketing-usd-rate";
+import { asUsd, fechaBcrp, getMarketingPenRate, jsonBcrp, ultimoTipoBcrp } from "../lib/marketing-usd-rate";
 
 // Respuesta real del BCRP (serie PD04640PD), los dias sin dato vienen "n.d.".
 const BCRP = {
@@ -25,6 +25,14 @@ describe("tipo de cambio PEN del BCRP", () => {
     expect(fechaBcrp("raro")).toBeNull();
     expect(ultimoTipoBcrp(BCRP)).toEqual({ rate: 3.467, date: "2026-10-30" });
     expect(ultimoTipoBcrp({ periods: [{ name: "02.Nov.26", values: ["n.d."] }] })).toBeNull();
+  });
+
+  it("lee el JSON aunque el BCRP le pegue un aviso de PHP al final (03/11/2026)", async () => {
+    const conAviso = `${JSON.stringify(BCRP)}<br />\n<font size='1'><table class='xdebug-error xe-notice'>( ! ) Notice: Undefined offset: 1</table></font>`;
+    expect(ultimoTipoBcrp(jsonBcrp(conAviso))).toEqual({ rate: 3.467, date: "2026-10-30" });
+    expect(jsonBcrp("<html>caido</html>")).toBeNull();
+    const fetcher = (async () => new Response(conAviso, { status: 200, headers: { "content-type": "text/html" } })) as unknown as typeof fetch;
+    expect(await getMarketingPenRate(fetcher, new Date("2026-11-03T15:00:00Z"), false)).toMatchObject({ rate: 3.467 });
   });
 
   it("consulta el BCRP; con una tasa de hace mas de 7 dias no convierte", async () => {
