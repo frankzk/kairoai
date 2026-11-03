@@ -305,6 +305,9 @@ export interface IcomflyOrderRecord {
   guide_final_at: string | null;
   guide_final_source: string;
   raw_attribution: Record<string, unknown>;
+  /** Migracion 20261103180000: cuando y por que se anulo en iComfly. */
+  cancelled_at?: string | null;
+  cancellation_reason?: string | null;
   synced_at: string;
 }
 

@@ -22,6 +22,7 @@ import {
 } from "@/lib/finance";
 import { resolveDispatchState } from "@/lib/dispatch";
 import { corteIcomflyDe, nombrePedidoIcomfly, pedidosDeIcomfly, skusPorProducto } from "@/lib/icomfly-pedidos";
+import { anulacionExcluida } from "@/lib/anulacion-motivos";
 import { normalizeMatchKey } from "@/lib/order-matching";
 import type { IcomflyOrderRecord } from "@/lib/finance-types";
 import {
@@ -432,6 +433,11 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
     if (rec) {
       row.dispatch_requested_by = rec.requested_by_name || "";
       row.dispatch_confirmed_by = rec.confirmed_by_name || "";
+      // Por que se anulo en iComfly: decide si cuenta para las tasas.
+      if (rec.cancellation_reason) {
+        row.anulacion_motivo = rec.cancellation_reason;
+        row.anulacion_excluida = anulacionExcluida(rec.cancellation_reason);
+      }
     }
   }
 

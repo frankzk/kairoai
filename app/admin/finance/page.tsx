@@ -1583,7 +1583,7 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4 xl:grid-cols-7">
+          <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4 xl:grid-cols-8">
             {operationalKpis.cards.map(({ id, ...card }) =>
               // El comparativo reemplaza al lead time en cualquier tienda que
               // tenga despachos: se arma con los couriers reales del periodo.
@@ -8839,6 +8839,10 @@ interface OpMetrics {
   returnRate: number;
   dispatchRate: number;
   annulRate: number;
+  /** Anulados que no cuentan (duplicado, lista negra, upsell...); el server los saca de todo lo demas. */
+  annulledExcluded?: number;
+  /** Despachados / (despachados + anulados que cuentan). */
+  confirmRate?: number | null;
   leadAvg: number | null;
   leadSamples: number;
   ticket: number;
@@ -8872,6 +8876,8 @@ interface KpiCardVM {
   tone: KpiTone;
   deltaLabel: string | null;
   deltaTone: DeltaTone;
+  /** Explicacion al pasar el mouse. */
+  title?: string;
 }
 
 function startOfDayMs(date: Date): number {
@@ -9116,6 +9122,11 @@ function annulTone(rate: number): KpiTone {
   return rate <= 10 ? "good" : rate <= 20 ? "warn" : "bad";
 }
 
+// Espejo de annulTone: <=10% anulados es >=90% confirmados.
+function confirmTone(rate: number): KpiTone {
+  return rate >= 90 ? "good" : rate >= 80 ? "warn" : "bad";
+}
+
 // Fila operativa COD: embudo de izquierda a derecha (volumen -> despacho ->
 // entrega -> anulacion -> reparto -> velocidad -> cesta). Cada card lleva valor,
 // comparativo vs periodo anterior y semaforo contra meta.
@@ -9151,13 +9162,27 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCa
       sub: `${formatInt(cur.delivered)}/${formatInt(cur.dispatched)} despachados - No entr. ${cur.returnRate.toFixed(1)}%`,
     },
     {
+      id: "confirm",
+      label: "Tasa de confirmación",
+      value: cur.confirmRate == null ? "—" : fmtPct1(cur.confirmRate),
+      tone: cur.confirmRate == null ? "neutral" : confirmTone(cur.confirmRate),
+      deltaLabel: cur.confirmRate == null ? null : ppDelta(cur.confirmRate, prev?.confirmRate ?? null),
+      deltaTone: deltaTone(cur.confirmRate ?? null, prev?.confirmRate ?? null, "up"),
+      sub: `${formatInt(cur.dispatched)}/${formatInt(cur.dispatched + cur.annulled)} decididos`,
+    },
+    {
       id: "annul",
       label: "Tasa de anulación",
       value: fmtPct1(cur.annulRate),
       tone: annulTone(cur.annulRate),
       deltaLabel: ppDelta(cur.annulRate, prev?.annulRate ?? null),
       deltaTone: deltaTone(cur.annulRate, prev?.annulRate ?? null, "down"),
-      sub: `${formatInt(cur.annulled)}/${formatInt(cur.generated)} anulados`,
+      sub: `${formatInt(cur.annulled)}/${formatInt(cur.generated)} anulados${
+        cur.annulledExcluded ? ` · ${formatInt(cur.annulledExcluded)} no cuentan` : ""
+      }`,
+      title: cur.annulledExcluded
+        ? "No cuentan los anulados por duplicado, número errado, producto agotado, lista negra, cambio en la orden (error en el pedido), fraude, prueba o reemplazo por upsell."
+        : undefined,
     },
     {
       id: "wip",
@@ -9198,6 +9223,7 @@ function OperationalKpiCard({
   deltaLabel = null,
   deltaTone: deltaToneValue = "muted",
   loading = false,
+  title,
 }: {
   label: string;
   value: string;
@@ -9207,6 +9233,7 @@ function OperationalKpiCard({
   deltaLabel?: string | null;
   deltaTone?: DeltaTone;
   loading?: boolean;
+  title?: string;
 }) {
   const borderClass =
     tone === "good"
@@ -9231,7 +9258,7 @@ function OperationalKpiCard({
         ? "text-red-400"
         : "text-muted-foreground";
   return (
-    <Card className={borderClass}>
+    <Card className={borderClass} title={title}>
       <CardContent className="p-2.5 sm:p-3">
         <div className="flex items-baseline justify-between gap-1.5">
           <p className="truncate text-[11px] text-muted-foreground">{label}</p>

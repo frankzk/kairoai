@@ -1337,12 +1337,12 @@ export async function listAtribucionDespacho(
 ): Promise<AtribucionPedido[]> {
   const pageSize = 1000;
   const porPedido = new Map<string, AtribucionPedido>();
-  for (const columna of ["guide_final_at", "confirmed_at"] as const) {
+  for (const columna of ["guide_final_at", "confirmed_at", "cancelled_at"] as const) {
     for (let from = 0; ; from += pageSize) {
       const { data, error } = await getDB()
         .from("icomfly_orders")
         .select(
-          "icomfly_order_id,guide_final_at,confirmed_at,estado_actual:status,guia_por:raw_attribution->genero_guia->>name,confirmo_por:raw_attribution->confirmo->>name"
+          "icomfly_order_id,guide_final_at,confirmed_at,cancelled_at,motivo_anulacion:cancellation_reason,estado_actual:status,guia_por:raw_attribution->genero_guia->>name,confirmo_por:raw_attribution->confirmo->>name,anulo_por:raw_attribution->cancelo->>name"
         )
         .eq("store_id", storeId)
         .gte(columna, desdeIso)

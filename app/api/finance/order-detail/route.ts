@@ -14,6 +14,7 @@ import { configDeTienda, problemaFechaPactada, recordatorioPara, requiereFechaPa
 import { identidadActual, vendedoraEfectiva } from "@/lib/identidad";
 import { orderAlerts, riskInputFromHistory } from "@/lib/order-risk";
 import { llamadasDelTelefono } from "@/lib/llamadas-historial";
+import { notasIcomflyDelPedido } from "@/lib/icomfly-comentarios-db";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -42,7 +43,7 @@ export async function GET(req: NextRequest) {
   try {
     // Cada pieza es best-effort: que falle el chat no puede dejar sin alertas
     // a la asesora, que es lo que de verdad necesita para decidir.
-    const [history, events, chatLead, confirmacionConfig, llamadas] = await Promise.all([
+    const [history, events, chatLead, confirmacionConfig, llamadas, notasIcomfly] = await Promise.all([
       phone
         ? loadCustomerOrdersByPhone({
             storeId: store.id,
@@ -62,6 +63,11 @@ export async function GET(req: NextRequest) {
       leerConfigConfirmacion(store.id, store.code).catch(() => configDeTienda(store.code, null)),
       // Las llamadas a este cliente (Zadarma y Telnyx), para la bitacora.
       phone ? llamadasDelTelefono({ storeCode: store.code, phone }).catch(() => []) : Promise.resolve([]),
+      // Los comentarios y etiquetas que le pusieron al pedido en iComfly.
+      notasIcomflyDelPedido(store, orderName).catch((err) => {
+        console.warn(`[order-detail] notas de iComfly: ${err instanceof Error ? err.message : err}`);
+        return null;
+      }),
     ]);
 
     const alerts = orderAlerts(
@@ -83,6 +89,7 @@ export async function GET(req: NextRequest) {
       chat_lead: chatLead,
       confirmacion_config: confirmacionConfig,
       llamadas,
+      notas_icomfly: notasIcomfly,
     });
   } catch (err) {
     const message = toFriendlyErrorMessage(err, "Error al abrir el pedido");
