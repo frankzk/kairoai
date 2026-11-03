@@ -2,6 +2,7 @@
 import { periodFromInput, type MarketingPeriod } from "./marketing-dates";
 import { readMetaBudgets } from "./marketing-meta-budgets";
 import type {
+  MarketingAdsAccounts,
   MarketingAdsData,
   MarketingCampaign,
   MarketingSource,
@@ -393,11 +394,49 @@ async function shipheroStock(
   throw new Error("ShipHero pagination limit");
 }
 
+/** TikTok desde lo que mando Make: sin filas en el periodo no es gasto cero, es "pendiente". */
+async function tiktokDesdeMake(
+  leer: (from: string, to: string) => Promise<MarketingAdsData[]>,
+  period: MarketingPeriod,
+): Promise<MarketingSource<MarketingAdsAccounts>> {
+  const checkedAt = new Date().toISOString();
+  try {
+    const accounts = await leer(period.from, period.to);
+    if (!accounts.length)
+      return {
+        status: "pending",
+        checkedAt,
+        message: "Make todavía no envió gasto de TikTok para este período.",
+        data: null,
+      };
+    return {
+      status: "ready",
+      checkedAt,
+      message: "Gasto diario enviado por Make (reporte de TikTok Ads).",
+      data: { accounts },
+    };
+  } catch {
+    return {
+      status: "error",
+      checkedAt,
+      message: "No se pudo leer el gasto de TikTok guardado.",
+      data: null,
+    };
+  }
+}
+
 export async function getMarketingSources(
   input: string | Pick<MarketingPeriod, "from" | "to">,
   env: Env = process.env,
   fetcher: typeof fetch = fetch,
-  options: { details?: boolean } = {},
+  options: {
+    details?: boolean;
+    /**
+     * Gasto de TikTok que manda Make (lib/tiktok-diario.ts), para cuando no hay
+     * acceso directo a la API. Recibe los dias YYYY-MM-DD, inclusivos.
+     */
+    tiktokDesdeMake?: (from: string, to: string) => Promise<MarketingAdsData[]>;
+  } = {},
 ): Promise<MarketingSources> {
   const period = periodFromInput(input);
   if (!period) throw new Error("Invalid period");
@@ -416,12 +455,14 @@ export async function getMarketingSources(
         ),
       }),
     ),
-    source(
-      has("TIKTOK_CR_ADVERTISER_ID", "TIKTOK_CR_ACCESS_TOKEN"),
-      async (signal) => ({
-        accounts: [await tiktokAds(period, env, fetcher, signal)],
-      }),
-    ),
+    has("TIKTOK_CR_ADVERTISER_ID", "TIKTOK_CR_ACCESS_TOKEN") || !options.tiktokDesdeMake
+      ? source(
+          has("TIKTOK_CR_ADVERTISER_ID", "TIKTOK_CR_ACCESS_TOKEN"),
+          async (signal) => ({
+            accounts: [await tiktokAds(period, env, fetcher, signal)],
+          }),
+        )
+      : tiktokDesdeMake(options.tiktokDesdeMake, period),
     source(
       has(
         "SHIPHERO_CR_ACCESS_TOKEN",

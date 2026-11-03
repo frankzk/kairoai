@@ -12,6 +12,11 @@ Reglas:
 
 Estado actual:
 
+Gasto de TikTok desde Make: `20261103200000_tiktok_ads_diario.sql` aplicada el
+03/11/2026. Tabla `tiktok_ads_diario` (una fila por tienda, anunciante,
+campaña y día; RLS sin políticas). La llena POST `/api/marketing/tiktok-diario`
+con la clave `KAIRO_MAKE_SECRET` y Marketing la usa como fuente de TikTok.
+
 Motivo de anulación: `20261103180000_icomfly_motivo_anulacion.sql` aplicada el
 03/11/2026. Agrega a `icomfly_orders` `cancelled_at` y `cancellation_reason`
 (copiados del pedido completo; el sync los mantiene) con índice parcial por

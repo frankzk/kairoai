@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { anunciantesTiktok } from "@/lib/tiktok-diario";
 import { getDB } from "@/lib/db";
 import { identidadActual } from "@/lib/identidad";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
@@ -98,11 +99,15 @@ export async function PATCH(req: NextRequest) {
       const platform = body.platform,
         account = body.account_id,
         campaign = body.campaign_id;
+      // TikTok: la cuenta configurada o las que ya mandaron gasto por Make.
       const ids =
         platform === "meta"
           ? metaAccountIds(process.env)
           : platform === "tiktok"
-            ? [process.env.TIKTOK_CR_ADVERTISER_ID]
+            ? [
+                process.env.TIKTOK_CR_ADVERTISER_ID,
+                ...(await anunciantesTiktok(store.id).catch(() => [])),
+              ]
             : [];
       if (
         typeof account !== "string" ||

@@ -3,6 +3,7 @@ import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { MARKETING_STORE } from "@/lib/marketing";
 import { periodFromParams } from "@/lib/marketing-dates";
 import { getMarketingSources } from "@/lib/marketing-sources";
+import { leerCuentasTiktok } from "@/lib/tiktok-diario";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -22,7 +23,11 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   return NextResponse.json(
-    await getMarketingSources(period, process.env, fetch, { details: true }),
+    await getMarketingSources(period, process.env, fetch, {
+      details: true,
+      // Sin acceso a la API de TikTok, el gasto que manda Make (lib/tiktok-diario.ts).
+      tiktokDesdeMake: (from, to) => leerCuentasTiktok(store.id, from, to),
+    }),
     { headers: { "Cache-Control": "private, no-store" } },
   );
 }

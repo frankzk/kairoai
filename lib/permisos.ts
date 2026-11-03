@@ -199,6 +199,8 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/zadarma/webhook", exige: PUB },
   // Firmado con Ed25519 (TELNYX_PUBLIC_KEY): lo verifica la ruta.
   { ruta: "/api/telnyx/webhook", exige: PUB },
+  // Make: gasto diario de TikTok Ads, con la clave KAIRO_MAKE_SECRET (lib/tiktok-diario.ts).
+  { ruta: "/api/marketing/tiktok-diario", exige: PUB },
   // OAuth de Shopify: vuelve desde Shopify sin nuestra cookie de primera parte
   { ruta: "/api/shopify/auth", exige: PUB },
 
