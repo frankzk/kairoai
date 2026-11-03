@@ -6,12 +6,16 @@ import {
   marketingPeriod,
   periodFromParams,
   presetPeriod,
+  periodQuery,
+  shiftDate,
   type MarketingPeriod,
   type MarketingPreset,
 } from "@/lib/marketing-dates";
 import { buildMarketingIntelligence } from "@/lib/marketing-intelligence";
 import { leerYo } from "@/lib/sesion-cliente";
-import { useMarketing } from "./useMarketing";
+import { useMarketing, useResource } from "./useMarketing";
+import type { MarketingSources } from "@/lib/marketing-source-types";
+import { Tablero, type TableroExtra } from "./Tablero";
 import { useCharlie } from "./useCharlie";
 import { buildCharlieModel } from "@/lib/marketing-charlie";
 import { UsdProvider } from "./UsdContext";
@@ -30,6 +34,7 @@ import { shortDate } from "./format";
 import s from "./dashboard.module.css";
 
 type View =
+  | "board"
   | "summary"
   | "details"
   | "trends"
@@ -52,7 +57,7 @@ const presets: Array<[MarketingPreset, string]> = [
 export default function MarketingDashboard() {
   const [period, setPeriod] = useState<MarketingPeriod | null>(null);
   const [preset, setPreset] = useState<MarketingPreset>("month");
-  const [view, setView] = useState<View>("summary");
+  const [view, setView] = useState<View>("board");
   const [detailView, setDetailView] = useState<"campaigns" | "products">(
     "campaigns",
   );
@@ -86,6 +91,7 @@ export default function MarketingDashboard() {
     const requested = params.get("view");
     if (
       [
+        "board",
         "summary",
         "details",
         "trends",
@@ -128,6 +134,29 @@ export default function MarketingDashboard() {
   const api = useMarketing(period, revision);
   const data = api.summary.data;
   const charlieActive = !["details", "trends", "sources"].includes(view);
+  // Tablero: el gasto de hoy, ayer y los 7 dias anteriores (fijo, aparte del
+  // periodo elegido) y el origen de los pedidos + inventario de iComfly.
+  const today = marketingDate();
+  const recentQuery =
+    view === "board" && period
+      ? periodQuery({ from: shiftDate(today, -7), to: today })
+      : null;
+  const recent = useResource<MarketingSources>(
+    recentQuery && period && recentQuery !== periodQuery(period)
+      ? `/api/marketing/sources?${recentQuery}`
+      : null,
+    revision,
+  );
+  const recentSources =
+    recentQuery && period && recentQuery === periodQuery(period)
+      ? { data: api.sources.data, loading: api.sources.loading }
+      : recent;
+  const extra = useResource<TableroExtra>(
+    view === "board" && period
+      ? `/api/marketing/tablero?${periodQuery(period)}`
+      : null,
+    revision,
+  );
   const charlie = useCharlie(period, revision, charlieActive);
   const [frequencyDay, setFrequencyDay] = useState("");
   const charlieModel = useMemo(
@@ -238,7 +267,7 @@ export default function MarketingDashboard() {
             <button
               className={s.button}
               onClick={() =>
-                setView(view === "sources" ? "summary" : "sources")
+                setView(view === "sources" ? "board" : "sources")
               }
               aria-pressed={view === "sources"}
             >
@@ -312,6 +341,7 @@ export default function MarketingDashboard() {
         )}
         <nav className={s.tabs} aria-label="Vistas de marketing">
           {[
+            ["board", "Tablero"],
             ["summary", "Decisión financiera"],
             ["matrix", "Matriz 4Pi"],
             ["structure", "Control y Testing"],
@@ -458,7 +488,24 @@ export default function MarketingDashboard() {
                 se conserva; el costo por pedido requiere pedidos.
               </p>
             )}
-            {view === "summary" ? (
+            {view === "board" && period ? (
+              <Tablero
+                data={data}
+                model={model}
+                period={period}
+                today={today}
+                sources={api.sources.data}
+                sourcesLoading={api.sources.loading}
+                recent={recentSources.data}
+                recentLoading={recentSources.loading}
+                settings={api.settings.data}
+                report={charlie.report.data}
+                reportLoading={charlie.report.loading}
+                fx={charlie.settings.data?.fx ?? null}
+                extra={extra.data}
+                extraLoading={extra.loading}
+              />
+            ) : view === "summary" ? (
               <>
                 {charlieModel && (
                   <CharlieExecutive
