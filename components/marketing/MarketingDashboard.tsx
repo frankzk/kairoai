@@ -348,7 +348,7 @@ export default function MarketingDashboard() {
             {charlie.settings.loading
               ? "USD · consultando referencia de conversión"
               : charlie.settings.data?.fx.rate
-                ? `USD · ${charlie.settings.data.fx.rate} CRC/USD · referencia ${charlie.settings.data.fx.date}`
+                ? `USD · ${charlie.settings.data.fx.rate} CRC/USD · referencia ${charlie.settings.data.fx.date}${charlie.settings.data.fx.pen ? ` · ${charlie.settings.data.fx.pen.rate} PEN/USD (BCRP ${charlie.settings.data.fx.pen.date})` : ""}`
                 : "USD · referencia de conversión pendiente"}
           </span>
         </div>
