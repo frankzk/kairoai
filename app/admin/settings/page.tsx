@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ZadarmaStatusCard from "@/components/ZadarmaStatusCard";
 import TelnyxStatusCard from "@/components/TelnyxStatusCard";
+import TelnyxCostosCard from "@/components/TelnyxCostosCard";
 import type { AgentSettings } from "@/lib/db";
 import { leerYo, tienePermiso } from "@/lib/sesion-cliente";
 
@@ -267,6 +268,7 @@ export default function SettingsPage() {
 
             {/* ── Telefonía: por qué no timbra ───────────────────── */}
             <TelnyxStatusCard />
+            <TelnyxCostosCard />
             <ZadarmaStatusCard />
 
             {error && <p className="text-xs text-red-400 px-1">{error}</p>}

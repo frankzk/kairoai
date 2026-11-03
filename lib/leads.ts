@@ -1035,6 +1035,8 @@ interface ZadarmaCallHistoryRow {
   duration_seconds: number | null;
   started_at: string | null;
   vendedora: number | null;
+  cost?: number | string | null;
+  cost_currency?: string | null;
 }
 
 
@@ -1062,7 +1064,7 @@ export async function getLeadHistory(storeId: number, leadId: number): Promise<L
   // seguir funcionando igual, por eso el error se traga.
   const { data: callData, error: callError } = await getDB()
     .from("zadarma_calls")
-    .select("id,direction,status,duration_seconds,started_at,vendedora")
+    .select("id,direction,status,duration_seconds,started_at,vendedora,cost,cost_currency")
     .eq("store_id", storeId)
     .eq("lead_id", leadId)
     .order("started_at", { ascending: false, nullsFirst: false })

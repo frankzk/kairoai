@@ -176,6 +176,28 @@ export async function tokenDeCredencial(cfg: TelnyxConfig, credentialId: string,
 }
 
 /**
+ * Si la Credential Connection manda el evento call.cost al terminar cada
+ * llamada (call_cost_in_webhooks). Sin eso Kairo no se entera del costo.
+ */
+export async function costoEnWebhooksActivo(cfg: TelnyxConfig, fetchImpl?: Fetch): Promise<boolean> {
+  const texto = await telnyxFetch(cfg, `/credential_connections/${encodeURIComponent(cfg.connectionId)}`, {}, fetchImpl);
+  const data = (JSON.parse(texto) as { data?: { call_cost_in_webhooks?: unknown } }).data;
+  return data?.call_cost_in_webhooks === true;
+}
+
+/** PATCH de la Credential Connection: activa call_cost_in_webhooks y nada mas. */
+export async function activarCostoEnWebhooks(cfg: TelnyxConfig, fetchImpl?: Fetch): Promise<boolean> {
+  const texto = await telnyxFetch(
+    cfg,
+    `/credential_connections/${encodeURIComponent(cfg.connectionId)}`,
+    { method: "PATCH", body: { call_cost_in_webhooks: true } },
+    fetchImpl
+  );
+  const data = (JSON.parse(texto) as { data?: { call_cost_in_webhooks?: unknown } }).data;
+  return data?.call_cost_in_webhooks === true;
+}
+
+/**
  * Hasta cuando sirve un token (el `exp` del JWT, en ms), o null si no se puede
  * leer. Con esto el servidor y el navegador reutilizan el mismo token mientras
  * siga vigente, en vez de pedirlo en cada carga de pagina (02/11/2026: con la
@@ -277,14 +299,28 @@ export function claveLlamadaTelnyx(llamadaId: string): string {
 
 // ─── Eventos ─────────────────────────────────────────────────────────────────
 
-export type TipoEventoTelnyx = "call.initiated" | "call.answered" | "call.hangup" | "call.recording.saved";
+export type TipoEventoTelnyx =
+  | "call.initiated"
+  | "call.answered"
+  | "call.hangup"
+  | "call.recording.saved"
+  | "call.cost";
 
 const TIPOS: ReadonlySet<string> = new Set<TipoEventoTelnyx>([
   "call.initiated",
   "call.answered",
   "call.hangup",
   "call.recording.saved",
+  "call.cost",
 ]);
+
+/** Lo que costo una llamada, del evento call.cost. */
+export interface CostoTelnyx {
+  total: number;
+  /** Moneda de la cuenta de Telnyx (USD), de cost_parts. */
+  moneda: string | null;
+  segundosCobrados: number | null;
+}
 
 export interface EventoTelnyx {
   tipo: TipoEventoTelnyx;
@@ -294,6 +330,8 @@ export interface EventoTelnyx {
   clientState: string | null;
   hangupCause: string | null;
   recordingUrl: string | null;
+  /** Solo en call.cost, y solo si Telnyx pudo calcularlo. */
+  costo: CostoTelnyx | null;
 }
 
 /** Los eventos que usa Kairo; cualquier otro (o un cuerpo raro) da null. */
@@ -310,6 +348,25 @@ export function leerEventoTelnyx(cuerpo: unknown): EventoTelnyx | null {
     clientState: texto(p.client_state),
     hangupCause: texto(p.hangup_cause),
     recordingUrl: texto(urls.mp3),
+    costo: data.event_type === "call.cost" ? leerCosto(p) : null,
+  };
+}
+
+/**
+ * total_cost viene como texto ("0.0125"). Con status "error" o sin total no
+ * hay costo: mejor vacio que un 0 que parezca una llamada gratis.
+ */
+function leerCosto(p: Record<string, unknown>): CostoTelnyx | null {
+  if (p.status === "error") return null;
+  const total = Number(p.total_cost);
+  if (p.total_cost == null || p.total_cost === "" || !Number.isFinite(total) || total < 0) return null;
+  const partes = Array.isArray(p.cost_parts) ? (p.cost_parts as Array<Record<string, unknown>>) : [];
+  const moneda = partes.map((c) => c.currency).find((c): c is string => typeof c === "string" && c.length > 0) ?? null;
+  const seg = Number(p.billed_duration_secs);
+  return {
+    total,
+    moneda: moneda ? moneda.toUpperCase() : null,
+    segundosCobrados: p.billed_duration_secs != null && Number.isFinite(seg) ? Math.round(seg) : null,
   };
 }
 

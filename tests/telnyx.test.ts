@@ -380,6 +380,36 @@ describe("webhook", () => {
     expect((await webhook(evento("call.answered", null))).status).toBe(503);
   });
 
+  it("call.cost guarda lo que costo la llamada, en la moneda de Telnyx", async () => {
+    const cs = await estado();
+    await webhook(evento("call.answered", cs, {}, "2026-11-01T10:00:00Z"));
+    await webhook(evento("call.hangup", cs, { hangup_cause: "normal_clearing" }, "2026-11-01T10:01:10Z"));
+    await webhook(
+      evento("call.cost", cs, {
+        status: "success",
+        total_cost: "0.0250",
+        billed_duration_secs: 120,
+        cost_parts: [{ call_part: "call-control", cost: "0.0250", currency: "usd", rate: "0.0125", billed_duration_secs: 120 }],
+      })
+    );
+    expect(llamada()).toMatchObject({ status: "answered", cost: 0.025, cost_currency: "USD", billed_seconds: 120 });
+  });
+
+  it("call.cost sin client_state encuentra la llamada por su id de Telnyx", async () => {
+    const cs = await estado();
+    await webhook(evento("call.initiated", cs));
+    expect(llamada().telnyx_call_control_id).toBe("v3:ctrl-1");
+    await webhook(evento("call.cost", null, { status: "success", total_cost: "0.0125", billed_duration_secs: 60 }));
+    expect(llamada()).toMatchObject({ cost: 0.0125, billed_seconds: 60 });
+  });
+
+  it("si Telnyx no pudo calcular el costo, queda vacio (no 0)", async () => {
+    const cs = await estado();
+    await webhook(evento("call.cost", cs, { status: "error", total_cost: null }));
+    expect(llamada().cost ?? null).toBeNull();
+    expect(leerEventoTelnyx(JSON.parse(evento("call.cost", cs, { total_cost: "" })))?.costo).toBeNull();
+  });
+
   it("una llamada que no salio de Kairo se ignora con 200 (Telnyx no reintenta)", async () => {
     await estado();
     const res = await webhook(evento("call.hangup", Buffer.from("otra-app").toString("base64")));
