@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { periodFromParams } from "@/lib/marketing-dates";
 import { getCharlieReport } from "@/lib/marketing-charlie-source";
+import { leerCuentasCharlieTiktok } from "@/lib/tiktok-anuncios";
 import type { CharlieReport } from "@/lib/marketing-charlie-types";
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -35,7 +36,13 @@ export async function GET(req: NextRequest) {
   let entry = cache.get(key);
   if (!entry || Date.now() - entry.at > 45_000) {
     if (cache.size >= 20) cache.clear();
-    entry = { at: Date.now(), report: getCharlieReport(period) };
+    entry = {
+      at: Date.now(),
+      // Mas las cuentas de TikTok por anuncio que manda Make (lib/tiktok-anuncios.ts).
+      report: getCharlieReport(period, process.env, fetch, new Date(), (from, to) =>
+        leerCuentasCharlieTiktok(store.id, from, to)
+      ),
+    };
     cache.set(key, entry);
   }
   const result = await entry.report;
