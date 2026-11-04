@@ -171,7 +171,12 @@ describe("cruce de compras únicas y resultados", () => {
       [
         row("1", { ...raw, campaign_id: "8888888" }),
         row("2"),
-        row("2", { ...raw, utm_source: "Instagram_Feed" }),
+        row("2", {
+          ...raw,
+          utm_campaign: "Other---777777777",
+          campaign_id: "777777777",
+          utm_id: "777777777",
+        }),
         row("3"),
       ],
       period,
