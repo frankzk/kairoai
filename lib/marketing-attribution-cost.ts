@@ -2,6 +2,8 @@ import type { AttributionGroup } from "./marketing-attribution";
 import type { MarketingIntelligence } from "./marketing-intelligence";
 import type { CharlieReport } from "./marketing-charlie-types";
 import type { MarketingPeriod } from "./marketing-dates";
+import type { UsdRate } from "./marketing-charlie-types";
+import { asUsd } from "./marketing-usd-rate";
 
 export type AttributionLevel = "campaign" | "adset" | "ad";
 type Campaign = Pick<
@@ -21,6 +23,7 @@ export function buildAttributionCostRows(
   campaigns: Campaign[],
   report: CharlieReport | null,
   period: MarketingPeriod,
+  fx: UsdRate | null = null,
 ) {
   const grouped = new Map<string, AttributionGroup>();
   const conflicts = new Set<string>();
@@ -191,6 +194,10 @@ export function buildAttributionCostRows(
       costPerDelivered:
         spend != null && aligned && g.delivered > 0
           ? spend / g.delivered
+          : null,
+      costPerDeliveredUsd:
+        spend != null && aligned && g.delivered > 0
+          ? asUsd(spend / g.delivered, currency, fx)
           : null,
       spendMessage,
       accountName,
