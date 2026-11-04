@@ -567,7 +567,7 @@ export default function MarketingDashboard() {
                     saved={api.saved}
                     save={api.save}
                   />
-                  <AttributionWorkspace period={data.period} revision={revision} campaigns={model.campaigns} />
+                  <AttributionWorkspace period={data.period} revision={revision} campaigns={model.campaigns} campaignsLoading={api.sources.loading} />
                   </>
                 ) : (
                   <ProductWorkspace
