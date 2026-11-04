@@ -10,21 +10,18 @@ import { useResource } from "./useMarketing";
 export function useCharlie(
   period: MarketingPeriod | null,
   revision: number,
-  active: boolean,
+  scope: "ads" | "structure" | null,
+  business: { data: CharlieRevenue | null; loading: boolean; error: string },
+  onConfigSaved: () => void,
 ) {
-  const [businessRevision, setBusinessRevision] = useState(0);
-  const query = period && active ? periodQuery(period) : null;
+  const query = period && scope ? periodQuery(period) : null;
   const settings = useResource<CharlieSettings>(
     period ? "/api/marketing/charlie-settings?store=mireva-cr" : null,
     revision,
   );
   const report = useResource<CharlieReport>(
-    query ? `/api/marketing/charlie?${query}` : null,
+    query ? `/api/marketing/charlie?${query}&scope=${scope}` : null,
     revision,
-  );
-  const business = useResource<CharlieRevenue>(
-    query ? `/api/marketing/charlie-business?${query}` : null,
-    revision + businessRevision,
   );
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
@@ -61,7 +58,7 @@ export function useCharlie(
         loading: false,
         error: "",
       });
-      if (body.kind === "config") setBusinessRevision((value) => value + 1);
+      if (body.kind === "config") onConfigSaved();
       return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo guardar.");

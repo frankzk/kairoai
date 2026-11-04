@@ -43,6 +43,7 @@ async function account(
   env: Record<string, string | undefined>,
   fetcher: typeof fetch,
   signal: AbortSignal,
+  includeStructure: boolean,
 ): Promise<CharlieAccount> {
   const base = `https://graph.facebook.com/${env.META_CR_GRAPH_VERSION}/act_${id}`,
     headers = { Authorization: `Bearer ${env.META_CR_ACCESS_TOKEN}` };
@@ -104,8 +105,10 @@ async function account(
       JSON.stringify([id, env.META_CR_GRAPH_VERSION, env.META_CR_ACCESS_TOKEN]),
     )
     .digest("hex");
-  const useCache = fetcher === fetch;
+  const useCache = includeStructure && fetcher === fetch;
   let metadata = useCache ? metadataCache.get(metadataKey) : undefined;
+  if (!includeStructure)
+    metadata = { at: Date.now(), promise: Promise.resolve([[], []]) };
   if (!metadata || Date.now() - metadata.at > 300000) {
     const promise = Promise.all([
       pages(
@@ -131,14 +134,28 @@ async function account(
   void metadata.promise.then(([ads, sets]) => {
     if (!ads || !sets) metadataCache.delete(metadataKey);
   });
-  const [rows, [adsMeta, setsMeta]] = await Promise.all([
+  const [rows, [adsMeta, loadedSets]] = await Promise.all([
     pages(
       "insights",
-      "ad_id,ad_name,adset_id,campaign_id,spend,impressions,clicks,frequency,actions,action_values",
+      `ad_id,ad_name,adset_id,campaign_id,spend,impressions,clicks,frequency,actions,action_values${includeStructure ? "" : ",adset_name,campaign_name"}`,
       true,
     ),
     metadata.promise,
   ]);
+  const setsMeta: Json[] | null = includeStructure
+    ? loadedSets
+    : Array.from(
+        new Map(
+          rows.map((row) => [
+            string(row.adset_id),
+            {
+              id: row.adset_id,
+              name: row.adset_name,
+              campaign_id: row.campaign_id,
+            },
+          ]),
+        ).values(),
+      );
   if (!adsMeta || !setsMeta) metadataCache.delete(metadataKey);
   const ads = new Map<string, CharlieAd>();
   const makeAd = (
@@ -179,6 +196,10 @@ async function account(
       );
     if (ad.daily.some((day) => day.date === date))
       throw new Error("Duplicate daily report");
+    if (!includeStructure) {
+      ad.adsetName = string(row.adset_name) || undefined;
+      ad.campaignName = string(row.campaign_name) || undefined;
+    }
     const purchases =
       action(row.actions, [
         "omni_purchase",
@@ -248,10 +269,11 @@ async function account(
     timezone: string(info.timezone_name),
     ads: Array.from(ads.values()),
     adsets,
-    ...(!adsMeta || !setsMeta
+    ...(!includeStructure || !adsMeta || !setsMeta
       ? {
-          metadataMessage:
-            "Los resultados están disponibles, pero la estructura o los Post IDs no se pudieron consultar por completo.",
+          metadataMessage: includeStructure
+            ? "Los resultados están disponibles, pero la estructura o los Post IDs no se pudieron consultar por completo."
+            : "Los metadatos completos se consultan al abrir Control y Testing.",
         }
       : {}),
   };
@@ -266,6 +288,8 @@ export async function getCharlieReport(
    * Si fallan, el reporte sigue con Meta: no se pierde la matriz por TikTok.
    */
   tiktok?: (from: string, to: string) => Promise<CharlieAccount[]>,
+  includeStructure = true,
+  includeTrailing = true,
 ): Promise<CharlieReport> {
   const checkedAt = now.toISOString();
   if (
@@ -281,7 +305,7 @@ export async function getCharlieReport(
     };
   const today = marketingDate(now),
     trailTo = period.to < today ? period.to : today,
-    trailFrom = shiftDate(trailTo, -6);
+    trailFrom = includeTrailing ? shiftDate(trailTo, -6) : period.from;
   const expanded = marketingPeriod(
     period.from < trailFrom ? period.from : trailFrom,
     trailTo,
@@ -298,7 +322,7 @@ export async function getCharlieReport(
     const [meta, deTiktok] = await Promise.all([
       Promise.all(
         metaAccountIds(env).map((id) =>
-          account(id, expanded, env, fetcher, signal),
+          account(id, expanded, env, fetcher, signal, includeStructure),
         ),
       ),
       tiktok

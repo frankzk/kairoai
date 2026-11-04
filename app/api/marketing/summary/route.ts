@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import { MARKETING_STORE } from "@/lib/marketing";
 import { periodFromParams } from "@/lib/marketing-dates";
-import { getMarketingData } from "@/lib/marketing-data";
+import { getMarketingData, getMarketingInputs } from "@/lib/marketing-data";
+import { readCharlieConfig } from "@/lib/marketing-charlie-settings";
+import { buildCharlieRevenue } from "@/lib/marketing-charlie-revenue";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { isOrdersDatasetUnavailableError } from "../../finance/_shared/orders-dataset";
 
@@ -57,12 +59,35 @@ export async function GET(req: NextRequest) {
   }
   try {
     // Only aggregate data leaves this route; no customer or order identifiers.
-    return NextResponse.json(
-      await bounded(getMarketingData(store, period, month)),
-      {
-        headers: { "Cache-Control": "private, no-store" },
-      },
-    );
+    const load = async () => {
+      if (params.get("include_charlie") !== "1")
+        return getMarketingData(store, period, month);
+      // One operational snapshot feeds both reports. Raw orders and phones stay on the server.
+      const [input, config] = await Promise.all([
+        getMarketingInputs(store, period, month),
+        readCharlieConfig(store.id).catch(() => null),
+      ]);
+      return {
+        ...input.summary,
+        charlieBusiness: config
+          ? buildCharlieRevenue(
+              input.orders,
+              input.phones,
+              period,
+              config.hero_product_keys,
+            )
+          : null,
+        ...(config
+          ? {}
+          : {
+              charlieError:
+                "No se pudo cargar la configuración de ingresos potenciales. Vuelve a actualizar.",
+            }),
+      };
+    };
+    return NextResponse.json(await bounded(load()), {
+      headers: { "Cache-Control": "private, no-store" },
+    });
   } catch (error) {
     return NextResponse.json(
       {
