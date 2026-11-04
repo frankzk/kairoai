@@ -110,7 +110,12 @@ export function useMarketing(
       const response = await fetch("/api/marketing/settings?store=mireva-cr", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          ...body,
+          ...(body.kind === "mapping" && period
+            ? { from: period.from, to: period.to }
+            : {}),
+        }),
       });
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
@@ -120,6 +125,26 @@ export function useMarketing(
             : "No se pudo guardar.",
         );
       }
+      const result = await response.json().catch(() => ({}));
+      if (
+        result.productMetric &&
+        summary.data &&
+        result.period?.from === summary.data.period.from &&
+        result.period?.to === summary.data.period.to
+      )
+        summary.setState({
+          data: {
+            ...summary.data,
+            groupedProducts: [
+              ...(summary.data.groupedProducts ?? []).filter(
+                (p) => p.key !== result.productMetric.key,
+              ),
+              result.productMetric,
+            ],
+          },
+          loading: false,
+          error: "",
+        });
       const refreshed = await fetch("/api/marketing/settings?store=mireva-cr", {
         cache: "no-store",
       });

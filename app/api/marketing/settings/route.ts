@@ -3,7 +3,12 @@ import { anunciantesTiktok } from "@/lib/tiktok-diario";
 import { getDB } from "@/lib/db";
 import { identidadActual } from "@/lib/identidad";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
-import { getMarketingData } from "@/lib/marketing-data";
+import {
+  buildGroupMetrics,
+  selectionTarget,
+} from "@/lib/marketing-product-groups-server";
+import { marketingPeriod, marketingDate } from "@/lib/marketing-dates";
+import { getMarketingInputs, getMarketingData } from "@/lib/marketing-data";
 import { presetPeriod } from "@/lib/marketing-dates";
 import { metaAccountIds } from "@/lib/marketing-sources";
 
@@ -52,7 +57,7 @@ export async function GET(req: NextRequest) {
     const [mappings, plans] = await Promise.all([
       readAll(
         "marketing_campaign_products",
-        "platform,account_id,campaign_id,product_key,product_name,sku,updated_at",
+        "platform,account_id,campaign_id,product_key,product_name,sku,family_key,variant_scope,variant_keys,updated_at",
       ),
       readAll(
         "marketing_product_plans",
@@ -77,7 +82,7 @@ export async function PATCH(req: NextRequest) {
   let body: Record<string, unknown>;
   try {
     const raw = await req.text();
-    if (raw.length > 8192)
+    if (raw.length > 32768)
       return reply({ error: "Solicitud demasiado grande." }, 413);
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
@@ -120,6 +125,27 @@ export async function PATCH(req: NextRequest) {
           400,
         );
       if (body.product_key === null) {
+        if (body.disable_auto === true) {
+          const result = await getDB()
+            .from("marketing_campaign_products")
+            .upsert(
+              {
+                ...audit,
+                platform,
+                account_id: account,
+                campaign_id: campaign,
+                product_key: "unassigned",
+                product_name: "Sin asignar",
+                sku: "",
+                family_key: null,
+                variant_scope: "none",
+                variant_keys: [],
+              },
+              { onConflict: "store_id,platform,account_id,campaign_id" },
+            );
+          if (result.error) throw new Error();
+          return reply({ saved: true });
+        }
         const result = await getDB()
           .from("marketing_campaign_products")
           .delete()
@@ -130,6 +156,84 @@ export async function PATCH(req: NextRequest) {
         if (result.error) throw new Error();
         return reply({ saved: true });
       }
+    }
+    if (body.kind === "mapping" && typeof body.family_key === "string") {
+      if (
+        body.family_key.length > 300 ||
+        !["all", "selected"].includes(String(body.variant_scope)) ||
+        (body.variant_scope === "selected" &&
+          (!Array.isArray(body.variant_keys) ||
+            !body.variant_keys.length ||
+            body.variant_keys.length > 300 ||
+            body.variant_keys.some(
+              (k) => typeof k !== "string" || k.length > 300,
+            )))
+      )
+        return reply(
+          { error: "Selecciona variantes válidas del mismo producto." },
+          400,
+        );
+      const period =
+        body.from !== undefined || body.to !== undefined
+          ? marketingPeriod(String(body.from || ""), String(body.to || ""))
+          : presetPeriod("today");
+      if (!period || period.to > marketingDate())
+        return reply({ error: "Período inválido." }, 400);
+      const input = await getMarketingInputs(store, period);
+      if (input.summary.familyDataError)
+        return reply(
+          {
+            error:
+              "El catálogo de variantes está incompleto. Actualiza y vuelve a intentarlo.",
+          },
+          503,
+        );
+      const family = input.summary.productFamilies?.find(
+        (f) => f.key === body.family_key,
+      );
+      if (!family)
+        return reply(
+          {
+            error:
+              "El producto agrupado no está disponible en el catálogo de Costa Rica.",
+          },
+          400,
+        );
+      let target: ReturnType<typeof selectionTarget>;
+      try {
+        target = selectionTarget(
+          family,
+          body.variant_scope === "all" ? null : (body.variant_keys as string[]),
+        );
+      } catch {
+        return reply(
+          { error: "Elige al menos una variante válida del mismo producto." },
+          400,
+        );
+      }
+      const result = await getDB()
+        .from("marketing_campaign_products")
+        .upsert(
+          {
+            ...audit,
+            platform: body.platform,
+            account_id: body.account_id,
+            campaign_id: body.campaign_id,
+            product_key: target.key,
+            product_name: target.name.slice(0, 200),
+            sku: target.sku,
+            family_key: family.key,
+            variant_scope: target.scope,
+            variant_keys: target.scope === "all" ? [] : target.memberKeys,
+          },
+          { onConflict: "store_id,platform,account_id,campaign_id" },
+        );
+      if (result.error) throw new Error();
+      return reply({
+        saved: true,
+        period: { from: period.from, to: period.to },
+        productMetric: buildGroupMetrics(input.orders, period, [target])[0],
+      });
     }
     if (typeof body.product_key !== "string" || body.product_key.length > 300)
       return reply({ error: "Selecciona un producto del catálogo." }, 400);
@@ -161,6 +265,9 @@ export async function PATCH(req: NextRequest) {
           {
             ...audit,
             ...productData,
+            family_key: null,
+            variant_scope: "legacy",
+            variant_keys: [],
             platform: body.platform,
             account_id: body.account_id,
             campaign_id: body.campaign_id,

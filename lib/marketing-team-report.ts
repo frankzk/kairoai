@@ -2,6 +2,10 @@ import type { MarketingSummary } from "./marketing";
 import type { MarketingSources } from "./marketing-source-types";
 import type { MarketingSettings } from "./marketing-settings-types";
 import type { UsdRate } from "./marketing-charlie-types";
+import {
+  effectiveAssignment,
+  reportProductMetrics,
+} from "./marketing-product-families";
 import { campaignKey } from "./marketing-settings-types";
 import { asUsd } from "./marketing-usd-rate";
 import { marketingDate, shiftDate } from "./marketing-dates";
@@ -55,7 +59,7 @@ export function productComparison(
   const mappings = new Map(
     settings?.mappings.map((m) => [
       campaignKey(m.platform, m.account_id, m.campaign_id),
-      m.product_key,
+      m,
     ]) ?? [],
   );
   const ready = Boolean(
@@ -79,14 +83,32 @@ export function productComparison(
               .at(-1) ?? "",
           currency: a.currency,
           timezone: a.timezone,
-          product: mappings.get(campaignKey(platform, a.accountId, c.id)),
+          mapping: effectiveAssignment(
+            mappings.get(campaignKey(platform, a.accountId, c.id)),
+            summary.productFamilies ?? [],
+            platform,
+            a.accountId,
+            c.id,
+            c.name,
+            Boolean(settings) && !summary.familyDataError,
+          ),
         })),
       ) ?? [],
   );
-  const unmapped = campaigns.filter((c) => c.spend > 0 && !c.product).length;
+  const unmapped = campaigns.filter((c) => c.spend > 0 && !c.mapping).length;
   const partial = !ready || unmapped > 0;
-  return summary.products.map((p) => {
-    const related = campaigns.filter((c) => c.product === p.key);
+  return reportProductMetrics(
+    summary,
+    campaigns.flatMap((c) => (c.mapping ? [c.mapping] : [])),
+  ).map((p) => {
+    const related = campaigns.filter(
+      (c) =>
+        c.mapping?.product_key === p.key ||
+        ("scope" in p &&
+          p.scope === "all" &&
+          (c.mapping?.family_key === p.familyKey ||
+            (c.mapping && p.memberKeys?.includes(c.mapping.product_key)))),
+    );
     function observation(start: string, end: string, orders: number) {
       const late = related.some(
         (c) => c.platform === "tiktok" && c.observedThrough < end,

@@ -6,6 +6,11 @@ export interface CampaignProduct {
   product_key: string;
   product_name: string;
   sku: string;
+  family_key?: string | null;
+  variant_scope?: "legacy" | "all" | "selected" | "none";
+  variant_keys?: string[];
+  automatic?: boolean;
+  match_reason?: string;
   updated_at?: string;
 }
 export interface ProductPlan {

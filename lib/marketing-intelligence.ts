@@ -1,4 +1,5 @@
 import type { MarketingSummary } from "./marketing";
+import { effectiveAssignment } from "./marketing-product-families";
 import { buildMarketingAdsSummary } from "./marketing-ads-summary";
 import type { MarketingSources } from "./marketing-source-types";
 import {
@@ -41,10 +42,17 @@ export function buildMarketingIntelligence(
             currency: account.currency,
             timezone: account.timezone,
             budgetMessage: account.budgetMessage,
-            mapping:
+            mapping: effectiveAssignment(
               mappings.get(
                 campaignKey(platform, account.accountId, campaign.id),
-              ) ?? null,
+              ),
+              summary.productFamilies ?? [],
+              platform,
+              account.accountId,
+              campaign.id,
+              campaign.name,
+              Boolean(settings) && !summary.familyDataError,
+            ),
             platformCpa:
               campaign.purchases != null && campaign.purchases > 0
                 ? campaign.spend / campaign.purchases
@@ -253,6 +261,7 @@ export function buildMarketingIntelligence(
     products,
     alerts,
     unmapped,
+    automaticCampaigns: campaigns.filter((c) => c.mapping?.automatic).length,
     assignedCampaigns: campaigns.filter((campaign) => campaign.mapping).length,
   };
 }
