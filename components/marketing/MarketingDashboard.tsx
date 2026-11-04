@@ -565,6 +565,7 @@ export default function MarketingDashboard() {
                   <>
                     <CampaignWorkspace
                       model={model}
+                      fx={charlie.settings.data?.fx ?? null}
                       catalog={data.catalog}
                       ready={settingsReady}
                       loading={api.sources.loading}
@@ -576,6 +577,7 @@ export default function MarketingDashboard() {
                       period={data.period}
                       revision={revision}
                       campaigns={model.campaigns}
+                      campaignsLoading={api.sources.loading}
                     />
                   </>
                 ) : (
