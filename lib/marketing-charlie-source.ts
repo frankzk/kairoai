@@ -288,6 +288,7 @@ async function account(
     name: string(info.name) || id,
     currency: string(info.currency),
     timezone: string(info.timezone_name),
+    platform: "meta",
     ads: Array.from(ads.values()),
     adsets,
     ...(structureOnly ? { creativeScope: "active" as const } : {}),

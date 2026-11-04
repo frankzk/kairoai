@@ -135,6 +135,7 @@ export function cuentasCharlieTiktok(filas: FilaAnuncio[], ultimoDia: string, ti
     if (!c) {
       c = {
         cuenta: {
+          platform: "tiktok",
           id: f.advertiser_id,
           name: `TikTok · ${f.advertiser_name || f.advertiser_id}`,
           currency: f.currency,

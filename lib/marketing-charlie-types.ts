@@ -36,6 +36,7 @@ export interface CharlieAdset {
   effectiveStatus: string;
 }
 export interface CharlieAccount {
+  platform?: "meta" | "tiktok";
   id: string;
   name: string;
   currency: string;
