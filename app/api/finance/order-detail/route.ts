@@ -15,6 +15,7 @@ import { identidadActual, vendedoraEfectiva } from "@/lib/identidad";
 import { orderAlerts, riskInputFromHistory } from "@/lib/order-risk";
 import { llamadasDelTelefono } from "@/lib/llamadas-historial";
 import { notasIcomflyDelPedido } from "@/lib/icomfly-comentarios-db";
+import { orderMarketingOrigin } from "@/lib/marketing-attribution-db";
 import { copiarGestionAIcomfly } from "@/lib/icomfly-nota-kairo";
 
 export const runtime = "nodejs";
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
   try {
     // Cada pieza es best-effort: que falle el chat no puede dejar sin alertas
     // a la asesora, que es lo que de verdad necesita para decidir.
-    const [history, events, chatLead, confirmacionConfig, llamadas, notasIcomfly] = await Promise.all([
+    const [history, events, chatLead, confirmacionConfig, llamadas, notasIcomfly, adOrigin] = await Promise.all([
       phone
         ? loadCustomerOrdersByPhone({
             storeId: store.id,
@@ -69,6 +70,7 @@ export async function GET(req: NextRequest) {
         console.warn(`[order-detail] notas de iComfly: ${err instanceof Error ? err.message : err}`);
         return null;
       }),
+      orderMarketingOrigin(store.id, orderName).catch(() => null),
     ]);
 
     const alerts = orderAlerts(
@@ -91,6 +93,7 @@ export async function GET(req: NextRequest) {
       confirmacion_config: confirmacionConfig,
       llamadas,
       notas_icomfly: notasIcomfly,
+      ad_origin: adOrigin,
     });
   } catch (err) {
     const message = toFriendlyErrorMessage(err, "Error al abrir el pedido");

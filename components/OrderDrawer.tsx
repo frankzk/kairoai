@@ -48,6 +48,7 @@ import type { CustomerOrder, CustomerSummary } from "@/lib/customer-history";
 import type { OrderAlert } from "@/lib/order-risk";
 import type { LlamadaHistorial } from "@/lib/llamadas-historial";
 import { fechaComentarioIso, type ComentarioIcomfly, type NotasIcomfly } from "@/lib/icomfly-comentarios";
+import type { IcomflyAdOrigin } from "@/lib/icomfly-ad-origin";
 import {
   ORDER_EVENT_CANALES,
   ORDER_EVENT_OUTCOME_LABEL,
@@ -96,6 +97,7 @@ interface DetailResponse {
   llamadas?: LlamadaHistorial[];
   /** Comentarios y etiquetas que le pusieron al pedido en iComfly. */
   notas_icomfly?: NotasIcomfly | null;
+  ad_origin?: IcomflyAdOrigin | null;
   error?: string;
 }
 
@@ -449,6 +451,7 @@ export default function OrderDrawer({
   // Los comentarios de iComfly van mezclados por fecha; los que no tienen
   // fecha, al final (son los mas viejos).
   const notasIcomfly = detail?.notas_icomfly ?? null;
+  const adOrigin = detail?.ad_origin;
   const bitacora: Array<{
     key: string;
     at: string;
@@ -832,6 +835,10 @@ export default function OrderDrawer({
                     )}
                   </div>
                 )}
+                {adOrigin && <details className="mb-3 border-y border-border py-2 text-xs"><summary className="cursor-pointer font-medium">Origen publicitario · {adOrigin.platform || adOrigin.source || "UTM"}</summary><dl className="mt-2 space-y-1 break-words">{[
+                  ["Campaña", adOrigin.campaignName], ["ID campaña", adOrigin.campaignId], ["Conjunto", adOrigin.adsetName], ["ID conjunto", adOrigin.adsetId], ["Anuncio", adOrigin.adName], ["ID anuncio", adOrigin.adId],
+                  ["utm_source", adOrigin.source], ["utm_medium", adOrigin.medium], ["utm_campaign", adOrigin.campaign], ["utm_content", adOrigin.content], ["utm_term", adOrigin.term], ["Clic registrado", adOrigin.hasClick ? "Sí" : "No"],
+                ].filter(([, value]) => value).map(([label, value]) => <div className="grid grid-cols-[7rem_1fr] gap-2" key={label}><dt className="text-muted-foreground">{label}</dt><dd>{value}</dd></div>)}</dl>{adOrigin.conflicts.length > 0 && <p className="mt-2 text-amber-300">Los ID son contradictorios; no se atribuye la venta automáticamente.</p>}<p className="mt-2 text-muted-foreground">Datos de iComfly guardados en la última sincronización.</p></details>}
                 <div className="max-h-72 space-y-1 overflow-y-auto">
                   {loading && bitacora.length === 0 ? (
                     <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">

@@ -20,7 +20,7 @@ describe("leer las líneas reales del pedido desde Icomfly", () => {
     const result = await getIcomflyOrder("mireva-cr", "821719");
     expect(result.items).toEqual(lines);
     expect(result.status).toBe("Confirmada");
-    expect(String(fetchMock.mock.calls[1][0])).toContain("/orders?store_id=71&withAttribution=1&page=1&limit=100");
+    expect(String(fetchMock.mock.calls[1][0])).toContain("/orders?store_id=71&withAttribution=1&withAdOrigin=1&page=1&limit=100");
   });
   it("preserva todas las líneas de un carrito, incluso cuando la primera página no contiene el pedido", async () => {
     fetchMock.mockResolvedValueOnce(response({ ...original, items: [] }));
