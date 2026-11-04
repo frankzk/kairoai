@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingSources } from "@/lib/marketing-source-types";
+import type { MarketingAttribution } from "@/lib/marketing-attribution";
 import type { MarketingSettings } from "@/lib/marketing-settings-types";
 import type { CharlieReport, UsdRate } from "@/lib/marketing-charlie-types";
 import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
@@ -33,8 +34,12 @@ export function TeamReport({
   saving,
   saved,
   save,
+  onAssign,
 }: {
-  data: MarketingSummary;
+  data: MarketingSummary & {
+    attribution?: MarketingAttribution | null;
+    attributionError?: string;
+  };
   sources: MarketingSources | null;
   settings: MarketingSettings | null;
   fx: UsdRate | null;
@@ -46,6 +51,7 @@ export function TeamReport({
   saving: string;
   saved: string;
   save: Save;
+  onAssign: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [ascending, setAscending] = useState(false);
@@ -93,6 +99,13 @@ export function TeamReport({
     () => productComparison(data, recent.data, settings, fx),
     [data, recent.data, settings, fx],
   );
+  const recentModel = useMemo(
+    () => buildMarketingIntelligence(data, recent.data, settings),
+    [data, recent.data, settings],
+  );
+  const origin = data.attribution;
+  const attributedOrders = (platform: "meta" | "tiktok") =>
+    origin ? origin.channelOrders[platform] : null;
   const meta = reportChannel(sources, "meta", fx),
     tiktok = reportChannel(sources, "tiktok", fx);
   const spend =
@@ -108,7 +121,7 @@ export function TeamReport({
     ),
   );
   const cpa =
-    aligned && spend != null && data.totals.generated > 0
+    spend != null && data.totals.generated > 0
       ? spend / data.totals.generated
       : null;
   const products = [...model.products].sort(
@@ -174,11 +187,17 @@ export function TeamReport({
         />
         <Metric
           label="CPA por pedido creado"
-          value={loading ? "Consultando…" : usd(cpa)}
+          value={
+            loading
+              ? "Consultando…"
+              : `${!aligned && cpa != null ? "≈ " : ""}${usd(cpa)}`
+          }
           note={
             aligned
               ? "Gasto total / pedidos creados"
-              : "Calendarios de Meta y TikTok diferentes"
+              : cpa != null
+                ? "Orientativo: calendarios de cuenta distintos"
+                : "Gasto completo y pedidos requeridos"
           }
         />
         <Metric
@@ -189,19 +208,27 @@ export function TeamReport({
       </section>
       <section className={r.channelMetrics} aria-label="Desglose por canal">
         <Metric
-          label="Compras reportadas · Meta"
-          value={loading ? "…" : number(meta.purchases)}
-          note="Atribución de Meta, no pedidos de Kairo"
+          label="Pedidos Meta · UTM"
+          value={number(attributedOrders("meta"))}
+          note={`Origen registrado en Kairo · píxel Meta: ${number(meta.purchases)} compras`}
         />
         <Metric
-          label="Conversiones reportadas · TikTok"
-          value={loading ? "…" : number(tiktok.conversions)}
-          note="Evento de conversión; no confirma una compra"
+          label="Pedidos TikTok · UTM"
+          value={number(attributedOrders("tiktok"))}
+          note={`Origen registrado en Kairo · TikTok: ${number(tiktok.conversions)} conversiones`}
         />
         <Metric
-          label="Orgánico / upsell"
-          value="Sin atribuir"
-          note="Origen pendiente de identificar"
+          label="Otros / sin atribuir"
+          value={
+            origin
+              ? number(
+                  origin.totalOrders -
+                    origin.channelOrders.meta -
+                    origin.channelOrders.tiktok,
+                )
+              : "Origen pendiente"
+          }
+          note="Incluye otros UTM y origen pendiente; no implica orgánico"
         />
         <Metric
           label="Gasto · Meta Ads"
@@ -217,17 +244,53 @@ export function TeamReport({
       {!aligned && (
         <p className={r.explanation}>
           Los pedidos usan hora de Costa Rica; TikTok reporta con el calendario
-          de su cuenta. El gasto se muestra convertido, pero el CPA combinado
-          queda pendiente de alinear los días. Las compras de las plataformas no
-          se suman como ventas de Kairo.
+          de su cuenta. El CPA marcado con ≈ es orientativo: divide el gasto
+          consultado entre pedidos creados, con un desfase horario entre
+          fuentes. Las compras del píxel no se suman como pedidos de Kairo.
         </p>
       )}
 
+      <section className={r.coverage} aria-label="Cobertura y datos pendientes">
+        <div>
+          <h3>Completa el reporte</h3>
+          <p>
+            {recent.loading
+              ? "Consultando campañas recientes…"
+              : settings
+                ? `${recentModel.unmapped.length} campañas con gasto sin producto (hoy y 7 días anteriores).`
+                : "No se pudieron consultar las asignaciones."}{" "}
+            Los costos parciales usan solo la pauta asignada.
+          </p>
+        </div>
+        <button onClick={onAssign}>Asignar productos</button>
+        <ul>
+          <li>
+            <strong>Origen:</strong>{" "}
+            {origin
+              ? `${origin.withUtm} de ${origin.totalOrders} pedidos con UTM; ${origin.linkedCampaign} con ID de campaña verificable. Sin origen no significa orgánico.`
+              : data.attributionError || "Cruce de origen no disponible."}
+          </li>
+          <li>
+            <strong>Inventario:</strong>{" "}
+            {sources?.shiphero.status === "ready"
+              ? "ShipHero consultado; los SKU sin coincidencia única quedan pendientes."
+              : "ShipHero pendiente. Stock y sugerencias de reposición requieren esa conexión."}
+          </li>
+          <li>
+            <strong>CPA:</strong> ≈ indica horarios diferentes o cobertura
+            parcial. Un costo parcial puede aumentar al asignar las campañas
+            restantes.
+          </li>
+        </ul>
+      </section>
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
             <p className={r.kicker}>01 / Productos</p>
             <h2>Comparar para decidir</h2>
+            <button className={r.assignLink} onClick={onAssign}>
+              Asignar campañas para calcular el CPA
+            </button>
             <p>
               Hoy y ayer; los últimos 7 días completos hasta{" "}
               {shortDate(yesterday)}. Independiente del período superior.
@@ -275,12 +338,35 @@ export function TeamReport({
                         {p.name}
                         <small>{p.sku || "Sin SKU"}</small>
                       </th>
-                      {p.cpas.map((v, i) => (
+                      {p.costs.map((cost, i) => (
                         <td
                           key={i}
-                          className={v != null && v > 8.5 ? r.risk : undefined}
+                          className={
+                            !cost.partial &&
+                            !cost.approximate &&
+                            cost.value != null &&
+                            cost.value > 8.5
+                              ? r.risk
+                              : undefined
+                          }
                         >
-                          {recent.loading ? "…" : usd(v)}
+                          {recent.loading ? (
+                            "…"
+                          ) : cost.value == null ? (
+                            cost.reason
+                          ) : (
+                            <>
+                              {cost.partial || cost.approximate ? "≈ " : ""}
+                              {usd(cost.value)}
+                              <small>
+                                {cost.partial
+                                  ? "Parcial: solo pauta asignada"
+                                  : cost.approximate
+                                    ? "Orientativo: horarios distintos"
+                                    : "Pauta completa consultada"}
+                              </small>
+                            </>
+                          )}
                         </td>
                       ))}
                     </tr>
@@ -340,7 +426,7 @@ export function TeamReport({
         <div className={r.pagination}>
           <p>
             {recent.error ||
-              "El CPA requiere asignaciones completas, moneda convertible y fechas comparables. Un dato pendiente no representa costo cero."}
+              "Cada producto se calcula con sus campañas asignadas. Los importes parciales no representan el CPA completo. Sin pedidos o sin conversión de moneda no se inventa un costo."}
           </p>
           <button
             disabled={page === 0}

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { LogOut, UserRound } from "lucide-react";
 import { pantallasDe } from "@/lib/permisos";
 import { KENKU_MANAGEMENT_STORES } from "@/lib/kenku-management";
+import marketingTheme from "./marketing/theme.module.css";
 import { leerYo, type Yo } from "@/lib/sesion-cliente";
 
 /**
@@ -22,10 +23,14 @@ export default function BarraUsuario() {
 
   if (pathname === "/login" || !yo) return null;
 
-  const pantallas = pantallasDe(yo.permisos).filter(p =>
-    p.ruta !== "/admin/marketing" || yo.tiendas.includes("mireva-cr")
+  const pantallas = pantallasDe(yo.permisos).filter(
+    (p) => p.ruta !== "/admin/marketing" || yo.tiendas.includes("mireva-cr"),
   );
-  const kenkuStores = KENKU_MANAGEMENT_STORES.filter(s => (yo.id === 0 || yo.tiendas.includes(s.code)) && yo.permisos.some(p => p === "pedidos" || p === "finanzas"));
+  const kenkuStores = KENKU_MANAGEMENT_STORES.filter(
+    (s) =>
+      (yo.id === 0 || yo.tiendas.includes(s.code)) &&
+      yo.permisos.some((p) => p === "pedidos" || p === "finanzas"),
+  );
 
   async function salir() {
     try {
@@ -36,24 +41,39 @@ export default function BarraUsuario() {
   }
 
   return (
-    <nav aria-label="Secciones" className="border-b border-border bg-card/60">
+    <nav
+      aria-label="Secciones"
+      className={`${pathname.startsWith("/admin/marketing") ? `${marketingTheme.theme} ${marketingTheme.navigation}` : ""} border-b border-border bg-card/60`}
+    >
       <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-1 gap-y-1 px-4 py-1.5 text-xs">
         {pantallas.map((p) => {
-          const activa = p.ruta === "/" ? pathname === "/" : pathname.startsWith(p.ruta);
+          const activa =
+            p.ruta === "/" ? pathname === "/" : pathname.startsWith(p.ruta);
           return (
             <Link
               key={p.ruta}
               href={p.ruta}
               aria-current={activa ? "page" : undefined}
               className={`rounded px-2 py-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                activa ? "bg-primary/15 font-medium text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                activa
+                  ? "bg-primary/15 font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
               }`}
             >
               {p.label}
             </Link>
           );
         })}
-        {kenkuStores.map(s => <Link key={s.code} href={s.path} aria-current={pathname.startsWith(s.path)?"page":undefined} className="rounded px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{s.label}</Link>)}
+        {kenkuStores.map((s) => (
+          <Link
+            key={s.code}
+            href={s.path}
+            aria-current={pathname.startsWith(s.path) ? "page" : undefined}
+            className="rounded px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {s.label}
+          </Link>
+        ))}
         <div className="ml-auto flex items-center gap-1">
           <Link
             href="/cuenta"

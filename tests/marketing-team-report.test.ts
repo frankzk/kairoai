@@ -119,22 +119,24 @@ describe("Team report financial integrity", () => {
       productComparison(summary, sources(), settings, fx, now)[0].cpas,
     ).toEqual([10, 25, 25]);
   });
-  it("withholds product CPA if any spending campaign is unassigned or assignments are unavailable", () => {
+  it("shows assigned cost as partial while unrelated spending campaigns remain unassigned", () => {
     const s = sources();
     s.meta.data!.accounts[0].campaigns.push({
       ...account("3").campaigns[0],
       id: "unassigned",
     });
-    expect(productComparison(summary, s, settings, fx, now)[0].cpas).toEqual([
-      null,
-      null,
-      null,
-    ]);
+    const product = productComparison(summary, s, settings, fx, now)[0];
+    expect(product.cpas).toEqual([10, 25, 25]);
+    expect(product.costs[0]).toMatchObject({
+      partial: true,
+      unmapped: 1,
+      reason: "Solo pauta asignada, cobertura parcial",
+    });
     expect(
       productComparison(summary, sources(), null, fx, now)[0].cpas,
     ).toEqual([null, null, null]);
   });
-  it("withholds CPA for incomparable calendars, missing rates and missing daily metrics", () => {
+  it("withholds cost without rates/daily metrics and flags incomparable calendars as orientative", () => {
     for (const change of ["timezone", "daily", "rate"]) {
       const s = sources();
       let rate: UsdRate | null = fx;
@@ -145,7 +147,21 @@ describe("Team report financial integrity", () => {
       if (change === "rate") rate = null;
       expect(
         productComparison(summary, s, settings, rate, now)[0].cpas,
-      ).toEqual([null, null, null]);
+      ).toEqual(change === "timezone" ? [10, 25, 25] : [null, null, null]);
+      if (change === "timezone")
+        expect(
+          productComparison(summary, s, settings, rate, now)[0].costs[0],
+        ).toMatchObject({ approximate: true, partial: false });
     }
+  });
+  it("does not use data retained by an unavailable source and explains missing assignments", () => {
+    const s = sources();
+    s.tiktok.status = "error";
+    const cost = productComparison(summary, s, settings, fx, now)[0].costs[0];
+    expect(cost).toMatchObject({ value: 8, partial: true });
+    expect(
+      productComparison(summary, s, { mappings: [], plans: [] }, fx, now)[0]
+        .costs[0],
+    ).toMatchObject({ value: null, reason: "Asigna sus campañas" });
   });
 });

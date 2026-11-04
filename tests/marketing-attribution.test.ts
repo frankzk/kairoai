@@ -198,3 +198,39 @@ describe("cruce de compras únicas y resultados", () => {
     ).toMatchObject({ totalOrders: 1, withUtm: 0, withoutUtm: 1, groups: [] });
   });
 });
+
+describe("channel coverage without fabricated campaign joins", () => {
+  it("counts verified Meta/TikTok sources even without a numeric campaign ID, but keeps campaign attribution pending", () => {
+    const r = buildMarketingAttribution(
+      [order("1"), order("2"), order("3")],
+      [
+        row("1", {
+          utm_source: "facebook",
+          utm_campaign: "Human readable campaign",
+        }),
+        row("2", { utm_source: "tiktok", utm_campaign: "Another campaign" }),
+      ],
+      period,
+      now,
+    );
+    expect(r.channelOrders).toEqual({ meta: 1, tiktok: 1, other: 0 });
+    expect(r.linkedCampaign).toBe(0);
+    expect(r.withoutUtm).toBe(1);
+    expect(r.groups).toEqual([]);
+  });
+  it("does not assign conflicted or ambiguous origins to a channel", () => {
+    const r = buildMarketingAttribution(
+      [order("1"), order("2")],
+      [
+        row("1", { ...raw, ad_id: "9999999999" }),
+        row("2", raw),
+        row("2", { utm_source: "tiktok", utm_campaign: "1234567890" }),
+      ],
+      period,
+      now,
+    );
+    expect(r.channelOrders).toEqual({ meta: 0, tiktok: 0, other: 0 });
+    expect(r.conflicts).toBe(1);
+    expect(r.ambiguous).toBe(1);
+  });
+});

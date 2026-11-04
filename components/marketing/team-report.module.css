@@ -1,5 +1,5 @@
 .report {
-  color: #1b3025;
+  color: var(--mk-text);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -17,7 +17,7 @@
   margin-bottom: 8px;
 }
 .report p {
-  color: #56665c;
+  color: var(--mk-muted);
 }
 .reportHeading,
 .sectionHead {
@@ -29,12 +29,12 @@
   margin-bottom: 24px;
 }
 .reportHeading {
-  border-top: 4px solid #177449;
+  border-top: 4px solid var(--mk-accent);
   padding-top: 22px;
   margin-top: 28px;
 }
 .report .kicker {
-  color: #28714e;
+  color: var(--mk-accent);
   font-size: 10px;
   letter-spacing: 0.13em;
   text-transform: uppercase;
@@ -45,23 +45,23 @@
 .pill {
   font-size: 11px;
   padding: 6px 10px;
-  border: 1px solid #d8e5da;
-  background: #eef5ec;
+  border: 1px solid var(--mk-border);
+  background: var(--mk-soft);
   border-radius: 6px;
-  color: #23583d;
+  color: var(--mk-accent);
 }
 .heroMetrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  border: 1px solid #d9e3d9;
-  background: #fff;
+  border: 1px solid var(--mk-border);
+  background: var(--mk-surface);
   border-radius: 10px;
   overflow: hidden;
 }
 .metric {
   min-width: 0;
   padding: 24px;
-  border-right: 1px solid #dfe7df;
+  border-right: 1px solid var(--mk-border);
 }
 .metric:last-child {
   border-right: 0;
@@ -82,11 +82,11 @@
 .metric small {
   display: block;
   font-size: 11px;
-  color: #5b6c60;
+  color: var(--mk-muted);
   line-height: 1.5;
 }
 .heroMetrics .metric:first-child {
-  background: #eaf3e8;
+  background: var(--mk-accent-soft);
 }
 .channelMetrics {
   display: grid;
@@ -106,14 +106,14 @@
 .report .explanation {
   margin: 18px 0 0;
   padding: 12px 15px;
-  background: #f0f2eb;
-  border-left: 2px solid #93ab7d;
+  background: var(--mk-soft);
+  border: 1px solid var(--mk-border);
   font-size: 11px;
   max-width: none;
 }
 .section {
   padding: 36px 0;
-  border-bottom: 1px solid #dbe4da;
+  border-bottom: 1px solid var(--mk-border);
 }
 .sectionHead p:not(.kicker) {
   font-size: 12px;
@@ -126,7 +126,7 @@
   gap: 32px;
 }
 .report .caption {
-  color: #607064;
+  color: var(--mk-muted);
   font-size: 11px;
   line-height: 1.6;
   margin: 7px 0 14px;
@@ -135,15 +135,15 @@
   display: grid;
   gap: 5px;
   font-size: 11px;
-  color: #526357;
+  color: var(--mk-muted);
   min-width: 0;
 }
 .report input,
 .report select {
-  border: 1px solid #cbd9cd;
+  border: 1px solid var(--mk-border);
   border-radius: 6px;
-  background: #fff;
-  color: #20372a;
+  background: var(--mk-surface);
+  color: var(--mk-text);
   padding: 8px 10px;
   min-width: 0;
   max-width: 100%;
@@ -152,17 +152,17 @@
   color-scheme: light;
 }
 .report button {
-  border: 1px solid #cad9cc;
+  border: 1px solid var(--mk-border);
   border-radius: 6px;
   padding: 6px 10px;
-  background: #fff;
-  color: #245d3e;
+  background: var(--mk-surface);
+  color: var(--mk-accent);
   font-size: 11px;
   min-height: 32px;
 }
 .report button:hover {
-  background: #edf4e9;
-  border-color: #6b9275;
+  background: var(--mk-hover);
+  border-color: var(--mk-accent);
 }
 .report button:disabled {
   opacity: 0.45;
@@ -173,15 +173,15 @@
 .report input:focus-visible,
 .report summary:focus-visible,
 .tableWrap:focus-visible {
-  outline: 2px solid #177449;
+  outline: 2px solid var(--mk-accent);
   outline-offset: 3px;
 }
 .tableWrap {
   overflow: auto;
   max-width: 100%;
-  border: 1px solid #dce5db;
+  border: 1px solid var(--mk-border);
   border-radius: 7px;
-  background: #fff;
+  background: var(--mk-surface);
 }
 .report table {
   width: 100%;
@@ -195,7 +195,7 @@
 .report th,
 .report td {
   padding: 12px 14px;
-  border-bottom: 1px solid #e6ebe3;
+  border-bottom: 1px solid var(--mk-border);
   vertical-align: top;
 }
 .report td {
@@ -204,8 +204,8 @@
   font-variant-numeric: tabular-nums;
 }
 .report thead th {
-  background: #edf3e9;
-  color: #455d4b;
+  background: var(--mk-soft);
+  color: var(--mk-muted);
   font-size: 11px;
   white-space: nowrap;
   font-weight: 600;
@@ -220,11 +220,11 @@
   border-bottom: 0;
 }
 .report tbody tr:hover {
-  background: #fafcf7;
+  background: var(--mk-hover);
 }
 .report table small {
   display: block;
-  color: #6b796d;
+  color: var(--mk-subtle);
   font-size: 10px;
   margin-top: 3px;
   max-width: 220px;
@@ -264,11 +264,11 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid #e1e8dd;
+  border-bottom: 1px solid var(--mk-border);
   padding: 12px 0;
 }
 .ranking li > span {
-  color: #8b9c88;
+  color: var(--mk-subtle);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -278,7 +278,7 @@
 }
 .ranking small {
   display: block;
-  color: #71816f;
+  color: var(--mk-subtle);
   font-size: 10px;
 }
 .ranking strong {
@@ -286,7 +286,7 @@
   font-weight: 600;
 }
 .stockPanel {
-  background: #eef3e7;
+  background: var(--mk-soft);
   padding: 22px;
   border-radius: 10px;
 }
@@ -305,24 +305,24 @@
   font-size: 11px;
 }
 .report .risk {
-  color: #a53b27;
+  color: var(--mk-bad);
 }
 .disclosure {
-  border: 1px solid #d8e3d7;
+  border: 1px solid var(--mk-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--mk-surface);
   margin-top: 20px;
 }
 .disclosure > summary {
   cursor: pointer;
   padding: 16px 18px;
   font-size: 13px;
-  color: #254e35;
+  color: var(--mk-text);
   font-weight: 600;
 }
 .disclosure > summary span {
   font-size: 11px;
-  color: #72816e;
+  color: var(--mk-subtle);
   margin-left: 12px;
   font-weight: 400;
 }
@@ -331,10 +331,10 @@
 }
 .disclosure[open] > summary {
   margin: 0 -18px 12px;
-  border-bottom: 1px solid #e1e8dd;
+  border-bottom: 1px solid var(--mk-border);
 }
 .account {
-  border-top: 1px solid #e0e8dc;
+  border-top: 1px solid var(--mk-border);
   padding-top: 24px;
   margin-top: 24px;
 }
@@ -348,7 +348,7 @@
   border: 0;
   background: none;
   padding: 0;
-  color: #3c5945;
+  color: var(--mk-accent);
   text-align: inherit;
   font-size: 11px;
 }
@@ -366,7 +366,7 @@
 }
 .assignment button {
   margin-top: 8px;
-  background: #e5f0df;
+  background: var(--mk-accent-soft);
 }
 .weekdays {
   display: grid;
@@ -391,11 +391,11 @@
   max-width: 45px;
   display: flex;
   align-items: flex-end;
-  border-bottom: 1px solid #9caf98;
+  border-bottom: 1px solid var(--mk-border);
 }
 .barTrack > div {
   width: 100%;
-  background: #ddc873;
+  background: var(--mk-bar);
   border-radius: 4px 4px 0 0;
 }
 .legend {
@@ -410,7 +410,7 @@
   display: flex;
   gap: 6px;
   align-items: center;
-  color: #526452;
+  color: var(--mk-muted);
   background: none;
   text-align: left;
 }
@@ -430,7 +430,7 @@
 .chartData {
   margin-top: 14px;
   font-size: 11px;
-  color: #4a634d;
+  color: var(--mk-accent);
 }
 .chartData > summary {
   cursor: pointer;
@@ -446,21 +446,21 @@
   gap: 24px;
 }
 .report .alert {
-  border-left: 2px solid #a4b891;
+  border: 1px solid var(--mk-border);
   padding: 10px 12px;
   margin: 8px 0;
   font-size: 11px;
-  background: #f2f5ed;
+  background: var(--mk-soft);
 }
 .alert strong {
   display: block;
-  color: #294c32;
+  color: var(--mk-text);
   margin-bottom: 4px;
   font-size: 12px;
 }
 .report .alertRisk {
-  border-left-color: #bd765c;
-  background: #faf1e9;
+  border-color: var(--mk-border);
+  background: var(--mk-bad-soft);
 }
 @media (max-width: 1000px) {
   .channelMetrics {
@@ -492,7 +492,7 @@
   }
   .heroMetrics .metric {
     border-right: 0;
-    border-bottom: 1px solid #dfe7df;
+    border-bottom: 1px solid var(--mk-border);
   }
   .heroMetrics .metric:last-child {
     border-bottom: 0;
@@ -562,4 +562,43 @@
   .alertGrid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.coverage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 18px;
+  border: 1px solid var(--mk-border);
+  border-radius: 7px;
+  background: var(--mk-soft);
+}
+.coverage > div {
+  flex: 1;
+  min-width: 230px;
+}
+.coverage h3 {
+  margin: 0 0 4px;
+}
+.coverage p,
+.coverage li {
+  font-size: 12px;
+  max-width: 75ch;
+}
+.coverage ul {
+  flex-basis: 100%;
+  display: grid;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--mk-border);
+  list-style: none;
+  color: var(--mk-muted);
+}
+.report .assignLink {
+  margin-top: 12px;
+  background: var(--mk-accent-soft);
+  border-color: var(--mk-accent);
 }

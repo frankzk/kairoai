@@ -351,12 +351,13 @@ Tiene tres estados y los tres son solo de color: en reposo, borde de estructura;
 - **Don't** parecer un SaaS genérico: sin degradados violeta, sin ilustraciones, sin tarjetas enormes con mucho aire, sin saludos de bienvenida.
 - **Don't** parecer un ERP viejo: la densidad nunca justifica gris sobre gris ni tablas donde todo pesa lo mismo. La jerarquía es obligatoria.
 
-## Reporte principal de Marketing (Mireva Costa Rica)
+## Marketing (Mireva Costa Rica), paleta unificada
 
-La pestaña «Reporte general» sigue el PDF del equipo y usa, por petición explícita,
-una superficie clara (#fafbf6), texto verde oscuro (#1b3025), acento verde (#177449)
-y barras amarillas cálidas. Esta excepción se limita al reporte; las pestañas de
-Charlie y la navegación general conservan el tema de Kairo. H1/H2 usan Georgia
+Todo el módulo Marketing usa una superficie clara, texto verde oscuro, acento
+verde y gráficos con verde, ámbar y violeta semánticos, definidos una sola vez
+en `components/marketing/theme.module.css` mediante OKLCH. Se aplica también a
+Charlie, asignaciones, reposición, conexiones y la barra superior mientras está
+en Marketing. El tema de las demás secciones de Kairo se conserva. H1/H2 del reporte usan Georgia
 local y los controles/tablas conservan la tipografía sans del sistema. No se
 cargan fuentes ni librerías de gráficos externas.
 
@@ -372,3 +373,16 @@ selectores de producto se montan al editar una campaña, para evitar miles de
 opciones en el DOM. Las tablas tienen región desplazable, orden accesible,
 paginación cuando corresponde y foco visible. Los gráficos incluyen datos en
 una tabla alternativa. Las asignaciones requieren el permiso Marketing vigente.
+
+
+El acceso «Asignar productos» está visible en la cabecera y en el bloque de CPA.
+El editor comparte búsqueda por nombre/SKU, guardado explícito y cancelación.
+Las celdas explican si faltan campañas, pedidos, desglose diario o conversión.
+Los costos con campañas pendientes se etiquetan parciales y usan solo pauta
+asignada, sin presentarlos como CPA completo. El CPA orientativo autorizado lleva
+«≈» y explica el desfase CR/Lima. Los indicadores del modelo Charlie conservan
+su criterio de comparabilidad; el reporte general ofrece el orientativo.
+El resumen integra el origen UTM sobre la misma cohorte operativa: una fuente
+Meta/TikTok verificable cuenta para canal aunque falte ID de campaña; un ID
+verificable es obligatorio para el cruce específico de campaña. Los desconocidos
+no se llaman orgánicos. Un fallo de lectura UTM no elimina los pedidos.

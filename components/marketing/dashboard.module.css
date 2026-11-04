@@ -1,13 +1,11 @@
 .workspace {
-  --primary: 161 51% 43%;
-  --ring: 161 51% 43%;
   max-width: 1400px;
   margin: 0 auto;
   padding: 28px 28px 48px;
-  color: oklch(92% 0.008 170);
+  color: var(--mk-text);
 }
 .eyebrow {
-  color: oklch(71% 0.015 170);
+  color: var(--mk-muted);
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -27,7 +25,7 @@
   letter-spacing: -0.025em;
 }
 .muted {
-  color: oklch(70% 0.018 240);
+  color: var(--mk-muted);
   font-size: 12px;
   line-height: 1.65;
   max-width: 75ch;
@@ -42,7 +40,7 @@
   display: grid;
   gap: 6px;
   font-size: 11px;
-  color: oklch(75% 0.012 240);
+  color: var(--mk-muted);
   min-width: 0;
 }
 .control {
@@ -51,16 +49,16 @@
   max-width: 100%;
   border: 1px solid hsl(var(--border));
   border-radius: 5px;
-  background: oklch(17% 0.012 240);
+  background: var(--mk-surface);
   padding: 0 10px;
-  color: oklch(93% 0.006 240);
+  color: var(--mk-text);
   font-size: 12px;
 }
 .control:focus-visible,
 .button:focus-visible,
 .tab:focus-visible,
 .link:focus-visible {
-  outline: 2px solid oklch(72% 0.11 165);
+  outline: 2px solid var(--mk-accent);
   outline-offset: 3px;
 }
 .button {
@@ -73,13 +71,13 @@
   font-size: 12px;
   border: 1px solid hsl(var(--border));
   border-radius: 5px;
-  background: oklch(19% 0.012 240);
+  background: var(--mk-surface);
   transition:
     background 180ms ease-out,
     transform 180ms ease-out;
 }
 .button:hover {
-  background: oklch(25% 0.016 240);
+  background: var(--mk-hover);
 }
 .button:active {
   transform: translateY(1px);
@@ -89,13 +87,13 @@
   cursor: not-allowed;
 }
 .primary {
-  color: oklch(16% 0.018 165);
-  background: oklch(73% 0.12 165);
+  color: var(--mk-surface);
+  background: var(--mk-accent);
   border-color: transparent;
   font-weight: 600;
 }
 .primary:hover {
-  background: oklch(80% 0.1 165);
+  background: var(--mk-good);
 }
 .tabs {
   display: flex;
@@ -107,24 +105,24 @@
 .tab {
   white-space: nowrap;
   padding: 12px 0;
-  color: oklch(70% 0.018 240);
+  color: var(--mk-muted);
   font-size: 13px;
   border-bottom: 2px solid transparent;
 }
 .tab[aria-pressed="true"] {
-  color: oklch(91% 0.03 165);
-  border-color: oklch(73% 0.12 165);
+  color: var(--mk-accent);
+  border-color: var(--mk-accent);
 }
 .tabIndex {
   margin-right: 8px;
   font:
     10px ui-monospace,
     monospace;
-  color: oklch(58% 0.012 240);
+  color: var(--mk-subtle);
 }
 .notice {
   border: 1px solid hsl(var(--border));
-  background: oklch(17% 0.013 240);
+  background: var(--mk-soft);
   padding: 10px 14px;
   display: flex;
   gap: 12px;
@@ -135,7 +133,7 @@
   margin-bottom: 20px;
 }
 .link {
-  color: oklch(81% 0.09 165);
+  color: var(--mk-accent);
   text-decoration: underline;
   text-underline-offset: 3px;
   font-size: 12px;
@@ -160,7 +158,7 @@
 }
 .metric dt {
   font-size: 11px;
-  color: oklch(71% 0.015 240);
+  color: var(--mk-muted);
 }
 .value {
   margin: 8px 0 6px;
@@ -171,7 +169,7 @@
   font-variant-numeric: tabular-nums;
 }
 .metric small {
-  color: oklch(68% 0.015 240);
+  color: var(--mk-muted);
   font-size: 10px;
   line-height: 1.5;
   display: block;
@@ -203,7 +201,7 @@
   border: 1px solid hsl(var(--border));
   border-radius: 7px;
   padding: 18px;
-  background: oklch(15% 0.013 240);
+  background: var(--mk-surface);
 }
 .tableWrap {
   overflow-x: auto;
@@ -218,7 +216,7 @@
 }
 .table th {
   font-weight: 500;
-  color: oklch(72% 0.012 240);
+  color: var(--mk-muted);
   font-size: 10px;
   white-space: nowrap;
 }
@@ -232,7 +230,7 @@
   border-bottom: 0;
 }
 .table tbody tr:hover {
-  background: oklch(18% 0.012 240);
+  background: var(--mk-hover);
 }
 .table td:first-child,
 .table th:first-child {
@@ -248,13 +246,13 @@
   white-space: nowrap;
 }
 .good {
-  color: oklch(79% 0.12 165);
+  color: var(--mk-good);
 }
 .warn {
-  color: oklch(84% 0.12 85);
+  color: var(--mk-warn);
 }
 .bad {
-  color: oklch(77% 0.12 25);
+  color: var(--mk-bad);
 }
 .badge {
   display: inline-block;
@@ -277,13 +275,13 @@
   line-height: 1.5;
 }
 .bar {
-  background: oklch(24% 0.012 240);
+  background: var(--mk-soft);
   height: 5px;
   overflow: hidden;
 }
 .barFill {
   height: 100%;
-  background: oklch(72% 0.11 165);
+  background: var(--mk-accent);
 }
 .chart {
   display: grid;
@@ -305,15 +303,15 @@
 .chartColumn {
   display: block;
   width: 100%;
-  background: oklch(69% 0.09 165);
+  background: var(--mk-chart-1);
   min-height: 1px;
 }
 .chartButton:hover .chartColumn,
 .chartButton:focus-visible .chartColumn {
-  background: oklch(84% 0.1 165);
+  background: var(--mk-good);
 }
 .chartButton:focus-visible {
-  outline: 2px solid oklch(80% 0.1 165);
+  outline: 2px solid var(--mk-good);
   outline-offset: 2px;
 }
 .chartAxis {
@@ -322,7 +320,7 @@
   gap: 12px;
   padding-top: 9px;
   font-size: 10px;
-  color: oklch(68% 0.012 240);
+  color: var(--mk-muted);
 }
 .legend {
   display: flex;
@@ -330,7 +328,7 @@
   gap: 14px;
   margin: 12px 0;
   font-size: 11px;
-  color: oklch(75% 0.012 240);
+  color: var(--mk-muted);
 }
 .dot {
   display: inline-block;
@@ -345,11 +343,11 @@
   border-radius: 6px;
   font-size: 12px;
   line-height: 1.7;
-  color: oklch(75% 0.012 240);
+  color: var(--mk-muted);
 }
 .skeleton {
   height: 180px;
-  background: oklch(20% 0.01 240);
+  background: var(--mk-soft);
   border-radius: 6px;
 }
 .formGrid {
@@ -360,13 +358,13 @@
 }
 .editing {
   padding: 18px;
-  background: oklch(19% 0.012 240);
+  background: var(--mk-surface);
 }
 .footer {
   border-top: 1px solid hsl(var(--border));
   padding-top: 16px;
   font-size: 10px;
-  color: oklch(67% 0.012 240);
+  color: var(--mk-muted);
   line-height: 1.7;
 }
 @media (max-width: 900px) {
@@ -419,61 +417,43 @@
   }
 }
 
-/* The team report deliberately uses the light paper surface requested in the PDF. */
-.lightReport {
-  --border: 110 18% 84%;
-  color: #1b3025;
-  background: #fafbf6;
-  border-radius: 12px;
-  margin-top: 20px;
-  margin-bottom: 20px;
-  color-scheme: light;
+.workspace {
+  background: var(--mk-canvas);
 }
-.lightReport .title {
+.title {
   font-family: Georgia, "Times New Roman", serif;
   font-size: 32px;
   font-weight: 400;
 }
-.lightReport .muted,
-.lightReport .eyebrow,
-.lightReport .field,
-.lightReport .tab {
-  color: #596e5c;
+.empty {
+  color: var(--mk-muted);
 }
-.lightReport .control,
-.lightReport .button {
-  background: #fff;
-  color: #245d3e;
-  border-color: #cad9cc;
+.button[aria-pressed="true"] {
+  background: var(--mk-accent-soft);
+  border-color: var(--mk-accent);
 }
-.lightReport .button:hover {
-  background: #edf4e9;
+.callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px;
+  margin: 16px 0;
+  background: var(--mk-accent-soft);
+  border: 1px solid var(--mk-border);
+  border-radius: 6px;
 }
-.lightReport .tab[aria-pressed="true"] {
-  color: #145d38;
-  border-color: #177449;
+.callout p {
+  max-width: 75ch;
 }
-.lightReport .tabIndex {
-  color: #7e917d;
-}
-.lightReport .notice {
-  background: #eef3e9;
-  color: #485e47;
+.checkField {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
+  color: var(--mk-text);
 }
-.lightReport .link {
-  color: #17643d;
-}
-.lightReport .footer {
-  color: #60715e;
-}
-.lightReport .skeleton {
-  background: #e8eee2;
-}
-@media (max-width: 700px) {
-  .lightReport {
-    margin-top: 0;
-    border-radius: 0;
-    padding: 20px 16px 32px;
-  }
+.checkField input {
+  accent-color: var(--mk-accent);
 }

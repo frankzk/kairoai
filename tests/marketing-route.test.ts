@@ -8,7 +8,11 @@ const mocks = vi.hoisted(() => ({
   costs: vi.fn(),
   versions: vi.fn(),
   config: vi.fn(),
+  origins: vi.fn(),
   storeAllowed: true,
+}));
+vi.mock("@/lib/marketing-attribution-db", () => ({
+  listMarketingOrigins: mocks.origins,
 }));
 vi.mock("@/lib/marketing-charlie-settings", () => ({
   readCharlieConfig: mocks.config,
@@ -44,6 +48,7 @@ beforeEach(() => {
     imports: [],
     settlementTraceByKey: new Map(),
   });
+  mocks.origins.mockResolvedValue([]);
   mocks.expenses.mockResolvedValue([]);
   mocks.costs.mockResolvedValue([]);
   mocks.versions.mockResolvedValue([]);
@@ -153,4 +158,58 @@ describe("marketing API isolation and availability", () => {
       vi.useRealTimers();
     }
   });
+});
+
+describe("Report summary UTM coverage", () => {
+  it("reuses one canonical order snapshot for orders, revenue and attribution and keeps identities private", async () => {
+    const response = await GET(
+      request(
+        "store=mireva-cr&from=2026-11-03&to=2026-11-03&include_charlie=1&include_attribution=1",
+      ),
+    );
+    const body = await response.json();
+    expect(mocks.dataset).toHaveBeenCalledTimes(1);
+    expect(mocks.origins).toHaveBeenCalledWith(
+      1,
+      "2026-11-03T06:00:00.000Z",
+      "2026-11-04T06:00:00.000Z",
+    );
+    expect(body.attribution).toMatchObject({
+      totalOrders: 0,
+      linkedCampaign: 0,
+      groups: [],
+    });
+    expect(body).not.toHaveProperty("orders");
+    expect(body).not.toHaveProperty("phones");
+  });
+  it("preserves orders when the origin reader fails and does not fabricate channel zeros", async () => {
+    mocks.origins.mockRejectedValue(new Error("private provider failure"));
+    const response = await GET(
+      request("store=mireva-cr&month=2026-11&include_attribution=1"),
+    );
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.attribution).toBeNull();
+    expect(body.attributionError).toBeTruthy();
+    expect(body.totals.generated).toBe(0);
+    expect(JSON.stringify(body)).not.toContain("private provider failure");
+  });
+});
+
+it("does not block available operations behind a stalled optional UTM reader", async () => {
+  vi.useFakeTimers();
+  try {
+    mocks.origins.mockImplementation(() => new Promise(() => {}));
+    const pending = GET(
+      request("store=mireva-cr&month=2026-11&include_attribution=1"),
+    );
+    await vi.advanceTimersByTimeAsync(4001);
+    const response = await pending,
+      body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.attribution).toBeNull();
+    expect(body.totals.generated).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
 });

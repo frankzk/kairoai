@@ -208,9 +208,7 @@ export default function MarketingDashboard() {
   }
   return (
     <UsdProvider fx={charlie.settings.data?.fx ?? null}>
-      <main
-        className={`${s.workspace} ${view === "report" ? s.lightReport : ""}`}
-      >
+      <main className={s.workspace}>
         <header className={s.header}>
           <div>
             <p className={s.eyebrow}>Mireva Costa Rica / Operación comercial</p>
@@ -351,9 +349,12 @@ export default function MarketingDashboard() {
           <button
             className={s.button}
             aria-pressed={view === "details"}
-            onClick={() => setView("details")}
+            onClick={() => {
+              setDetailView("campaigns");
+              setView("details");
+            }}
           >
-            Productos y campañas
+            Asignar productos
           </button>
           <button
             className={s.button}
@@ -378,7 +379,7 @@ export default function MarketingDashboard() {
                 ? "No se pudieron consultar las conexiones. La inversión queda sin datos."
                 : missing.length
                   ? `${missing.join(", ")}: conexión pendiente o consulta no disponible.${missing.some((name) => name !== "ShipHero") ? " La inversión puede ser parcial." : " Inventario sin datos."}`
-                  : "Plataformas e inventario consultados. Las ventas siguen sin atribuir a campañas."}
+                  : "Fuentes consultadas. El origen de los pedidos usa únicamente UTM verificables."}
           </span>
           {view !== "sources" && (
             <button className={s.link} onClick={() => setView("sources")}>
@@ -479,6 +480,10 @@ export default function MarketingDashboard() {
             {view === "report" ? (
               <TeamReport
                 data={data}
+                onAssign={() => {
+                  setDetailView("campaigns");
+                  setView("details");
+                }}
                 sources={api.sources.data}
                 settings={api.settings.data}
                 fx={charlie.settings.data?.fx ?? null}
@@ -558,16 +563,20 @@ export default function MarketingDashboard() {
                 </div>
                 {detailView === "campaigns" ? (
                   <>
-                  <CampaignWorkspace
-                    model={model}
-                    catalog={data.catalog}
-                    ready={settingsReady}
-                    loading={api.sources.loading}
-                    saving={api.saving}
-                    saved={api.saved}
-                    save={api.save}
-                  />
-                  <AttributionWorkspace period={data.period} revision={revision} campaigns={model.campaigns} />
+                    <CampaignWorkspace
+                      model={model}
+                      catalog={data.catalog}
+                      ready={settingsReady}
+                      loading={api.sources.loading}
+                      saving={api.saving}
+                      saved={api.saved}
+                      save={api.save}
+                    />
+                    <AttributionWorkspace
+                      period={data.period}
+                      revision={revision}
+                      campaigns={model.campaigns}
+                    />
                   </>
                 ) : (
                   <ProductWorkspace

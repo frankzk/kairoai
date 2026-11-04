@@ -146,14 +146,11 @@ function RevenueChart({ model }: { model: CharlieModel }) {
       <h2 className={s.heading}>Últimos 7 días: Meta e ingreso potencial</h2>
       <div className={s.legend}>
         <span>
-          <span className={s.dot} style={{ background: "oklch(79% .1 165)" }} />
+          <span className={s.dot} style={{ background: "var(--mk-chart-1)" }} />
           Ingreso potencial USD
         </span>
         <span>
-          <span
-            className={s.dot}
-            style={{ background: "oklch(78% .09 235)" }}
-          />
+          <span className={s.dot} style={{ background: "var(--mk-chart-2)" }} />
           Gasto Meta USD
         </span>
       </div>
@@ -197,7 +194,7 @@ function RevenueChart({ model }: { model: CharlieModel }) {
                   y={y(day.revenueUsd)}
                   height={166 - y(day.revenueUsd)}
                   width="12"
-                  fill="oklch(79% .1 165)"
+                  fill="var(--mk-chart-1)"
                 >
                   <title>
                     {day.date}: {money(day.revenueUsd)} potencial
@@ -210,7 +207,7 @@ function RevenueChart({ model }: { model: CharlieModel }) {
                   y={y(day.metaSpendUsd)}
                   height={166 - y(day.metaSpendUsd)}
                   width="12"
-                  fill="oklch(78% .09 235)"
+                  fill="var(--mk-chart-2)"
                 >
                   <title>
                     {day.date}: {money(day.metaSpendUsd)} Meta

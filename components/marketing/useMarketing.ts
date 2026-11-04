@@ -10,6 +10,7 @@ import {
   periodQuery,
   type MarketingPeriod,
 } from "@/lib/marketing-dates";
+import type { MarketingAttribution } from "@/lib/marketing-attribution";
 import type { CharlieRevenue } from "@/lib/marketing-charlie-revenue";
 import { marketingLoadPlan, type MarketingView } from "@/lib/marketing-loading";
 
@@ -73,10 +74,12 @@ export function useMarketing(
     MarketingSummary & {
       charlieBusiness?: CharlieRevenue | null;
       charlieError?: string;
+      attribution?: MarketingAttribution | null;
+      attributionError?: string;
     }
   >(
     query && plan.summary
-      ? `/api/marketing/summary?${query}&include_charlie=1`
+      ? `/api/marketing/summary?${query}&include_charlie=1${view === "report" ? "&include_attribution=1" : ""}`
       : null,
     revision + financialRevision,
   );
