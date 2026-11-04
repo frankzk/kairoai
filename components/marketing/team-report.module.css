@@ -361,6 +361,11 @@
   min-width: 220px;
   text-align: left;
 }
+.assignment > small {
+  display: block;
+  margin-top: 4px;
+  line-height: 1.4;
+}
 .assignment select {
   width: 240px;
 }
