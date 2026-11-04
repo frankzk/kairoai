@@ -35,9 +35,82 @@ const signature = (s: string) =>
     .join(" ");
 export function campaignCore(name: string) {
   return name
-    .replace(/^(?:(?:CBO|ABO|COST[ _-]*CAP|CAMPA[ÑN]A)\b[\s_|:-]*)+/i, "")
+    .replace(
+      /^(?:(?:CBO|ABO|COST[ _-]*CAP|CAMPA[ÑN]A)(?=[\s_|:-]|$)[\s_|:-]*)+/i,
+      "",
+    )
     .replace(/(?:[\s_|-]+(?:CR|CB|Costa[ _]Rica))+$/i, "")
     .trim();
+}
+/** A conservative, visible alias: separators/case and known wrappers only. */
+export function campaignAlias(name: string): string | null {
+  const alias = normalProductName(campaignCore(name));
+  if (
+    alias.length < 4 ||
+    alias.length > 160 ||
+    [
+      "ventas",
+      "campana",
+      "testing",
+      "control",
+      "oferta",
+      "producto",
+      "capsulas",
+      "shampoo",
+    ].includes(alias)
+  )
+    return null;
+  return alias;
+}
+export function learnedCampaignMatch(
+  name: string,
+  families: MarketingFamily[],
+  mappings: CampaignProduct[],
+):
+  | { kind: "none" | "ambiguous"; mapping: null }
+  | { kind: "exact"; mapping: CampaignProduct } {
+  const alias = campaignAlias(name);
+  const rules = alias
+    ? mappings.filter((m) => m.campaign_alias === alias && !m.automatic)
+    : [];
+  if (!rules.length) return { kind: "none", mapping: null };
+  const targets = new Set(
+    rules.map((m) =>
+      JSON.stringify([
+        m.family_key,
+        m.product_key,
+        m.variant_scope,
+        [...(m.variant_keys ?? [])].sort(),
+      ]),
+    ),
+  );
+  const valid = rules.every((m) => {
+    const f = families.find((f) => f.key === m.family_key);
+    return (
+      f &&
+      !f.review &&
+      f.members.length &&
+      (m.variant_scope === "all"
+        ? m.product_key === f.key
+        : m.variant_scope === "selected" &&
+          Boolean(m.variant_keys?.length) &&
+          m.variant_keys!.every((k) => f.members.some((v) => v.key === k)))
+    );
+  });
+  if (targets.size !== 1 || !valid) return { kind: "ambiguous", mapping: null };
+  const catalog = matchCampaignProduct(name, families),
+    rule = rules[0];
+  if (
+    catalog.kind === "ambiguous" ||
+    (catalog.kind === "exact" &&
+      (catalog.family?.key !== rule.family_key ||
+        (catalog.variantKeys &&
+          (rule.variant_scope !== "selected" ||
+            JSON.stringify([...rule.variant_keys!].sort()) !==
+              JSON.stringify([...catalog.variantKeys].sort())))))
+  )
+    return { kind: "ambiguous", mapping: null };
+  return { kind: "exact", mapping: rule };
 }
 export type ProductMatch = {
   kind: "exact" | "suggestion" | "ambiguous" | "none";
@@ -141,9 +214,22 @@ export function effectiveAssignment(
   id: string,
   name: string,
   enabled: boolean,
+  learned: CampaignProduct[] = [],
 ): CampaignProduct | null {
   if (stored) return stored.variant_scope === "none" ? null : stored;
   if (!enabled) return null;
+  const remembered = learnedCampaignMatch(name, families, learned);
+  if (remembered.kind === "ambiguous") return null;
+  if (remembered.kind === "exact")
+    return {
+      ...remembered.mapping,
+      platform,
+      account_id: account,
+      campaign_id: id,
+      campaign_alias: null,
+      automatic: true,
+      match_reason: `Alias aprendido: ${remembered.mapping.campaign_alias?.toLocaleUpperCase("es")}`,
+    };
   const match = matchCampaignProduct(name, families);
   if (match.kind !== "exact" || !match.family) return null;
   const variant = match.variantKeys?.[0];

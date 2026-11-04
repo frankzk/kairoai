@@ -9,6 +9,7 @@ export interface CampaignProduct {
   family_key?: string | null;
   variant_scope?: "legacy" | "all" | "selected" | "none";
   variant_keys?: string[];
+  campaign_alias?: string | null;
   automatic?: boolean;
   match_reason?: string;
   updated_at?: string;

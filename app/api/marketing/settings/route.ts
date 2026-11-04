@@ -11,6 +11,7 @@ import { marketingPeriod, marketingDate } from "@/lib/marketing-dates";
 import { getMarketingInputs, getMarketingData } from "@/lib/marketing-data";
 import { presetPeriod } from "@/lib/marketing-dates";
 import { metaAccountIds } from "@/lib/marketing-sources";
+import { campaignAlias } from "@/lib/marketing-product-families";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
     const [mappings, plans] = await Promise.all([
       readAll(
         "marketing_campaign_products",
-        "platform,account_id,campaign_id,product_key,product_name,sku,family_key,variant_scope,variant_keys,updated_at",
+        "platform,account_id,campaign_id,product_key,product_name,sku,family_key,variant_scope,variant_keys,campaign_alias,updated_at",
       ),
       readAll(
         "marketing_product_plans",
@@ -140,6 +141,7 @@ export async function PATCH(req: NextRequest) {
                 family_key: null,
                 variant_scope: "none",
                 variant_keys: [],
+                campaign_alias: null,
               },
               { onConflict: "store_id,platform,account_id,campaign_id" },
             );
@@ -158,6 +160,25 @@ export async function PATCH(req: NextRequest) {
       }
     }
     if (body.kind === "mapping" && typeof body.family_key === "string") {
+      if (
+        body.learn_alias !== undefined &&
+        typeof body.learn_alias !== "boolean"
+      )
+        return reply({ error: "Indica si quieres recordar el alias." }, 400);
+      const alias =
+        body.learn_alias === true &&
+        typeof body.campaign_name === "string" &&
+        body.campaign_name.length <= 1000
+          ? campaignAlias(body.campaign_name)
+          : null;
+      if (body.learn_alias === true && !alias)
+        return reply(
+          {
+            error:
+              "El nombre de campaña es demasiado genérico o largo para aprenderlo como alias.",
+          },
+          400,
+        );
       if (
         body.family_key.length > 300 ||
         !["all", "selected"].includes(String(body.variant_scope)) ||
@@ -225,6 +246,7 @@ export async function PATCH(req: NextRequest) {
             family_key: family.key,
             variant_scope: target.scope,
             variant_keys: target.scope === "all" ? [] : target.memberKeys,
+            campaign_alias: alias,
           },
           { onConflict: "store_id,platform,account_id,campaign_id" },
         );
@@ -268,6 +290,7 @@ export async function PATCH(req: NextRequest) {
             family_key: null,
             variant_scope: "legacy",
             variant_keys: [],
+            campaign_alias: null,
             platform: body.platform,
             account_id: body.account_id,
             campaign_id: body.campaign_id,

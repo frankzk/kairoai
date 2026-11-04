@@ -1,5 +1,8 @@
 import type { MarketingSummary } from "./marketing";
-import { effectiveAssignment } from "./marketing-product-families";
+import {
+  effectiveAssignment,
+  learnedCampaignMatch,
+} from "./marketing-product-families";
 import { buildMarketingAdsSummary } from "./marketing-ads-summary";
 import type { MarketingSources } from "./marketing-source-types";
 import {
@@ -52,7 +55,14 @@ export function buildMarketingIntelligence(
               campaign.id,
               campaign.name,
               Boolean(settings) && !summary.familyDataError,
+              settings?.mappings ?? [],
             ),
+            aliasConflict:
+              learnedCampaignMatch(
+                campaign.name,
+                summary.productFamilies ?? [],
+                settings?.mappings ?? [],
+              ).kind === "ambiguous",
             platformCpa:
               campaign.purchases != null && campaign.purchases > 0
                 ? campaign.spend / campaign.purchases
