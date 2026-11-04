@@ -75,10 +75,11 @@ export function anulacionExcluida(motivo: string | null | undefined): boolean {
 }
 
 /**
- * Tasa de confirmacion: de los pedidos ya decididos (despachados o anulados
- * que cuentan), cuantos se despacharon. Los pendientes todavia no se deciden.
+ * Tasa de confirmacion: confirmados ÷ generados (04/11/2026). Confirmar no es
+ * despachar: los confirmados se leen del estado de iComfly
+ * (lib/icomfly-estado-venta.ts). Los generados ya vienen sin los anulados que
+ * no cuentan. null sin pedidos generados.
  */
-export function tasaConfirmacion(despachados: number, anuladosQueCuentan: number): number | null {
-  const decididos = despachados + anuladosQueCuentan;
-  return decididos > 0 ? (despachados / decididos) * 100 : null;
+export function tasaConfirmacion(confirmados: number, generados: number): number | null {
+  return generados > 0 ? (confirmados / generados) * 100 : null;
 }

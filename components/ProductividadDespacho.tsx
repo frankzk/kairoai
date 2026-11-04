@@ -68,7 +68,7 @@ export default function ProductividadDespacho({ storeCode }: { storeCode: string
           (entregados + no entregados). Los no entregados son devoluciones cerradas; esta tasa excluye pedidos en ruta, novedades abiertas y cancelados.
         </p>
         <p className="mb-3 text-xs text-muted-foreground">
-          <strong className="font-medium text-foreground/80">Tasa de confirmación</strong>: confirmados ÷ (confirmados + anulados) de
+          <strong className="font-medium text-foreground/80">Confirmados vs. anulados</strong>: confirmados ÷ (confirmados + anulados) de
           esa persona en el período. <strong className="font-medium text-foreground/80">No cuentan</strong> los anulados por duplicado,
           número errado, producto agotado, lista negra (o 2 devoluciones), cambio en la orden (error en el pedido), fraude, prueba o
           reemplazo por upsell: se muestran aparte.
@@ -90,7 +90,7 @@ export default function ProductividadDespacho({ storeCode }: { storeCode: string
                   <th className="py-2 pr-4 text-right font-medium">% del total</th>
                   <th className="py-2 pr-4 text-right font-medium">Confirmados</th>
                   <th className="py-2 pr-4 text-right font-medium" title="Anulados que cuentan para la tasa de confirmación">Anulados</th>
-                  <th className="py-2 pr-4 text-right font-medium" title="Confirmados ÷ (confirmados + anulados que cuentan)">Tasa de confirmación</th>
+                  <th className="py-2 pr-4 text-right font-medium" title="Confirmados ÷ (confirmados + anulados que cuentan) de cada persona. No es la tasa de confirmación de Gestión (confirmados ÷ generados): por persona no hay pedidos generados.">Confirmados vs. anulados</th>
                   <th className="py-2 pr-4 text-right font-medium" title="Anulados por duplicado, lista negra, cambio en la orden, upsell…: no afectan la tasa">No cuentan</th>
                   <th className="py-2 text-right font-medium">Upsells</th>
                 </tr>

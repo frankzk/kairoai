@@ -8839,9 +8839,17 @@ interface OpMetrics {
   returnRate: number;
   dispatchRate: number;
   annulRate: number;
-  /** Anulados que no cuentan (duplicado, lista negra, upsell...); el server los saca de todo lo demas. */
+  /** Pedidos que no cuentan (anulados por duplicado, lista negra, upsell...; Testeos y Producto Agotado); el server los saca de todo lo demas. */
   annulledExcluded?: number;
-  /** Despachados / (despachados + anulados que cuentan). */
+  /** Confirmados en iComfly (Confirmada o posterior) o con guia. */
+  confirmed?: number;
+  /** Confirmados todavia sin guia. */
+  confirmedNotDispatched?: number;
+  /** De esos, marcados "Enviada" (a Boxful) en iComfly sin guia. */
+  sentWithoutGuide?: number;
+  /** Ni confirmados ni anulados: en gestion. */
+  inProgress?: number;
+  /** Confirmados / generados (lib/anulacion-motivos.ts). */
   confirmRate?: number | null;
   leadAvg: number | null;
   leadSamples: number;
@@ -9150,6 +9158,13 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCa
       deltaLabel: ppDelta(cur.dispatchRate, prev?.dispatchRate ?? null),
       deltaTone: deltaTone(cur.dispatchRate, prev?.dispatchRate ?? null, "up"),
       sub: `${formatInt(cur.dispatched)}/${formatInt(cur.generated)} con guía`,
+      title:
+        cur.confirmedNotDispatched != null
+          ? `Despachados (con guía) ÷ generados, sobre la misma base que la tasa de confirmación. ` +
+            `${formatInt(cur.confirmedNotDispatched)} confirmados todavía sin guía` +
+            (cur.sentWithoutGuide ? ` (${formatInt(cur.sentWithoutGuide)} ya "Enviada" a Boxful en iComfly)` : "") +
+            `: falta de stock, almacén o retraso.`
+          : undefined,
     },
     {
       id: "delivery",
@@ -9168,7 +9183,18 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCa
       tone: cur.confirmRate == null ? "neutral" : confirmTone(cur.confirmRate),
       deltaLabel: cur.confirmRate == null ? null : ppDelta(cur.confirmRate, prev?.confirmRate ?? null),
       deltaTone: deltaTone(cur.confirmRate ?? null, prev?.confirmRate ?? null, "up"),
-      sub: `${formatInt(cur.dispatched)}/${formatInt(cur.dispatched + cur.annulled)} decididos`,
+      sub:
+        cur.confirmed != null
+          ? `${formatInt(cur.confirmed)}/${formatInt(cur.generated)} confirmados`
+          : `${formatInt(cur.dispatched)}/${formatInt(cur.generated)}`,
+      title:
+        cur.confirmed != null
+          ? `Confirmados ÷ generados. Confirmado = en iComfly está Confirmada, Enviada o en transporte, o ya tiene guía. ` +
+            `Confirmar no es despachar. De ${formatInt(cur.generated)} generados: ${formatInt(cur.confirmed)} confirmados ` +
+            `(${formatInt(cur.dispatched)} con guía, ${formatInt(cur.confirmedNotDispatched ?? 0)} sin guía), ` +
+            `${formatInt(cur.annulled)} anulados y ${formatInt(cur.inProgress ?? 0)} en gestión (Pendiente, Modificar, Comprar después…).` +
+            (cur.annulledExcluded ? ` No cuentan ${formatInt(cur.annulledExcluded)} (duplicado, lista negra, upsell, testeos, agotado…).` : "")
+          : undefined,
     },
     {
       id: "annul",
@@ -9181,7 +9207,7 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCa
         cur.annulledExcluded ? ` · ${formatInt(cur.annulledExcluded)} no cuentan` : ""
       }`,
       title: cur.annulledExcluded
-        ? "No cuentan los anulados por duplicado, número errado, producto agotado, lista negra, cambio en la orden (error en el pedido), fraude, prueba o reemplazo por upsell."
+        ? "No cuentan los anulados por duplicado, número errado, producto agotado, lista negra, cambio en la orden (error en el pedido), fraude, prueba o reemplazo por upsell, ni los pedidos en Testeos o Producto Agotado en iComfly."
         : undefined,
     },
     {

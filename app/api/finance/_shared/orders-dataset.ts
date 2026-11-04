@@ -433,6 +433,9 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
     if (rec) {
       row.dispatch_requested_by = rec.requested_by_name || "";
       row.dispatch_confirmed_by = rec.confirmed_by_name || "";
+      // Estado de hoy en iComfly: decide si el pedido esta confirmado para la
+      // tasa de confirmacion (lib/icomfly-estado-venta.ts).
+      if (rec.status) row.icomfly_estado = rec.status;
       // Por que se anulo en iComfly: decide si cuenta para las tasas.
       if (rec.cancellation_reason) {
         row.anulacion_motivo = rec.cancellation_reason;

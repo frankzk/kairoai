@@ -5,6 +5,7 @@
 // El de-duplicado contra page.tsx es un paso posterior.
 
 import { tasaConfirmacion } from "./anulacion-motivos";
+import { esEnviadaIcomfly, etapaVentaIcomfly } from "./icomfly-estado-venta";
 import { FINANCE_STORES, type FinanceStorePublic } from "@/lib/store-config";
 import type {
   BusinessExpense,
@@ -129,6 +130,8 @@ export interface TrackableOrderRow {
   anulacion_motivo?: string;
   /** Si anulado, NO cuenta para las tasas (lib/anulacion-motivos.ts). */
   anulacion_excluida?: boolean;
+  /** Estado del pedido hoy en iComfly ("Confirmada", "Enviada", "Pendiente"...); ver lib/icomfly-estado-venta.ts. */
+  icomfly_estado?: string;
 }
 
 export interface OpMetrics {
@@ -144,9 +147,20 @@ export interface OpMetrics {
   returnRate: number;
   dispatchRate: number;
   annulRate: number;
-  /** Anulados que no cuentan (duplicado, lista negra, upsell...): fuera de todo lo de arriba. */
+  /**
+   * Pedidos que no cuentan: anulados por duplicado, lista negra, upsell... y los
+   * que en iComfly estan en Testeos o Producto Agotado. Fuera de todo lo demas.
+   */
   annulledExcluded: number;
-  /** Despachados / (despachados + anulados que cuentan); null sin pedidos decididos. */
+  /** Confirmados en iComfly (Confirmada o posterior) o ya despachados; ver lib/icomfly-estado-venta.ts. */
+  confirmed: number;
+  /** Confirmados que todavia no tienen guia (falta stock, almacen, retraso...). */
+  confirmedNotDispatched: number;
+  /** De esos, los que iComfly ya marco "Enviada" (mandados a Boxful) sin guia. */
+  sentWithoutGuide: number;
+  /** Ni confirmados ni anulados: Pendiente, Modificar, Comprar despues, coordinar... */
+  inProgress: number;
+  /** Confirmados / generados; null sin pedidos generados. */
   confirmRate: number | null;
   leadAvg: number | null;
   leadSamples: number;
@@ -364,17 +378,53 @@ export interface KpiWindow {
   maturing: boolean;
 }
 
-function startOfDayMs(date: Date): number {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+// Dias en la hora de la TIENDA (04/11/2026). Antes se usaba la hora del
+// proceso: en Vercel es UTC, asi que "Ayer" iba de las 6 p. m. del dia
+// anterior a las 6 p. m. de ayer en Costa Rica y Honduras, y no cuadraba con
+// iComfly. Sin zona (navegador, tests viejos) se usa la hora local.
+
+/** Desfase de la zona en ese instante, en ms (Costa Rica: -6 h). */
+function zoneOffsetMs(time: number, timeZone: string): number {
+  const p = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(new Date(time));
+  const get = (type: string) => Number(p.find((x) => x.type === type)?.value);
+  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+  return asUtc - Math.floor(time / 1000) * 1000;
 }
 
-// Fecha YYYY-MM-DD -> medianoche local en ms, o null si no parsea. Se usa para
-// el rango custom de KPIs; medianoche local para ser consistente con
-// startOfDayMs (hoy/ayer/7d/30d usan el dia local del proceso).
-function parseDateKeyMs(value: string | undefined): number | null {
+/** Año, mes (0-11) y dia de `date` en la zona (o en la hora local). */
+function calendarParts(date: Date, timeZone?: string): { y: number; m: number; d: number } {
+  if (!timeZone) return { y: date.getFullYear(), m: date.getMonth(), d: date.getDate() };
+  const local = new Date(date.getTime() + zoneOffsetMs(date.getTime(), timeZone));
+  return { y: local.getUTCFullYear(), m: local.getUTCMonth(), d: local.getUTCDate() };
+}
+
+/** Medianoche de ese dia (mes 0-11; acepta desbordes como mes -1) en la zona, en ms. */
+function midnightMs(y: number, m: number, d: number, timeZone?: string): number {
+  if (!timeZone) return new Date(y, m, d).getTime();
+  const guess = Date.UTC(y, m, d);
+  return guess - zoneOffsetMs(guess - zoneOffsetMs(guess, timeZone), timeZone);
+}
+
+function startOfDayMs(date: Date, timeZone?: string): number {
+  const { y, m, d } = calendarParts(date, timeZone);
+  return midnightMs(y, m, d, timeZone);
+}
+
+// Fecha YYYY-MM-DD -> medianoche de ese dia en ms (en la zona de la tienda si
+// se indica), o null si no parsea. Se usa para el rango custom de KPIs.
+function parseDateKeyMs(value: string | undefined, timeZone?: string): number | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const [y, m, d] = value.split("-").map(Number);
-  const time = new Date(y, m - 1, d).getTime();
+  const time = midnightMs(y, m - 1, d, timeZone);
   return Number.isNaN(time) ? null : time;
 }
 
@@ -386,9 +436,14 @@ function formatDateKeyLabel(value: string): string {
 // anterior). "Mes" compara MTD contra el mismo tramo del mes anterior, no contra
 // el mes completo. `maturing` marca rangos donde la tasa de entrega aun no madura
 // por el lag logistico del COD (un pedido de hoy no se entrega hoy).
-export function getKpiWindows(range: KpiRange, now: Date, custom?: KpiCustomRange): KpiWindow {
+export function getKpiWindows(
+  range: KpiRange,
+  now: Date,
+  custom?: KpiCustomRange,
+  timeZone?: string
+): KpiWindow {
   const end = now.getTime();
-  const dayStart = startOfDayMs(now);
+  const dayStart = startOfDayMs(now, timeZone);
   const DAY = 24 * 60 * 60 * 1000;
   if (range === "all") {
     return {
@@ -402,12 +457,12 @@ export function getKpiWindows(range: KpiRange, now: Date, custom?: KpiCustomRang
     };
   }
   if (range === "custom") {
-    const startMs = parseDateKeyMs(custom?.start);
-    const endDayMs = parseDateKeyMs(custom?.end);
+    const startMs = parseDateKeyMs(custom?.start, timeZone);
+    const endDayMs = parseDateKeyMs(custom?.end, timeZone);
     // Rango invalido o incompleto: cae a "Todo" para no romper la vista (la UI
     // no consulta hasta tener ambas fechas; esto es solo red de seguridad).
     if (startMs == null || endDayMs == null || startMs > endDayMs) {
-      return getKpiWindows("all", now);
+      return getKpiWindows("all", now, undefined, timeZone);
     }
     const curEnd = endDayMs + DAY; // fin inclusivo: el dia completo del "hasta"
     const span = curEnd - startMs;
@@ -445,9 +500,10 @@ export function getKpiWindows(range: KpiRange, now: Date, custom?: KpiCustomRang
     };
   }
   if (range === "month") {
-    const curStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const { y, m } = calendarParts(now, timeZone);
+    const curStart = midnightMs(y, m, 1, timeZone);
     const elapsed = end - curStart;
-    const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+    const prevStart = midnightMs(y, m - 1, 1, timeZone);
     return {
       curStart,
       curEnd: end,
@@ -500,6 +556,10 @@ export function computeOpMetricsFromTrackableRows(
   let notDelivered = 0;
   let annulled = 0;
   let annulledExcluded = 0;
+  let confirmed = 0;
+  let confirmedNotDispatched = 0;
+  let sentWithoutGuide = 0;
+  let inProgress = 0;
   let enRoute = 0;
   let enRouteRetry = 0;
   let revenue = 0;
@@ -509,17 +569,31 @@ export function computeOpMetricsFromTrackableRows(
   for (const row of rows) {
     const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
     const status = getEffectiveTrackingStatus(row, traces);
+    const isDispatched = Boolean(row.guide_number) || isDispatchedStatus(status);
+    // Estado de hoy en iComfly (lib/icomfly-estado-venta.ts). Un pedido de
+    // Shopify anulado solo en iComfly tambien es anulado aca.
+    const etapa = etapaVentaIcomfly(row.icomfly_estado);
+    const isAnnulled = status === "annulled" || (!isDispatched && etapa === "anulado");
     // Duplicados, lista negra, cambios en la orden, upsell...: no eran pedidos
-    // que se pudieran confirmar. No cuentan ni como generados ni como anulados.
-    if (status === "annulled" && row.anulacion_excluida) {
+    // que se pudieran confirmar. Tampoco los Testeos ni los "Producto Agotado"
+    // de iComfly. No cuentan ni como generados ni como anulados.
+    if ((isAnnulled && row.anulacion_excluida) || (!isDispatched && etapa === "no_cuenta")) {
       annulledExcluded += 1;
       continue;
     }
     generated += 1;
-    if (Boolean(row.guide_number) || isDispatchedStatus(status)) dispatched += 1;
+    if (isDispatched) dispatched += 1;
+    // Confirmar no es despachar: Confirmada o posterior en iComfly, o ya con guia.
+    const isConfirmed = isDispatched || (!isAnnulled && etapa === "confirmado");
+    if (isConfirmed) confirmed += 1;
+    if (isConfirmed && !isDispatched) {
+      confirmedNotDispatched += 1;
+      if (esEnviadaIcomfly(row.icomfly_estado)) sentWithoutGuide += 1;
+    }
+    if (!isConfirmed && !isAnnulled) inProgress += 1;
     if (status === "delivered") delivered += 1;
     else if (status === "not_delivered" || status === "returned") notDelivered += 1;
-    else if (status === "annulled") annulled += 1;
+    else if (isAnnulled) annulled += 1;
     else if (status === "en_route") enRoute += 1;
     else if (status === "en_route_retry") enRouteRetry += 1;
 
@@ -552,7 +626,11 @@ export function computeOpMetricsFromTrackableRows(
     dispatchRate: generated ? (dispatched / generated) * 100 : 0,
     annulRate: generated ? (annulled / generated) * 100 : 0,
     annulledExcluded,
-    confirmRate: tasaConfirmacion(dispatched, annulled),
+    confirmed,
+    confirmedNotDispatched,
+    sentWithoutGuide,
+    inProgress,
+    confirmRate: tasaConfirmacion(confirmed, generated),
     leadAvg: leadDays.length ? leadDays.reduce((acc, value) => acc + value, 0) / leadDays.length : null,
     leadSamples: leadDays.length,
     ticket: valueOrders ? revenue / valueOrders : 0,

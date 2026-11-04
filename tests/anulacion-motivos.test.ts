@@ -52,8 +52,8 @@ describe("motivos de anulación de iComfly", () => {
     }
   });
 
-  it("tasa de confirmación: despachados ÷ (despachados + anulados que cuentan)", () => {
-    expect(tasaConfirmacion(90, 10)).toBe(90);
+  it("tasa de confirmación: confirmados ÷ generados", () => {
+    expect(tasaConfirmacion(75, 100)).toBe(75);
     expect(tasaConfirmacion(0, 0)).toBeNull();
   });
 });
@@ -93,6 +93,62 @@ describe("KPIs de Finanzas", () => {
       ],
       new Map()
     );
-    expect(m).toMatchObject({ generated: 4, dispatched: 3, annulled: 1, annulledExcluded: 2, annulRate: 25, confirmRate: 75 });
+    expect(m).toMatchObject({ generated: 4, dispatched: 3, confirmed: 3, annulled: 1, annulledExcluded: 2, annulRate: 25, confirmRate: 75 });
+  });
+
+  // El caso del 03/11: confirmar no es despachar. Un pedido Confirmada sin guía
+  // (falta stock, almacén) ya está confirmado; uno en Pendiente o Modificar
+  // dirección todavía no. Confirmación y despacho van sobre la misma base.
+  it("confirmados ÷ generados: Confirmada y Enviada sin guía cuentan como confirmados, no como despachados", () => {
+    const m = computeOpMetricsFromTrackableRows(
+      [
+        fila({ guide_number: "G1", internal_status: "delivered", icomfly_estado: "Entregado" }),
+        fila({ guide_number: "G2", internal_status: "pending", icomfly_estado: "Guia_Generada" }),
+        fila({ icomfly_estado: "Confirmada" }),
+        fila({ icomfly_estado: "Enviada" }),
+        fila({ icomfly_estado: "Pendiente" }),
+        fila({ icomfly_estado: "Modificar Dirección" }),
+        fila({ icomfly_estado: "Comprar Después" }),
+        fila({ internal_status: "annulled", shopify_cancelled_at: "2026-11-01T16:00:00Z", icomfly_estado: "Cancelado" }),
+      ],
+      new Map()
+    );
+    expect(m).toMatchObject({
+      generated: 8,
+      confirmed: 4,
+      dispatched: 2,
+      confirmedNotDispatched: 2,
+      sentWithoutGuide: 1,
+      inProgress: 3,
+      annulled: 1,
+      confirmRate: 50,
+      dispatchRate: 25,
+      annulRate: 12.5,
+    });
+    // generados = confirmados + anulados + en gestión
+    expect(m.confirmed + m.annulled + m.inProgress).toBe(m.generated);
+  });
+
+  it("Testeos y Producto Agotado de iComfly no cuentan; un anulado solo en iComfly sí es anulado", () => {
+    const m = computeOpMetricsFromTrackableRows(
+      [
+        fila({ icomfly_estado: "Testeos" }),
+        fila({ icomfly_estado: "Producto Agotado" }),
+        // Pedido de Shopify que se anuló solo en iComfly: Kairo lo ve pendiente.
+        fila({ icomfly_estado: "Cancelado", anulacion_motivo: "Cliente canceló", anulacion_excluida: false }),
+        fila({ icomfly_estado: "Cancelado", anulacion_motivo: "lista negra", anulacion_excluida: true }),
+        fila({ icomfly_estado: "Confirmada" }),
+      ],
+      new Map()
+    );
+    expect(m).toMatchObject({ generated: 2, annulledExcluded: 3, annulled: 1, confirmed: 1, inProgress: 0, confirmRate: 50 });
+  });
+
+  it("sin estado de iComfly (pedidos viejos de Shopify) confirmado = con guía", () => {
+    const m = computeOpMetricsFromTrackableRows(
+      [fila({ guide_number: "G1", internal_status: "delivered" }), fila({})],
+      new Map()
+    );
+    expect(m).toMatchObject({ generated: 2, confirmed: 1, inProgress: 1, confirmRate: 50 });
   });
 });
