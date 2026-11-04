@@ -2,6 +2,7 @@
 import { useState } from "react";
 import {
   matchCampaignProduct,
+  campaignAlias,
   type MarketingFamily,
 } from "@/lib/marketing-product-families";
 import type { MarketingSummary } from "@/lib/marketing";
@@ -271,11 +272,14 @@ export function CampaignAssignment({
     [mode, setMode] = useState<"all" | "selected">("all"),
     [keys, setKeys] = useState<string[]>([]),
     [query, setQuery] = useState(""),
+    [learn, setLearn] = useState(false),
     [failed, setFailed] = useState(false);
+  const alias = campaignAlias(c.name);
   const family = families.find((f) => f.key === familyKey),
     suggestion = matchCampaignProduct(c.name, families);
   const changed =
     familyKey !== (currentFamily?.key ?? "") ||
+    learn !== Boolean(c.mapping?.campaign_alias) ||
     mode !== (c.mapping?.variant_scope === "all" ? "all" : "selected") ||
     JSON.stringify([...keys].sort()) !==
       JSON.stringify([...currentKeys].sort());
@@ -285,6 +289,7 @@ export function CampaignAssignment({
       c.mapping?.variant_scope === "all" || !c.mapping ? "all" : "selected",
     );
     setKeys(currentKeys);
+    setLearn(c.mapping ? Boolean(c.mapping.campaign_alias) : true);
     setEditing(true);
     setQuery("");
     setFailed(false);
@@ -293,6 +298,7 @@ export function CampaignAssignment({
     f: MarketingFamily | undefined,
     m: "all" | "selected",
     selected: string[],
+    remember = false,
   ) {
     setFailed(false);
     const base = {
@@ -309,6 +315,8 @@ export function CampaignAssignment({
             family_key: f.key,
             variant_scope: m,
             variant_keys: m === "all" ? [] : selected,
+            learn_alias: remember,
+            ...(remember ? { campaign_name: c.name } : {}),
           }
         : { ...base, product_key: null, disable_auto: true },
     );
@@ -340,7 +348,19 @@ export function CampaignAssignment({
               Automática: {c.mapping.match_reason}
             </small>
           )}
-          {!c.mapping && suggestion.kind !== "none" && (
+          {c.mapping?.campaign_alias && !c.mapping.automatic && (
+            <small>
+              Alias aprendido:{" "}
+              {c.mapping.campaign_alias.toLocaleUpperCase("es")} · Meta y TikTok
+            </small>
+          )}
+          {c.aliasConflict && (!c.mapping || c.mapping.campaign_alias) && (
+            <small className={s.warn}>
+              Alias con asignaciones distintas o no verificables. Revisa el
+              producto y sus variantes.
+            </small>
+          )}
+          {!c.mapping && !c.aliasConflict && suggestion.kind !== "none" && (
             <small>
               {suggestion.kind === "ambiguous"
                 ? "Coincidencia ambigua: revisa el producto"
@@ -456,18 +476,46 @@ export function CampaignAssignment({
                   : `${keys.length} referencias elegidas; la selección no se amplía sola.`}{" "}
                 Cada pedido cuenta una vez.
               </small>
+              {alias && !family.review && (
+                <>
+                  <label className={r.aliasLearning}>
+                    <input
+                      type="checkbox"
+                      checked={learn}
+                      disabled={Boolean(saving)}
+                      onChange={(e) => setLearn(e.target.checked)}
+                    />
+                    <span>
+                      Recordar «{alias.toLocaleUpperCase("es")}» en Meta y
+                      TikTok
+                    </span>
+                  </label>
+                  <small>
+                    Reutiliza este producto y el mismo alcance de variantes
+                    cuando el alias coincida exactamente. Desmarca y guarda para
+                    quitar lo aprendido de esta campaña.
+                  </small>
+                </>
+              )}
             </>
           )}
           <div className="flex flex-wrap gap-2 mt-2">
             <button
-            className={`${s.button} ${s.primary} ${r.saveAssignment}`}
+              className={`${s.button} ${s.primary} ${r.saveAssignment}`}
               disabled={
                 !ready ||
                 Boolean(saving) ||
                 (family && mode === "selected" && !keys.length) ||
                 (!changed && !c.mapping?.automatic)
               }
-              onClick={() => persist(family, mode, keys)}
+              onClick={() =>
+                persist(
+                  family,
+                  mode,
+                  keys,
+                  Boolean(learn && alias && !family?.review),
+                )
+              }
             >
               {saving === c.key ? "Guardando…" : "Guardar"}
             </button>

@@ -91,6 +91,7 @@ export function productComparison(
             c.id,
             c.name,
             Boolean(settings) && !summary.familyDataError,
+            settings?.mappings ?? [],
           ),
         })),
       ) ?? [],

@@ -128,6 +128,45 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("persistent marketing settings", () => {
+  it("learns a normalized alias only with an explicit manual save and can clear it", async () => {
+    const payload = {
+      ...mapping,
+      family_key: "family:shopify:42",
+      variant_scope: "all",
+      learn_alias: true,
+      campaign_name: "FAT BURN_CB",
+      campaign_alias: "forged",
+    };
+    expect((await PATCH(request(payload))).status).toBe(200);
+    expect(mocks.calls[0].value).toMatchObject({
+      campaign_alias: "fat burn",
+      store_id: 1,
+      family_key: "family:shopify:42",
+    });
+    expect(
+      (await PATCH(request({ ...payload, learn_alias: false }))).status,
+    ).toBe(200);
+    expect(mocks.calls[1].value).toMatchObject({ campaign_alias: null });
+  });
+  it.each([
+    { campaign_name: "CBO Ventas | CR" },
+    { campaign_name: 12 },
+    { learn_alias: "true" },
+    { campaign_name: "x".repeat(1001) },
+  ])("rejects unlearnable alias inputs %j without writing", async (patch) => {
+    const result = await PATCH(
+      request({
+        ...mapping,
+        family_key: "family:shopify:42",
+        variant_scope: "all",
+        learn_alias: true,
+        campaign_name: "FAT BURN_CB",
+        ...patch,
+      }),
+    );
+    expect(result.status).toBe(400);
+    expect(mocks.calls).toEqual([]);
+  });
   it("validates selected variants against the server family and returns a unique-order metric", async () => {
     const result = await PATCH(
       request({

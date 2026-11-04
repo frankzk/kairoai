@@ -27,7 +27,7 @@ export async function readMarketingVariantMappings(
     const { data, error } = await getDB()
       .from("marketing_campaign_products")
       .select(
-        "platform,account_id,campaign_id,product_key,product_name,sku,family_key,variant_scope,variant_keys",
+        "platform,account_id,campaign_id,product_key,product_name,sku,family_key,variant_scope,variant_keys,campaign_alias",
       )
       .eq("store_id", storeId)
       .order("platform")
