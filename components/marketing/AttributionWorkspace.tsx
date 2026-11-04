@@ -25,7 +25,9 @@ export default function AttributionWorkspace({
   campaignsLoading?: boolean;
 }) {
   const resource = useResource<MarketingAttribution>(
-    `/api/marketing/attribution?${periodQuery(period)}`,
+    campaignsLoading
+      ? null
+      : `/api/marketing/attribution?${periodQuery(period)}`,
     revision,
   );
   const [level, setLevel] = useState<AttributionLevel>("campaign");
@@ -85,7 +87,7 @@ export default function AttributionWorkspace({
           </p>
         </div>
       </div>
-      {resource.loading ? (
+      {resource.loading || campaignsLoading ? (
         <p role="status" className={s.muted}>
           Cruzando los UTM de los pedidos…
         </p>
@@ -99,9 +101,19 @@ export default function AttributionWorkspace({
             <p className={`${s.muted} mb-4`}>
               {count(resource.data.withUtm)} de{" "}
               {count(resource.data.totalOrders)} pedidos con datos de origen ·{" "}
-              {count(resource.data.linkedCampaign)} con ID de campaña utilizable
-              · {count(resource.data.withoutUtm)} sin origen registrado. Sin UTM
-              no significa orgánico.
+              {count(resource.data.linkedCampaign)} con campaña identificada (
+              {percentage(
+                resource.data.totalOrders
+                  ? resource.data.linkedCampaign / resource.data.totalOrders
+                  : null,
+              )}
+              ) · {count(resource.data.withoutUtm)} sin origen registrado. Sin
+              UTM no significa orgánico.
+            </p>
+            <p className={`${s.muted} mb-4`}>
+              Incluye UTM de iComfly, respaldos de Shopify y el origen de
+              pedidos reemplazados por upsell. El cruce usa referencias exactas
+              e ID compatibles; cada pedido se cuenta una sola vez.
             </p>
             {(resource.data.conflicts > 0 || resource.data.ambiguous > 0) && (
               <p className={s.notice}>

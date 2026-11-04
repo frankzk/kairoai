@@ -1,4 +1,9 @@
-import { readIcomflyAdOrigin } from "./icomfly-ad-origin";
+import { readIcomflyAdOrigin, mergeAdOrigins } from "./icomfly-ad-origin";
+import {
+  resolveOriginCampaign,
+  type OriginCampaign,
+  type IcomflyAdOrigin,
+} from "./icomfly-ad-origin";
 import { nombrePedidoIcomfly } from "./icomfly-pedidos";
 import type { OrderProfitabilityRow } from "./finance-orders";
 import type { MarketingPeriod } from "./marketing-dates";
@@ -10,6 +15,12 @@ export interface MarketingOriginRow {
   store_web_seq: unknown;
   tracking_number: unknown;
   ad_origin: unknown;
+  resolvedOrigin?: IcomflyAdOrigin | null;
+  originSource?:
+    | "icomfly"
+    | "shopify_saved"
+    | "shopify_archive"
+    | "upsell_original";
 }
 export interface AttributionGroup {
   platform: string;
@@ -32,6 +43,7 @@ export function buildMarketingAttribution(
   rows: MarketingOriginRow[],
   period: MarketingPeriod,
   now = new Date(),
+  catalog: OriginCampaign[] = [],
 ) {
   const cohort = orders.filter((o) => {
     const t = Date.parse(o.created_at || "");
@@ -61,8 +73,9 @@ export function buildMarketingAttribution(
     Array<NonNullable<ReturnType<typeof readIcomflyAdOrigin>>>
   >();
   for (const row of rows) {
-    const origin = readIcomflyAdOrigin(row.ad_origin);
-    if (!origin) continue;
+    const parsed = row.resolvedOrigin ?? readIcomflyAdOrigin(row.ad_origin);
+    if (!parsed) continue;
+    const origin = resolveOriginCampaign(parsed, catalog);
     const name =
       row.shopify_display_number ||
       nombrePedidoIcomfly(
@@ -86,28 +99,14 @@ export function buildMarketingAttribution(
     ambiguous = 0;
   for (const order of cohort) {
     const variants = candidates.get(order.order_key) ?? [];
-    const distinct = new Map(
-      variants.map((o) => [
-        JSON.stringify([
-          o.platform,
-          o.campaignId,
-          o.adsetId,
-          o.adId,
-          o.source,
-          o.campaign,
-          o.medium,
-          o.content,
-        ]),
-        o,
-      ]),
-    );
-    if (!distinct.size) continue;
+    if (!variants.length) continue;
     withUtm++;
-    if (distinct.size > 1) {
+    const merged = mergeAdOrigins(variants);
+    if (merged.ambiguous) {
       ambiguous++;
       continue;
     }
-    const origin = Array.from(distinct.values())[0];
+    const origin = merged.origin!;
     if (origin.conflicts.length) {
       conflicts++;
       continue;
