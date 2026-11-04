@@ -108,6 +108,12 @@ export function TeamReport({
     origin ? origin.channelOrders[platform] : null;
   const meta = reportChannel(sources, "meta", fx),
     tiktok = reportChannel(sources, "tiktok", fx);
+  const tiktokThrough = sources?.tiktok.data?.accounts
+    .flatMap((a) =>
+      a.campaigns.flatMap((c) => c.daily?.map((d) => d.date) ?? []),
+    )
+    .sort()
+    .at(-1);
   const spend =
     meta.spend != null && tiktok.spend != null
       ? meta.spend + tiktok.spend
@@ -173,7 +179,7 @@ export function TeamReport({
           <h2>Ventas, inversión y próximos pasos</h2>
         </div>
         <span className={r.period}>
-          {shortDate(data.period.from)} — {shortDate(data.period.to)} · USD
+          {shortDate(data.period.from)} al {shortDate(data.period.to)} · USD
         </span>
       </div>
       <section
@@ -238,7 +244,11 @@ export function TeamReport({
         <Metric
           label="Gasto · TikTok Ads"
           value={loading ? "…" : usd(tiktok.spend)}
-          note="Datos enviados por Make o API"
+          note={
+            tiktokThrough
+              ? `Último día recibido: ${shortDate(tiktokThrough)}`
+              : "Datos enviados por Make o API"
+          }
         />
       </section>
       {!aligned && (
@@ -360,7 +370,7 @@ export function TeamReport({
                               {usd(cost.value)}
                               <small>
                                 {cost.partial
-                                  ? "Parcial: solo pauta asignada"
+                                  ? `Parcial: ${cost.reason.toLocaleLowerCase("es")}`
                                   : cost.approximate
                                     ? "Orientativo: horarios distintos"
                                     : "Pauta completa consultada"}

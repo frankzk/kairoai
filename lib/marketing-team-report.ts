@@ -71,6 +71,12 @@ export function productComparison(
       )?.flatMap((a) =>
         a.campaigns.map((c) => ({
           ...c,
+          platform,
+          observedThrough:
+            a.campaigns
+              .flatMap((c) => c.daily?.map((d) => d.date) ?? [])
+              .sort()
+              .at(-1) ?? "",
           currency: a.currency,
           timezone: a.timezone,
           product: mappings.get(campaignKey(platform, a.accountId, c.id)),
@@ -82,8 +88,11 @@ export function productComparison(
   return summary.products.map((p) => {
     const related = campaigns.filter((c) => c.product === p.key);
     function observation(start: string, end: string, orders: number) {
+      const late = related.some(
+        (c) => c.platform === "tiktok" && c.observedThrough < end,
+      );
       const base = {
-        partial,
+        partial: partial || late,
         approximate: related.some((c) => c.timezone !== summary.timezone),
         campaignCount: related.length,
         unmapped,
@@ -108,7 +117,7 @@ export function productComparison(
       if (values.some((v) => v == null))
         return { ...base, value: null, reason: "Conversión pendiente" };
       const spend = values.reduce<number>((n, v) => n + v!, 0);
-      if (partial && spend === 0)
+      if (base.partial && spend === 0)
         return {
           ...base,
           value: null,
@@ -117,11 +126,13 @@ export function productComparison(
       return {
         ...base,
         value: spend / orders,
-        reason: partial
-          ? "Solo pauta asignada, cobertura parcial"
-          : base.approximate
-            ? "Calendarios distintos"
-            : "Pauta asignada / pedidos",
+        reason: late
+          ? "TikTok no reporta todo el rango"
+          : partial
+            ? "Solo pauta asignada, cobertura parcial"
+            : base.approximate
+              ? "Calendarios distintos"
+              : "Pauta asignada / pedidos",
       };
     }
     const costs = [

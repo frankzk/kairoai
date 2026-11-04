@@ -165,3 +165,15 @@ describe("Team report financial integrity", () => {
     ).toMatchObject({ value: null, reason: "Asigna sus campañas" });
   });
 });
+
+it("marks a product cost partial if TikTok has not reported through the end date, without hiding completed-day comparisons", () => {
+  const s = sources();
+  s.tiktok.data!.accounts[0].campaigns[0].daily!.shift();
+  const p = productComparison(summary, s, settings, fx, now)[0];
+  expect(p.costs[0]).toMatchObject({
+    value: 8,
+    partial: true,
+    reason: "TikTok no reporta todo el rango",
+  });
+  expect(p.costs[1]).toMatchObject({ value: 25, partial: false });
+});

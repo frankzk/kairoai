@@ -122,7 +122,7 @@ export default function CampaignsTable({
                             <td className="p-3 tabular-nums">
                               {campaign.impressions
                                 ? `${((campaign.clicks / campaign.impressions) * 100).toFixed(2)} %`
-                                : "—"}
+                                : "Sin datos"}
                             </td>
                           </tr>
                         ))}
