@@ -44,6 +44,7 @@ async function account(
   fetcher: typeof fetch,
   signal: AbortSignal,
   includeStructure: boolean,
+  structureOnly = false,
 ): Promise<CharlieAccount> {
   const base = `https://graph.facebook.com/${env.META_CR_GRAPH_VERSION}/act_${id}`,
     headers = { Authorization: `Bearer ${env.META_CR_ACCESS_TOKEN}` };
@@ -67,9 +68,11 @@ async function account(
       url.searchParams.set("fields", fields);
       url.searchParams.set("limit", insights ? "500" : "100");
       if (after) url.searchParams.set("after", after);
+      if (structureOnly && edge === "ads")
+        url.searchParams.set("effective_status", JSON.stringify(["ACTIVE"]));
       if (insights) {
-        url.searchParams.set("level", "ad");
-        url.searchParams.set("time_increment", "1");
+        url.searchParams.set("level", structureOnly ? "adset" : "ad");
+        if (!structureOnly) url.searchParams.set("time_increment", "1");
         url.searchParams.set(
           "time_range",
           JSON.stringify({ since: period.from, until: period.to }),
@@ -102,7 +105,12 @@ async function account(
     throw new Error("Invalid account");
   const metadataKey = createHash("sha256")
     .update(
-      JSON.stringify([id, env.META_CR_GRAPH_VERSION, env.META_CR_ACCESS_TOKEN]),
+      JSON.stringify([
+        id,
+        env.META_CR_GRAPH_VERSION,
+        env.META_CR_ACCESS_TOKEN,
+        structureOnly,
+      ]),
     )
     .digest("hex");
   const useCache = includeStructure && fetcher === fetch;
@@ -137,7 +145,9 @@ async function account(
   const [rows, [adsMeta, loadedSets]] = await Promise.all([
     pages(
       "insights",
-      `ad_id,ad_name,adset_id,campaign_id,spend,impressions,clicks,frequency,actions,action_values${includeStructure ? "" : ",adset_name,campaign_name"}`,
+      structureOnly
+        ? "adset_id,spend"
+        : `ad_id,ad_name,adset_id,campaign_id,spend,impressions,clicks,frequency,actions,action_values${includeStructure ? "" : ",adset_name,campaign_name"}`,
       true,
     ),
     metadata.promise,
@@ -174,7 +184,15 @@ async function account(
     assets: null,
     daily: [],
   });
+  const setSpend = new Map<string, number>();
   for (const row of rows) {
+    if (structureOnly) {
+      const setId = string(row.adset_id);
+      if (!/^\d+$/.test(setId) || setSpend.has(setId))
+        throw new Error("Invalid adset report");
+      setSpend.set(setId, metric(row.spend));
+      continue;
+    }
     const adId = string(row.ad_id),
       date = string(row.date_start);
     if (
@@ -261,6 +279,9 @@ async function account(
     campaignId: string(row.campaign_id),
     effectiveStatus: string(row.effective_status),
     dynamic: row.is_dynamic_creative === true,
+    ...(structureOnly
+      ? { periodSpend: setSpend.get(string(row.id)) ?? 0 }
+      : {}),
   }));
   return {
     id,
@@ -269,6 +290,7 @@ async function account(
     timezone: string(info.timezone_name),
     ads: Array.from(ads.values()),
     adsets,
+    ...(structureOnly ? { creativeScope: "active" as const } : {}),
     ...(!includeStructure || !adsMeta || !setsMeta
       ? {
           metadataMessage: includeStructure
@@ -290,6 +312,7 @@ export async function getCharlieReport(
   tiktok?: (from: string, to: string) => Promise<CharlieAccount[]>,
   includeStructure = true,
   includeTrailing = true,
+  structureOnly = false,
 ): Promise<CharlieReport> {
   const checkedAt = now.toISOString();
   if (
@@ -322,7 +345,15 @@ export async function getCharlieReport(
     const [meta, deTiktok] = await Promise.all([
       Promise.all(
         metaAccountIds(env).map((id) =>
-          account(id, expanded, env, fetcher, signal, includeStructure),
+          account(
+            id,
+            expanded,
+            env,
+            fetcher,
+            signal,
+            includeStructure,
+            structureOnly,
+          ),
         ),
       ),
       tiktok

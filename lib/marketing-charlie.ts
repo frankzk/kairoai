@@ -257,9 +257,13 @@ export function buildCharlieModel(
         activeAds: account.metadataMessage ? null : active.length,
         posts,
         metadataComplete: !account.metadataMessage,
-        spendUsd: spendValues.every((value) => value != null)
-          ? spendValues.reduce<number>((sum, value) => sum + value!, 0)
-          : null,
+        creativeScope: account.creativeScope,
+        spendUsd:
+          set.periodSpend !== undefined
+            ? asUsd(set.periodSpend, account.currency, fx)
+            : spendValues.every((value) => value != null)
+              ? spendValues.reduce<number>((sum, value) => sum + value!, 0)
+              : null,
         flexAds: related.filter((ad) => ad.assets != null),
         pattern322: related.filter(
           (ad) =>

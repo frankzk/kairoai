@@ -121,6 +121,7 @@ async function metaAds(
   signal: AbortSignal,
   details: boolean,
   overview?: { from: string; to: string },
+  daily = details,
 ): Promise<MarketingAdsData> {
   const version = env.META_CR_GRAPH_VERSION || "";
   if (!/^\d+$/.test(id) || !/^v\d+\.\d+$/.test(version))
@@ -150,12 +151,12 @@ async function metaAds(
     const url = new URL(`${base}/insights`);
     url.searchParams.set(
       "fields",
-      `campaign_id,campaign_name,spend,impressions,clicks${details ? ",actions" : ""}`,
+      `campaign_id,campaign_name,spend,impressions,clicks${daily ? ",actions" : ""}`,
     );
-    if (details || overview) {
+    if (daily || overview) {
       url.searchParams.set("time_increment", "1");
     }
-    if (details) {
+    if (daily) {
       url.searchParams.set(
         "action_attribution_windows",
         JSON.stringify(["7d_click", "1d_view"]),
@@ -171,7 +172,7 @@ async function metaAds(
     for (const rawEntry of body.data) {
       const row = obj(rawEntry);
       const day = str(row.date_start);
-      if (details || overview) {
+      if (daily || overview) {
         if (!/^20\d{2}-\d{2}-\d{2}$/.test(day) || day < since || day > until)
           throw new Error("Invalid report day");
       }
@@ -201,7 +202,7 @@ async function metaAds(
         impressions: metric(row.impressions),
         clicks: metric(row.clicks),
       };
-      if (details) {
+      if (daily) {
         if (
           !/^20\d{2}-\d{2}-\d{2}$/.test(str(row.date_start)) ||
           str(row.date_start) < since ||
@@ -470,6 +471,8 @@ export async function getMarketingSources(
   options: {
     details?: boolean;
     overview?: boolean;
+    /** Campaign daily metrics without the budget catalogue. */
+    daily?: boolean;
     now?: Date;
     /**
      * Gasto de TikTok que manda Make (lib/tiktok-diario.ts), para cuando no hay
@@ -503,6 +506,7 @@ export async function getMarketingSources(
               signal,
               options.details === true,
               overview,
+              options.daily ?? options.details === true,
             ),
           ),
         ),

@@ -418,3 +418,62 @@
     animation: none !important;
   }
 }
+
+/* The team report deliberately uses the light paper surface requested in the PDF. */
+.lightReport {
+  --border: 110 18% 84%;
+  color: #1b3025;
+  background: #fafbf6;
+  border-radius: 12px;
+  margin-top: 20px;
+  margin-bottom: 20px;
+  color-scheme: light;
+}
+.lightReport .title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 32px;
+  font-weight: 400;
+}
+.lightReport .muted,
+.lightReport .eyebrow,
+.lightReport .field,
+.lightReport .tab {
+  color: #596e5c;
+}
+.lightReport .control,
+.lightReport .button {
+  background: #fff;
+  color: #245d3e;
+  border-color: #cad9cc;
+}
+.lightReport .button:hover {
+  background: #edf4e9;
+}
+.lightReport .tab[aria-pressed="true"] {
+  color: #145d38;
+  border-color: #177449;
+}
+.lightReport .tabIndex {
+  color: #7e917d;
+}
+.lightReport .notice {
+  background: #eef3e9;
+  color: #485e47;
+  font-size: 12px;
+}
+.lightReport .link {
+  color: #17643d;
+}
+.lightReport .footer {
+  color: #60715e;
+}
+.lightReport .skeleton {
+  background: #e8eee2;
+}
+@media (max-width: 700px) {
+  .lightReport {
+    margin-top: 0;
+    border-radius: 0;
+    padding: 20px 16px 32px;
+  }
+}

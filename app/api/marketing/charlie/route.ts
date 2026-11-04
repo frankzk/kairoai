@@ -50,6 +50,7 @@ export async function GET(req: NextRequest) {
         (from, to) => leerCuentasCharlieTiktok(store.id, from, to),
         includeStructure,
         false,
+        includeStructure,
       ),
     };
     cache.set(key, entry);
