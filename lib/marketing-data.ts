@@ -4,27 +4,53 @@ import {
   listProductCostVersions,
 } from "./finance";
 import { buildFinanceControlCenter } from "./finance-orders";
-import { buildMarketingSummary } from "./marketing";
+import {
+  readMarketingProductCatalog,
+  readMarketingVariantMappings,
+} from "./marketing-product-groups-db";
+import {
+  buildProductFamilies,
+  buildGroupMetrics,
+  familyTargets,
+} from "./marketing-product-groups-server";
+import { buildMarketingSummary, type MarketingSummary } from "./marketing";
 import type { MarketingPeriod } from "./marketing-dates";
 import type { FinanceStoreConfig } from "./stores";
 import { getOrdersDataset } from "../app/api/finance/_shared/orders-dataset";
+
+async function optionalFamilyData<T>(promise: Promise<T>): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), 2500);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export async function getMarketingInputs(
   store: FinanceStoreConfig,
   period: MarketingPeriod,
   month = "",
 ) {
-  const [dataset, expenses, costs, versions] = await Promise.all([
-    getOrdersDataset(store, [
-      "rows",
-      "matchedSettlementRows",
-      "imports",
-      "settlementTraceByKey",
-    ]),
-    listExpenses("ads", store.id),
-    listProductCosts(store.id),
-    listProductCostVersions(undefined, store.id),
-  ]);
+  const [dataset, expenses, costs, versions, native, mappings] =
+    await Promise.all([
+      getOrdersDataset(store, [
+        "rows",
+        "matchedSettlementRows",
+        "imports",
+        "settlementTraceByKey",
+      ]),
+      listExpenses("ads", store.id),
+      listProductCosts(store.id),
+      listProductCostVersions(undefined, store.id),
+      optionalFamilyData(readMarketingProductCatalog(store.id)),
+      optionalFamilyData(readMarketingVariantMappings(store.id)),
+    ]);
   const control = buildFinanceControlCenter(
     dataset.rows,
     dataset.matchedSettlementRows,
@@ -33,7 +59,7 @@ export async function getMarketingInputs(
     versions.filter((cost) => cost.currency?.toUpperCase() === "CRC"),
     dataset.settlementTraceByKey,
   );
-  const summary = buildMarketingSummary({
+  const summary: MarketingSummary = buildMarketingSummary({
     orders: control.orders,
     expenses,
     month,
@@ -53,6 +79,15 @@ export async function getMarketingInputs(
   summary.catalog = Array.from(catalog.values()).sort((a, b) =>
     a.name.localeCompare(b.name),
   );
+  summary.productFamilies = buildProductFamilies(summary.catalog, native ?? []);
+  summary.groupedProducts = buildGroupMetrics(
+    control.orders,
+    period,
+    familyTargets(summary.productFamilies, mappings ?? []),
+  );
+  if (!native || !mappings)
+    summary.familyDataError =
+      "Parte del catálogo o de las selecciones no se pudo consultar. Revisa las variantes antes de usar sus costos.";
   return {
     summary,
     orders: control.orders,

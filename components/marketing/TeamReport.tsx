@@ -130,9 +130,10 @@ export function TeamReport({
     spend != null && data.totals.generated > 0
       ? spend / data.totals.generated
       : null;
-  const products = [...model.products].sort(
-    (a, b) => (ascending ? 1 : -1) * (a.orders - b.orders),
-  );
+  const products = [
+    ...(data.groupedProducts?.filter((p) => p.scope === "all") ??
+      model.products),
+  ].sort((a, b) => (ascending ? 1 : -1) * (a.orders - b.orders));
   const stock =
     model.products.find((p) => p.key === stockKey) ?? model.products[0];
   const lowStock = [...model.products]
@@ -140,7 +141,7 @@ export function TeamReport({
     .sort((a, b) => (stockAscending ? 1 : -1) * (a.available! - b.available!));
   const filtered = comparisons
     .filter((p) =>
-      `${p.name} ${p.sku}`
+      `${p.name} ${p.sku} ${"memberKeys" in p ? (p.memberKeys as string[]).join(" ") : ""}`
         .toLocaleLowerCase("es")
         .includes(query.toLocaleLowerCase("es")),
     )
@@ -274,6 +275,7 @@ export function TeamReport({
         </div>
         <button onClick={onAssign}>Asignar productos</button>
         <ul>
+          {data.familyDataError && <li role="alert">{data.familyDataError}</li>}
           <li>
             <strong>Origen:</strong>{" "}
             {origin
@@ -346,7 +348,13 @@ export function TeamReport({
                     <tr key={p.key}>
                       <th scope="row">
                         {p.name}
-                        <small>{p.sku || "Sin SKU"}</small>
+                        <small>
+                          {"scope" in p
+                            ? p.scope === "all"
+                              ? "Producto completo · todas las variantes"
+                              : `Selección · ${p.memberKeys?.length ?? 1} SKU`
+                            : p.sku || "Sin SKU"}
+                        </small>
                       </th>
                       {p.costs.map((cost, i) => (
                         <td
@@ -393,8 +401,9 @@ export function TeamReport({
           <div>
             <h3>Cantidad de pedidos por producto</h3>
             <p className={r.caption}>
-              Un pedido con varios productos aparece en cada producto; las filas
-              no son aditivas.
+              Las variantes del mismo producto se agrupan y cada pedido cuenta
+              una vez. Las selecciones específicas pueden solaparse; las filas
+              no se suman.
             </p>
             <div
               className={r.tableWrap}
@@ -416,7 +425,13 @@ export function TeamReport({
                     <tr key={p.key}>
                       <th scope="row">
                         {p.name}
-                        <small>{p.sku || "Sin SKU"}</small>
+                        <small>
+                          {"scope" in p
+                            ? p.scope === "all"
+                              ? "Producto completo · todas las variantes"
+                              : `Selección · ${p.memberKeys?.length ?? 1} SKU`
+                            : p.sku || "Sin SKU"}
+                        </small>
                       </th>
                       <td>{count(p.todayOrders)}</td>
                       <td>{count(p.yesterdayOrders)}</td>
@@ -479,7 +494,13 @@ export function TeamReport({
                   <span className={r.productName} title={p.name}>
                     {p.name}
                   </span>
-                  <small>{p.sku || "Sin SKU"}</small>
+                  <small>
+                    {"scope" in p
+                      ? p.scope === "all"
+                        ? "Producto completo · todas las variantes"
+                        : `Selección · ${p.memberKeys?.length ?? 1} SKU`
+                      : p.sku || "Sin SKU"}
+                  </small>
                 </div>
                 <strong>{count(p.orders)}</strong>
               </li>
@@ -592,6 +613,7 @@ export function TeamReport({
                 sources={campaignSources}
                 model={campaignModel}
                 catalog={data.catalog}
+                families={data.productFamilies}
                 fx={fx}
                 ready={canEdit}
                 loading={budgets.loading}

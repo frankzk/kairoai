@@ -1,5 +1,9 @@
 "use client";
 import { useState } from "react";
+import {
+  matchCampaignProduct,
+  type MarketingFamily,
+} from "@/lib/marketing-product-families";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingSources } from "@/lib/marketing-source-types";
 import type { UsdRate } from "@/lib/marketing-charlie-types";
@@ -15,6 +19,7 @@ export function CampaignGroups({
   sources,
   model,
   catalog,
+  families,
   fx,
   ready,
   loading,
@@ -25,6 +30,7 @@ export function CampaignGroups({
   sources: MarketingSources | null;
   model: MarketingIntelligence;
   catalog: MarketingSummary["catalog"];
+  families?: MarketingFamily[];
   fx: UsdRate | null;
   ready: boolean;
   loading: boolean;
@@ -50,6 +56,7 @@ export function CampaignGroups({
             (c) => c.platform === g.platform && c.accountId === g.id,
           )}
           catalog={catalog}
+          families={families}
           fx={fx}
           ready={ready}
           loading={loading}
@@ -65,6 +72,7 @@ function AccountTable({
   title,
   rows,
   catalog,
+  families,
   fx,
   ready,
   loading,
@@ -75,6 +83,7 @@ function AccountTable({
   title: string;
   rows: MarketingIntelligence["campaigns"];
   catalog: MarketingSummary["catalog"];
+  families?: MarketingFamily[];
   fx: UsdRate | null;
   ready: boolean;
   loading: boolean;
@@ -190,6 +199,7 @@ function AccountTable({
                   <CampaignAssignment
                     campaign={c}
                     catalog={catalog}
+                    families={families}
                     ready={ready}
                     saving={saving}
                     saved={saved}
@@ -231,7 +241,7 @@ function AccountTable({
 }
 export function CampaignAssignment({
   campaign: c,
-  catalog,
+  families = [],
   ready,
   saving,
   saved,
@@ -239,17 +249,78 @@ export function CampaignAssignment({
 }: {
   campaign: MarketingIntelligence["campaigns"][number];
   catalog: MarketingSummary["catalog"];
+  families?: MarketingFamily[];
   ready: boolean;
   saving: string;
   saved: string;
   save: Save;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [productQuery, setProductQuery] = useState("");
-  const [failed, setFailed] = useState(false);
-  const [draft, setDraft] = useState<string | null>(null);
-  const value = draft ?? c.mapping?.product_key ?? "",
-    dirty = value !== (c.mapping?.product_key ?? "");
+  const currentFamily = families.find(
+    (f) =>
+      f.key === c.mapping?.family_key ||
+      f.members.some((v) => v.key === c.mapping?.product_key),
+  );
+  const currentKeys =
+    c.mapping?.variant_scope === "selected"
+      ? (c.mapping.variant_keys ?? [])
+      : c.mapping && c.mapping.variant_scope !== "all"
+        ? [c.mapping.product_key]
+        : [];
+  const [editing, setEditing] = useState(false),
+    [familyKey, setFamilyKey] = useState(""),
+    [mode, setMode] = useState<"all" | "selected">("all"),
+    [keys, setKeys] = useState<string[]>([]),
+    [query, setQuery] = useState(""),
+    [failed, setFailed] = useState(false);
+  const family = families.find((f) => f.key === familyKey),
+    suggestion = matchCampaignProduct(c.name, families);
+  const changed =
+    familyKey !== (currentFamily?.key ?? "") ||
+    mode !== (c.mapping?.variant_scope === "all" ? "all" : "selected") ||
+    JSON.stringify([...keys].sort()) !==
+      JSON.stringify([...currentKeys].sort());
+  function edit() {
+    setFamilyKey(currentFamily?.key ?? "");
+    setMode(
+      c.mapping?.variant_scope === "all" || !c.mapping ? "all" : "selected",
+    );
+    setKeys(currentKeys);
+    setEditing(true);
+    setQuery("");
+    setFailed(false);
+  }
+  async function persist(
+    f: MarketingFamily | undefined,
+    m: "all" | "selected",
+    selected: string[],
+  ) {
+    setFailed(false);
+    const base = {
+      kind: "mapping",
+      platform: c.platform,
+      account_id: c.accountId,
+      campaign_id: c.id,
+    };
+    const ok = await save(
+      c.key,
+      f
+        ? {
+            ...base,
+            family_key: f.key,
+            variant_scope: m,
+            variant_keys: m === "all" ? [] : selected,
+          }
+        : { ...base, product_key: null, disable_auto: true },
+    );
+    if (ok) setEditing(false);
+    else setFailed(true);
+  }
+  const matches = families.filter(
+    (f) =>
+      `${f.name} ${f.members.map((v) => v.sku).join(" ")}`
+        .toLocaleLowerCase("es")
+        .includes(query.toLocaleLowerCase("es")) || f.key === familyKey,
+  );
   return (
     <div className={r.assignment}>
       {!editing ? (
@@ -257,17 +328,50 @@ export function CampaignAssignment({
           <span className={r.productName} title={c.mapping?.product_name}>
             {c.mapping?.product_name || "Sin asignar"}
           </span>
+          {c.mapping && (
+            <small>
+              {c.mapping.variant_scope === "all"
+                ? `Todas las variantes · ${currentFamily?.members.length ?? "?"} SKU`
+                : `${currentKeys.length || 1} SKU seleccionado(s)`}
+            </small>
+          )}
+          {c.mapping?.automatic && (
+            <small className={s.good}>
+              Automática: {c.mapping.match_reason}
+            </small>
+          )}
+          {!c.mapping && suggestion.kind !== "none" && (
+            <small>
+              {suggestion.kind === "ambiguous"
+                ? "Coincidencia ambigua: revisa el producto"
+                : "Sugerencias disponibles, requieren revisión"}
+            </small>
+          )}
           {ready && (
-            <button
-              className={s.button}
-              aria-label={`Asignar producto a ${c.name}`}
-              onClick={() => {
-                setEditing(true);
-                setFailed(false);
-              }}
-            >
-              {c.mapping ? "Cambiar producto" : "Asignar producto"}
-            </button>
+            <div className="flex flex-wrap gap-2 mt-2">
+              <button
+                className={s.button}
+                aria-label={`Asignar producto a ${c.name}`}
+                onClick={edit}
+              >
+                {c.mapping ? "Cambiar producto" : "Asignar producto"}
+              </button>
+              {c.mapping?.automatic && currentFamily && (
+                <button
+                  className={s.button}
+                  disabled={Boolean(saving)}
+                  onClick={() =>
+                    persist(
+                      currentFamily,
+                      c.mapping!.variant_scope === "all" ? "all" : "selected",
+                      currentKeys,
+                    )
+                  }
+                >
+                  Fijar asignación
+                </button>
+              )}
+            </div>
           )}
         </>
       ) : (
@@ -276,81 +380,116 @@ export function CampaignAssignment({
             className={s.control}
             type="search"
             aria-label={`Buscar producto para ${c.name}`}
-            placeholder="Buscar nombre o SKU"
-            value={productQuery}
-            onChange={(e) => setProductQuery(e.target.value)}
+            placeholder="Buscar producto o SKU"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
           />
           <select
             className={s.control}
             aria-label={`Producto para ${c.name}`}
-            disabled={!ready || saving === c.key}
-            value={value}
-            onChange={(e) => setDraft(e.target.value)}
+            disabled={!ready || Boolean(saving)}
+            value={familyKey}
+            onChange={(e) => {
+              setFamilyKey(e.target.value);
+              setMode("all");
+              setKeys([]);
+            }}
           >
-            <option value="">Sin asignar</option>
-            {c.mapping &&
-              !catalog.some((p) => p.key === c.mapping!.product_key) && (
-                <option value={c.mapping.product_key}>
-                  {c.mapping.product_name} (guardado)
-                </option>
-              )}
-            {catalog
-              .filter(
-                (p) =>
-                  p.key === value ||
-                  `${p.name} ${p.sku}`
-                    .toLocaleLowerCase("es")
-                    .includes(productQuery.toLocaleLowerCase("es")),
-              )
-              .map((p) => (
-                <option key={p.key} value={p.key}>
-                  {p.name}
-                  {p.sku ? ` · ${p.sku}` : ""}
-                </option>
-              ))}
+            <option value="">Sin asignar (desactiva automática)</option>
+            {matches.map((f) => (
+              <option key={f.key} value={f.key}>
+                {f.name} · {f.members.length} SKU
+                {suggestion.candidates.some((x) => x.key === f.key)
+                  ? " · coincidencia sugerida"
+                  : ""}
+              </option>
+            ))}
           </select>
-          {dirty && (
+          {family && (
+            <>
+              <select
+                className={s.control}
+                aria-label={`Alcance de variantes para ${c.name}`}
+                value={mode}
+                onChange={(e) => setMode(e.target.value as "all" | "selected")}
+              >
+                <option value="all">
+                  Todas las variantes y SKU históricos
+                </option>
+                <option value="selected">Elegir variantes</option>
+              </select>
+              {family.review && (
+                <small className={s.warn}>
+                  SKU o nombre ambiguo entre productos. Revisa sus miembros.
+                </small>
+              )}
+              {mode === "selected" && (
+                <fieldset className={r.variantList}>
+                  <legend>SKU incluidos</legend>
+                  {family.members.map((v) => (
+                    <label key={v.key}>
+                      <input
+                        type="checkbox"
+                        checked={keys.includes(v.key)}
+                        onChange={(e) =>
+                          setKeys((old) =>
+                            e.target.checked
+                              ? [...old, v.key]
+                              : old.filter((k) => k !== v.key),
+                          )
+                        }
+                      />
+                      <span>
+                        {v.name}
+                        <small>
+                          {v.sku || "Sin SKU"}
+                          {v.historical ? " · histórico" : ""}
+                        </small>
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+              )}
+              <small>
+                {mode === "all"
+                  ? `Incluye ${family.members.length} SKU y nuevas variantes del producto.`
+                  : `${keys.length} SKU elegidos; la selección no se amplía sola.`}{" "}
+                Cada pedido cuenta una vez.
+              </small>
+            </>
+          )}
+          <div className="flex flex-wrap gap-2 mt-2">
             <button
-              className={s.button}
-              disabled={!ready || Boolean(saving)}
-              onClick={async () => {
-                const p = catalog.find((p) => p.key === value);
-                setFailed(false);
-                const ok = await save(c.key, {
-                  kind: "mapping",
-                  platform: c.platform,
-                  account_id: c.accountId,
-                  campaign_id: c.id,
-                  product_key: p?.key ?? null,
-                });
-                if (ok) {
-                  setDraft(null);
-                  setEditing(false);
-                } else setFailed(true);
-              }}
+              className={`${s.button} ${s.primary}`}
+              disabled={
+                !ready ||
+                Boolean(saving) ||
+                (family && mode === "selected" && !keys.length) ||
+                (!changed && !c.mapping?.automatic)
+              }
+              onClick={() => persist(family, mode, keys)}
             >
               {saving === c.key ? "Guardando…" : "Guardar"}
             </button>
-          )}
-          <button
-            className={s.button}
-            disabled={saving === c.key}
-            onClick={() => {
-              setDraft(null);
-              setEditing(false);
-              setFailed(false);
-            }}
-          >
-            Cancelar
-          </button>
+            <button
+              className={s.button}
+              disabled={saving === c.key}
+              onClick={() => {
+                setEditing(false);
+                setFailed(false);
+              }}
+            >
+              Cancelar
+            </button>
+          </div>
         </>
       )}
       {failed && (
         <small role="alert" className={s.bad}>
-          No se pudo guardar. Revisa la conexión y vuelve a intentarlo.
+          No se pudo guardar. Revisa las variantes y vuelve a intentarlo.
         </small>
       )}
-      {saved === c.key && !dirty && (
+      {saved === c.key && !editing && (
         <small role="status">Asignación guardada</small>
       )}
     </div>

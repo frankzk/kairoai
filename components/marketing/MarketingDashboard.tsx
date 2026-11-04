@@ -567,6 +567,7 @@ export default function MarketingDashboard() {
                       model={model}
                       fx={charlie.settings.data?.fx ?? null}
                       catalog={data.catalog}
+                      families={data.productFamilies}
                       ready={settingsReady}
                       loading={api.sources.loading}
                       saving={api.saving}

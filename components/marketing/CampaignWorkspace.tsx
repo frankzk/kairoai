@@ -13,6 +13,7 @@ type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
 export function CampaignWorkspace({
   model,
   catalog,
+  families,
   ready,
   loading,
   saving,
@@ -22,6 +23,7 @@ export function CampaignWorkspace({
 }: {
   model: MarketingIntelligence;
   catalog: MarketingSummary["catalog"];
+  families?: import("@/lib/marketing-product-families").MarketingFamily[];
   ready: boolean;
   loading: boolean;
   saving: string;
@@ -96,8 +98,8 @@ export function CampaignWorkspace({
         <div>
           <h2 className={s.heading}>Campañas y producto anunciado</h2>
           <p className={s.muted}>
-            Un producto por campaña. El presupuesto es el diario actual, incluso
-            si consultas otro período.
+            Un producto por campaña, con todas sus variantes o una selección. El
+            presupuesto es el diario actual, incluso si consultas otro período.
           </p>
         </div>
         <span className={s.badge}>
@@ -107,12 +109,14 @@ export function CampaignWorkspace({
       </div>
       <div className={s.callout}>
         <p className={s.muted}>
-          1. Busca la campaña o elige una cuenta. 2. Pulsa «Asignar producto» y
-          selecciona el SKU del catálogo. 3. Guarda. Usa el mismo SKU en todas
-          las campañas del mismo producto. El reporte se recalcula al guardar.
+          Las coincidencias exactas y únicas se aplican automáticamente al
+          reporte. Puedes fijarlas o cambiarlas. Para las demás: elige el
+          producto completo, incluye todas sus variantes o selecciona algunos
+          SKU y guarda. Una sugerencia no se asigna sola.
         </p>
         <span className={s.badge}>
-          {model.unmapped.length} campañas con gasto sin producto
+          {model.automaticCampaigns} automáticas · {model.unmapped.length}{" "}
+          campañas con gasto sin producto
         </span>
       </div>
       {saved && (
@@ -262,6 +266,7 @@ export function CampaignWorkspace({
                           <CampaignAssignment
                             campaign={campaign}
                             catalog={catalog}
+                            families={families}
                             ready={ready}
                             saving={saving}
                             saved={saved}

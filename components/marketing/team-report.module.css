@@ -602,3 +602,34 @@
   background: var(--mk-accent-soft);
   border-color: var(--mk-accent);
 }
+
+.variantList {
+  max-height: 210px;
+  overflow: auto;
+  border: 1px solid var(--mk-border);
+  border-radius: 5px;
+  padding: 8px;
+  margin-top: 8px;
+}
+.variantList legend {
+  font-size: 11px;
+  color: var(--mk-muted);
+}
+.variantList label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  padding: 6px 0;
+  max-width: 330px;
+}
+.variantList input {
+  height: 16px;
+  padding: 0;
+  flex-shrink: 0;
+  accent-color: var(--mk-accent);
+}
+.variantList small {
+  display: block;
+  font-size: 10px;
+}

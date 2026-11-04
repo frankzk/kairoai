@@ -15,13 +15,17 @@ const mocks = vi.hoisted(() => ({
   }>,
   dbError: false,
   catalog: vi.fn(),
+  inputs: vi.fn(),
 }));
 vi.mock("@/lib/identidad", () => ({ identidadActual: () => mocks.identity }));
 vi.mock("@/lib/stores", () => ({
   getRequiredStoreFromSearchParams: (params: URLSearchParams) =>
     params.get("store") === "mireva-cr" ? { id: 1, code: "mireva-cr" } : null,
 }));
-vi.mock("@/lib/marketing-data", () => ({ getMarketingData: mocks.catalog }));
+vi.mock("@/lib/marketing-data", () => ({
+  getMarketingData: mocks.catalog,
+  getMarketingInputs: mocks.inputs,
+}));
 vi.mock("@/lib/db", () => ({
   getDB: () => ({
     from: (table: string) => {
@@ -104,9 +108,109 @@ beforeEach(() => {
   mocks.catalog.mockResolvedValue({
     catalog: [{ key: "sku:a", name: "Producto de Costa Rica", sku: "A" }],
   });
+  mocks.inputs.mockResolvedValue({
+    orders: [],
+    summary: {
+      productFamilies: [
+        {
+          key: "family:shopify:42",
+          name: "Producto padre",
+          source: "shopify",
+          review: false,
+          members: [
+            { key: "sku:a", name: "Negro", sku: "A" },
+            { key: "sku:b", name: "Beige", sku: "B" },
+          ],
+        },
+      ],
+    },
+  });
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("persistent marketing settings", () => {
+  it("validates selected variants against the server family and returns a unique-order metric", async () => {
+    const result = await PATCH(
+      request({
+        ...mapping,
+        family_key: "family:shopify:42",
+        variant_scope: "selected",
+        variant_keys: ["sku:b", "sku:a"],
+        product_name: "Forged",
+      }),
+    );
+    expect(result.status).toBe(200);
+    const body = await result.json();
+    expect(body).toMatchObject({
+      saved: true,
+      productMetric: {
+        name: "Producto padre",
+        scope: "selected",
+        memberKeys: ["sku:a", "sku:b"],
+        orders: 0,
+      },
+    });
+    expect(mocks.calls[0].value).toMatchObject({
+      product_name: "Producto padre",
+      family_key: "family:shopify:42",
+      variant_scope: "selected",
+      variant_keys: ["sku:a", "sku:b"],
+      store_id: 1,
+    });
+    expect(
+      (mocks.calls[0].value as { product_key: string }).product_key,
+    ).toMatch(/^selection:/);
+  });
+  it("supports all variants and a persistent override disabling automatic matching", async () => {
+    expect(
+      (
+        await PATCH(
+          request({
+            ...mapping,
+            family_key: "family:shopify:42",
+            variant_scope: "all",
+          }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(mocks.calls[0].value).toMatchObject({
+      product_key: "family:shopify:42",
+      variant_scope: "all",
+      variant_keys: [],
+    });
+    expect(
+      (
+        await PATCH(
+          request({ ...mapping, product_key: null, disable_auto: true }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(mocks.calls[1].value).toMatchObject({
+      product_key: "unassigned",
+      variant_scope: "none",
+      family_key: null,
+      variant_keys: [],
+    });
+  });
+  it.each([
+    { family_key: "family:foreign", variant_scope: "all" },
+    {
+      family_key: "family:shopify:42",
+      variant_scope: "selected",
+      variant_keys: [],
+    },
+    {
+      family_key: "family:shopify:42",
+      variant_scope: "selected",
+      variant_keys: ["sku:foreign"],
+    },
+    { family_key: "family:shopify:42", variant_scope: "unknown" },
+  ])(
+    "rejects invalid parent/variant mapping %j without writes",
+    async (patch) => {
+      expect((await PATCH(request({ ...mapping, ...patch }))).status).toBe(400);
+      expect(mocks.calls).toEqual([]);
+    },
+  );
   it("requires independent Marketing and Costa Rica for reads and writes", async () => {
     for (const permissions of [[], ["finanzas"], ["usuarios"]]) {
       mocks.identity.permisos = permissions;

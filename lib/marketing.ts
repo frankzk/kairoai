@@ -386,4 +386,8 @@ export function buildMarketingSummary({
   };
 }
 
-export type MarketingSummary = ReturnType<typeof buildMarketingSummary>;
+export type MarketingSummary = ReturnType<typeof buildMarketingSummary> & {
+  productFamilies?: import("./marketing-product-families").MarketingFamily[];
+  groupedProducts?: import("./marketing-product-families").MarketingGroupMetric[];
+  familyDataError?: string;
+};

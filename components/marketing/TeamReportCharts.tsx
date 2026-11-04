@@ -40,7 +40,10 @@ export function WeekdayChart({ data }: { data: MarketingSummary }) {
 const colors = ["var(--mk-chart-1)", "var(--mk-chart-2)", "var(--mk-chart-3)"];
 export function TrendChart({ data }: { data: MarketingSummary }) {
   const [hidden, setHidden] = useState<string[]>([]);
-  const products = [...data.products]
+  const products = [
+    ...(data.groupedProducts?.filter((p) => p.scope === "all") ??
+      data.products),
+  ]
     .sort((a, b) => b.orders - a.orders)
     .filter((p) => p.orders > 0)
     .slice(0, 3);
