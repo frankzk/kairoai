@@ -27,6 +27,8 @@ export interface CharlieAd {
   daily: CharlieDay[];
 }
 export interface CharlieAdset {
+  /** Native account currency, summed across the selected period including inactive ads. */
+  periodSpend?: number;
   id: string;
   name: string;
   campaignId: string;
@@ -41,6 +43,7 @@ export interface CharlieAccount {
   ads: CharlieAd[];
   adsets: CharlieAdset[];
   metadataMessage?: string;
+  creativeScope?: "active";
 }
 export type CharlieReport = MarketingSource<{
   accounts: CharlieAccount[];

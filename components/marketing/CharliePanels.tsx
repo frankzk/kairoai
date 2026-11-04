@@ -783,14 +783,17 @@ export function CharlieStructure({
                   ) : set.role === "testing" ? (
                     <>
                       <span>
-                        {set.pattern322} anuncios con 3:2:2 verificable
+                        {set.pattern322} anuncios{" "}
+                        {set.creativeScope === "active" ? "activos " : ""}con
+                        3:2:2 verificable
                       </span>
                       <p className={s.muted}>
                         {set.dynamic
                           ? "Conjunto dinámico"
                           : "Dinámico no declarado"}{" "}
-                        · {set.flexAds.length} anuncios con especificación de
-                        activos
+                        · {set.flexAds.length} anuncios{" "}
+                        {set.creativeScope === "active" ? "activos " : ""}con
+                        especificación de activos
                       </p>
                     </>
                   ) : (

@@ -24,9 +24,10 @@ export async function GET(req: NextRequest) {
     );
   return NextResponse.json(
     await getMarketingSources(period, process.env, fetch, {
-      details: !["overview", "basic"].includes(
+      details: !["overview", "basic", "report"].includes(
         req.nextUrl.searchParams.get("scope") || "",
       ),
+      daily: req.nextUrl.searchParams.get("scope") === "report" || undefined,
       overview: req.nextUrl.searchParams.get("scope") === "overview",
       // Sin acceso a la API de TikTok, el gasto que manda Make (lib/tiktok-diario.ts).
       tiktokDesdeMake: (from, to) => leerCuentasTiktok(store.id, from, to),

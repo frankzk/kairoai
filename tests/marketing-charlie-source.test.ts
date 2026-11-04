@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { buildCharlieModel } from "../lib/marketing-charlie";
 import { getCharlieReport } from "../lib/marketing-charlie-source";
 import { marketingPeriod } from "../lib/marketing-dates";
 const period = marketingPeriod("2026-10-29", "2026-10-29")!,
@@ -287,5 +288,92 @@ describe("Charlie Meta reader", () => {
       "pending",
     );
     expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe("Lean Control and Testing report", () => {
+  it("reads active creatives and aggregated adset spend, including spend from ads no longer active", async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("act_123"))
+        return json({
+          id: "act_123",
+          currency: "USD",
+          timezone_name: "America/Costa_Rica",
+        });
+      if (url.pathname.endsWith("/ads")) {
+        expect(JSON.parse(url.searchParams.get("effective_status")!)).toEqual([
+          "ACTIVE",
+        ]);
+        return json({
+          data: [
+            {
+              id: "1",
+              name: "Current",
+              adset_id: "11",
+              campaign_id: "22",
+              effective_status: "ACTIVE",
+              creative: { id: "33", effective_object_story_id: "5_6" },
+            },
+          ],
+        });
+      }
+      if (url.pathname.endsWith("/adsets"))
+        return json({
+          data: [
+            {
+              id: "11",
+              name: "Control",
+              campaign_id: "22",
+              effective_status: "ACTIVE",
+            },
+            {
+              id: "12",
+              name: "Testing",
+              campaign_id: "22",
+              effective_status: "PAUSED",
+            },
+          ],
+        });
+      expect(url.pathname.endsWith("/insights")).toBe(true);
+      expect(url.searchParams.get("level")).toBe("adset");
+      expect(url.searchParams.has("time_increment")).toBe(false);
+      expect(url.searchParams.get("fields")).toBe("adset_id,spend");
+      return json({ data: [{ adset_id: "11", spend: "125" }] });
+    });
+    const result = await getCharlieReport(
+      period,
+      env,
+      fetcher,
+      now,
+      undefined,
+      true,
+      false,
+      true,
+    );
+    expect(result.status).toBe("ready");
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    const model = buildCharlieModel(
+      { period, totals: { generated: 1, delivered: 0 } },
+      null,
+      null,
+      result,
+      null,
+      undefined,
+      now,
+    );
+    expect(model.structure[0]).toMatchObject({
+      spendUsd: 125,
+      activeAds: 1,
+      posts: ["5_6"],
+    });
+    expect(result.data!.accounts[0]).toMatchObject({
+      creativeScope: "active",
+      adsets: [
+        { id: "11", periodSpend: 125 },
+        { id: "12", periodSpend: 0 },
+      ],
+      ads: [{ id: "1", postId: "5_6", daily: [] }],
+    });
   });
 });

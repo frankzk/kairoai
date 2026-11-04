@@ -22,6 +22,7 @@ import {
   CharlieStructure,
   CharlieSubtraction,
 } from "./CharliePanels";
+import { TeamReport } from "./TeamReport";
 import { Overview, SourceConnections, Trends } from "./MarketingViews";
 import { CampaignWorkspace } from "./CampaignWorkspace";
 import { ProductWorkspace } from "./ProductWorkspace";
@@ -46,7 +47,7 @@ const presets: Array<[MarketingPreset, string]> = [
 export default function MarketingDashboard() {
   const [period, setPeriod] = useState<MarketingPeriod | null>(null);
   const [preset, setPreset] = useState<MarketingPreset>("month");
-  const [view, setView] = useState<View>("summary");
+  const [view, setView] = useState<View>("report");
   const [detailView, setDetailView] = useState<"campaigns" | "products">(
     "campaigns",
   );
@@ -82,6 +83,7 @@ export default function MarketingDashboard() {
     const requested = params.get("view");
     if (
       [
+        "report",
         "summary",
         "details",
         "trends",
@@ -183,6 +185,8 @@ export default function MarketingDashboard() {
   const busy =
     api.summary.loading ||
     api.sources.loading ||
+    api.settings.loading ||
+    api.recent.loading ||
     charlie.settings.loading ||
     charlie.report.loading;
   const settingsReady = Boolean(
@@ -203,7 +207,9 @@ export default function MarketingDashboard() {
   }
   return (
     <UsdProvider fx={charlie.settings.data?.fx ?? null}>
-      <main className={s.workspace}>
+      <main
+        className={`${s.workspace} ${view === "report" ? s.lightReport : ""}`}
+      >
         <header className={s.header}>
           <div>
             <p className={s.eyebrow}>Mireva Costa Rica / Operación comercial</p>
@@ -249,9 +255,7 @@ export default function MarketingDashboard() {
             </button>
             <button
               className={s.button}
-              onClick={() =>
-                setView(view === "sources" ? "summary" : "sources")
-              }
+              onClick={() => setView(view === "sources" ? "report" : "sources")}
               aria-pressed={view === "sources"}
             >
               Conexiones
@@ -324,6 +328,7 @@ export default function MarketingDashboard() {
         )}
         <nav className={s.tabs} aria-label="Vistas de marketing">
           {[
+            ["report", "Reporte general"],
             ["summary", "Decisión financiera"],
             ["matrix", "Matriz 4Pi"],
             ["structure", "Control y Testing"],
@@ -371,7 +376,7 @@ export default function MarketingDashboard() {
               : api.sources.error
                 ? "No se pudieron consultar las conexiones. La inversión queda sin datos."
                 : missing.length
-                  ? `${missing.join(", ")}: conexión pendiente o consulta no disponible. La inversión puede ser parcial.`
+                  ? `${missing.join(", ")}: conexión pendiente o consulta no disponible.${missing.some((name) => name !== "ShipHero") ? " La inversión puede ser parcial." : " Inventario sin datos."}`
                   : "Plataformas e inventario consultados. Las ventas siguen sin atribuir a campañas."}
           </span>
           {view !== "sources" && (
@@ -470,7 +475,22 @@ export default function MarketingDashboard() {
                 se conserva; el costo por pedido requiere pedidos.
               </p>
             )}
-            {view === "summary" ? (
+            {view === "report" ? (
+              <TeamReport
+                data={data}
+                sources={api.sources.data}
+                settings={api.settings.data}
+                fx={charlie.settings.data?.fx ?? null}
+                model={model}
+                loading={api.sources.loading}
+                revision={revision}
+                recent={api.recent}
+                canEdit={settingsReady}
+                saving={api.saving}
+                saved={api.saved}
+                save={api.save}
+              />
+            ) : view === "summary" ? (
               <>
                 {charlieModel && (
                   <CharlieExecutive

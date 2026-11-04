@@ -217,3 +217,46 @@ describe("Lightweight executive Meta query", () => {
     ).toBe(true);
   });
 });
+
+describe("Team report loading", () => {
+  it("opens the PDF report without creative scans or budget scans", () => {
+    expect(marketingLoadPlan("report")).toMatchObject({
+      summary: true,
+      settings: true,
+      sourceScope: "report",
+      reportScope: null,
+    });
+  });
+  it("reads campaign actions and daily metrics without fetching the budget catalogue", async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("act_123"))
+        return Response.json({
+          id: "act_123",
+          currency: "USD",
+          timezone_name: "America/Costa_Rica",
+        });
+      expect(url.pathname.endsWith("/insights")).toBe(true);
+      expect(url.searchParams.get("fields")).toContain("actions");
+      expect(url.searchParams.get("time_increment")).toBe("1");
+      return Response.json({
+        data: [
+          {
+            ...rows[1],
+            actions: [{ action_type: "omni_purchase", value: "2" }],
+          },
+        ],
+      });
+    });
+    const result = await getMarketingSources(period, env, fetcher, {
+      daily: true,
+      details: false,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(result.meta.data!.accounts[0].campaigns[0]).toMatchObject({
+      spend: 5,
+      purchases: 2,
+      daily: [{ date: "2026-11-01", spend: 5, purchases: 2 }],
+    });
+  });
+});

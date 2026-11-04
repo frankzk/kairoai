@@ -3,7 +3,13 @@ import { useEffect, useState } from "react";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingSources } from "@/lib/marketing-source-types";
 import type { MarketingSettings } from "@/lib/marketing-settings-types";
-import { periodQuery, type MarketingPeriod } from "@/lib/marketing-dates";
+import {
+  marketingDate,
+  marketingPeriod,
+  shiftDate,
+  periodQuery,
+  type MarketingPeriod,
+} from "@/lib/marketing-dates";
 import type { CharlieRevenue } from "@/lib/marketing-charlie-revenue";
 import { marketingLoadPlan, type MarketingView } from "@/lib/marketing-loading";
 
@@ -78,6 +84,14 @@ export function useMarketing(
     query ? `/api/marketing/sources?${query}&scope=${plan.sourceScope}` : null,
     revision,
   );
+  const today = marketingDate();
+  const recentPeriod = marketingPeriod(shiftDate(today, -7), today)!;
+  const recent = useResource<MarketingSources>(
+    period && view === "report"
+      ? `/api/marketing/sources?${periodQuery(recentPeriod)}&scope=report`
+      : null,
+    revision,
+  );
   const settings = useResource<MarketingSettings>(
     period && plan.settings ? "/api/marketing/settings?store=mireva-cr" : null,
     revision,
@@ -128,5 +142,5 @@ export function useMarketing(
       setSaving("");
     }
   }
-  return { summary, sources, settings, saving, saveError, saved, save };
+  return { summary, sources, recent, settings, saving, saveError, saved, save };
 }

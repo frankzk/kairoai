@@ -1,4 +1,5 @@
 export type MarketingView =
+  | "report"
   | "summary"
   | "details"
   | "trends"
@@ -12,17 +13,20 @@ export function marketingLoadPlan(
   expandedOverview = false,
 ) {
   return {
-    summary: ["summary", "details", "trends"].includes(view),
+    summary: ["report", "summary", "details", "trends"].includes(view),
     settings:
+      view === "report" ||
       view === "details" ||
       view === "trends" ||
       (view === "summary" && expandedOverview),
     sourceScope:
-      view === "summary"
-        ? ("overview" as const)
-        : ["details", "trends", "structure"].includes(view)
-          ? ("details" as const)
-          : ("basic" as const),
+      view === "report"
+        ? ("report" as const)
+        : view === "summary"
+          ? ("overview" as const)
+          : ["details", "trends", "structure"].includes(view)
+            ? ("details" as const)
+            : ("basic" as const),
     reportScope:
       view === "structure"
         ? ("structure" as const)
