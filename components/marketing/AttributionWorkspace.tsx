@@ -8,7 +8,7 @@ import {
   type AttributionLevel,
 } from "@/lib/marketing-attribution-cost";
 import type { CharlieReport } from "@/lib/marketing-charlie-types";
-import { useUsdMoney } from "./UsdContext";
+import { useUsdMoney, useUsdRate } from "./UsdContext";
 import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
 import { count, percentage } from "./format";
 import s from "./dashboard.module.css";
@@ -33,6 +33,7 @@ export default function AttributionWorkspace({
     "orders" | "deliveryRate" | "costPerDelivered"
   >("orders");
   const money = useUsdMoney();
+  const fx = useUsdRate();
   const report = useResource<CharlieReport>(
     level === "campaign"
       ? null
@@ -48,6 +49,7 @@ export default function AttributionWorkspace({
       campaigns,
       report.data,
       period,
+      fx,
     )
       .filter((g) =>
         `${g.platform} ${g.campaignName} ${g.matchedCampaignName} ${g.adsetName} ${g.adName} ${g.campaignId} ${g.adsetId} ${g.adId}`
@@ -55,8 +57,9 @@ export default function AttributionWorkspace({
           .includes(query.trim().toLowerCase()),
       )
       .sort((a, b) => {
-        const av = a[sort],
-          bv = b[sort];
+        const av =
+            sort === "costPerDelivered" ? a.costPerDeliveredUsd : a[sort],
+          bv = sort === "costPerDelivered" ? b.costPerDeliveredUsd : b[sort];
         if (av == null) return bv == null ? b.orders - a.orders : 1;
         if (bv == null) return -1;
         return (
@@ -64,7 +67,7 @@ export default function AttributionWorkspace({
           b.orders - a.orders
         );
       });
-  }, [resource.data, level, query, campaigns, report.data, period, sort]);
+  }, [resource.data, level, query, campaigns, report.data, period, sort, fx]);
   const pages = Math.max(1, Math.ceil(groups.length / 15)),
     current = Math.min(page, pages - 1);
   return (
@@ -163,8 +166,9 @@ export default function AttributionWorkspace({
                 report.data?.status === "error" ||
                 report.data?.status === "pending") && (
                 <p role="status" className={`${s.notice} mb-3`}>
-                  El gasto por anuncio no está disponible. Los resultados de
-                  entrega se conservan.
+                  {report.data?.message ||
+                    "El gasto por anuncio no está disponible. Vuelve a actualizar o reduce el rango de fechas."}{" "}
+                  Los resultados de entrega se conservan.
                 </p>
               )}
             <div className={s.tableWrap}>

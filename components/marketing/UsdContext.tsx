@@ -5,6 +5,9 @@ import type { UsdRate } from "@/lib/marketing-charlie-types";
 import { asUsd } from "@/lib/marketing-usd-rate";
 import { money } from "./format";
 const Fx = createContext<UsdRate | null>(null);
+export function useUsdRate() {
+  return useContext(Fx);
+}
 export function UsdProvider({
   fx,
   children,

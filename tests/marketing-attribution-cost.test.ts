@@ -97,6 +97,45 @@ const report = (accounts = [account]): CharlieReport => ({
   },
 });
 describe("inversión y costo por entregado UTM", () => {
+  it("compara costos en USD sin ordenar soles como si fueran dólares", () => {
+    const fx = {
+      rate: 500,
+      date: "2026-11-04",
+      source: "hacienda" as const,
+      checkedAt: "now",
+      message: "",
+      pen: { rate: 3.75, date: "2026-11-04", source: "bcrp" as const },
+    };
+    const usd = buildAttributionCostRows(
+      [group],
+      "campaign",
+      [{ ...campaign, spend: 10 }],
+      null,
+      period,
+      fx,
+    )[0];
+    const pen = buildAttributionCostRows(
+      [group],
+      "campaign",
+      [{ ...campaign, spend: 30, currency: "PEN" }],
+      null,
+      period,
+      fx,
+    )[0];
+    expect(usd.costPerDelivered).toBe(1);
+    expect(pen.costPerDelivered).toBe(3);
+    expect(usd.costPerDeliveredUsd).toBe(1);
+    expect(pen.costPerDeliveredUsd).toBe(0.8);
+    expect(
+      buildAttributionCostRows(
+        [group],
+        "campaign",
+        [{ ...campaign, spend: 30, currency: "PEN" }],
+        null,
+        period,
+      )[0].costPerDeliveredUsd,
+    ).toBeNull();
+  });
   it("mantiene visibles campañas y anuncios con gasto pero sin pedidos vinculados", () => {
     expect(
       buildAttributionCostRows([], "campaign", [campaign], null, period)[0],
