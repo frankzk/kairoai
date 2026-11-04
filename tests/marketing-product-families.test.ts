@@ -67,6 +67,17 @@ describe("Campaign product families", () => {
       "Pack 2 Fat-Burn",
     );
     expect(baseProductName("2x Fat-Burn")).toBe("2x Fat-Burn");
+    expect(
+      baseProductName("Fat-Burn Shorts - Compresión — Beige - Beige"),
+    ).toBe("Fat-Burn Shorts - Compresión");
+    expect(baseProductName("Fat-Burn Shorts - Compresión (Negro / XXL)")).toBe(
+      "Fat-Burn Shorts - Compresión",
+    );
+    expect(
+      baseProductName(
+        "Fat-Burn Shorts - Compresión (Negro / XXL) - Negro / XXL",
+      ),
+    ).toBe("Fat-Burn Shorts - Compresión");
   });
   it("never automatically resolves reused SKU or a duplicate product alias", () => {
     const ambiguous = buildProductFamilies(catalog, [

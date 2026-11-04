@@ -352,7 +352,7 @@ export function TeamReport({
                           {"scope" in p
                             ? p.scope === "all"
                               ? "Producto completo · todas las variantes"
-                              : `Selección · ${p.memberKeys?.length ?? 1} SKU`
+                              : `Selección · ${p.memberKeys?.length ?? 1} referencias`
                             : p.sku || "Sin SKU"}
                         </small>
                       </th>
@@ -429,7 +429,7 @@ export function TeamReport({
                           {"scope" in p
                             ? p.scope === "all"
                               ? "Producto completo · todas las variantes"
-                              : `Selección · ${p.memberKeys?.length ?? 1} SKU`
+                              : `Selección · ${p.memberKeys?.length ?? 1} referencias`
                             : p.sku || "Sin SKU"}
                         </small>
                       </th>
@@ -498,7 +498,7 @@ export function TeamReport({
                     {"scope" in p
                       ? p.scope === "all"
                         ? "Producto completo · todas las variantes"
-                        : `Selección · ${p.memberKeys?.length ?? 1} SKU`
+                        : `Selección · ${p.memberKeys?.length ?? 1} referencias`
                       : p.sku || "Sin SKU"}
                   </small>
                 </div>

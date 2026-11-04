@@ -331,8 +331,8 @@ export function CampaignAssignment({
           {c.mapping && (
             <small>
               {c.mapping.variant_scope === "all"
-                ? `Todas las variantes · ${currentFamily?.members.length ?? "?"} SKU`
-                : `${currentKeys.length || 1} SKU seleccionado(s)`}
+                ? `Todas las variantes · ${currentFamily?.members.length ?? "?"} referencias`
+                : `${currentKeys.length || 1} referencia(s) seleccionada(s)`}
             </small>
           )}
           {c.mapping?.automatic && (
@@ -398,7 +398,7 @@ export function CampaignAssignment({
             <option value="">Sin asignar (desactiva automática)</option>
             {matches.map((f) => (
               <option key={f.key} value={f.key}>
-                {f.name} · {f.members.length} SKU
+                {f.name} · {f.members.length} referencias
                 {suggestion.candidates.some((x) => x.key === f.key)
                   ? " · coincidencia sugerida"
                   : ""}
@@ -414,7 +414,7 @@ export function CampaignAssignment({
                 onChange={(e) => setMode(e.target.value as "all" | "selected")}
               >
                 <option value="all">
-                  Todas las variantes y SKU históricos
+                  Todas las variantes y registros históricos
                 </option>
                 <option value="selected">Elegir variantes</option>
               </select>
@@ -425,7 +425,7 @@ export function CampaignAssignment({
               )}
               {mode === "selected" && (
                 <fieldset className={r.variantList}>
-                  <legend>SKU incluidos</legend>
+                  <legend>Variantes y registros históricos</legend>
                   {family.members.map((v) => (
                     <label key={v.key}>
                       <input
@@ -452,8 +452,8 @@ export function CampaignAssignment({
               )}
               <small>
                 {mode === "all"
-                  ? `Incluye ${family.members.length} SKU y nuevas variantes del producto.`
-                  : `${keys.length} SKU elegidos; la selección no se amplía sola.`}{" "}
+                  ? `Incluye ${family.members.length} referencias y nuevas variantes del producto.`
+                  : `${keys.length} referencias elegidas; la selección no se amplía sola.`}{" "}
                 Cada pedido cuenta una vez.
               </small>
             </>

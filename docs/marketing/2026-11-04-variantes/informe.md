@@ -8,4 +8,6 @@ Los pedidos se deduplican por producto o selección, aunque tengan varias varian
 
 La migración aditiva agrega familia, alcance y miembros a marketing_campaign_products. Mantiene RLS y los permisos exclusivos del servidor. La API verifica permisos, tienda, cuenta, producto y variantes con datos del servidor; ignora nombres y claves calculadas que mande el cliente.
 
-Validación: pruebas de coincidencia/ambigüedad, SKU reutilizado, selección inválida, persistencia y exclusión automática, deduplicación de pedidos y suma de gasto. Catálogo real de CR: 227 entradas → 146 productos; Fat-Burn tiene 29 SKU actuales/históricos, con dos variantes archivadas actuales. Stock ShipHero permanece pendiente.
+Validación: pruebas de coincidencia/ambigüedad, SKU reutilizado, selección inválida, persistencia y exclusión automática, deduplicación de pedidos y suma de gasto. Catálogo real de CR: 227 entradas → 142 productos; Fat-Burn tiene 33 referencias actuales/históricas, con dos variantes archivadas actuales. Stock ShipHero permanece pendiente.
+
+Validación final: 1.854 pruebas en 186 archivos; compilación de producción. RLS sigue habilitado y anon/authenticated no tienen permisos en la tabla de asignaciones. Las advertencias generales del proyecto en el asesor de Supabase ya existían y no se cambian en esta entrega. La tabla de asignaciones permanece solo para el servidor ([RLS sin políticas](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy)).

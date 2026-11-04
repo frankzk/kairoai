@@ -21,11 +21,20 @@ export interface NativeProduct {
 }
 export function baseProductName(name: string) {
   return name
+    .trim()
     .replace(/^1x\s+/i, "")
     .replace(/\s*\((?:color|talla|size)\s*:.*$/i, "")
     .replace(/\s*[-–—·]\s*(?:color|talla|size)\s*:.*$/i, "")
     .replace(
       /\s*[-–—]\s*(?:negro|beige|blanco|rojo|cafe|café|azul|verde|gris)\s*\/\s*(?:talla\s+unica|talla\s+única|[smlx]+|\d+)(?:\s.*)?$/i,
+      "",
+    )
+    .replace(
+      /\s*\((?:negro|beige|blanco|rojo|cafe|café|azul|verde|gris)\s*\/\s*(?:talla\s+[úu]nica|[smlx]+|\d+)\)$/i,
+      "",
+    )
+    .replace(
+      /\s*[-–—]\s*(negro|beige|blanco|rojo|cafe|café|azul|verde|gris)(?:\s*[-–—]\s*\1)?$/i,
       "",
     )
     .trim();
@@ -103,7 +112,10 @@ export function buildProductFamilies(
     .map((f) => ({
       ...f,
       members: f.members.sort(
-        (a, b) => a.sku.localeCompare(b.sku) || a.key.localeCompare(b.key),
+        (a, b) =>
+          Number(Boolean(a.historical)) - Number(Boolean(b.historical)) ||
+          a.sku.localeCompare(b.sku) ||
+          a.key.localeCompare(b.key),
       ),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
