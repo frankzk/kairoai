@@ -265,6 +265,7 @@ export async function listOrdersWithAttribution(opts: {
   const params = new URLSearchParams({
     store_id: String(externalStoreId),
     withAttribution: "1",
+    withAdOrigin: "1",
     page: String(page),
     limit: String(limit),
   });

@@ -24,6 +24,7 @@ import {
 } from "./CharliePanels";
 import { Overview, SourceConnections, Trends } from "./MarketingViews";
 import { CampaignWorkspace } from "./CampaignWorkspace";
+import AttributionWorkspace from "./AttributionWorkspace";
 import { ProductWorkspace } from "./ProductWorkspace";
 import CampaignsTable from "./CampaignsTable";
 import { shortDate } from "./format";
@@ -536,6 +537,7 @@ export default function MarketingDashboard() {
                   </span>
                 </div>
                 {detailView === "campaigns" ? (
+                  <>
                   <CampaignWorkspace
                     model={model}
                     catalog={data.catalog}
@@ -545,6 +547,8 @@ export default function MarketingDashboard() {
                     saved={api.saved}
                     save={api.save}
                   />
+                  <AttributionWorkspace period={data.period} revision={revision} campaigns={model.campaigns} />
+                  </>
                 ) : (
                   <ProductWorkspace
                     products={model.products}
