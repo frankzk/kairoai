@@ -39,6 +39,12 @@ export interface MarketingAdsData {
   timezone: string;
   campaigns: MarketingCampaign[];
   budgetMessage?: string;
+  /** Account-currency daily totals for the executive graph; independent of the selected-period campaign totals. */
+  dailySpend?: {
+    from: string;
+    to: string;
+    days: Array<{ date: string; spend: number }>;
+  };
 }
 
 export interface MarketingAdsAccounts {

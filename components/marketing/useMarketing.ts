@@ -4,6 +4,8 @@ import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingSources } from "@/lib/marketing-source-types";
 import type { MarketingSettings } from "@/lib/marketing-settings-types";
 import { periodQuery, type MarketingPeriod } from "@/lib/marketing-dates";
+import type { CharlieRevenue } from "@/lib/marketing-charlie-revenue";
+import { marketingLoadPlan, type MarketingView } from "@/lib/marketing-loading";
 
 interface Resource<T> {
   data: T | null;
@@ -42,8 +44,9 @@ export function useResource<T>(url: string | null, revision: number) {
       });
     return () => controller.abort();
   }, [url, revision]);
-  const current =
-    url && state.requestKey !== url
+  const current = !url
+    ? { data: null, loading: false, error: "" }
+    : state.requestKey !== url
       ? { data: null, loading: true, error: "" }
       : state;
   return {
@@ -51,18 +54,32 @@ export function useResource<T>(url: string | null, revision: number) {
     setState: (next: Resource<T>) => setState({ ...next, requestKey: url }),
   };
 }
-export function useMarketing(period: MarketingPeriod | null, revision: number) {
+export function useMarketing(
+  period: MarketingPeriod | null,
+  revision: number,
+  view: MarketingView = "summary",
+  expandedOverview = false,
+  financialRevision = 0,
+) {
   const query = period ? periodQuery(period) : null;
-  const summary = useResource<MarketingSummary>(
-    query ? `/api/marketing/summary?${query}` : null,
-    revision,
+  const plan = marketingLoadPlan(view, expandedOverview);
+  const summary = useResource<
+    MarketingSummary & {
+      charlieBusiness?: CharlieRevenue | null;
+      charlieError?: string;
+    }
+  >(
+    query && plan.summary
+      ? `/api/marketing/summary?${query}&include_charlie=1`
+      : null,
+    revision + financialRevision,
   );
   const sources = useResource<MarketingSources>(
-    query ? `/api/marketing/sources?${query}` : null,
+    query ? `/api/marketing/sources?${query}&scope=${plan.sourceScope}` : null,
     revision,
   );
   const settings = useResource<MarketingSettings>(
-    period ? "/api/marketing/settings?store=mireva-cr" : null,
+    period && plan.settings ? "/api/marketing/settings?store=mireva-cr" : null,
     revision,
   );
   const [saving, setSaving] = useState("");

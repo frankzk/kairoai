@@ -1,5 +1,10 @@
 // Server-only consumers: tokens are read here, never returned to the browser.
-import { periodFromInput, type MarketingPeriod } from "./marketing-dates";
+import {
+  periodFromInput,
+  marketingDate,
+  shiftDate,
+  type MarketingPeriod,
+} from "./marketing-dates";
 import { readMetaBudgets } from "./marketing-meta-budgets";
 import type {
   MarketingAdsAccounts,
@@ -115,6 +120,7 @@ async function metaAds(
   fetcher: typeof fetch,
   signal: AbortSignal,
   details: boolean,
+  overview?: { from: string; to: string },
 ): Promise<MarketingAdsData> {
   const version = env.META_CR_GRAPH_VERSION || "";
   if (!/^\d+$/.test(id) || !/^v\d+\.\d+$/.test(version))
@@ -133,8 +139,12 @@ async function metaAds(
     !str(account.timezone_name)
   )
     throw new Error("Invalid Meta account");
-  const { from: since, to: until } = period;
+  const since =
+    overview && overview.from < period.from ? overview.from : period.from;
+  const until = period.to;
   const rows: MarketingCampaign[] = [];
+  const dailySpend = new Map<string, number>();
+  const seen = new Set<string>();
   let after = "";
   for (let page = 0; page < 25; page++) {
     const url = new URL(`${base}/insights`);
@@ -142,8 +152,10 @@ async function metaAds(
       "fields",
       `campaign_id,campaign_name,spend,impressions,clicks${details ? ",actions" : ""}`,
     );
-    if (details) {
+    if (details || overview) {
       url.searchParams.set("time_increment", "1");
+    }
+    if (details) {
       url.searchParams.set(
         "action_attribution_windows",
         JSON.stringify(["7d_click", "1d_view"]),
@@ -158,6 +170,21 @@ async function metaAds(
       throw new Error("Invalid Meta report");
     for (const rawEntry of body.data) {
       const row = obj(rawEntry);
+      const day = str(row.date_start);
+      if (details || overview) {
+        if (!/^20\d{2}-\d{2}-\d{2}$/.test(day) || day < since || day > until)
+          throw new Error("Invalid report day");
+      }
+      if (overview) {
+        const key = `${str(row.campaign_id)}:${day}`;
+        if (!str(row.campaign_id) || seen.has(key))
+          throw new Error("Duplicate report day");
+        seen.add(key);
+        if (day >= overview.from && day <= overview.to)
+          dailySpend.set(day, (dailySpend.get(day) ?? 0) + metric(row.spend));
+        // The extra trailing days belong only to the graph, never to period spend or CPA.
+        if (day < period.from || day > period.to) continue;
+      }
       const actions = list(row.actions).map(obj);
       const purchase = [
         "omni_purchase",
@@ -202,6 +229,17 @@ async function metaAds(
         currency: str(account.currency),
         timezone: str(account.timezone_name),
         campaigns: campaigns(rows),
+        ...(overview
+          ? {
+              dailySpend: {
+                ...overview,
+                days: Array.from(dailySpend, ([date, spend]) => ({
+                  date,
+                  spend,
+                })),
+              },
+            }
+          : {}),
       };
       if (details) {
         try {
@@ -431,6 +469,8 @@ export async function getMarketingSources(
   fetcher: typeof fetch = fetch,
   options: {
     details?: boolean;
+    overview?: boolean;
+    now?: Date;
     /**
      * Gasto de TikTok que manda Make (lib/tiktok-diario.ts), para cuando no hay
      * acceso directo a la API. Recibe los dias YYYY-MM-DD, inclusivos.
@@ -442,6 +482,11 @@ export async function getMarketingSources(
   if (!period) throw new Error("Invalid period");
   const has = (...keys: string[]) =>
     keys.every((key) => Boolean(env[key]?.trim()));
+  const today = marketingDate(options.now ?? new Date());
+  const trailTo = period.to < today ? period.to : today;
+  const overview = options.overview
+    ? { from: shiftDate(trailTo, -6), to: trailTo }
+    : undefined;
   const [meta, tiktok, shiphero] = await Promise.all([
     source(
       has("META_CR_GRAPH_VERSION", "META_CR_ACCESS_TOKEN") &&
@@ -450,12 +495,21 @@ export async function getMarketingSources(
         // A missing account must not masquerade as complete Meta spend.
         accounts: await Promise.all(
           metaAccountIds(env).map((id) =>
-            metaAds(id, period, env, fetcher, signal, options.details === true),
+            metaAds(
+              id,
+              period,
+              env,
+              fetcher,
+              signal,
+              options.details === true,
+              overview,
+            ),
           ),
         ),
       }),
     ),
-    has("TIKTOK_CR_ADVERTISER_ID", "TIKTOK_CR_ACCESS_TOKEN") || !options.tiktokDesdeMake
+    has("TIKTOK_CR_ADVERTISER_ID", "TIKTOK_CR_ACCESS_TOKEN") ||
+    !options.tiktokDesdeMake
       ? source(
           has("TIKTOK_CR_ADVERTISER_ID", "TIKTOK_CR_ACCESS_TOKEN"),
           async (signal) => ({

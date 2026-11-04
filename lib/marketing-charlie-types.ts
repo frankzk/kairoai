@@ -14,6 +14,8 @@ export interface CharlieAd {
   name: string;
   adsetId: string;
   campaignId: string;
+  adsetName?: string;
+  campaignName?: string;
   effectiveStatus: string;
   postId: string | null;
   creativeId: string | null;

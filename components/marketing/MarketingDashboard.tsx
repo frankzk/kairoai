@@ -28,15 +28,9 @@ import { ProductWorkspace } from "./ProductWorkspace";
 import CampaignsTable from "./CampaignsTable";
 import { shortDate } from "./format";
 import s from "./dashboard.module.css";
+import { marketingLoadPlan, type MarketingView } from "@/lib/marketing-loading";
 
-type View =
-  | "summary"
-  | "details"
-  | "trends"
-  | "sources"
-  | "matrix"
-  | "structure"
-  | "subtraction";
+type View = MarketingView;
 const presets: Array<[MarketingPreset, string]> = [
   ["today", "Hoy"],
   ["yesterday", "Ayer"],
@@ -62,6 +56,8 @@ export default function MarketingDashboard() {
   const [dateError, setDateError] = useState("");
   const [canViewManagement, setCanViewManagement] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
+  const [expandedOverview, setExpandedOverview] = useState(false);
+  const [financialRevision, setFinancialRevision] = useState(0);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search),
       initial = periodFromParams(params);
@@ -125,10 +121,26 @@ export default function MarketingDashboard() {
       `${window.location.pathname}?${query}`,
     );
   }, [period, preset, view]);
-  const api = useMarketing(period, revision);
+  const loadPlan = marketingLoadPlan(view, expandedOverview);
+  const api = useMarketing(
+    period,
+    revision,
+    view,
+    expandedOverview,
+    financialRevision,
+  );
   const data = api.summary.data;
-  const charlieActive = !["details", "trends", "sources"].includes(view);
-  const charlie = useCharlie(period, revision, charlieActive);
+  const charlie = useCharlie(
+    period,
+    revision,
+    loadPlan.reportScope,
+    {
+      data: data?.charlieBusiness ?? null,
+      loading: api.summary.loading,
+      error: data?.charlieError || api.summary.error,
+    },
+    () => setFinancialRevision((value) => value + 1),
+  );
   const [frequencyDay, setFrequencyDay] = useState("");
   const charlieModel = useMemo(
     () =>
@@ -172,7 +184,7 @@ export default function MarketingDashboard() {
     api.summary.loading ||
     api.sources.loading ||
     charlie.settings.loading ||
-    (charlieActive && (charlie.report.loading || charlie.business.loading));
+    charlie.report.loading;
   const settingsReady = Boolean(
     api.settings.data &&
     !api.settings.loading &&
@@ -469,7 +481,7 @@ export default function MarketingDashboard() {
                       api.sources.loading
                     }
                     error={charlie.business.error || charlie.settings.error}
-                    reportLoading={charlie.report.loading}
+                    reportLoading={api.sources.loading}
                   />
                 )}
                 <CharlieCurrency
@@ -481,18 +493,25 @@ export default function MarketingDashboard() {
                   saving={charlie.saving}
                   save={charlie.save}
                 />
-                <details className={s.section}>
+                <details
+                  className={s.section}
+                  onToggle={(event) =>
+                    setExpandedOverview(event.currentTarget.open)
+                  }
+                >
                   <summary className={s.link}>
                     Ver resumen operativo, productos y liquidaciones
                   </summary>
-                  <div className="mt-5">
-                    <Overview
-                      data={data}
-                      model={model}
-                      sourcesLoading={api.sources.loading}
-                      go={setView}
-                    />
-                  </div>
+                  {expandedOverview && (
+                    <div className="mt-5">
+                      <Overview
+                        data={data}
+                        model={model}
+                        sourcesLoading={api.sources.loading}
+                        go={setView}
+                      />
+                    </div>
+                  )}
                 </details>
               </>
             ) : view === "details" ? (

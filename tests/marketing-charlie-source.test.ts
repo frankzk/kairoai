@@ -31,6 +31,53 @@ const reportRow = {
   ],
 };
 describe("Charlie Meta reader", () => {
+  it("loads 4Pi and subtraction without scanning every creative and retains the TikTok callback", async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("act_123"))
+        return json({
+          id: "act_123",
+          currency: "USD",
+          timezone_name: "America/Costa_Rica",
+        });
+      expect(url.pathname.endsWith("/insights")).toBe(true);
+      expect(url.searchParams.get("fields")).toContain("adset_name");
+      return json({
+        data: [
+          { ...reportRow, adset_name: "Testing", campaign_name: "Producto" },
+        ],
+      });
+    });
+    const tiktok = vi.fn().mockResolvedValue([
+      {
+        id: "456",
+        name: "TikTok",
+        currency: "PEN",
+        timezone: "America/Lima",
+        ads: [],
+        adsets: [],
+      },
+    ]);
+    const result = await getCharlieReport(
+      period,
+      env,
+      fetcher,
+      now,
+      tiktok,
+      false,
+      false,
+    );
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(tiktok).toHaveBeenCalledWith("2026-10-29", "2026-10-29");
+    expect(result.data!.accounts).toHaveLength(2);
+    expect(result.data!.accounts[0].ads[0]).toMatchObject({
+      adsetName: "Testing",
+      campaignName: "Producto",
+      postId: null,
+      daily: [{ spend: 12.5, frequency: 1.13 }],
+    });
+    expect(result.data!.accounts[0].metadataMessage).toBeTruthy();
+  });
   it("requests daily ad insights and expands the trailing series, keeping tokens in headers", async () => {
     const fetcher = vi.fn(
       async (input: string | URL | Request, init?: RequestInit) => {
@@ -155,8 +202,13 @@ describe("Charlie Meta reader", () => {
     const fetcher = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("act_123"))
-        return json({ id: "act_123", currency: "USD", timezone_name: "America/Costa_Rica" });
-      if (url.pathname.endsWith("/insights")) return json({ data: [reportRow] });
+        return json({
+          id: "act_123",
+          currency: "USD",
+          timezone_name: "America/Costa_Rica",
+        });
+      if (url.pathname.endsWith("/insights"))
+        return json({ data: [reportRow] });
       return json({ data: [] });
     });
     const tiktok = {
@@ -167,13 +219,28 @@ describe("Charlie Meta reader", () => {
       ads: [],
       adsets: [],
     };
-    const conTiktok = await getCharlieReport(period, env, fetcher, now, async () => [tiktok]);
+    const conTiktok = await getCharlieReport(
+      period,
+      env,
+      fetcher,
+      now,
+      async () => [tiktok],
+    );
     expect(conTiktok.status).toBe("ready");
-    expect(conTiktok.data?.accounts.map((a) => a.currency)).toEqual(["USD", "PEN"]);
+    expect(conTiktok.data?.accounts.map((a) => a.currency)).toEqual([
+      "USD",
+      "PEN",
+    ]);
 
-    const caido = await getCharlieReport(period, env, fetcher, now, async () => {
-      throw new Error("base caida");
-    });
+    const caido = await getCharlieReport(
+      period,
+      env,
+      fetcher,
+      now,
+      async () => {
+        throw new Error("base caida");
+      },
+    );
     expect(caido.status).toBe("ready");
     expect(caido.data?.accounts).toHaveLength(1);
     expect(caido.message).toContain("TikTok no se pudo leer");

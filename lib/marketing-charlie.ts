@@ -194,9 +194,10 @@ export function buildCharlieModel(
           accountName: account.name,
           nativeCurrency: account.currency,
           accountTimezone: account.timezone,
-          adsetName: adset?.name || ad.adsetId,
+          adsetName: adset?.name || ad.adsetName || ad.adsetId,
           campaignName:
             campaigns.get(`${account.id}:${ad.campaignId}`)?.name ||
+            ad.campaignName ||
             ad.campaignId,
           spendUsd: spend,
           purchases,
@@ -272,6 +273,17 @@ export function buildCharlieModel(
   );
   const trailing =
     business?.days.map((date) => {
+      const overview =
+        sources?.meta.status === "ready" ? sources.meta.data?.accounts : null;
+      const hasOverview = Boolean(
+        overview?.length &&
+        overview.every(
+          (account) =>
+            account.dailySpend &&
+            date.date >= account.dailySpend.from &&
+            date.date <= account.dailySpend.to,
+        ),
+      );
       const rows = accounts.flatMap((account) =>
         account.ads
           .map((ad) => ({
@@ -280,14 +292,22 @@ export function buildCharlieModel(
           }))
           .filter((item) => item.row),
       );
-      const values = rows.map((item) =>
-        asUsd(item.row!.spend, item.currency, fx),
-      );
+      const values = hasOverview
+        ? overview!.map((account) =>
+            asUsd(
+              account.dailySpend!.days.find((day) => day.date === date.date)
+                ?.spend ?? 0,
+              account.currency,
+              fx,
+            ),
+          )
+        : rows.map((item) => asUsd(item.row!.spend, item.currency, fx));
       return {
         date: date.date,
         revenueUsd: asUsd(date.revenueCrc, "CRC", fx),
         metaSpendUsd:
-          report?.status === "ready" && values.every((value) => value != null)
+          (hasOverview || report?.status === "ready") &&
+          values.every((value) => value != null)
             ? values.reduce<number>((sum, value) => sum + value!, 0)
             : null,
       };
