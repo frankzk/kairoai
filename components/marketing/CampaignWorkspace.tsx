@@ -1,9 +1,12 @@
 "use client";
 import { useMemo, useState } from "react";
+import type { UsdRate } from "@/lib/marketing-charlie-types";
+import { asUsd } from "@/lib/marketing-usd-rate";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
 import { count, money } from "./format";
 import s from "./dashboard.module.css";
+import { CampaignAssignment } from "./TeamReportCampaigns";
 import { useUsdMoney } from "./UsdContext";
 
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
@@ -15,6 +18,7 @@ export function CampaignWorkspace({
   saving,
   save,
   saved,
+  fx,
 }: {
   model: MarketingIntelligence;
   catalog: MarketingSummary["catalog"];
@@ -23,6 +27,7 @@ export function CampaignWorkspace({
   saving: string;
   save: Save;
   saved: string;
+  fx?: UsdRate | null;
 }) {
   const money = useUsdMoney();
   const [query, setQuery] = useState("");
@@ -32,8 +37,8 @@ export function CampaignWorkspace({
   >("spend");
   const [ascending, setAscending] = useState(false);
   const [page, setPage] = useState(0);
-  const [failedKey, setFailedKey] = useState("");
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [unassignedOnly, setUnassignedOnly] = useState(true);
+  const [withSpendOnly, setWithSpendOnly] = useState(true);
   const accounts = useMemo(
     () =>
       Array.from(
@@ -51,6 +56,8 @@ export function CampaignWorkspace({
       model.campaigns
         .filter(
           (campaign) =>
+            (!withSpendOnly || campaign.spend > 0) &&
+            (!unassignedOnly || !campaign.mapping) &&
             (!account ||
               `${campaign.platform}:${campaign.accountId}` === account) &&
             `${campaign.name} ${campaign.mapping?.product_name || ""}`
@@ -61,10 +68,20 @@ export function CampaignWorkspace({
           const order =
             sort === "name"
               ? a.name.localeCompare(b.name)
-              : (a[sort] ?? -1) - (b[sort] ?? -1);
+              : (asUsd(a[sort], a.currency, fx ?? null) ?? -1) -
+                (asUsd(b[sort], b.currency, fx ?? null) ?? -1);
           return ascending ? order : -order;
         }),
-    [model.campaigns, account, query, sort, ascending],
+    [
+      model.campaigns,
+      account,
+      query,
+      sort,
+      ascending,
+      unassignedOnly,
+      withSpendOnly,
+      fx,
+    ],
   );
   const pages = Math.max(1, Math.ceil(filtered.length / 15));
   const currentPage = Math.min(page, pages - 1);
@@ -88,6 +105,22 @@ export function CampaignWorkspace({
           {count(model.campaigns.length)}
         </span>
       </div>
+      <div className={s.callout}>
+        <p className={s.muted}>
+          1. Busca la campaña o elige una cuenta. 2. Pulsa «Asignar producto» y
+          selecciona el SKU del catálogo. 3. Guarda. Usa el mismo SKU en todas
+          las campañas del mismo producto. El reporte se recalcula al guardar.
+        </p>
+        <span className={s.badge}>
+          {model.unmapped.length} campañas con gasto sin producto
+        </span>
+      </div>
+      {saved && (
+        <p role="status" className={`${s.notice} ${s.good}`}>
+          Asignación guardada. El reporte ya usa ese producto; desmarca «Solo
+          sin producto» para revisarla.
+        </p>
+      )}
       <div className={`${s.toolbar} mb-4`}>
         <label className={s.field}>
           Buscar campaña o producto
@@ -118,6 +151,28 @@ export function CampaignWorkspace({
               </option>
             ))}
           </select>
+        </label>
+        <label className={s.checkField}>
+          <input
+            type="checkbox"
+            checked={unassignedOnly}
+            onChange={(e) => {
+              setUnassignedOnly(e.target.checked);
+              setPage(0);
+            }}
+          />
+          Solo sin producto
+        </label>
+        <label className={s.checkField}>
+          <input
+            type="checkbox"
+            checked={withSpendOnly}
+            onChange={(e) => {
+              setWithSpendOnly(e.target.checked);
+              setPage(0);
+            }}
+          />
+          Con gasto en el período
         </label>
         <span className={s.muted}>{count(filtered.length)} campañas</span>
       </div>
@@ -174,12 +229,6 @@ export function CampaignWorkspace({
                 {filtered
                   .slice(currentPage * 15, (currentPage + 1) * 15)
                   .map((campaign) => {
-                    const selected =
-                      drafts[campaign.key] ??
-                      campaign.mapping?.product_key ??
-                      "";
-                    const changed =
-                      selected !== (campaign.mapping?.product_key ?? "");
                     const budgetNote =
                       campaign.budgetKind === "adsets"
                         ? "Suma de conjuntos activos"
@@ -209,104 +258,15 @@ export function CampaignWorkspace({
                                   "Estado no consultado"}
                           </span>
                         </td>
-                        <td className="w-[250px]">
-                          <label className={s.field}>
-                            <span className="sr-only">
-                              Producto de {campaign.name}
-                            </span>
-                            <select
-                              aria-label={`Producto de ${campaign.name}`}
-                              className={`${s.control} w-full`}
-                              disabled={!ready || Boolean(saving)}
-                              value={selected}
-                              onChange={(event) =>
-                                setDrafts((old) => ({
-                                  ...old,
-                                  [campaign.key]: event.target.value,
-                                }))
-                              }
-                            >
-                              <option value="">
-                                {ready
-                                  ? "Sin asignar"
-                                  : "Asignaciones no disponibles"}
-                              </option>
-                              {campaign.mapping &&
-                                !catalog.some(
-                                  (product) =>
-                                    product.key ===
-                                    campaign.mapping!.product_key,
-                                ) && (
-                                  <option value={campaign.mapping.product_key}>
-                                    {campaign.mapping.product_name} (guardado)
-                                  </option>
-                                )}
-                              {catalog.map((product) => (
-                                <option key={product.key} value={product.key}>
-                                  {product.name}
-                                  {product.sku ? ` · ${product.sku}` : ""}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          {changed && (
-                            <div className="mt-2 flex gap-2">
-                              <button
-                                className={`${s.button} ${s.primary}`}
-                                disabled={Boolean(saving)}
-                                onClick={async () => {
-                                  const ok = await save(campaign.key, {
-                                    kind: "mapping",
-                                    platform: campaign.platform,
-                                    account_id: campaign.accountId,
-                                    campaign_id: campaign.id,
-                                    product_key: selected || null,
-                                  });
-                                  setFailedKey(ok ? "" : campaign.key);
-                                  if (ok)
-                                    setDrafts((old) => {
-                                      const next = { ...old };
-                                      delete next[campaign.key];
-                                      return next;
-                                    });
-                                }}
-                              >
-                                {saving === campaign.key
-                                  ? "Guardando…"
-                                  : "Guardar"}
-                              </button>
-                              <button
-                                className={s.button}
-                                disabled={Boolean(saving)}
-                                onClick={() =>
-                                  setDrafts((old) => {
-                                    const next = { ...old };
-                                    delete next[campaign.key];
-                                    return next;
-                                  })
-                                }
-                              >
-                                Cancelar
-                              </button>
-                            </div>
-                          )}
-                          {changed && failedKey === campaign.key && (
-                            <p
-                              role="alert"
-                              className={`${s.warn} mt-2 text-xs`}
-                            >
-                              No se pudo guardar. Revisa la conexión e inténtalo
-                              de nuevo.
-                            </p>
-                          )}
-                          {!changed && saved === campaign.key && (
-                            <span
-                              role="status"
-                              className={`${s.good} mt-2 block text-[11px]`}
-                            >
-                              Asignación guardada
-                            </span>
-                          )}
+                        <td>
+                          <CampaignAssignment
+                            campaign={campaign}
+                            catalog={catalog}
+                            ready={ready}
+                            saving={saving}
+                            saved={saved}
+                            save={save}
+                          />
                         </td>
                         <td className={s.numeric}>
                           {money(campaign.spend, campaign.currency)}
@@ -331,6 +291,14 @@ export function CampaignWorkspace({
                       </tr>
                     );
                   })}
+                {!filtered.length && (
+                  <tr>
+                    <td colSpan={7}>
+                      Todas las campañas de este filtro tienen producto.
+                      Desmarca «Solo sin producto» para revisarlas.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

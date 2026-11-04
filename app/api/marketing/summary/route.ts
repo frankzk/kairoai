@@ -5,6 +5,8 @@ import { periodFromParams } from "@/lib/marketing-dates";
 import { getMarketingData, getMarketingInputs } from "@/lib/marketing-data";
 import { readCharlieConfig } from "@/lib/marketing-charlie-settings";
 import { buildCharlieRevenue } from "@/lib/marketing-charlie-revenue";
+import { listMarketingOrigins } from "@/lib/marketing-attribution-db";
+import { buildMarketingAttribution } from "@/lib/marketing-attribution";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { isOrdersDatasetUnavailableError } from "../../finance/_shared/orders-dataset";
 
@@ -29,6 +31,21 @@ async function bounded<T>(operation: Promise<T>): Promise<T> {
   });
   try {
     return await Promise.race([operation, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Origin coverage is optional: a slow reader must not hold the operational summary hostage.
+async function optionalOrigins(storeId: number, from: string, to: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      listMarketingOrigins(storeId, from, to).catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), 4000);
+      }),
+    ]);
   } finally {
     clearTimeout(timer);
   }
@@ -60,15 +77,39 @@ export async function GET(req: NextRequest) {
   try {
     // Only aggregate data leaves this route; no customer or order identifiers.
     const load = async () => {
-      if (params.get("include_charlie") !== "1")
+      if (
+        params.get("include_charlie") !== "1" &&
+        params.get("include_attribution") !== "1"
+      )
         return getMarketingData(store, period, month);
       // One operational snapshot feeds both reports. Raw orders and phones stay on the server.
-      const [input, config] = await Promise.all([
+      const includeAttribution = params.get("include_attribution") === "1";
+      const [input, config, origins] = await Promise.all([
         getMarketingInputs(store, period, month),
         readCharlieConfig(store.id).catch(() => null),
+        includeAttribution
+          ? optionalOrigins(
+              store.id,
+              new Date(period.start).toISOString(),
+              new Date(period.end).toISOString(),
+            )
+          : Promise.resolve(null),
       ]);
       return {
         ...input.summary,
+        ...(includeAttribution
+          ? {
+              attribution: origins
+                ? buildMarketingAttribution(input.orders, origins, period)
+                : null,
+              ...(origins
+                ? {}
+                : {
+                    attributionError:
+                      "No se pudo consultar el origen UTM. Los pedidos se conservan sin asignarles un canal.",
+                  }),
+            }
+          : {}),
         charlieBusiness: config
           ? buildCharlieRevenue(
               input.orders,

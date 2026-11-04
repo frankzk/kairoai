@@ -91,11 +91,7 @@ export function OrdersChart({ data }: { data: MarketingSummary }) {
     </div>
   );
 }
-const colors = [
-  "oklch(78% .11 165)",
-  "oklch(79% .08 230)",
-  "oklch(84% .12 85)",
-];
+const colors = ["var(--mk-chart-1)", "var(--mk-chart-2)", "var(--mk-chart-3)"];
 export function ProductTrend({
   products,
   dates,

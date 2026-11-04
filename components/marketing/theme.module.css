@@ -1,0 +1,44 @@
+.theme {
+  /* Mireva's team works through daytime orders, budgets and stock on office laptops. */
+  --mk-canvas: oklch(98.6% 0.006 105);
+  --mk-surface: oklch(99.4% 0.003 135);
+  --mk-soft: oklch(95.6% 0.016 125);
+  --mk-hover: oklch(96.8% 0.012 135);
+  --mk-border: oklch(87% 0.019 140);
+  --mk-text: oklch(29% 0.035 154);
+  --mk-muted: oklch(46% 0.025 147);
+  --mk-subtle: oklch(53% 0.023 147);
+  --mk-accent: oklch(49% 0.105 155);
+  --mk-accent-soft: oklch(93% 0.028 145);
+  --mk-good: oklch(43% 0.095 155);
+  --mk-warn: oklch(46% 0.095 76);
+  --mk-warn-soft: oklch(96% 0.026 88);
+  --mk-bad: oklch(46% 0.13 33);
+  --mk-bad-soft: oklch(96.5% 0.02 45);
+  --mk-chart-1: oklch(47% 0.105 155);
+  --mk-chart-2: oklch(57% 0.115 78);
+  --mk-chart-3: oklch(51% 0.105 295);
+  --mk-bar: oklch(82% 0.095 93);
+  --background: 72 35% 98%;
+  --foreground: 149 28% 16%;
+  --card: 120 25% 99%;
+  --card-foreground: 149 28% 16%;
+  --muted: 100 24% 94%;
+  --muted-foreground: 140 12% 36%;
+  --border: 130 17% 83%;
+  --input: 130 17% 83%;
+  --accent: 113 23% 93%;
+  --accent-foreground: 149 28% 16%;
+  --primary: 150 66% 27%;
+  --primary-foreground: 90 25% 98%;
+  --ring: 150 66% 27%;
+  color: var(--mk-text);
+  color-scheme: light;
+}
+.canvas {
+  min-height: calc(100vh - 40px);
+  background: var(--mk-canvas);
+}
+.theme.navigation {
+  background: var(--mk-surface);
+}

@@ -22,7 +22,11 @@ export default function CampaignsTable({
     );
   if (error)
     return (
-      <p role="alert" className="py-4 text-sm text-amber-400">
+      <p
+        role="alert"
+        className="py-4 text-sm"
+        style={{ color: "var(--mk-warn)" }}
+      >
         {error}
       </p>
     );
@@ -118,7 +122,7 @@ export default function CampaignsTable({
                             <td className="p-3 tabular-nums">
                               {campaign.impressions
                                 ? `${((campaign.clicks / campaign.impressions) * 100).toFixed(2)} %`
-                                : "—"}
+                                : "Sin datos"}
                             </td>
                           </tr>
                         ))}

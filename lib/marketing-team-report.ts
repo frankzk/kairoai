@@ -65,27 +65,46 @@ export function productComparison(
   );
   const campaigns = (["meta", "tiktok"] as const).flatMap(
     (platform) =>
-      sources?.[platform].data?.accounts.flatMap((a) =>
+      (sources?.[platform].status === "ready"
+        ? sources[platform].data?.accounts
+        : []
+      )?.flatMap((a) =>
         a.campaigns.map((c) => ({
           ...c,
+          platform,
+          observedThrough:
+            a.campaigns
+              .flatMap((c) => c.daily?.map((d) => d.date) ?? [])
+              .sort()
+              .at(-1) ?? "",
           currency: a.currency,
           timezone: a.timezone,
           product: mappings.get(campaignKey(platform, a.accountId, c.id)),
         })),
       ) ?? [],
   );
-  const complete =
-    ready && campaigns.every((c) => c.spend === 0 || Boolean(c.product));
+  const unmapped = campaigns.filter((c) => c.spend > 0 && !c.product).length;
+  const partial = !ready || unmapped > 0;
   return summary.products.map((p) => {
     const related = campaigns.filter((c) => c.product === p.key);
-    function cpa(start: string, end: string, orders: number) {
-      if (
-        !complete ||
-        !related.length ||
-        !orders ||
-        related.some((c) => c.timezone !== summary.timezone || !c.daily)
-      )
-        return null;
+    function observation(start: string, end: string, orders: number) {
+      const late = related.some(
+        (c) => c.platform === "tiktok" && c.observedThrough < end,
+      );
+      const base = {
+        partial: partial || late,
+        approximate: related.some((c) => c.timezone !== summary.timezone),
+        campaignCount: related.length,
+        unmapped,
+      };
+      if (!settings)
+        return { ...base, value: null, reason: "Asignaciones no disponibles" };
+      if (!related.length)
+        return { ...base, value: null, reason: "Asigna sus campañas" };
+      if (!orders)
+        return { ...base, value: null, reason: "Sin pedidos creados" };
+      if (related.some((c) => !c.daily))
+        return { ...base, value: null, reason: "Detalle diario pendiente" };
       const values = related.map((c) =>
         asUsd(
           c
@@ -95,17 +114,36 @@ export function productComparison(
           fx,
         ),
       );
-      return values.every((v) => v != null)
-        ? values.reduce<number>((n, v) => n + v!, 0) / orders
-        : null;
+      if (values.some((v) => v == null))
+        return { ...base, value: null, reason: "Conversión pendiente" };
+      const spend = values.reduce<number>((n, v) => n + v!, 0);
+      if (base.partial && spend === 0)
+        return {
+          ...base,
+          value: null,
+          reason: "Sin pauta asignada en estas fechas",
+        };
+      return {
+        ...base,
+        value: spend / orders,
+        reason: late
+          ? "TikTok no reporta todo el rango"
+          : partial
+            ? "Solo pauta asignada, cobertura parcial"
+            : base.approximate
+              ? "Calendarios distintos"
+              : "Pauta asignada / pedidos",
+      };
     }
+    const costs = [
+      observation(today, today, p.todayOrders),
+      observation(yesterday, yesterday, p.yesterdayOrders),
+      observation(from, yesterday, p.sevenDayOrders),
+    ];
     return {
       ...p,
-      cpas: [
-        cpa(today, today, p.todayOrders),
-        cpa(yesterday, yesterday, p.yesterdayOrders),
-        cpa(from, yesterday, p.sevenDayOrders),
-      ],
+      costs,
+      cpas: costs.map((c) => c.value),
     };
   });
 }

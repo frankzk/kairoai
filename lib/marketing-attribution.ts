@@ -79,6 +79,7 @@ export function buildMarketingAttribution(
     candidates.set(orderKey, [...(candidates.get(orderKey) ?? []), origin]);
   }
   const groups = new Map<string, AttributionGroup>();
+  const channelOrders = { meta: 0, tiktok: 0, other: 0 };
   let withUtm = 0,
     linkedCampaign = 0,
     conflicts = 0,
@@ -111,6 +112,9 @@ export function buildMarketingAttribution(
       conflicts++;
       continue;
     }
+    if (origin.platform === "meta" || origin.platform === "tiktok")
+      channelOrders[origin.platform]++;
+    else if (origin.platform === "other") channelOrders.other++;
     if (!origin.platform || origin.platform === "other" || !origin.campaignId)
       continue;
     linkedCampaign++;
@@ -145,6 +149,7 @@ export function buildMarketingAttribution(
   }
   return {
     totalOrders: cohort.length,
+    channelOrders,
     withUtm,
     linkedCampaign,
     withoutUtm: cohort.length - withUtm,

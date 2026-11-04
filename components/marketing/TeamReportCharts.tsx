@@ -37,7 +37,7 @@ export function WeekdayChart({ data }: { data: MarketingSummary }) {
     </div>
   );
 }
-const colors = ["#14734b", "#b47a15", "#6b62a8"];
+const colors = ["var(--mk-chart-1)", "var(--mk-chart-2)", "var(--mk-chart-3)"];
 export function TrendChart({ data }: { data: MarketingSummary }) {
   const [hidden, setHidden] = useState<string[]>([]);
   const products = [...data.products]
@@ -92,14 +92,14 @@ export function TrendChart({ data }: { data: MarketingSummary }) {
                   x2={574}
                   y1={y(max * t)}
                   y2={y(max * t)}
-                  stroke="#e4e9e4"
+                  stroke="var(--mk-border)"
                 />
                 <text
                   x={25}
                   y={y(max * t) + 4}
                   textAnchor="end"
                   fontSize={11}
-                  fill="#58665d"
+                  fill="var(--mk-muted)"
                 >
                   {Math.round(max * t)}
                 </text>
@@ -126,10 +126,16 @@ export function TrendChart({ data }: { data: MarketingSummary }) {
                 )}
               </g>
             ))}
-            <text x={34} y={194} fontSize={11} fill="#58665d">
+            <text x={34} y={194} fontSize={11} fill="var(--mk-muted)">
               {shortDate(data.period.from)}
             </text>
-            <text x={574} y={194} textAnchor="end" fontSize={11} fill="#58665d">
+            <text
+              x={574}
+              y={194}
+              textAnchor="end"
+              fontSize={11}
+              fill="var(--mk-muted)"
+            >
               {shortDate(data.period.to)}
             </text>
           </svg>

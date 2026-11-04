@@ -7,6 +7,7 @@ import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
 import { asUsd } from "@/lib/marketing-usd-rate";
 import { money } from "./format";
 import r from "./team-report.module.css";
+import s from "./dashboard.module.css";
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
 const usd = (value: number | null | undefined) =>
   value == null ? "Sin datos" : money(value, "USD");
@@ -228,7 +229,7 @@ function AccountTable({
     </div>
   );
 }
-function CampaignAssignment({
+export function CampaignAssignment({
   campaign: c,
   catalog,
   ready,
@@ -244,6 +245,8 @@ function CampaignAssignment({
   save: Save;
 }) {
   const [editing, setEditing] = useState(false);
+  const [productQuery, setProductQuery] = useState("");
+  const [failed, setFailed] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   const value = draft ?? c.mapping?.product_key ?? "",
     dirty = value !== (c.mapping?.product_key ?? "");
@@ -256,8 +259,12 @@ function CampaignAssignment({
           </span>
           {ready && (
             <button
+              className={s.button}
               aria-label={`Asignar producto a ${c.name}`}
-              onClick={() => setEditing(true)}
+              onClick={() => {
+                setEditing(true);
+                setFailed(false);
+              }}
             >
               {c.mapping ? "Cambiar producto" : "Asignar producto"}
             </button>
@@ -265,52 +272,83 @@ function CampaignAssignment({
         </>
       ) : (
         <>
+          <input
+            className={s.control}
+            type="search"
+            aria-label={`Buscar producto para ${c.name}`}
+            placeholder="Buscar nombre o SKU"
+            value={productQuery}
+            onChange={(e) => setProductQuery(e.target.value)}
+          />
           <select
+            className={s.control}
             aria-label={`Producto para ${c.name}`}
             disabled={!ready || saving === c.key}
             value={value}
             onChange={(e) => setDraft(e.target.value)}
           >
             <option value="">Sin asignar</option>
-            {catalog.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.name}
-                {p.sku ? ` · ${p.sku}` : ""}
-              </option>
-            ))}
+            {c.mapping &&
+              !catalog.some((p) => p.key === c.mapping!.product_key) && (
+                <option value={c.mapping.product_key}>
+                  {c.mapping.product_name} (guardado)
+                </option>
+              )}
+            {catalog
+              .filter(
+                (p) =>
+                  p.key === value ||
+                  `${p.name} ${p.sku}`
+                    .toLocaleLowerCase("es")
+                    .includes(productQuery.toLocaleLowerCase("es")),
+              )
+              .map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.name}
+                  {p.sku ? ` · ${p.sku}` : ""}
+                </option>
+              ))}
           </select>
           {dirty && (
             <button
+              className={s.button}
               disabled={!ready || Boolean(saving)}
               onClick={async () => {
                 const p = catalog.find((p) => p.key === value);
-                if (
-                  await save(c.key, {
-                    kind: "mapping",
-                    platform: c.platform,
-                    account_id: c.accountId,
-                    campaign_id: c.id,
-                    product_key: p?.key ?? null,
-                  })
-                ) {
+                setFailed(false);
+                const ok = await save(c.key, {
+                  kind: "mapping",
+                  platform: c.platform,
+                  account_id: c.accountId,
+                  campaign_id: c.id,
+                  product_key: p?.key ?? null,
+                });
+                if (ok) {
                   setDraft(null);
                   setEditing(false);
-                }
+                } else setFailed(true);
               }}
             >
               {saving === c.key ? "Guardando…" : "Guardar"}
             </button>
           )}
           <button
+            className={s.button}
             disabled={saving === c.key}
             onClick={() => {
               setDraft(null);
               setEditing(false);
+              setFailed(false);
             }}
           >
             Cancelar
           </button>
         </>
+      )}
+      {failed && (
+        <small role="alert" className={s.bad}>
+          No se pudo guardar. Revisa la conexión y vuelve a intentarlo.
+        </small>
       )}
       {saved === c.key && !dirty && (
         <small role="status">Asignación guardada</small>
