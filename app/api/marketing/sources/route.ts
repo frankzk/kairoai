@@ -4,6 +4,7 @@ import { MARKETING_STORE } from "@/lib/marketing";
 import { periodFromParams } from "@/lib/marketing-dates";
 import { getMarketingSources } from "@/lib/marketing-sources";
 import { leerCuentasTiktok } from "@/lib/tiktok-diario";
+import { rememberOriginCatalog } from "@/lib/marketing-origin-catalog";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -22,16 +23,18 @@ export async function GET(req: NextRequest) {
       { error: "Indica un rango válido de hasta 93 días." },
       { status: 400 },
     );
-  return NextResponse.json(
-    await getMarketingSources(period, process.env, fetch, {
-      details: !["overview", "basic", "report"].includes(
-        req.nextUrl.searchParams.get("scope") || "",
-      ),
-      daily: req.nextUrl.searchParams.get("scope") === "report" || undefined,
-      overview: req.nextUrl.searchParams.get("scope") === "overview",
-      // Sin acceso a la API de TikTok, el gasto que manda Make (lib/tiktok-diario.ts).
-      tiktokDesdeMake: (from, to) => leerCuentasTiktok(store.id, from, to),
-    }),
-    { headers: { "Cache-Control": "private, no-store" } },
-  );
+  const sources = await getMarketingSources(period, process.env, fetch, {
+    details: !["overview", "basic", "report"].includes(
+      req.nextUrl.searchParams.get("scope") || "",
+    ),
+    daily: req.nextUrl.searchParams.get("scope") === "report" || undefined,
+    overview: req.nextUrl.searchParams.get("scope") === "overview",
+    // Sin acceso a la API de TikTok, el gasto que manda Make (lib/tiktok-diario.ts).
+    tiktokDesdeMake: (from, to) => leerCuentasTiktok(store.id, from, to),
+  });
+  // A cache write must not hide a successfully read advertising report.
+  await rememberOriginCatalog(store.id, sources).catch(() => {});
+  return NextResponse.json(sources, {
+    headers: { "Cache-Control": "private, no-store" },
+  });
 }

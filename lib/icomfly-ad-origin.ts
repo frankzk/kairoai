@@ -24,7 +24,7 @@ const id = (v: unknown): string | null => {
 };
 const suffix = (v: string) => id(/-{2,}([1-9]\d{5,30})$/.exec(v)?.[1]);
 const name = (v: string) => v.replace(/-{2,}[1-9]\d{5,30}$/, "").trim();
-/** Only the order's ad_origin is authoritative. Never search customer notes for IDs. */
+/** Read captured advertising fields only. Never search free-form customer notes for IDs. */
 export function readIcomflyAdOrigin(value: unknown): IcomflyAdOrigin | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
@@ -62,6 +62,7 @@ export function readIcomflyAdOrigin(value: unknown): IcomflyAdOrigin | null {
   const campaignId = choose("campaign", [
     id(v.campaign_id),
     id(v.utm_id),
+    id(campaign),
     suffix(campaign),
   ]);
   const mediumId = suffix(medium);
@@ -70,7 +71,7 @@ export function readIcomflyAdOrigin(value: unknown): IcomflyAdOrigin | null {
     mediumId,
     mediumId ? id(term) : null,
   ]);
-  const adId = choose("ad", [id(v.ad_id), suffix(content)]);
+  const adId = choose("ad", [id(v.ad_id), id(content), suffix(content)]);
   const hasClick = Boolean(text(v.fbclid) || text(v.ttclid) || text(v.gclid));
   if (
     ![source, medium, campaign, content, term, campaignId, adsetId, adId].some(
@@ -98,4 +99,92 @@ export function readIcomflyAdOrigin(value: unknown): IcomflyAdOrigin | null {
     origin: text(v.origen),
     conflicts,
   };
+}
+
+/** Shopify saved note_attributes are query-encoded; native iComfly values are not. */
+export function shopifyAdOrigin(attributes: unknown): Record<string, string> {
+  const allowed =
+    /^(utm_(source|medium|campaign|content|term|id)|campaign_id|adset_id|ad_id|channel)$/;
+  const result: Record<string, string> = {};
+  if (!Array.isArray(attributes)) return result;
+  for (const item of attributes) {
+    const key = text(item?.name).toLowerCase();
+    if (!allowed.test(key) || typeof item?.value !== "string") continue;
+    let value = text(item.value);
+    // A literal '+' in already decoded values (e.g. NAD+) must survive.
+    if (/%[0-9a-f]{2}/i.test(value)) {
+      try {
+        value = decodeURIComponent(value.replace(/\+/g, " "));
+      } catch {
+        /* keep captured text */
+      }
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
+/** Labels and placement names can differ while identifying the same ad. IDs cannot. */
+export function mergeAdOrigins(origins: IcomflyAdOrigin[]): {
+  origin: IcomflyAdOrigin | null;
+  ambiguous: boolean;
+} {
+  if (!origins.length) return { origin: null, ambiguous: false };
+  const ids = (field: "campaignId" | "adsetId" | "adId") =>
+    Array.from(
+      new Set(
+        origins.map((o) => o[field]).filter((v): v is string => Boolean(v)),
+      ),
+    );
+  const platforms = Array.from(
+    new Set(origins.map((o) => o.platform).filter((p) => p && p !== "other")),
+  );
+  const campaigns = ids("campaignId"),
+    sets = ids("adsetId"),
+    ads = ids("adId");
+  if ([campaigns, sets, ads, platforms].some((values) => values.length > 1))
+    return { origin: null, ambiguous: true };
+  const best = [...origins].sort(
+    (a, b) =>
+      Number(Boolean(b.campaignId)) - Number(Boolean(a.campaignId)) ||
+      Number(Boolean(b.adId)) - Number(Boolean(a.adId)),
+  )[0];
+  const origin = {
+    ...best,
+    campaignId: campaigns[0] ?? null,
+    adsetId: sets[0] ?? null,
+    adId: ads[0] ?? null,
+    platform: platforms[0] ?? best.platform,
+    hasClick: origins.some((o) => o.hasClick),
+    conflicts: Array.from(new Set(origins.flatMap((o) => o.conflicts))),
+  };
+  return { origin, ambiguous: false };
+}
+
+export interface OriginCampaign {
+  platform: "meta" | "tiktok";
+  accountId: string;
+  campaignId: string;
+}
+/** Unknown utm_source can be resolved by an exact, uniquely verified campaign ID; never by name. */
+export function resolveOriginCampaign(
+  origin: IcomflyAdOrigin,
+  catalog: OriginCampaign[],
+): IcomflyAdOrigin {
+  if (!origin.campaignId || origin.conflicts.length) return origin;
+  const matches = catalog.filter((c) => c.campaignId === origin.campaignId);
+  const identities = Array.from(
+    new Map(
+      matches.map((c) => [JSON.stringify([c.platform, c.accountId]), c]),
+    ).values(),
+  );
+  if (identities.length !== 1) return origin;
+  const platform = identities[0].platform;
+  if (
+    origin.platform &&
+    origin.platform !== "other" &&
+    origin.platform !== platform
+  )
+    return { ...origin, conflicts: [...origin.conflicts, "platform"] };
+  return { ...origin, platform };
 }
