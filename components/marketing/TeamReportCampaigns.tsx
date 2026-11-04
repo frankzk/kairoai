@@ -460,7 +460,7 @@ export function CampaignAssignment({
           )}
           <div className="flex flex-wrap gap-2 mt-2">
             <button
-              className={`${s.button} ${s.primary}`}
+            className={`${s.button} ${s.primary} ${r.saveAssignment}`}
               disabled={
                 !ready ||
                 Boolean(saving) ||

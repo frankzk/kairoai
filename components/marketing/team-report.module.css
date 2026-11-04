@@ -368,6 +368,13 @@
   margin-top: 8px;
   background: var(--mk-accent-soft);
 }
+.assignment .saveAssignment {
+  background: var(--mk-accent);
+  color: var(--mk-surface);
+}
+.assignment .saveAssignment:hover {
+  background: var(--mk-good);
+}
 .weekdays {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
