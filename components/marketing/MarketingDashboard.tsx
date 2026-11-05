@@ -14,6 +14,8 @@ import { leerYo } from "@/lib/sesion-cliente";
 import { useMarketing } from "./useMarketing";
 import { useCharlie } from "./useCharlie";
 import { buildCharlieModel } from "@/lib/marketing-charlie";
+import { subtractionRealOrders } from "@/lib/marketing-subtraction-real";
+import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import { UsdProvider } from "./UsdContext";
 import {
   CharlieCurrency,
@@ -28,7 +30,7 @@ import { CampaignWorkspace } from "./CampaignWorkspace";
 import AttributionWorkspace from "./AttributionWorkspace";
 import { ProductWorkspace } from "./ProductWorkspace";
 import CampaignsTable from "./CampaignsTable";
-import { shortDate } from "./format";
+import { money, shortDate } from "./format";
 import s from "./dashboard.module.css";
 import { marketingLoadPlan, type MarketingView } from "@/lib/marketing-loading";
 
@@ -145,6 +147,35 @@ export default function MarketingDashboard() {
     () => setFinancialRevision((value) => value + 1),
   );
   const [frequencyDay, setFrequencyDay] = useState("");
+  // Sustracción: real orders per ad (UTM + share by product) once the
+  // period's orders, the catalogue and the assignments are loaded.
+  const realOrders = useMemo(
+    () =>
+      view === "subtraction"
+        ? subtractionRealOrders({
+            report: charlie.report.data,
+            sources: api.sources.data,
+            summary: data,
+            settings: api.settings.data,
+            control: api.periodControl.data,
+            fx: charlie.settings.data?.fx ?? null,
+          })
+        : null,
+    [
+      view,
+      charlie.report.data,
+      api.sources.data,
+      data,
+      api.settings.data,
+      api.periodControl.data,
+      charlie.settings.data,
+    ],
+  );
+  const realStatus = realOrders
+    ? ("ready" as const)
+    : api.summary.loading || api.settings.loading || api.periodControl.loading
+      ? ("loading" as const)
+      : ("unavailable" as const);
   const charlieModel = useMemo(
     () =>
       period
@@ -155,6 +186,8 @@ export default function MarketingDashboard() {
             charlie.report.data,
             charlie.settings.data,
             frequencyDay,
+            undefined,
+            realOrders,
           )
         : null,
     [
@@ -165,6 +198,7 @@ export default function MarketingDashboard() {
       charlie.report.data,
       charlie.settings.data,
       frequencyDay,
+      realOrders,
     ],
   );
   const model = useMemo(
@@ -379,7 +413,7 @@ export default function MarketingDashboard() {
                 ? "No se pudieron consultar las conexiones. La inversión queda sin datos."
                 : missing.length
                   ? `${missing.join(", ")}: conexión pendiente o consulta no disponible.${missing.some((name) => name !== "ShipHero") ? " La inversión puede ser parcial." : " Inventario sin datos."}`
-                  : "Fuentes consultadas. El origen de los pedidos usa únicamente UTM verificables."}
+                  : "Fuentes consultadas. Los pedidos por campaña usan el UTM y, sin UTM, la asignación de producto (≈)."}
           </span>
           {view !== "sources" && (
             <button className={s.link} onClick={() => setView("sources")}>
@@ -433,6 +467,7 @@ export default function MarketingDashboard() {
                   model={charlieModel}
                   period={period}
                   onDay={setFrequencyDay}
+                  real={realStatus}
                 />
               )}
             </>
@@ -491,6 +526,14 @@ export default function MarketingDashboard() {
                 loading={api.sources.loading}
                 revision={revision}
                 recent={api.recent}
+                control={api.control}
+                periodControl={api.periodControl}
+                actions={api.actions}
+                changes={api.changes}
+                inventory={api.inventory}
+                logChange={api.logChange}
+                canUpload={canEdit}
+                onInventorySaved={() => setRevision((value) => value + 1)}
                 canEdit={settingsReady}
                 saving={api.saving}
                 saved={api.saved}
@@ -558,7 +601,9 @@ export default function MarketingDashboard() {
                     Productos prioritarios
                   </button>
                   <span className={s.muted}>
-                    CPA máximo USD 8.50 · Stock mínimo 100
+                    CPA máximo {money(MARKETING_TARGETS.cpaUsd)} · Stock: rojo
+                    &lt; {MARKETING_TARGETS.stockRedDays} días, amarillo &lt;{" "}
+                    {MARKETING_TARGETS.stockYellowDays} días
                   </span>
                 </div>
                 {detailView === "campaigns" ? (

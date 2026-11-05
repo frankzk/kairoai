@@ -4,6 +4,8 @@ import type { CharlieModel } from "@/lib/marketing-charlie";
 import type { CharlieSettings } from "@/lib/marketing-charlie-types";
 import type { MarketingPeriod } from "@/lib/marketing-dates";
 import { marketingDate } from "@/lib/marketing-dates";
+import { MARKETING_TARGETS } from "@/lib/marketing-targets";
+import { ordersText } from "@/lib/marketing-actions";
 import { count, money, percentage, shortDate } from "./format";
 import s from "./dashboard.module.css";
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
@@ -282,7 +284,7 @@ export function CharlieExecutive({
           <h2 className={s.heading}>Motor de decisión Charlie</h2>
           <p className={s.muted}>
             Base confirmada: valor de pedidos creados, ingreso potencial. Techo
-            CPA USD 8.50.
+            CPA {money(MARKETING_TARGETS.cpaUsd)}.
           </p>
         </div>
         <span className={`${s.badge} ${s.warn}`}>
@@ -315,7 +317,11 @@ export function CharlieExecutive({
             money(model.cpa),
             "Gasto consultado / pedidos creados",
           ],
-          ["Headroom", money(model.headroom), "USD 8.50 menos CPA combinado"],
+          [
+            "Headroom",
+            money(model.headroom),
+            `${money(MARKETING_TARGETS.cpaUsd)} menos CPA combinado`,
+          ],
           [
             "Pedidos creados",
             model.totalOrders == null ? "Sin datos" : count(model.totalOrders),
@@ -585,7 +591,7 @@ export function CharlieMatrix({
                 <td className={s.numeric}>{money(ad.cpm)}</td>
                 <td className={s.numeric}>{count(ad.purchases)}</td>
                 <td
-                  className={`${s.numeric} ${(ad.cpa ?? 0) > 8.5 ? s.warn : ""}`}
+                  className={`${s.numeric} ${(ad.cpa ?? 0) > MARKETING_TARGETS.cpaUsd ? s.warn : ""}`}
                 >
                   {money(ad.cpa)}
                 </td>
@@ -877,10 +883,13 @@ export function CharlieSubtraction({
   model,
   period,
   onDay,
+  real,
 }: {
   model: CharlieModel;
   period: MarketingPeriod;
   onDay: (day: string) => void;
+  /** Real orders per ad: loading, ready, or unavailable (the reasons then use the pixel). */
+  real: "loading" | "ready" | "unavailable";
 }) {
   return (
     <section className={s.section}>
@@ -904,14 +913,27 @@ export function CharlieSubtraction({
           />
         </label>
       </div>
-      <div className={s.tableWrap}>
-        <table className={`${s.table} min-w-[1000px]`}>
+      {real !== "ready" && (
+        <div role="status" className={`${s.notice} ${s.warn}`}>
+          {real === "loading"
+            ? "Consultando pedidos reales; mientras tanto se usa el píxel."
+            : "Pedidos reales no disponibles; se usa el píxel."}
+        </div>
+      )}
+      <div
+        className={s.tableWrap}
+        tabIndex={0}
+        role="region"
+        aria-label="Candidatos a pausa"
+      >
+        <table className={`${s.table} min-w-[1080px]`}>
           <thead>
             <tr>
               <th>Anuncio</th>
               <th className={s.numeric}>Gasto diario USD</th>
               <th className={s.numeric}>Parte de cuenta</th>
-              <th className={s.numeric}>CPA diario USD</th>
+              <th className={s.numeric}>Pedidos reales</th>
+              <th className={s.numeric}>CPA real diario USD</th>
               <th className={s.numeric}>GPT diario USD</th>
               <th>Motivo y revisión</th>
             </tr>
@@ -927,7 +949,15 @@ export function CharlieSubtraction({
                 </td>
                 <td className={s.numeric}>{money(ad.daySpendUsd)}</td>
                 <td className={s.numeric}>{percentage(ad.spendShare)}</td>
-                <td className={s.numeric}>{money(ad.dayCpa)}</td>
+                <td className={s.numeric}>
+                  {ad.dayRealOrders == null
+                    ? "Sin datos"
+                    : `${ad.dayRealBasis === "estimado" ? "≈ " : ""}${ordersText(ad.dayRealOrders)}`}
+                </td>
+                <td className={s.numeric}>
+                  {money(ad.dayRealCpa)}
+                  <small className="block">Píxel: {money(ad.dayCpa)}</small>
+                </td>
                 <td className={s.numeric}>{money(ad.dayGpt)}</td>
                 <td className="max-w-[330px]">
                   <ul className={`${s.muted} mb-2`}>
@@ -935,14 +965,18 @@ export function CharlieSubtraction({
                       <li key={reason}>{reason}</li>
                     ))}
                   </ul>
-                  <a
-                    className={s.link}
-                    href={`https://adsmanager.facebook.com/adsmanager/manage/ads?act=${ad.accountId}&selected_ad_ids=${ad.id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Revisar pausa en Meta
-                  </a>
+                  {ad.platform === "tiktok" ? (
+                    <span className={s.muted}>Revisar en TikTok Ads</span>
+                  ) : (
+                    <a
+                      className={s.link}
+                      href={`https://adsmanager.facebook.com/adsmanager/manage/ads?act=${ad.accountId}&selected_ad_ids=${ad.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Revisar pausa en Meta
+                    </a>
+                  )}
                 </td>
               </tr>
             ))}
@@ -956,8 +990,11 @@ export function CharlieSubtraction({
         </div>
       )}
       <p className={`${s.muted} mt-4`}>
-        La comparación GPT usa el promedio ponderado por compras reportadas de
-        la cuenta en ese día. Sin compras no se inventa CPA cero: el gasto
+        Pedidos reales: pedidos de iComfly sin anulados, con el UTM del anuncio
+        más su parte de los pedidos del producto asignado, según el gasto (≈).
+        Sin pedidos reales, los motivos usan el píxel y lo indican. La
+        comparación GPT usa el promedio ponderado por compras reportadas de la
+        cuenta en ese día. Sin compras no se inventa CPA cero: el gasto
         significativo sin compras se marca aparte. Valida el rol del anuncio y
         el retraso de atribución antes de actuar. Kairo no pausa anuncios ni
         cambia presupuestos desde este panel.

@@ -25,3 +25,11 @@ export const shortDate = (date: string) =>
     month: "short",
     timeZone: "UTC",
   }).format(new Date(`${date}T12:00:00Z`));
+export {
+  daysText as days,
+  timeCrText as timeCr,
+  dateTimeCrText as dateTimeCr,
+} from "@/lib/marketing-copy";
+/** Whole hours since an ISO time ("hace 30 h"). */
+export const hoursAgo = (iso: string, now: Date = new Date()) =>
+  Math.max(0, Math.floor((now.getTime() - Date.parse(iso)) / 3_600_000));

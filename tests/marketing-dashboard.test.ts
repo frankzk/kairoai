@@ -162,6 +162,31 @@ describe("product spend and replenishment", () => {
     });
     expect(model.ads.spend).toBe(30);
   });
+  it("divides the product CPA by real orders (annulled out) and treats spend without real orders as above target", () => {
+    const real = summary([
+      order("2026-10-29T12:00:00Z"),
+      order("2026-10-29T13:00:00Z", { tracking_status: "annulled" }),
+    ]);
+    const product = buildMarketingIntelligence(real, sources(), settings())
+      .products[0];
+    expect(product).toMatchObject({
+      orders: 2,
+      realOrders: 1,
+      cpa: 30,
+      cpaCreated: 15,
+    });
+    const none = buildMarketingIntelligence(
+      summary([
+        order("2026-10-29T12:00:00Z", { tracking_status: "annulled" }),
+      ]),
+      sources(),
+      settings(),
+    );
+    expect(none.products[0].cpa).toBe(Infinity);
+    expect(none.alerts.find((a) => a.key.startsWith("cpa:"))?.detail).toBe(
+      "USD\u00a030,00 de gasto sin pedidos reales. Revisar campañas y cobertura de inversión.",
+    );
+  });
   it("withholds product spend when assignments fail and never invents stock", () => {
     const model = buildMarketingIntelligence(
       summary([order("2026-10-29T12:00:00Z")]),
@@ -312,6 +337,53 @@ describe("product spend and replenishment", () => {
       buildMarketingIntelligence(summary(orders), source, mapping).products[0]
         .suggestedUnits,
     ).toBeNull();
+  });
+  it("alerts on days of coverage instead of a fixed 100-unit minimum", () => {
+    const orders = Array.from({ length: 7 }, (_, index) =>
+      order(`2026-10-${22 + index}T12:00:00Z`, {
+        items: [
+          { sku: "SKU-A", title: "Producto real", quantity: 10, price: 1 },
+        ],
+      }),
+    );
+    const withStock = (available: number) => {
+      const source = sources();
+      source.shiphero = {
+        ...pending,
+        status: "ready",
+        data: {
+          stock: [
+            {
+              sku: "sku-a",
+              warehouseId: "CR",
+              onHand: available,
+              available,
+              allocated: 0,
+            },
+          ],
+        },
+      };
+      return buildMarketingIntelligence(summary(orders), source, settings());
+    };
+    const plain = (s: string) => s.replace(/\u00a0|\u202f/g, " ");
+    // 40 units at 10 a day: 4 days, yellow.
+    const yellow = withStock(40);
+    expect(yellow.products[0].coverage).toMatchObject({
+      tone: "yellow",
+      days: 4,
+    });
+    const alert = yellow.alerts.find((a) => a.key === "stock:sku:sku-a")!;
+    expect(alert.title).toBe("Producto real: 4,0 días de stock");
+    expect(plain(alert.detail)).toBe(
+      "40 unidades; vende 10,0 por día (últimos 7 días).",
+    );
+    // 90 units at 10 a day are 9 days: no alert, even under 100 units.
+    expect(withStock(90).alerts.some((a) => a.key.startsWith("stock:"))).toBe(
+      false,
+    );
+    expect(
+      withStock(0).alerts.find((a) => a.key.startsWith("stock:"))?.title,
+    ).toBe("Producto real: agotado");
   });
 });
 describe("daily campaign budgets", () => {

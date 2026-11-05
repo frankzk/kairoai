@@ -1,4 +1,5 @@
 "use client";
+import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import { Fragment, useMemo, useState } from "react";
 import type { MarketingProductMetric } from "@/lib/marketing-intelligence";
 import { count, money } from "./format";
@@ -191,7 +192,11 @@ export function ProductWorkspace({
               : "Costo combinado por producto, sin atribuir sus pedidos a una campaña específica."}
           </p>
         </div>
-        <span className={s.badge}>CPA máx. USD 8.50 · Stock mín. 100</span>
+        <span className={s.badge}>
+          CPA máx. {money(MARKETING_TARGETS.cpaUsd)} · Stock: rojo &lt;{" "}
+          {MARKETING_TARGETS.stockRedDays} días, amarillo &lt;{" "}
+          {MARKETING_TARGETS.stockYellowDays}
+        </span>
       </div>
       <div className={`${s.toolbar} mb-4`}>
         <label className={s.field}>
@@ -263,7 +268,7 @@ export function ProductWorkspace({
                   <th className={s.numeric}>7 días completos</th>
                   <th className={s.numeric}>Pedidos período</th>
                   <th className={s.numeric}>Inversión asignada</th>
-                  <th className={s.numeric}>Costo / pedido</th>
+                  <th className={s.numeric}>CPA real</th>
                   <th className={s.numeric}>Stock actual</th>
                   <th>Prioridad</th>
                 </>
@@ -301,7 +306,7 @@ export function ProductWorkspace({
                           </span>
                         </td>
                         <td
-                          className={`${s.numeric} ${product.available != null && product.available < 100 ? s.warn : ""}`}
+                          className={`${s.numeric} ${product.coverage.tone === "red" || product.coverage.tone === "yellow" ? s.warn : ""}`}
                         >
                           {product.available == null
                             ? "Sin datos"
@@ -361,12 +366,14 @@ export function ProductWorkspace({
                           {money(product.spend, product.currency)}
                         </td>
                         <td
-                          className={`${s.numeric} ${product.currency === "USD" && (product.cpa ?? 0) > 8.5 ? s.warn : ""}`}
+                          className={`${s.numeric} ${product.currency === "USD" && (product.cpa ?? 0) > MARKETING_TARGETS.cpaUsd ? s.warn : ""}`}
                         >
-                          {money(product.cpa, product.currency)}
+                          {product.cpa != null && !Number.isFinite(product.cpa)
+                            ? "Sin pedidos reales"
+                            : money(product.cpa, product.currency)}
                         </td>
                         <td
-                          className={`${s.numeric} ${product.available != null && product.available < 100 ? s.warn : ""}`}
+                          className={`${s.numeric} ${product.coverage.tone === "red" || product.coverage.tone === "yellow" ? s.warn : ""}`}
                         >
                           {product.available == null
                             ? "Sin datos"

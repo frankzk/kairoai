@@ -5,11 +5,20 @@ import {
   shiftDate,
   type MarketingPeriod,
 } from "./marketing-dates";
-import { readMetaBudgets } from "./marketing-meta-budgets";
+import {
+  readMetaCampaignCatalog,
+  type MetaCampaignBudget,
+} from "./marketing-meta-budgets";
+import {
+  changesFromUpdatedTime,
+  readMetaActivities,
+} from "./marketing-meta-activity";
 import type {
+  CampaignLifetime,
   MarketingAdsAccounts,
   MarketingAdsData,
   MarketingCampaign,
+  MarketingHourlySpend,
   MarketingSource,
   MarketingSources,
   MarketingStock,
@@ -56,6 +65,28 @@ function campaigns(rows: MarketingCampaign[]): MarketingCampaign[] {
   return Array.from(grouped.values())
     .map((row) => ({ ...row, spend: Math.round(row.spend * 100) / 100 }))
     .sort((a, b) => b.spend - a.spend);
+}
+
+const PURCHASE_TYPES = [
+  "omni_purchase",
+  "purchase",
+  "offsite_conversion.fb_pixel_purchase",
+];
+const ATTRIBUTION_WINDOWS = JSON.stringify(["7d_click", "1d_view"]);
+/** The first canonical purchase type only, so the same purchase is never counted twice. */
+function purchasesOf(row: Json): number {
+  const actions = list(row.actions).map(obj);
+  const purchase = PURCHASE_TYPES.map((type) =>
+    actions.find((action) => action.action_type === type),
+  ).find(Boolean);
+  return purchase ? metric(purchase.value) : 0;
+}
+
+/** `"14:00:00 - 14:59:59"` → 14; anything else → null. */
+export function hourOfBreakdown(value: unknown): number | null {
+  const match = /^(\d{2}):00:00\s*-\s*\d{2}:59:59$/.exec(str(value).trim());
+  const hour = match ? Number(match[1]) : NaN;
+  return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : null;
 }
 
 async function json(
@@ -113,6 +144,244 @@ export function metaAccountIds(env: Env): string[] {
   return ids;
 }
 
+interface MetaExtras {
+  /** Account-level spend per hour for these CR dates (only CR time-zone accounts). */
+  hourly?: { from: string; to: string };
+  /** Spend and pixel purchases since launch per campaign. */
+  lifetime?: boolean;
+  /** Activity log since the period start (falls back to `updated_time`). */
+  activities?: boolean;
+  now?: Date;
+}
+
+async function metaPages(
+  fetcher: typeof fetch,
+  build: (after: string) => URL,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+): Promise<Json[]> {
+  const rows: Json[] = [];
+  let after = "";
+  for (let page = 0; page < 25; page++) {
+    const body = await json(fetcher, build(after), { headers, signal });
+    if (body.error || !Array.isArray(body.data))
+      throw new Error("Invalid Meta report");
+    rows.push(...body.data.map(obj));
+    const paging = obj(body.paging);
+    if (!paging.next) return rows;
+    const cursor = str(obj(paging.cursors).after);
+    if (!cursor || cursor === after) throw new Error("Incomplete Meta report");
+    after = cursor;
+  }
+  throw new Error("Meta pagination limit");
+}
+
+/** Lifetime spend and pixel purchases per campaign (`date_preset=maximum`). */
+async function metaLifetime(
+  base: string,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+  fetcher: typeof fetch,
+): Promise<Map<string, { spend: number; purchases: number }>> {
+  const rows = await metaPages(
+    fetcher,
+    (after) => {
+      const url = new URL(`${base}/insights`);
+      url.searchParams.set("fields", "campaign_id,spend,actions");
+      url.searchParams.set("level", "campaign");
+      url.searchParams.set("date_preset", "maximum");
+      url.searchParams.set("action_attribution_windows", ATTRIBUTION_WINDOWS);
+      url.searchParams.set("limit", "500");
+      if (after) url.searchParams.set("after", after);
+      return url;
+    },
+    headers,
+    signal,
+  );
+  const totals = new Map<string, { spend: number; purchases: number }>();
+  for (const row of rows) {
+    const id = str(row.campaign_id);
+    if (!id) throw new Error("Missing campaign identifier");
+    const current = totals.get(id) ?? { spend: 0, purchases: 0 };
+    current.spend += metric(row.spend);
+    current.purchases += purchasesOf(row);
+    totals.set(id, current);
+  }
+  return totals;
+}
+
+/** Account spend per hour of the account day (`hourly_stats_aggregated_by_advertiser_time_zone`). */
+async function metaHourly(
+  base: string,
+  range: { from: string; to: string },
+  headers: Record<string, string>,
+  signal: AbortSignal,
+  fetcher: typeof fetch,
+): Promise<MarketingHourlySpend> {
+  const rows = await metaPages(
+    fetcher,
+    (after) => {
+      const url = new URL(`${base}/insights`);
+      url.searchParams.set("fields", "spend");
+      url.searchParams.set("level", "account");
+      url.searchParams.set("time_increment", "1");
+      url.searchParams.set(
+        "breakdowns",
+        "hourly_stats_aggregated_by_advertiser_time_zone",
+      );
+      url.searchParams.set(
+        "time_range",
+        JSON.stringify({ since: range.from, until: range.to }),
+      );
+      url.searchParams.set("limit", "500");
+      if (after) url.searchParams.set("after", after);
+      return url;
+    },
+    headers,
+    signal,
+  );
+  const days = new Map<string, number[]>();
+  for (const row of rows) {
+    const date = str(row.date_start);
+    const hour = hourOfBreakdown(
+      row.hourly_stats_aggregated_by_advertiser_time_zone,
+    );
+    if (
+      !/^20\d{2}-\d{2}-\d{2}$/.test(date) ||
+      date < range.from ||
+      date > range.to ||
+      hour == null
+    )
+      throw new Error("Invalid hourly row");
+    const hours = days.get(date) ?? Array<number>(24).fill(0);
+    hours[hour] += metric(row.spend);
+    days.set(date, hours);
+  }
+  return {
+    ...range,
+    days: Array.from(days, ([date, hours]) => ({
+      date,
+      hours: hours.map((v) => Math.round(v * 100) / 100),
+    })).sort((a, b) => a.date.localeCompare(b.date)),
+  };
+}
+
+/**
+ * Budgets/bids, lifetime, activity log and hourly spend. None of them may fail
+ * the account: each failure only leaves a message (spend stays usable).
+ */
+async function enrichMetaAccount(
+  result: MarketingAdsData,
+  base: string,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+  fetcher: typeof fetch,
+  extra: MetaExtras & { details: boolean; since: string },
+) {
+  const needCatalog = extra.details || extra.lifetime || extra.activities;
+  const hourlyAllowed = result.timezone === "America/Costa_Rica";
+  const [catalog, lifetime, hourly] = await Promise.all([
+    needCatalog
+      ? readMetaCampaignCatalog(
+          base,
+          result.currency,
+          headers,
+          signal,
+          fetcher,
+        ).catch(() => null)
+      : Promise.resolve(null),
+    extra.lifetime
+      ? metaLifetime(base, headers, signal, fetcher).catch(() => null)
+      : Promise.resolve(null),
+    extra.hourly && hourlyAllowed
+      ? metaHourly(base, extra.hourly, headers, signal, fetcher).catch(
+          () => null,
+        )
+      : Promise.resolve(null),
+  ]);
+  if (catalog) {
+    const merged = new Map(
+      result.campaigns.map((campaign) => [campaign.id, campaign]),
+    );
+    for (const budget of catalog.campaigns)
+      merged.set(budget.id, {
+        ...(merged.get(budget.id) ?? {
+          id: budget.id,
+          name: budget.name,
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          purchases: 0,
+          daily: [],
+        }),
+        ...(extra.details ? budget : timesOnly(budget)),
+      });
+    result.campaigns = Array.from(merged.values()).sort(
+      (a, b) => b.spend - a.spend,
+    );
+  } else if (needCatalog)
+    result.budgetMessage =
+      "La inversión está disponible, pero no se pudo consultar el presupuesto diario actual.";
+  if (extra.lifetime) {
+    if (!lifetime)
+      result.lifetimeMessage =
+        "No se pudo consultar el gasto acumulado desde el lanzamiento.";
+    else
+      for (const campaign of result.campaigns) {
+        const total = lifetime.get(campaign.id);
+        const launched = campaign.startTime ?? campaign.createdTime ?? null;
+        const entry: CampaignLifetime = {
+          spend: Math.round((total?.spend ?? 0) * 100) / 100,
+          purchases: total ? total.purchases : 0,
+          firstDate: launched ? marketingDate(new Date(launched)) : null,
+        };
+        campaign.lifetime = entry;
+      }
+  }
+  if (extra.hourly) {
+    if (!hourlyAllowed)
+      result.hourlyMessage =
+        "Sin gasto por hora: la cuenta no usa la hora de Costa Rica.";
+    else if (!hourly)
+      result.hourlyMessage = "No se pudo consultar el gasto por hora.";
+    else result.hourly = hourly;
+  }
+  if (extra.activities) {
+    try {
+      result.changes = await readMetaActivities(
+        base,
+        headers,
+        signal,
+        fetcher,
+        extra.since,
+        catalog?.adsetCampaign ?? new Map(),
+        { currency: result.currency, now: extra.now },
+      );
+      // Without the catalog, ad set events (COST CAP bids, ABO budgets) have
+      // no campaign and are dropped: the log is incomplete.
+      result.changesStatus = catalog ? "activity" : "unavailable";
+    } catch {
+      if (catalog) {
+        result.changes = changesFromUpdatedTime(
+          result.accountId,
+          catalog.campaigns,
+        );
+        result.changesStatus = "updated_time";
+      } else {
+        result.changes = [];
+        result.changesStatus = "unavailable";
+      }
+    }
+  }
+}
+
+/** Without `details`, only launch/edit times are merged (no budget catalogue). */
+const timesOnly = (budget: MetaCampaignBudget) => ({
+  createdTime: budget.createdTime,
+  startTime: budget.startTime,
+  updatedTime: budget.updatedTime,
+});
+
 async function metaAds(
   id: string,
   period: MarketingPeriod,
@@ -122,6 +391,7 @@ async function metaAds(
   details: boolean,
   overview?: { from: string; to: string },
   daily = details,
+  extra: MetaExtras = {},
 ): Promise<MarketingAdsData> {
   const version = env.META_CR_GRAPH_VERSION || "";
   if (!/^\d+$/.test(id) || !/^v\d+\.\d+$/.test(version))
@@ -157,10 +427,7 @@ async function metaAds(
       url.searchParams.set("time_increment", "1");
     }
     if (daily) {
-      url.searchParams.set(
-        "action_attribution_windows",
-        JSON.stringify(["7d_click", "1d_view"]),
-      );
+      url.searchParams.set("action_attribution_windows", ATTRIBUTION_WINDOWS);
     }
     url.searchParams.set("level", "campaign");
     url.searchParams.set("time_range", JSON.stringify({ since, until }));
@@ -186,15 +453,7 @@ async function metaAds(
         // The extra trailing days belong only to the graph, never to period spend or CPA.
         if (day < period.from || day > period.to) continue;
       }
-      const actions = list(row.actions).map(obj);
-      const purchase = [
-        "omni_purchase",
-        "purchase",
-        "offsite_conversion.fb_pixel_purchase",
-      ]
-        .map((type) => actions.find((action) => action.action_type === type))
-        .find(Boolean);
-      const purchases = purchase ? metric(purchase.value) : 0;
+      const purchases = purchasesOf(row);
       const entry: MarketingCampaign = {
         id: str(row.campaign_id),
         name: str(row.campaign_name),
@@ -242,39 +501,12 @@ async function metaAds(
             }
           : {}),
       };
-      if (details) {
-        try {
-          const budgets = await readMetaBudgets(
-            base,
-            result.currency,
-            headers,
-            signal,
-            fetcher,
-          );
-          const merged = new Map(
-            result.campaigns.map((campaign) => [campaign.id, campaign]),
-          );
-          for (const budget of budgets)
-            merged.set(budget.id, {
-              ...(merged.get(budget.id) ?? {
-                id: budget.id,
-                name: budget.name,
-                spend: 0,
-                impressions: 0,
-                clicks: 0,
-                purchases: 0,
-                daily: [],
-              }),
-              ...budget,
-            });
-          result.campaigns = Array.from(merged.values()).sort(
-            (a, b) => b.spend - a.spend,
-          );
-        } catch {
-          result.budgetMessage =
-            "La inversión está disponible, pero no se pudo consultar el presupuesto diario actual.";
-        }
-      }
+      if (details || extra.lifetime || extra.activities || extra.hourly)
+        await enrichMetaAccount(result, base, headers, signal, fetcher, {
+          ...extra,
+          details,
+          since: period.from,
+        });
       return result;
     }
     const cursor = str(obj(paging.cursors).after);
@@ -473,6 +705,10 @@ export async function getMarketingSources(
     overview?: boolean;
     /** Campaign daily metrics without the budget catalogue. */
     daily?: boolean;
+    /** Account spend per hour for today and the previous 7 days (CR accounts only). */
+    hourly?: boolean;
+    /** Actions table: details + daily + lifetime + activity log (Meta) and lifetime (TikTok). */
+    actions?: boolean;
     now?: Date;
     /**
      * Gasto de TikTok que manda Make (lib/tiktok-diario.ts), para cuando no hay
@@ -486,6 +722,7 @@ export async function getMarketingSources(
   const has = (...keys: string[]) =>
     keys.every((key) => Boolean(env[key]?.trim()));
   const today = marketingDate(options.now ?? new Date());
+  const details = options.details === true || options.actions === true;
   const trailTo = period.to < today ? period.to : today;
   const overview = options.overview
     ? { from: shiftDate(trailTo, -6), to: trailTo }
@@ -504,9 +741,17 @@ export async function getMarketingSources(
               env,
               fetcher,
               signal,
-              options.details === true,
+              details,
               overview,
-              options.daily ?? options.details === true,
+              options.daily ?? details,
+              {
+                hourly: options.hourly
+                  ? { from: shiftDate(today, -7), to: today }
+                  : undefined,
+                lifetime: options.actions === true,
+                activities: options.actions === true,
+                now: options.now,
+              },
             ),
           ),
         ),

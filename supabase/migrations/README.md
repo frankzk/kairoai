@@ -12,6 +12,24 @@ Reglas:
 
 Estado actual:
 
+Mejoras de Marketing: las cuatro se aplicaron el 05/11/2026, en este orden.
+Si faltara alguna, Marketing sigue funcionando y la parte nueva muestra
+"Pendiente: aplicar migración":
+
+- `20261105120000_marketing_inventory_snapshots.sql`: tablas
+  `marketing_inventory_snapshots` y `marketing_inventory_items` (foto diaria
+  del CSV product_table) y la función `marketing_replace_inventory_snapshot`
+  (reemplaza la foto del día en una transacción). Solo service role.
+- `20261105120100_marketing_campaign_changes.sql`: tabla
+  `marketing_campaign_changes` (registro manual de cambios y lanzamientos por
+  campaña, para las reglas de 72 h y el límite de lanzamientos de TikTok).
+- `20261105120200_marketing_keywords_and_account_labels.sql`: tablas
+  `marketing_campaign_keywords` (palabra del nombre de campaña → producto) y
+  `marketing_ad_account_labels` (Madre, CR2…CR5).
+- `20261105120300_tiktok_campaign_lifetime.sql`: vista
+  `tiktok_ads_campanas_resumen` (gasto y conversiones acumuladas por campaña de
+  TikTok y primer día con gasto), `security_invoker`, solo service role.
+
 TikTok por anuncio: `20261103230000_tiktok_anuncios_diario.sql` aplicada el
 03/11/2026. Tabla `tiktok_anuncios_diario` (una fila por tienda, anunciante,
 anuncio y día; RLS sin políticas). La llena POST `/api/marketing/tiktok-anuncios`

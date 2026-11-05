@@ -177,3 +177,56 @@ it("marks a product cost partial if TikTok has not reported through the end date
   });
   expect(p.costs[1]).toMatchObject({ value: 25, partial: false });
 });
+
+it("uses real orders (without annulled) and keeps the created CPA as reference", () => {
+  const withAnnulled = buildMarketingSummary({
+    orders: [
+      ...orders,
+      {
+        ...orders[1],
+        order_key: "x",
+        tracking_status: "annulled",
+      } as OrderProfitabilityRow,
+      {
+        ...orders[0],
+        order_key: "y",
+        tracking_status: "annulled",
+      } as OrderProfitabilityRow,
+    ],
+    expenses: [],
+    from: "2026-11-01",
+    to: "2026-11-04",
+    now,
+  });
+  expect(withAnnulled.products[0]).toMatchObject({
+    realOrders: withAnnulled.products[0].orders - 2,
+    todayOrders: 2,
+    todayReal: 1,
+    yesterdayOrders: 2,
+    yesterdayReal: 1,
+    sevenDayOrders: 2,
+    sevenDayReal: 1,
+  });
+  const p = productComparison(withAnnulled, sources(), settings, fx, now)[0];
+  // Today: USD 8 + PEN 8 (= USD 2) over 1 real order, 2 created.
+  expect(p.costs[0]).toMatchObject({ value: 10, createdValue: 5 });
+  expect(p.cpas).toEqual([10, 25, 25]);
+  const allAnnulled = buildMarketingSummary({
+    orders: orders.map(
+      (o) => ({ ...o, tracking_status: "annulled" }) as OrderProfitabilityRow,
+    ),
+    expenses: [],
+    from: "2026-11-01",
+    to: "2026-11-04",
+    now,
+  });
+  expect(
+    productComparison(allAnnulled, sources(), settings, fx, now)[0].costs[0],
+  ).toMatchObject({
+    value: null,
+    createdValue: 10,
+    reason: "Sin pedidos reales",
+    // The spend is kept so "CPA por encima del objetivo" can list it.
+    spend: 10,
+  });
+});

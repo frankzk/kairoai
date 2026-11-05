@@ -75,13 +75,24 @@ describe("Marketing view loading boundaries", () => {
     expect(marketingLoadPlan("summary", true).settings).toBe(true);
   });
   it("defers the full creative catalogue to Control and Testing and avoids orders in ad-only views", () => {
-    for (const view of ["matrix", "subtraction"] as const)
-      expect(marketingLoadPlan(view)).toMatchObject({
-        summary: false,
-        settings: false,
-        reportScope: "ads",
-        sourceScope: "basic",
-      });
+    expect(marketingLoadPlan("matrix")).toMatchObject({
+      summary: false,
+      settings: false,
+      reportScope: "ads",
+      sourceScope: "basic",
+      control: false,
+      periodControl: false,
+    });
+    // Subtraction uses real orders: catalogue, assignments and the period's orders.
+    expect(marketingLoadPlan("subtraction")).toMatchObject({
+      summary: true,
+      settings: true,
+      reportScope: "ads",
+      sourceScope: "basic",
+      control: false,
+      periodControl: true,
+      actions: false,
+    });
     expect(marketingLoadPlan("structure")).toMatchObject({
       summary: false,
       reportScope: "structure",
@@ -225,7 +236,20 @@ describe("Team report loading", () => {
       settings: true,
       sourceScope: "report",
       reportScope: null,
+      control: true,
+      periodControl: true,
+      actions: true,
+      changes: true,
+      inventory: true,
     });
+    for (const view of ["summary", "details", "trends", "sources"] as const)
+      expect(marketingLoadPlan(view)).toMatchObject({
+        control: false,
+        periodControl: false,
+        actions: false,
+        changes: false,
+        inventory: false,
+      });
   });
   it("reads campaign actions and daily metrics without fetching the budget catalogue", async () => {
     const fetcher = vi.fn(async (input: string | URL | Request) => {

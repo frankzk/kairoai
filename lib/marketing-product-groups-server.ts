@@ -195,6 +195,7 @@ export function buildGroupMetrics(
     return {
       ...t,
       orders: 0,
+      realOrders: 0,
       units: 0,
       delivered: 0,
       failed: 0,
@@ -203,6 +204,9 @@ export function buildGroupMetrics(
       todayOrders: 0,
       yesterdayOrders: 0,
       sevenDayOrders: 0,
+      todayReal: 0,
+      yesterdayReal: 0,
+      sevenDayReal: 0,
       recentUnits: 0,
       previousOrders: 0,
       daily: Array.from({ length: period.days }, (_, i) => ({
@@ -233,12 +237,23 @@ export function buildGroupMetrics(
           p.recentUnits += quantity;
         if (seen.has(i)) continue;
         seen.add(i);
-        if (date === today) p.todayOrders++;
-        if (date === yesterday) p.yesterdayOrders++;
-        if (date >= recent && date < today) p.sevenDayOrders++;
+        const real = order.tracking_status !== "annulled";
+        if (date === today) {
+          p.todayOrders++;
+          if (real) p.todayReal++;
+        }
+        if (date === yesterday) {
+          p.yesterdayOrders++;
+          if (real) p.yesterdayReal++;
+        }
+        if (date >= recent && date < today) {
+          p.sevenDayOrders++;
+          if (real) p.sevenDayReal++;
+        }
         if (time >= prev.start && time < prev.end) p.previousOrders++;
         if (active) {
           p.orders++;
+          if (real) p.realOrders++;
           p.daily[Math.floor((time - period.start) / MARKETING_DAY)].orders++;
           if (order.tracking_status === "delivered") p.delivered++;
           else if (

@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     filters: Array<[string, unknown]>;
   }>,
   dbError: false,
+  missingTables: [] as string[],
   catalog: vi.fn(),
   inputs: vi.fn(),
 }));
@@ -62,9 +63,11 @@ vi.mock("@/lib/db", () => ({
         ) =>
           Promise.resolve({
             data: [],
-            error: mocks.dbError
-              ? { message: "private database detail" }
-              : null,
+            error: mocks.missingTables.includes(table)
+              ? { code: "42P01", message: "private database detail" }
+              : mocks.dbError
+                ? { message: "private database detail" }
+                : null,
           }).then(resolve, reject),
       };
       return query;
@@ -99,6 +102,7 @@ beforeEach(() => {
   vi.stubEnv("META_CR_AD_ACCOUNT_IDS", "123");
   mocks.calls.length = 0;
   mocks.dbError = false;
+  mocks.missingTables = [];
   mocks.identity = {
     id: 7,
     nombre: "Marketing CR",
@@ -121,6 +125,13 @@ beforeEach(() => {
             { key: "sku:a", name: "Negro", sku: "A" },
             { key: "sku:b", name: "Beige", sku: "B" },
           ],
+        },
+        {
+          key: "family:review:7",
+          name: "En revisión",
+          source: "nombre",
+          review: true,
+          members: [{ key: "sku:c", name: "C", sku: "C" }],
         },
       ],
     },
@@ -265,8 +276,18 @@ describe("persistent marketing settings", () => {
     const result = await GET(request());
     expect(result.status).toBe(200);
     expect(result.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(await result.json()).toEqual({ mappings: [], plans: [] });
-    expect(mocks.calls).toHaveLength(2);
+    expect(await result.json()).toEqual({
+      mappings: [],
+      plans: [],
+      keywords: [],
+      accountLabels: [],
+    });
+    expect(mocks.calls.map((call) => call.table)).toEqual([
+      "marketing_campaign_products",
+      "marketing_product_plans",
+      "marketing_campaign_keywords",
+      "marketing_ad_account_labels",
+    ]);
     mocks.calls.forEach((call) =>
       expect(call.filters).toContainEqual(["store_id", 1]),
     );
@@ -362,5 +383,189 @@ describe("persistent marketing settings", () => {
       "private database detail",
     );
     expect((await PATCH(request(mapping))).status).toBe(503);
+  });
+  it("normalizes campaign keywords, validates the family on the server and deletes with null", async () => {
+    const saved = await PATCH(
+      request({
+        kind: "keyword",
+        keyword: "NEOCELL ",
+        family_key: "family:shopify:42",
+      }),
+    );
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toEqual({ saved: true, keyword: "neocell" });
+    expect(mocks.calls).toEqual([
+      expect.objectContaining({
+        table: "marketing_campaign_keywords",
+        operation: "upsert",
+        value: expect.objectContaining({
+          store_id: 1,
+          keyword: "neocell",
+          family_key: "family:shopify:42",
+          product_name: "Producto padre",
+          updated_by: "7:Marketing CR",
+        }),
+      }),
+    ]);
+    mocks.calls.length = 0;
+    expect(
+      (
+        await PATCH(
+          request({
+            kind: "keyword",
+            keyword: "Colágeno",
+            family_key: "family:shopify:99",
+          }),
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await PATCH(
+          request({
+            kind: "keyword",
+            keyword: "ab",
+            family_key: "family:shopify:42",
+          }),
+        )
+      ).status,
+    ).toBe(400);
+    expect(mocks.calls).toEqual([]);
+    expect(
+      (
+        await PATCH(
+          request({
+            kind: "keyword",
+            keyword: "Shilajit  Cápsulas",
+            family_key: null,
+          }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(mocks.calls[0]).toMatchObject({
+      table: "marketing_campaign_keywords",
+      operation: "delete",
+      filters: [
+        ["store_id", 1],
+        ["keyword", "shilajit capsulas"],
+      ],
+    });
+  });
+  it("rejects keywords that can never match and families under review", async () => {
+    const noise = await PATCH(
+      request({
+        kind: "keyword",
+        keyword: "selerb cap",
+        family_key: "family:shopify:42",
+      }),
+    );
+    expect(noise.status).toBe(400);
+    expect((await noise.json()).error).toBe(
+      "Quita «CAP»: no cuenta al leer el nombre de la campaña.",
+    );
+    const review = await PATCH(
+      request({
+        kind: "keyword",
+        keyword: "selerb",
+        family_key: "family:review:7",
+      }),
+    );
+    expect(review.status).toBe(400);
+    expect((await review.json()).error).toContain("en revisión");
+    expect(mocks.calls).toEqual([]);
+  });
+  it("saves and clears account labels only for configured accounts", async () => {
+    expect(
+      (
+        await PATCH(
+          request({
+            kind: "account_label",
+            platform: "meta",
+            account_id: "123",
+            label: " Madre ",
+          }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(mocks.calls[0]).toMatchObject({
+      table: "marketing_ad_account_labels",
+      operation: "upsert",
+      value: {
+        store_id: 1,
+        platform: "meta",
+        account_id: "123",
+        label: "Madre",
+      },
+    });
+    mocks.calls.length = 0;
+    expect(
+      (
+        await PATCH(
+          request({
+            kind: "account_label",
+            platform: "meta",
+            account_id: "999",
+            label: "CR2",
+          }),
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await PATCH(
+          request({
+            kind: "account_label",
+            platform: "meta",
+            account_id: "123",
+            label: "x".repeat(21),
+          }),
+        )
+      ).status,
+    ).toBe(400);
+    expect(mocks.calls).toEqual([]);
+    expect(
+      (
+        await PATCH(
+          request({
+            kind: "account_label",
+            platform: "meta",
+            account_id: "123",
+            label: null,
+          }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(mocks.calls[0]).toMatchObject({ operation: "delete" });
+    mocks.identity.permisos = ["marketing", "solo_lectura"];
+    expect(
+      (
+        await PATCH(
+          request({
+            kind: "account_label",
+            platform: "meta",
+            account_id: "123",
+            label: "CR2",
+          }),
+        )
+      ).status,
+    ).toBe(403);
+  });
+  it("keeps settings usable when the keyword tables are not migrated yet", async () => {
+    mocks.missingTables = ["marketing_campaign_keywords"];
+    const result = await GET(request());
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({
+      keywords: [],
+      keywordsError: expect.stringContaining("Pendiente"),
+    });
+    const saved = await PATCH(
+      request({
+        kind: "keyword",
+        keyword: "neocell",
+        family_key: "family:shopify:42",
+      }),
+    );
+    expect(saved.status).toBe(503);
+    expect((await saved.json()).error).toContain("Pendiente");
   });
 });

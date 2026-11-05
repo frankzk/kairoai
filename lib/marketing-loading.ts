@@ -13,11 +13,16 @@ export function marketingLoadPlan(
   expandedOverview = false,
 ) {
   return {
-    summary: ["report", "summary", "details", "trends"].includes(view),
+    // Subtraction needs the product catalogue and the assignments to turn
+    // orders into real orders per ad (UTM + share by product).
+    summary: ["report", "summary", "details", "trends", "subtraction"].includes(
+      view,
+    ),
     settings:
       view === "report" ||
       view === "details" ||
       view === "trends" ||
+      view === "subtraction" ||
       (view === "summary" && expandedOverview),
     sourceScope:
       view === "report"
@@ -33,5 +38,13 @@ export function marketingLoadPlan(
         : view === "matrix" || view === "subtraction"
           ? ("ads" as const)
           : null,
+    /** Real orders of today and the 13 previous days (goals, actions, COST CAP). */
+    control: view === "report",
+    /** Real orders of the selected period (channel cards, subtraction). */
+    periodControl: view === "report" || view === "subtraction",
+    /** Campaign actions: budgets, bids, lifetime and Meta activity of the last 14 days. */
+    actions: view === "report",
+    changes: view === "report",
+    inventory: view === "report",
   };
 }
