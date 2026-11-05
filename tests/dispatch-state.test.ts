@@ -133,7 +133,7 @@ describe("mergeDispatchIntoTracking", () => {
     expect(mergeDispatchIntoTracking("pending", "recolectado", row)).toBe("recolectado");
     expect(mergeDispatchIntoTracking("annulled", "despachado", row)).toBe("annulled");
     expect(mergeDispatchIntoTracking("pending", "despachado", { ...row, shopify_cancelled_at: "2026-11-05" })).toBe("pending");
-    expect(mergeDispatchIntoTracking("pending", "despachado", { ...row, icomfly_estado: "Confirmada" })).toBe("pending");
+    expect(mergeDispatchIntoTracking("pending", "despachado", { ...row, icomfly_estado: "Confirmada" })).toBe("despacho_solicitado");
     expect(mergeDispatchIntoTracking("pending", "despachado", { ...row, guide_number: "G1" })).toBe("pending");
   });
   const ok = { shopify_cancelled_at: null, shopify_financial_status: "paid" };
