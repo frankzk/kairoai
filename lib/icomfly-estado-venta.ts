@@ -10,7 +10,7 @@
 //
 // iComfly guarda un solo estado por pedido, que mezcla venta y transporte:
 //   - confirmado: Confirmada, y todo lo que viene después (Enviada, Guia_Generada,
-//     En_Transito, En_Reparto, Entregado, Novedad, Devolucion, Reclame_Oficina).
+//     En_Transito, En_Reparto, Entregado, Novedad, Devolucion, Devuelto, Reclame_Oficina) y Pedido Pagado.
 //     "Enviada" es "mandado a Boxful": puede no tener guía todavía.
 //   - en gestión: Pendiente, Comprar Después, Modificar Dirección/Pedido,
 //     desea pago tarjeta, quiere coordinar entrega... La asesora sigue trabajando.
@@ -48,7 +48,11 @@ const CONFIRMADO = new Set([
   "novedad",
   "novedad_operativa",
   "devolucion",
+  "devuelto",
+  "devuelta",
   "reclame_oficina",
+  // Pagado por adelantado: venta confirmada aunque no tenga guia todavia.
+  "pedido_pagado",
 ]);
 const NO_CUENTA = new Set(["testeos", "testeo", "producto_agotado"]);
 const ANULADO = new Set(["cancelado", "cancelada", "anulado", "anulada"]);

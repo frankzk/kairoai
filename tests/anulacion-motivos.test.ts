@@ -96,6 +96,17 @@ describe("KPIs de Finanzas", () => {
     expect(m).toMatchObject({ generated: 4, dispatched: 3, confirmed: 3, annulled: 1, annulledExcluded: 2, annulRate: 25, confirmRate: 75 });
   });
 
+  // Forza/Moovin anuló la guía: hoy es un pedido anulado. Antes contaba como
+  // despachado y confirmado Y como anulado, y la base no cuadraba.
+  it("una guía anulada por la transportadora es anulada, no despachada ni confirmada", () => {
+    const m = computeOpMetricsFromTrackableRows(
+      [fila({ guide_number: "F1", forza_group: "cancelled" }), fila({ icomfly_estado: "Pendiente" })],
+      new Map()
+    );
+    expect(m).toMatchObject({ generated: 2, dispatched: 0, confirmed: 0, annulled: 1, inProgress: 1 });
+    expect(m.confirmed + m.annulled + m.inProgress).toBe(m.generated);
+  });
+
   // El caso del 03/11: confirmar no es despachar. Un pedido Confirmada sin guía
   // (falta stock, almacén) ya está confirmado; uno en Pendiente o Modificar
   // dirección todavía no. Confirmación y despacho van sobre la misma base.

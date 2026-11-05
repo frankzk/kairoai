@@ -411,12 +411,15 @@ function calendarParts(date: Date, timeZone?: string): { y: number; m: number; d
 function midnightMs(y: number, m: number, d: number, timeZone?: string): number {
   if (!timeZone) return new Date(y, m, d).getTime();
   const guess = Date.UTC(y, m, d);
-  return guess - zoneOffsetMs(guess - zoneOffsetMs(guess, timeZone), timeZone);
-}
-
-function startOfDayMs(date: Date, timeZone?: string): number {
-  const { y, m, d } = calendarParts(date, timeZone);
-  return midnightMs(y, m, d, timeZone);
+  const first = guess - zoneOffsetMs(guess, timeZone);
+  const second = guess - zoneOffsetMs(first, timeZone);
+  // El primer instante de ese dia en la zona. Si la medianoche no existe
+  // (salto de horario de verano a las 00:00), el dia arranca a la 01:00.
+  const target = new Date(guess).toISOString().slice(0, 10);
+  const sameDay = [first, second].filter(
+    (t) => new Date(t + zoneOffsetMs(t, timeZone)).toISOString().slice(0, 10) === target
+  );
+  return sameDay.length ? Math.min(...sameDay) : second;
 }
 
 // Fecha YYYY-MM-DD -> medianoche de ese dia en ms (en la zona de la tienda si
@@ -443,8 +446,12 @@ export function getKpiWindows(
   timeZone?: string
 ): KpiWindow {
   const end = now.getTime();
-  const dayStart = startOfDayMs(now, timeZone);
   const DAY = 24 * 60 * 60 * 1000;
+  // Medianoche de hoy + n dias por calendario (no n * 24 h): en zonas con
+  // horario de verano hay dias de 23 o 25 h.
+  const today = calendarParts(now, timeZone);
+  const dayStartPlus = (n: number) => midnightMs(today.y, today.m, today.d + n, timeZone);
+  const dayStart = dayStartPlus(0);
   if (range === "all") {
     return {
       curStart: 0,
@@ -464,7 +471,8 @@ export function getKpiWindows(
     if (startMs == null || endDayMs == null || startMs > endDayMs) {
       return getKpiWindows("all", now, undefined, timeZone);
     }
-    const curEnd = endDayMs + DAY; // fin inclusivo: el dia completo del "hasta"
+    const [ey, em, ed] = custom!.end!.split("-").map(Number);
+    const curEnd = midnightMs(ey, em - 1, ed + 1, timeZone); // fin inclusivo: el dia completo del "hasta"
     const span = curEnd - startMs;
     return {
       curStart: startMs,
@@ -481,7 +489,7 @@ export function getKpiWindows(
     return {
       curStart: dayStart,
       curEnd: end,
-      prevStart: dayStart - DAY,
+      prevStart: dayStartPlus(-1),
       prevEnd: dayStart,
       rangeLabel: "Hoy",
       compareLabel: "vs. ayer",
@@ -490,10 +498,10 @@ export function getKpiWindows(
   }
   if (range === "yesterday") {
     return {
-      curStart: dayStart - DAY,
+      curStart: dayStartPlus(-1),
       curEnd: dayStart,
-      prevStart: dayStart - 2 * DAY,
-      prevEnd: dayStart - DAY,
+      prevStart: dayStartPlus(-2),
+      prevEnd: dayStartPlus(-1),
       rangeLabel: "Ayer",
       compareLabel: "vs. anteayer",
       maturing: true,
@@ -515,7 +523,7 @@ export function getKpiWindows(
     };
   }
   const days = range === "7d" ? 7 : 30;
-  const curStart = dayStart - (days - 1) * DAY;
+  const curStart = dayStartPlus(-(days - 1));
   const span = end - curStart;
   return {
     curStart,
@@ -569,11 +577,16 @@ export function computeOpMetricsFromTrackableRows(
   for (const row of rows) {
     const traces = getSettlementTracesForLogisticsRow(row, settlementTraceByKey);
     const status = getEffectiveTrackingStatus(row, traces);
-    const isDispatched = Boolean(row.guide_number) || isDispatchedStatus(status);
+    // Estado de HOY: una guia que la transportadora anulo (Forza/Moovin
+    // "cancelled") es un pedido anulado, no despachado ni confirmado. Si no,
+    // contaba en los dos lados y confirmados + anulados + en gestion pasaba
+    // de los generados.
+    const courierAnnulled = status === "annulled";
+    const isDispatched = !courierAnnulled && (Boolean(row.guide_number) || isDispatchedStatus(status));
     // Estado de hoy en iComfly (lib/icomfly-estado-venta.ts). Un pedido de
     // Shopify anulado solo en iComfly tambien es anulado aca.
     const etapa = etapaVentaIcomfly(row.icomfly_estado);
-    const isAnnulled = status === "annulled" || (!isDispatched && etapa === "anulado");
+    const isAnnulled = courierAnnulled || (!isDispatched && etapa === "anulado");
     // Duplicados, lista negra, cambios en la orden, upsell...: no eran pedidos
     // que se pudieran confirmar. Tampoco los Testeos ni los "Producto Agotado"
     // de iComfly. No cuentan ni como generados ni como anulados.

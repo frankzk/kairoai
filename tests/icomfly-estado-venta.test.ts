@@ -9,7 +9,7 @@ import { claveEstado, esEnviadaIcomfly, etapaVentaIcomfly } from "../lib/icomfly
 
 describe("etapa de venta en iComfly", () => {
   it("Confirmada y todo lo que viene después es confirmado", () => {
-    for (const e of ["Confirmada", "Enviada", "Guia_Generada", "GUIA_GENERADA", "En_Transito", "En_Reparto", "Entregado", "Novedad", "NOVEDAD_OPERATIVA", "Devolucion", "Devolución", "RECLAME_OFICINA"])
+    for (const e of ["Confirmada", "Enviada", "Guia_Generada", "GUIA_GENERADA", "En_Transito", "En_Reparto", "Entregado", "Novedad", "NOVEDAD_OPERATIVA", "Devolucion", "Devolución", "Devuelto", "RECLAME_OFICINA", "Pedido Pagado"])
       expect(etapaVentaIcomfly(e), e).toBe("confirmado");
   });
   it("lo que la asesora todavía gestiona no es confirmado", () => {
