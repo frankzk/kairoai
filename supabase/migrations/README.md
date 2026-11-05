@@ -12,8 +12,8 @@ Reglas:
 
 Estado actual:
 
-Mejoras de Marketing (05/11/2026), **pendientes de aplicar** (en este orden).
-Hasta aplicarlas, Marketing sigue funcionando y cada parte nueva muestra
+Mejoras de Marketing: las cuatro se aplicaron el 05/11/2026, en este orden.
+Si faltara alguna, Marketing sigue funcionando y la parte nueva muestra
 "Pendiente: aplicar migración":
 
 - `20261105120000_marketing_inventory_snapshots.sql`: tablas
