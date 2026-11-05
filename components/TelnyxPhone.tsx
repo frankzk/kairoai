@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic, MicOff, Phone, PhoneOff } from "lucide-react";
 import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
+import { startPhoneConnection, phoneError } from "@/lib/telnyx-connection";
 import {
   avisarResultadoLlamada,
   onMarcarTelnyx,
@@ -31,6 +32,7 @@ interface LlamadaRTC {
   unmuteAudio(): void;
 }
 interface ClienteRTC {
+  clearReconnectToken(): void;
   remoteElement: HTMLMediaElement | string;
   on(evento: string, cb: (dato: unknown) => void): void;
   connect(): Promise<void>;
@@ -75,15 +77,6 @@ const ETIQUETA: Record<EstadoLlamada, string> = {
   terminada: "Llamada terminada",
 };
 
-// Reconexiones seguidas antes de rendirse. Sin limite, un token vencido o
-// Telnyx caido dejaria un lazo pidiendo tokens para siempre (paso con
-// /api/zadarma/last-call el 29/08/2026, ver ZadarmaWebphone).
-const MAX_RECONEXIONES = 5;
-// Si pedir el token falla (el 02/11/2026 la base saturada lo dejaba 20 s sin
-// respuesta), se reintenta solo: 3 s, 6 s, 12 s... hasta 1 minuto entre
-// intentos, unos 5 minutos en total. Antes no se reintentaba y el telefono se
-// quedaba "conectandose" hasta recargar la pagina.
-const MAX_REINTENTOS_TOKEN = 8;
 const AUDIO_ID = "kairo-telnyx-audio";
 
 // El token se guarda en la pestaña mientras le queden mas de 10 minutos: una
@@ -94,7 +87,13 @@ const claveToken = (staffId: number) => `kairo:telnyx-token:${staffId}`;
 function vencimientoJwt(token: string): number | null {
   try {
     const parte = token.split(".")[1] ?? "";
-    const exp = Number((JSON.parse(atob(parte.replace(/-/g, "+").replace(/_/g, "/"))) as { exp?: unknown }).exp);
+    const exp = Number(
+      (
+        JSON.parse(atob(parte.replace(/-/g, "+").replace(/_/g, "/"))) as {
+          exp?: unknown;
+        }
+      ).exp,
+    );
     return Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
   } catch {
     return null;
@@ -105,8 +104,13 @@ function tokenGuardado(staffId: number): string | null {
   try {
     const raw = window.sessionStorage.getItem(claveToken(staffId));
     if (!raw) return null;
-    const { token, vence } = JSON.parse(raw) as { token?: string; vence?: number };
-    return token && vence && vence - MARGEN_TOKEN_MS > Date.now() ? token : null;
+    const { token, vence } = JSON.parse(raw) as {
+      token?: string;
+      vence?: number;
+    };
+    return token && vence && vence - MARGEN_TOKEN_MS > Date.now()
+      ? token
+      : null;
   } catch {
     return null;
   }
@@ -115,7 +119,11 @@ function tokenGuardado(staffId: number): string | null {
 function guardarToken(staffId: number, token: string | null): void {
   try {
     const vence = token ? vencimientoJwt(token) : null;
-    if (token && vence) window.sessionStorage.setItem(claveToken(staffId), JSON.stringify({ token, vence }));
+    if (token && vence)
+      window.sessionStorage.setItem(
+        claveToken(staffId),
+        JSON.stringify({ token, vence }),
+      );
     else window.sessionStorage.removeItem(claveToken(staffId));
   } catch {
     // Almacenamiento bloqueado: se pide el token cada vez, como antes.
@@ -137,6 +145,7 @@ export default function TelnyxPhone() {
   const [ahora, setAhora] = useState(() => Date.now());
   const [silenciado, setSilenciado] = useState(false);
   const cliente = useRef<ClienteRTC | null>(null);
+  const reconectar = useRef<() => void>(() => {});
   const llamada = useRef<LlamadaRTC | null>(null);
   // Para premarcar "Contestó" / "No contestó" al colgar: desde donde se llamo,
   // desde cuando suena el telefono DEL CLIENTE (no desde que se marco) y si
@@ -150,127 +159,107 @@ export default function TelnyxPhone() {
     return onVendedoraChange(setVendedora);
   }, []);
 
-  // Conexion: token → cliente → listo. Se rehace si cambia la asesora.
+  // Exactly one connection lifecycle per advisor; old SDK clients cannot reconnect themselves.
   useEffect(() => {
     if (!vendedoraId) return;
-    let cancelado = false;
-    let reconexiones = 0;
-    let reintentosToken = 0;
-    let timer: number | undefined;
-
-    const pedirToken = async (forzar: boolean): Promise<string> => {
-      const guardado = forzar ? null : tokenGuardado(vendedoraId);
-      if (guardado) return guardado;
-      const res = await fetch("/api/telnyx/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vendedora_id: vendedoraId }),
-        signal: AbortSignal.timeout(25_000),
-      });
-      const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
-      if (!res.ok || !data.token) throw new Error(data.error || "No se pudo conectar el teléfono");
-      guardarToken(vendedoraId, data.token);
-      return data.token;
-    };
-
-    const conectar = async (forzarToken = false) => {
-      let token: string;
-      try {
-        token = await pedirToken(forzarToken);
-        reintentosToken = 0;
-      } catch {
-        if (cancelado) return;
-        if (reintentosToken >= MAX_REINTENTOS_TOKEN) {
-          setError("No se pudo conectar el teléfono: recarga la página (F5).");
-          return;
-        }
-        reintentosToken += 1;
-        setError("Conectando el teléfono… reintentando.");
-        timer = window.setTimeout(() => void conectar(forzarToken), Math.min(3_000 * 2 ** (reintentosToken - 1), 60_000));
-        return;
-      }
-      try {
+    const connection = startPhoneConnection<ClienteRTC>({
+      token: async (forzar) => {
+        if (forzar) guardarToken(vendedoraId, null);
+        const guardado = forzar ? null : tokenGuardado(vendedoraId);
+        if (guardado) return guardado;
+        const res = await fetch("/api/telnyx/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            vendedora_id: vendedoraId,
+            forzar_token: forzar,
+          }),
+          signal: AbortSignal.timeout(25000),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          token?: string;
+          error?: string;
+        };
+        if (!res.ok || !data.token)
+          throw new Error("No se pudo conectar el teléfono");
+        guardarToken(vendedoraId, data.token);
+        return data.token;
+      },
+      create: async (token) => {
         const { TelnyxRTC } = await import("@telnyx/webrtc");
-        if (cancelado) return;
-        const c = new TelnyxRTC({ login_token: token }) as unknown as ClienteRTC;
+        // autoReconnect is supported by the installed IVertoOptions/runtime;
+        // IClientOptions in 2.27.10 omits it from the public constructor type.
+        const options = {
+          login_token: token,
+          autoReconnect: false,
+          skipLastVoiceSdkId: true,
+        };
+        const c = new TelnyxRTC(options) as unknown as ClienteRTC;
         c.remoteElement = AUDIO_ID;
-        let estuvoListo = false;
-        c.on("telnyx.ready", () => {
-          estuvoListo = true;
-          reconexiones = 0;
-          setListo(true);
-          setError(null);
-        });
-        c.on("telnyx.error", (e) => {
-          setListo(false);
-          // Puede ser el token guardado (vencido o revocado): el proximo
-          // intento pide uno nuevo.
-          guardarToken(vendedoraId, null);
-          setError(e instanceof Error ? e.message : "Error del teléfono");
-        });
-        // Se cayo la conexion (token vencido, red): de nuevo, espaciando cada
-        // intento. Si nunca llego a estar listo, el token no sirvio: uno nuevo.
-        c.on("telnyx.socket.close", () => {
-          setListo(false);
-          if (cancelado || reconexiones >= MAX_RECONEXIONES) return;
-          reconexiones += 1;
-          timer = window.setTimeout(() => void conectar(!estuvoListo), Math.min(2_000 * 2 ** reconexiones, 60_000));
-        });
-        c.on("telnyx.notification", (n) => {
-          const dato = n as { type?: string; call?: LlamadaRTC };
-          if (dato.type !== "callUpdate" || !dato.call) return;
-          // El primer aviso puede llegar antes de que newCall devuelva la
-          // llamada; otra llamada distinta de la nuestra no se muestra.
-          if (llamada.current && dato.call !== llamada.current) return;
-          if (!llamada.current && estadoVisible(dato.call.state) !== "marcando") return;
-          llamada.current = dato.call;
-          const visible = estadoVisible(dato.call.state);
-          if (!visible) return;
-          setEstado(visible);
-          if (visible === "timbrando" && timbreDesde.current === null) timbreDesde.current = Date.now();
-          if (visible === "en_llamada") {
-            contestada.current = true;
-            setDesde((d) => d ?? Date.now());
-          }
-          if (visible === "terminada") {
-            const segundosTimbre = timbreDesde.current
-              ? Math.round((Date.now() - timbreDesde.current) / 1000)
-              : 0;
-            avisarResultadoLlamada({
-              contexto: contexto.current,
-              segundosTimbre,
-              sugerencia: sugerenciaDeLlamada({
-                contestada: contestada.current,
-                segundosTimbre,
-                causa: dato.call.cause,
-              }),
-            });
-            llamada.current = null;
-            setSilenciado(false);
-            // El aviso queda unos segundos para que se lea, y se va.
-            window.setTimeout(() => {
-              if (!llamada.current) {
-                setEstado(null);
-                setDesde(null);
-              }
-            }, 4_000);
-          }
-        });
-        await cliente.current?.disconnect().catch(() => undefined);
+        return c;
+      },
+      client: (c) => {
+        // When a broken connection is retired, its final SDK notifications are
+        // ignored. Release the local call UI; provider webhooks keep the real CDR.
+        if (!c && cliente.current && llamada.current) {
+          llamada.current = null;
+          setEstado(null);
+          setDesde(null);
+          setSilenciado(false);
+        }
         cliente.current = c;
-        await c.connect();
-      } catch (err) {
-        if (!cancelado) setError(err instanceof Error ? err.message : "Teléfono no disponible");
-      }
+      },
+      ready: setListo,
+      error: setError,
+      notification: (n) => {
+        const dato = n as { type?: string; call?: LlamadaRTC };
+        if (dato.type !== "callUpdate" || !dato.call) return;
+        // El primer aviso puede llegar antes de que newCall devuelva la
+        // llamada; otra llamada distinta de la nuestra no se muestra.
+        if (llamada.current && dato.call !== llamada.current) return;
+        if (!llamada.current && estadoVisible(dato.call.state) !== "marcando")
+          return;
+        llamada.current = dato.call;
+        const visible = estadoVisible(dato.call.state);
+        if (!visible) return;
+        setEstado(visible);
+        if (visible === "timbrando" && timbreDesde.current === null)
+          timbreDesde.current = Date.now();
+        if (visible === "en_llamada") {
+          contestada.current = true;
+          setDesde((d) => d ?? Date.now());
+        }
+        if (visible === "terminada") {
+          const segundosTimbre = timbreDesde.current
+            ? Math.round((Date.now() - timbreDesde.current) / 1000)
+            : 0;
+          avisarResultadoLlamada({
+            contexto: contexto.current,
+            segundosTimbre,
+            sugerencia: sugerenciaDeLlamada({
+              contestada: contestada.current,
+              segundosTimbre,
+              causa: dato.call.cause,
+            }),
+          });
+          llamada.current = null;
+          setSilenciado(false);
+          // El aviso queda unos segundos para que se lea, y se va.
+          window.setTimeout(() => {
+            if (!llamada.current) {
+              setEstado(null);
+              setDesde(null);
+            }
+          }, 4_000);
+        }
+      },
+    });
+    reconectar.current = () => {
+      if (!llamada.current) connection.reconnect();
     };
-
-    void conectar();
     return () => {
-      cancelado = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-      void cliente.current?.disconnect().catch(() => undefined);
-      cliente.current = null;
-      setListo(false);
+      reconectar.current = () => {};
+      connection.stop();
     };
   }, [vendedoraId]);
 
@@ -280,11 +269,15 @@ export default function TelnyxPhone() {
       onMarcarTelnyx((pedido: LlamadaTelnyx) => {
         const c = cliente.current;
         if (!c || !listo) {
-          setError("El teléfono todavía se está conectando: espera unos segundos y vuelve a llamar.");
+          setError(
+            "El teléfono todavía se está conectando: espera unos segundos y vuelve a llamar.",
+          );
           return;
         }
         if (llamada.current) {
-          setError("Ya hay una llamada en curso: cuélgala antes de llamar a otro cliente.");
+          setError(
+            "Ya hay una llamada en curso: cuélgala antes de llamar a otro cliente.",
+          );
           return;
         }
         setError(null);
@@ -294,20 +287,33 @@ export default function TelnyxPhone() {
         contexto.current = pedido.contexto ?? {};
         timbreDesde.current = null;
         contestada.current = false;
-        llamada.current = c.newCall({
-          destinationNumber: pedido.destino,
-          callerNumber: pedido.callerNumber,
-          clientState: pedido.clientState,
-          audio: true,
-        });
+        try {
+          llamada.current = c.newCall({
+            destinationNumber: pedido.destino,
+            callerNumber: pedido.callerNumber,
+            clientState: pedido.clientState,
+            audio: true,
+          });
+        } catch (event) {
+          setEstado(null);
+          llamada.current = null;
+          setError(phoneError(event).message);
+        }
       }),
-    [listo]
+    [listo],
   );
 
   // Lo que consulta el boton "Llamar" antes de pedir una llamada.
   const enCurso = estado !== null && estado !== "terminada";
-  useEffect(() => publicarEstadoTelefono({ listo, enCurso }), [listo, enCurso]);
-  useEffect(() => () => publicarEstadoTelefono({ listo: false, enCurso: false }), []);
+  useEffect(
+    () =>
+      publicarEstadoTelefono({ listo, enCurso, motivo: error ?? undefined }),
+    [listo, enCurso, error],
+  );
+  useEffect(
+    () => () => publicarEstadoTelefono({ listo: false, enCurso: false }),
+    [],
+  );
 
   // Reloj de la llamada en curso.
   useEffect(() => {
@@ -342,12 +348,16 @@ export default function TelnyxPhone() {
           {estado === "marcando" || estado === "timbrando" ? (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           ) : (
-            <Phone className={`h-4 w-4 ${estado === "en_llamada" ? "text-emerald-400" : "text-muted-foreground"}`} />
+            <Phone
+              className={`h-4 w-4 ${estado === "en_llamada" ? "text-emerald-400" : "text-muted-foreground"}`}
+            />
           )}
           <div className="text-sm">
             <p className="font-medium">{ETIQUETA[estado]}</p>
             {estado === "en_llamada" && desde && (
-              <p className="text-xs tabular-nums text-muted-foreground">{duracion(Math.floor((ahora - desde) / 1000))}</p>
+              <p className="text-xs tabular-nums text-muted-foreground">
+                {duracion(Math.floor((ahora - desde) / 1000))}
+              </p>
             )}
           </div>
           {enCurso && (
@@ -357,11 +367,17 @@ export default function TelnyxPhone() {
                 onClick={alternarSilencio}
                 disabled={estado !== "en_llamada"}
                 aria-pressed={silenciado}
-                aria-label={silenciado ? "Activar micrófono" : "Silenciar micrófono"}
+                aria-label={
+                  silenciado ? "Activar micrófono" : "Silenciar micrófono"
+                }
                 title={silenciado ? "Activar micrófono" : "Silenciar micrófono"}
                 className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground hover:text-foreground disabled:opacity-40"
               >
-                {silenciado ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                {silenciado ? (
+                  <MicOff className="h-4 w-4" />
+                ) : (
+                  <Mic className="h-4 w-4" />
+                )}
               </button>
               <button
                 type="button"
@@ -379,9 +395,19 @@ export default function TelnyxPhone() {
 
       {error && !estado && (
         // Aviso discreto, como el de Zadarma: nunca tapa el tablero.
-        <p className="pointer-events-none fixed bottom-2 left-2 z-40 max-w-xs rounded-md bg-muted/90 px-2 py-1 text-[10px] text-muted-foreground">
-          Teléfono: {error}
-        </p>
+        <div
+          role="status"
+          className="fixed bottom-2 left-2 z-[70] max-w-xs rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground"
+        >
+          <p>Teléfono: {error}</p>
+          <button
+            type="button"
+            onClick={() => reconectar.current()}
+            className="mt-1 font-medium text-foreground underline underline-offset-2"
+          >
+            Reconectar teléfono
+          </button>
+        </div>
       )}
     </>
   );

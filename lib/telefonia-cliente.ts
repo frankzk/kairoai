@@ -104,6 +104,8 @@ export interface EstadoTelefono {
   listo: boolean;
   /** Hay una llamada marcando, timbrando o en curso. */
   enCurso: boolean;
+  /** Current connection error, for the call button to explain why dialing is blocked. */
+  motivo?: string;
 }
 
 let estadoTelefono: EstadoTelefono = { listo: false, enCurso: false };
@@ -130,7 +132,7 @@ export function onEstadoTelefono(callback: (estado: EstadoTelefono) => void): ()
 /** Por que no se puede llamar ahora con Telnyx, o null si se puede. */
 export function motivoParaNoLlamar(estado: EstadoTelefono): string | null {
   if (estado.enCurso) return "Ya hay una llamada en curso: cuélgala antes de llamar a otro cliente.";
-  if (!estado.listo) return "El teléfono todavía se está conectando: espera unos segundos y vuelve a llamar.";
+  if (!estado.listo) return estado.motivo || "El teléfono todavía se está conectando: espera unos segundos y vuelve a llamar.";
   return null;
 }
 
