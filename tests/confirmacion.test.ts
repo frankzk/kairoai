@@ -13,6 +13,7 @@ import {
   configDeTienda,
   diasDeGestion,
   estadoConfirmacion,
+  pedidoDeFila,
   fechaLocal,
   problemaFechaPactada,
   recordatorioPara,
@@ -137,6 +138,17 @@ describe("subetapa (la primera que aplica gana)", () => {
     expect(estado([intento("2026-10-14T09:00", "confirmado")])).toMatchObject({ subetapa: "confirmado", plazo: null });
     expect(estado([], { confirmadoIcomfly: true }).subetapa).toBe("confirmado");
     expect(estado([], { pagado: true, creadoAt: "2026-08-02T15:00:00Z" }).subetapa).toBe("confirmado");
+  });
+  it("con estado actual de iComfly aplica el criterio del KPI y no exige el nombre de la asesora", () => {
+    for (const icomfly_estado of ["Confirmada", "Enviada", "Pedido Pagado"]) {
+      const pedido = pedidoDeFila({ icomfly_estado, dispatch_confirmed_by: "" });
+      expect(estado([], pedido).subetapa, icomfly_estado).toBe("confirmado");
+    }
+    for (const icomfly_estado of ["Pendiente", "Comprar Después", "Modificar Dirección", "Cancelado", "Testeos"]) {
+      const pedido = pedidoDeFila({ icomfly_estado, dispatch_confirmed_by: "Asesora", shopify_financial_status: "paid" });
+      expect(estado([intento("2026-10-14T09:00", "confirmado")], pedido).subetapa, icomfly_estado).not.toBe("confirmado");
+    }
+    expect(estado([], pedidoDeFila({ dispatch_confirmed_by: "Asesora" })).subetapa).toBe("confirmado");
   });
 });
 

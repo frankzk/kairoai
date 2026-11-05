@@ -6,6 +6,7 @@
 
 import { normalizeMatchKey } from "./order-matching";
 import { moovinTransitPhase } from "./moovin-status";
+import { esEnviadaIcomfly } from "./icomfly-estado-venta";
 import type { MoovinTrackingRow, IcomflyOrderRecord } from "./finance-types";
 
 // ─── Configuracion (pendiente de confirmar con iComfly) ──────────────────────
@@ -155,8 +156,10 @@ export function detectGuideFinal(
   order: NormalizedIcomflyOrder,
   boxfulDispatched?: Set<string>
 ): GuideFinalSignal {
-  // iComfly primario: tracking / shipped / estado.
-  if (order.trackingNumber.trim() || order.shippedAt || statusImpliesFinalGuide(order.status)) {
+  // Enviada registra el envio a Boxful, no una guia ni la recoleccion fisica.
+  // En ese estado shippedAt tampoco acredita una guia final.
+  const sentToBoxful = esEnviadaIcomfly(order.status);
+  if (order.trackingNumber.trim() || (!sentToBoxful && (order.shippedAt || statusImpliesFinalGuide(order.status)))) {
     return { exists: true, at: order.shippedAt ?? null, source: "icomfly" };
   }
   // Boxful como respaldo: el pedido aparece con guia en la logistica importada.
@@ -185,6 +188,7 @@ export function computeDispatchState(
   guideFinal: GuideFinalSignal
 ): DispatchState {
   if (guideFinal.exists) return "despachado";
+  if (esEnviadaIcomfly(order.status)) return "despacho_solicitado";
   const requested = order.attribution[DISPATCH_REQUEST_FIELD];
   if (requested && (requested.name || requested.email || requested.userId != null)) {
     return "despacho_solicitado";
@@ -359,6 +363,16 @@ export function resolveDispatchState(
 
   const hasGuide = Boolean(guideNumber && String(guideNumber).trim());
   if (rec) {
+    // Repara tambien registros sincronizados antes de distinguir envio a
+    // Boxful de guia final. La evidencia fisica de Moovin tuvo prioridad arriba.
+    if (
+      !hasGuide &&
+      !rec.tracking_number?.trim() &&
+      rec.guide_final_source !== "boxful" &&
+      esEnviadaIcomfly(rec.status)
+    ) {
+      return "despacho_solicitado";
+    }
     return rec.dispatch_state === "despachado"
       ? "despachado"
       : rec.dispatch_state === "despacho_solicitado"
@@ -377,7 +391,12 @@ export function resolveDispatchState(
 export function mergeDispatchIntoTracking(
   baseStatus: string,
   dispatchState: DispatchView | null,
-  row: { shopify_cancelled_at?: string | null; shopify_financial_status?: string | null }
+  row: {
+    shopify_cancelled_at?: string | null;
+    shopify_financial_status?: string | null;
+    icomfly_estado?: string | null;
+    guide_number?: string | null;
+  }
 ): string {
   // Anulado manda (replica isShopifyCancelled sin arrastrar finance-orders, que
   // usa el alias @/ y rompe los tests).
@@ -385,6 +404,16 @@ export function mergeDispatchIntoTracking(
   // Solo aplica al limbo previo al movimiento real (no pisa entregado, no
   // entregado, incidencia, reintento ni anulado).
   if (baseStatus !== "pending" && baseStatus !== "en_route") return baseStatus;
+  // El dataset durable puede contener el dispatch_view anterior al despliegue.
+  // Corrige su lectura sin esperar a un sync ni degradar evidencia de transito.
+  if (
+    baseStatus === "pending" &&
+    !row.guide_number?.trim() &&
+    esEnviadaIcomfly(row.icomfly_estado) &&
+    (dispatchState == null || dispatchState === "pendiente" || dispatchState === "despachado")
+  ) {
+    return "despacho_solicitado";
+  }
   switch (dispatchState) {
     case "despacho_solicitado":
       return "despacho_solicitado";

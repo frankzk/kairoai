@@ -20,6 +20,7 @@
 // Puro (sin base ni reloj implicito): se prueba en tests/confirmacion.test.ts.
 
 import { getFinanceStore } from "./store-config";
+import { etapaVentaIcomfly } from "./icomfly-estado-venta";
 
 export type Subetapa =
   | "sin_llamar"
@@ -89,8 +90,10 @@ export function configDeTienda(storeCode: string, metadata?: unknown): ConfigCon
 
 export interface PedidoConfirmacion {
   creadoAt: string | null;
-  /** iComfly ya registro quien confirmo el pedido. */
+  /** Confirmacion de respaldo cuando no existe un estado actual de iComfly. */
   confirmadoIcomfly: boolean;
+  /** Estado actual: misma fuente que el indicador de confirmacion de Gestion. */
+  estadoIcomfly?: string | null;
   /** Shopify lo muestra pagado (p. ej. SINPE ya verificado). */
   pagado: boolean;
 }
@@ -210,8 +213,15 @@ export function estadoConfirmacion(
   const ultimoContactoAt = ultimaGestion?.created_at ?? null;
   const base = { diasGestion, ultimoContactoAt };
 
-  // 1) Confirmado: lo dijo una asesora, iComfly ya lo confirmo o Shopify lo cobro.
-  if (pedido.confirmadoIcomfly || pedido.pagado || contactos.some((e) => e.outcome === "confirmado")) {
+  // El estado actual de iComfly manda, igual que en el KPI: una atribucion o
+  // confirmacion antigua no convierte un pedido vuelto a gestion en confirmado.
+  // Sin estado externo se conserva la confirmacion local / pago de Shopify.
+  const etapaIcomfly = etapaVentaIcomfly(pedido.estadoIcomfly);
+  const confirmado =
+    etapaIcomfly != null
+      ? etapaIcomfly === "confirmado"
+      : pedido.confirmadoIcomfly || pedido.pagado || contactos.some((e) => e.outcome === "confirmado");
+  if (confirmado) {
     return { subetapa: "confirmado", plazo: null, vence: null, ...base };
   }
 
@@ -282,11 +292,13 @@ export function requiereFechaPactada(outcome: string): boolean {
 export function pedidoDeFila(row: {
   shopify_created_at?: string | null;
   dispatch_confirmed_by?: string | null;
+  icomfly_estado?: string | null;
   shopify_financial_status?: string | null;
 }): PedidoConfirmacion {
   return {
     creadoAt: row.shopify_created_at ?? null,
     confirmadoIcomfly: Boolean(row.dispatch_confirmed_by),
+    estadoIcomfly: row.icomfly_estado ?? null,
     pagado: row.shopify_financial_status === "paid",
   };
 }
