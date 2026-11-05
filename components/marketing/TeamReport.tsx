@@ -2,25 +2,67 @@
 import { useMemo, useState } from "react";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingSources } from "@/lib/marketing-source-types";
-import type { MarketingAttribution } from "@/lib/marketing-attribution";
 import type { MarketingSettings } from "@/lib/marketing-settings-types";
 import type { CharlieReport, UsdRate } from "@/lib/marketing-charlie-types";
 import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
+import type { MarketingControl } from "@/lib/marketing-real-orders";
+import type { Coverage } from "@/lib/marketing-coverage";
 import { buildMarketingIntelligence } from "@/lib/marketing-intelligence";
 import { marketingDate, periodQuery, shiftDate } from "@/lib/marketing-dates";
-import { asUsd } from "@/lib/marketing-usd-rate";
 import { productComparison, reportChannel } from "@/lib/marketing-team-report";
-import { useResource } from "./useMarketing";
-import { count, money, shortDate } from "./format";
+import { MARKETING_TARGETS } from "@/lib/marketing-targets";
+import {
+  buildRealEstimate,
+  channelOrders,
+  realCpa,
+} from "@/lib/marketing-real-cpa";
+import { buildDailyPace } from "@/lib/marketing-pace";
+import { accountLabel, buildCampaignActionRows } from "@/lib/marketing-actions";
+import { buildCostCapControl } from "@/lib/marketing-cost-cap";
+import { buildKeywordIndex } from "@/lib/marketing-campaign-keywords";
+import { highCpaAlerts, stockDaysRows } from "@/lib/marketing-report-alerts";
+import { decimalText } from "@/lib/marketing-copy";
+import {
+  useResource,
+  type MarketingChanges,
+  type MarketingInventoryStatus,
+} from "./useMarketing";
+import { count, money, percentage, shortDate } from "./format";
 import r from "./team-report.module.css";
 import { CampaignGroups } from "./TeamReportCampaigns";
 import { WeekdayChart, TrendChart, AdDiagnostics } from "./TeamReportCharts";
+import { DailyGoals } from "./DailyGoals";
+import { CampaignActions } from "./CampaignActions";
+import { CostCapControl } from "./CostCapControl";
+import { InventoryUpload, inventoryStatusText } from "./InventoryUpload";
+import { KeywordRules } from "./KeywordRules";
 
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
+type Resource<T> = { data: T | null; loading: boolean; error: string };
+const t = MARKETING_TARGETS;
 const usd = (value: number | null | undefined) =>
   value == null ? "Sin datos" : money(value, "USD");
 const number = (value: number | null | undefined) =>
   value == null ? "Sin datos" : count(value);
+const coverageChip = (coverage: Coverage) =>
+  coverage.tone === "red"
+    ? r.chipRed
+    : coverage.tone === "yellow"
+      ? r.chipYellow
+      : coverage.tone === "ok"
+        ? r.chipOk
+        : r.chipMuted;
+const scopeText = (p: {
+  scope?: "all" | "selected";
+  memberKeys?: string[];
+  sku: string;
+}) =>
+  p.scope
+    ? p.scope === "all"
+      ? "Producto completo · todas las variantes"
+      : `Selección · ${p.memberKeys?.length ?? 1} referencias`
+    : p.sku || "Sin SKU";
+
 export function TeamReport({
   data,
   sources,
@@ -30,23 +72,40 @@ export function TeamReport({
   loading,
   revision,
   recent,
+  control,
+  periodControl,
+  actions,
+  changes,
+  inventory,
+  logChange,
+  canUpload,
+  onInventorySaved,
   canEdit,
   saving,
   saved,
   save,
   onAssign,
 }: {
-  data: MarketingSummary & {
-    attribution?: MarketingAttribution | null;
-    attributionError?: string;
-  };
+  data: MarketingSummary;
   sources: MarketingSources | null;
   settings: MarketingSettings | null;
   fx: UsdRate | null;
   model: MarketingIntelligence;
   loading: boolean;
   revision: number;
-  recent: { data: MarketingSources | null; loading: boolean; error: string };
+  recent: Resource<MarketingSources>;
+  /** Real orders of today and the 13 previous days. */
+  control: Resource<MarketingControl>;
+  /** Real orders of the selected period. */
+  periodControl: Resource<MarketingControl>;
+  /** Sources with budgets, bids, lifetime and Meta activity (today−13..today). */
+  actions: Resource<MarketingSources>;
+  changes: Resource<MarketingChanges>;
+  inventory: Resource<MarketingInventoryStatus>;
+  logChange: (body: Record<string, unknown>) => Promise<string | null>;
+  /** Marketing editor (not read-only): may upload the inventory and log changes. */
+  canUpload: boolean;
+  onInventorySaved: () => void;
   canEdit: boolean;
   saving: string;
   saved: string;
@@ -55,7 +114,7 @@ export function TeamReport({
 }) {
   const [query, setQuery] = useState("");
   const [ascending, setAscending] = useState(false);
-  const [stockAscending, setStockAscending] = useState(true);
+  const [allStock, setAllStock] = useState(false);
   const [stockKey, setStockKey] = useState("");
   const [campaignsOpen, setCampaignsOpen] = useState(false);
   const [adsOpen, setAdsOpen] = useState(false);
@@ -103,9 +162,84 @@ export function TeamReport({
     () => buildMarketingIntelligence(data, recent.data, settings),
     [data, recent.data, settings],
   );
-  const origin = data.attribution;
-  const attributedOrders = (platform: "meta" | "tiktok") =>
-    origin ? origin.channelOrders[platform] : null;
+  const keywordIndex = useMemo(
+    () =>
+      buildKeywordIndex(data.productFamilies ?? [], settings?.keywords ?? []),
+    [data.productFamilies, settings?.keywords],
+  );
+  // Módulo 1: today's pace. The orders are as of the control request.
+  const pace = useMemo(
+    () =>
+      control.data
+        ? buildDailyPace({
+            control: control.data,
+            sources: recent.data,
+            fx,
+            now: new Date(control.data.generatedAt),
+          })
+        : null,
+    [control.data, recent.data, fx],
+  );
+  // Módulos 2 y 3: one row per campaign with the suggested action.
+  const actionResult = useMemo(
+    () =>
+      actions.data && !control.loading
+        ? buildCampaignActionRows({
+            summary: data,
+            sources: actions.data,
+            control: control.data,
+            settings,
+            manualChanges: changes.data?.changes ?? [],
+            fx,
+          })
+        : null,
+    [
+      actions.data,
+      control.loading,
+      control.data,
+      data,
+      settings,
+      changes.data,
+      fx,
+    ],
+  );
+  const costCap = useMemo(
+    () =>
+      actionResult
+        ? buildCostCapControl(
+            [...actionResult.meta, ...actionResult.tiktok],
+            t,
+            { fx },
+          )
+        : null,
+    [actionResult, fx],
+  );
+  // A6: real orders by channel for the period (UTM + assignment).
+  const channel = useMemo(() => {
+    if (!periodControl.data || !sources) return null;
+    const { estimates } = buildRealEstimate({
+      summary: data,
+      sources,
+      settings,
+      control: periodControl.data,
+      fx,
+    });
+    return channelOrders(
+      periodControl.data.days,
+      estimates,
+      data.period.from,
+      data.period.to,
+    );
+  }, [periodControl.data, data, sources, settings, fx]);
+  const metaAccounts = useMemo(
+    () =>
+      (actions.data?.meta.data?.accounts ?? []).map((a) => ({
+        accountId: a.accountId,
+        accountName: a.accountName || a.accountId,
+        auto: accountLabel("meta", a.accountId, a.accountName || "", []),
+      })),
+    [actions.data],
+  );
   const meta = reportChannel(sources, "meta", fx),
     tiktok = reportChannel(sources, "tiktok", fx);
   const tiktokThrough = sources?.tiktok.data?.accounts
@@ -126,19 +260,15 @@ export function TeamReport({
         sources[p].data?.accounts.every((a) => a.timezone === data.timezone),
     ),
   );
-  const cpa =
-    spend != null && data.totals.generated > 0
-      ? spend / data.totals.generated
-      : null;
+  const cpa = realCpa(spend, data.totals.generated, data.totals.annulled);
   const products = [
     ...(data.groupedProducts?.filter((p) => p.scope === "all") ??
       model.products),
   ].sort((a, b) => (ascending ? 1 : -1) * (a.orders - b.orders));
   const stock =
     model.products.find((p) => p.key === stockKey) ?? model.products[0];
-  const lowStock = [...model.products]
-    .filter((p) => p.available != null && p.available < 100)
-    .sort((a, b) => (stockAscending ? 1 : -1) * (a.available! - b.available!));
+  const stockRows = stockDaysRows(model.products, allStock);
+  const lowStock = stockDaysRows(model.products);
   const filtered = comparisons
     .filter((p) =>
       `${p.name} ${p.sku} ${"memberKeys" in p ? (p.memberKeys as string[]).join(" ") : ""}`
@@ -149,31 +279,59 @@ export function TeamReport({
   const pages = Math.max(1, Math.ceil(filtered.length / 5)),
     page = Math.min(comparisonPage, pages - 1),
     visible = filtered.slice(page * 5, page * 5 + 5);
-  const highCpa = campaignModel.campaigns.filter((c) => {
-    const value = asUsd(c.platformCpa, c.currency, fx);
-    return value != null && value > 8.5;
-  });
+  const cpaAlerts = highCpaAlerts(
+    comparisons,
+    actionResult ? [...actionResult.meta, ...actionResult.tiktok] : [],
+  );
+  // Revisar para escalar: CPA real (sin anulados) del período dentro de la
+  // meta, con pedidos reales suficientes y stock (A1: el CPA real decide).
   const scaling = model.products.filter((p) => {
-    const related = campaignModel.campaigns.filter(
-      (c) => c.mapping?.product_key === p.key && c.spend > 0,
-    );
+    const real = campaignModel.products.find((c) => c.key === p.key);
     return (
-      !model.ads.partial &&
+      !campaignModel.ads.partial &&
       settings != null &&
       campaignModel.unmapped.length === 0 &&
-      p.available != null &&
-      p.available >= 100 &&
-      related.length > 0 &&
-      related.every(
-        (c) =>
-          c.purchases != null &&
-          c.purchases >= 20 &&
-          (asUsd(c.platformCpa, c.currency, fx) ?? Infinity) <= 8.5,
-      )
+      p.coverage.days != null &&
+      p.coverage.days >= t.stockYellowDays &&
+      real != null &&
+      real.currency === "USD" &&
+      real.campaignCount > 0 &&
+      real.cpa != null &&
+      real.cpa > 0 &&
+      real.cpa <= t.cpaUsd &&
+      real.realOrders >= t.scaleMinRealOrders
     );
   });
+  const inventoryLine = inventoryStatusText(inventory);
+  const originsOk = periodControl.data?.origins === "ok";
+  const channelNote = (
+    c: NonNullable<typeof channel>["meta"],
+    platform: string,
+  ) =>
+    [
+      originsOk
+        ? `${count(c.utm)} con UTM + ${count(Math.round(c.assigned))} por asignación de producto`
+        : "Por asignación de producto · UTM no disponible",
+      c.missingDates.length
+        ? `${platform} sin datos de gasto del ${c.missingDates.map(shortDate).join(", ")}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  const channelValue = (value: number | undefined) =>
+    periodControl.loading || loading
+      ? "…"
+      : value == null
+        ? "Sin datos"
+        : count(Math.round(value));
   return (
     <div className={r.report}>
+      <DailyGoals
+        pace={pace}
+        loading={control.loading}
+        spendLoading={recent.loading}
+        error={control.error}
+      />
       <div className={r.reportHeading}>
         <div>
           <p className={r.kicker}>Reporte del equipo</p>
@@ -188,23 +346,21 @@ export function TeamReport({
         aria-label="Resultados principales del período"
       >
         <Metric
-          label="Total de ventas"
-          value={count(data.totals.generated)}
-          note="Pedidos creados · todas las fuentes"
+          label="Pedidos reales"
+          value={count(cpa.real)}
+          note={`${count(data.totals.generated)} creados · ${count(data.totals.annulled)} anulados`}
         />
         <Metric
-          label="CPA por pedido creado"
+          label="CPA real"
           value={
             loading
               ? "Consultando…"
-              : `${!aligned && cpa != null ? "≈ " : ""}${usd(cpa)}`
+              : `${!aligned && cpa.cpaReal != null ? "≈ " : ""}${usd(cpa.cpaReal)}`
           }
           note={
-            aligned
-              ? "Gasto total / pedidos creados"
-              : cpa != null
-                ? "Orientativo: calendarios de cuenta distintos"
-                : "Gasto completo y pedidos requeridos"
+            cpa.cpaReal == null
+              ? "Gasto completo y pedidos reales requeridos"
+              : `${aligned ? "Gasto / pedidos reales (sin anulados)" : "Orientativo: calendarios de cuenta distintos"} · con creados: ${usd(cpa.cpaCreated)}`
           }
         />
         <Metric
@@ -215,27 +371,27 @@ export function TeamReport({
       </section>
       <section className={r.channelMetrics} aria-label="Desglose por canal">
         <Metric
-          label="Pedidos Meta · UTM"
-          value={number(attributedOrders("meta"))}
-          note={`Origen registrado en Kairo · píxel Meta: ${number(meta.purchases)} compras`}
-        />
-        <Metric
-          label="Pedidos TikTok · UTM"
-          value={number(attributedOrders("tiktok"))}
-          note={`Origen registrado en Kairo · TikTok: ${number(tiktok.conversions)} conversiones`}
-        />
-        <Metric
-          label="Otros / sin atribuir"
-          value={
-            origin
-              ? number(
-                  origin.totalOrders -
-                    origin.channelOrders.meta -
-                    origin.channelOrders.tiktok,
-                )
-              : "Origen pendiente"
+          label="Pedidos Meta"
+          value={channelValue(channel?.meta.total)}
+          note={
+            channel
+              ? `${channelNote(channel.meta, "Meta")} · píxel: ${number(meta.purchases)} compras`
+              : periodControl.error || "Pedidos reales no disponibles."
           }
-          note="Incluye otros UTM y origen pendiente; no implica orgánico"
+        />
+        <Metric
+          label="Pedidos TikTok"
+          value={channelValue(channel?.tiktok.total)}
+          note={
+            channel
+              ? `${channelNote(channel.tiktok, "TikTok")} · TikTok: ${number(tiktok.conversions)} conversiones`
+              : periodControl.error || "Pedidos reales no disponibles."
+          }
+        />
+        <Metric
+          label="Otros / sin campaña"
+          value={channelValue(channel?.other)}
+          note="Productos sin campaña con gasto, otros orígenes u orgánicos. Sin UTM no implica orgánico."
         />
         <Metric
           label="Gasto · Meta Ads"
@@ -256,8 +412,8 @@ export function TeamReport({
         <p className={r.explanation}>
           Los pedidos usan hora de Costa Rica; TikTok reporta con el calendario
           de su cuenta. El CPA marcado con ≈ es orientativo: divide el gasto
-          consultado entre pedidos creados, con un desfase horario entre
-          fuentes. Las compras del píxel no se suman como pedidos de Kairo.
+          consultado entre pedidos reales, con un desfase horario entre fuentes.
+          Las compras del píxel no se suman como pedidos de Kairo.
         </p>
       )}
 
@@ -278,27 +434,60 @@ export function TeamReport({
           {data.familyDataError && <li role="alert">{data.familyDataError}</li>}
           <li>
             <strong>Origen:</strong>{" "}
-            {origin
-              ? `${origin.withUtm} de ${origin.totalOrders} pedidos con UTM; ${origin.linkedCampaign} con ID de campaña verificable. Sin origen no significa orgánico.`
-              : data.attributionError || "Cruce de origen no disponible."}
+            {channel
+              ? `${count(channel.withCampaign)} de ${count(channel.real)} pedidos reales con UTM de campaña (${percentage(channel.utmShare)}). El resto se reparte por producto asignado y gasto. Para mejorar: capturar los UTM en el formulario de iComfly.`
+              : periodControl.loading
+                ? "Consultando el origen de los pedidos…"
+                : periodControl.error || "Cruce de origen no disponible."}
           </li>
           <li>
             <strong>Inventario:</strong>{" "}
             {sources?.shiphero.status === "ready"
-              ? "ShipHero consultado; los SKU sin coincidencia única quedan pendientes."
-              : "ShipHero pendiente. Stock y sugerencias de reposición requieren esa conexión."}
+              ? `${sources.shiphero.message || "Inventario consultado."} `
+              : "ShipHero sin conectar. "}
+            {inventoryLine.text}
+            {inventoryLine.warning && (
+              <span className={r.warnText}> {inventoryLine.warning}</span>
+            )}{" "}
+            <a href="#inventario" className={r.inlineLink}>
+              Ir al inventario
+            </a>
           </li>
           <li>
-            <strong>CPA:</strong> ≈ indica horarios diferentes o cobertura
-            parcial. Un costo parcial puede aumentar al asignar las campañas
-            restantes.
+            <strong>CPA:</strong> CPA real = gasto / pedidos reales (sin
+            anulados). ≈ indica horarios diferentes o cobertura parcial. Un
+            costo parcial puede aumentar al asignar las campañas restantes.
           </li>
         </ul>
       </section>
+
+      <CampaignActions
+        result={actionResult}
+        loading={actions.loading || control.loading}
+        error={actions.error}
+        metaAccounts={metaAccounts}
+        labels={settings?.accountLabels ?? []}
+        labelsError={settings?.keywordsError ?? ""}
+        changes={{
+          pending: changes.data?.status === "pending_migration",
+          loading: changes.loading,
+          error: changes.error,
+        }}
+        canEdit={canUpload}
+        saving={saving}
+        save={save}
+        logChange={logChange}
+      />
+      <CostCapControl
+        control={costCap}
+        loading={actions.loading || control.loading}
+        error={actions.error}
+      />
+
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>01 / Productos</p>
+            <p className={r.kicker}>04 / Productos</p>
             <h2>Comparar para decidir</h2>
             <button className={r.assignLink} onClick={onAssign}>
               Asignar campañas para calcular el CPA
@@ -325,8 +514,8 @@ export function TeamReport({
           <div>
             <h3>CPA general por producto</h3>
             <p className={r.caption}>
-              Pauta de campañas asignadas / pedidos del producto. No atribuye
-              cada venta.
+              Pauta de campañas asignadas / pedidos reales del producto (sin
+              anulados). No atribuye cada venta.
             </p>
             <div
               className={r.tableWrap}
@@ -348,13 +537,7 @@ export function TeamReport({
                     <tr key={p.key}>
                       <th scope="row">
                         {p.name}
-                        <small>
-                          {"scope" in p
-                            ? p.scope === "all"
-                              ? "Producto completo · todas las variantes"
-                              : `Selección · ${p.memberKeys?.length ?? 1} referencias`
-                            : p.sku || "Sin SKU"}
-                        </small>
+                        <small>{scopeText(p)}</small>
                       </th>
                       {p.costs.map((cost, i) => (
                         <td
@@ -363,7 +546,7 @@ export function TeamReport({
                             !cost.partial &&
                             !cost.approximate &&
                             cost.value != null &&
-                            cost.value > 8.5
+                            cost.value > t.cpaUsd
                               ? r.risk
                               : undefined
                           }
@@ -371,17 +554,23 @@ export function TeamReport({
                           {recent.loading ? (
                             "…"
                           ) : cost.value == null ? (
-                            cost.reason
+                            <>
+                              {cost.reason}
+                              {cost.createdValue != null && (
+                                <small>Creados: {usd(cost.createdValue)}</small>
+                              )}
+                            </>
                           ) : (
                             <>
                               {cost.partial || cost.approximate ? "≈ " : ""}
                               {usd(cost.value)}
                               <small>
+                                Creados: {usd(cost.createdValue)} ·{" "}
                                 {cost.partial
-                                  ? `Parcial: ${cost.reason.toLocaleLowerCase("es")}`
+                                  ? `parcial: ${cost.reason.toLocaleLowerCase("es")}`
                                   : cost.approximate
-                                    ? "Orientativo: horarios distintos"
-                                    : "Pauta completa consultada"}
+                                    ? "orientativo: horarios distintos"
+                                    : "pauta completa consultada"}
                               </small>
                             </>
                           )}
@@ -399,11 +588,11 @@ export function TeamReport({
             </div>
           </div>
           <div>
-            <h3>Cantidad de pedidos por producto</h3>
+            <h3>Pedidos reales por producto</h3>
             <p className={r.caption}>
-              Las variantes del mismo producto se agrupan y cada pedido cuenta
-              una vez. Las selecciones específicas pueden solaparse; las filas
-              no se suman.
+              Sin anulados; debajo, los creados. Las variantes del mismo
+              producto se agrupan y cada pedido cuenta una vez. Las selecciones
+              específicas pueden solaparse; las filas no se suman.
             </p>
             <div
               className={r.tableWrap}
@@ -425,17 +614,20 @@ export function TeamReport({
                     <tr key={p.key}>
                       <th scope="row">
                         {p.name}
-                        <small>
-                          {"scope" in p
-                            ? p.scope === "all"
-                              ? "Producto completo · todas las variantes"
-                              : `Selección · ${p.memberKeys?.length ?? 1} referencias`
-                            : p.sku || "Sin SKU"}
-                        </small>
+                        <small>{scopeText(p)}</small>
                       </th>
-                      <td>{count(p.todayOrders)}</td>
-                      <td>{count(p.yesterdayOrders)}</td>
-                      <td>{count(p.sevenDayOrders)}</td>
+                      {(
+                        [
+                          [p.todayReal, p.todayOrders],
+                          [p.yesterdayReal, p.yesterdayOrders],
+                          [p.sevenDayReal, p.sevenDayOrders],
+                        ] as const
+                      ).map(([real, created], i) => (
+                        <td key={i}>
+                          {count(real)}
+                          <small>{count(created)} creados</small>
+                        </td>
+                      ))}
                     </tr>
                   ))}
                   {!visible.length && (
@@ -473,6 +665,7 @@ export function TeamReport({
         </div>
       </section>
       <section
+        id="inventario"
         className={`${r.section} ${r.inventoryGrid}`}
         aria-label="Ventas e inventario"
       >
@@ -495,11 +688,7 @@ export function TeamReport({
                     {p.name}
                   </span>
                   <small>
-                    {"scope" in p
-                      ? p.scope === "all"
-                        ? "Producto completo · todas las variantes"
-                        : `Selección · ${p.memberKeys?.length ?? 1} referencias`
-                      : p.sku || "Sin SKU"}
+                    {scopeText(p as Parameters<typeof scopeText>[0])}
                   </small>
                 </div>
                 <strong>{count(p.orders)}</strong>
@@ -526,47 +715,80 @@ export function TeamReport({
           </label>
           <strong className={r.stockNumber}>{number(stock?.available)}</strong>
           <p>unidades disponibles · stock actual</p>
+          {stock && (
+            <p>
+              Cobertura:{" "}
+              <span className={`${r.chip} ${coverageChip(stock.coverage)}`}>
+                {stock.coverage.label}
+              </span>
+            </p>
+          )}
           <p className={r.caption}>
-            {stock?.available == null
-              ? "ShipHero pendiente o SKU sin coincidencia única."
-              : stock.coverageDays != null
-                ? `Cobertura estimada: ${stock.coverageDays.toFixed(1)} días con la demanda reciente.`
-                : "Sin demanda reciente para estimar cobertura."}
+            {!stock || stock.coverage.available == null
+              ? stock?.coverage.label === "SKU sin coincidencia única"
+                ? "SKU sin coincidencia única en el inventario."
+                : "Sube el product_table para ver los días de stock."
+              : `Vende ${decimalText(stock.coverage.dailyUnits)} por día (últimos 7 días, sin anulados).`}
           </p>
+          <InventoryUpload
+            status={inventory}
+            catalog={data.catalog}
+            canEdit={canUpload}
+            onSaved={onInventorySaved}
+          />
         </div>
         <div>
-          <h3>Falta de stock</h3>
-          <p className={r.caption}>Menos de 100 unidades disponibles.</p>
+          <div className={r.sectionHead}>
+            <h3>Stock en días</h3>
+            <button
+              onClick={() => setAllStock(!allStock)}
+              aria-pressed={allStock}
+            >
+              {allStock ? "Solo rojo y amarillo" : "Ver todos"}
+            </button>
+          </div>
+          <p className={r.caption}>
+            Disponible ÷ unidades vendidas por día (últimos 7 días, sin
+            anulados). Rojo: menos de {t.stockRedDays} días. Amarillo: menos de{" "}
+            {t.stockYellowDays}.
+          </p>
           <div
             className={r.tableWrap}
             tabIndex={0}
             role="region"
-            aria-label="Productos con stock bajo"
+            aria-label="Stock en días de cobertura"
           >
             <table>
               <thead>
                 <tr>
                   <th>Producto</th>
-                  <th>
-                    <button onClick={() => setStockAscending(!stockAscending)}>
-                      Unidades {stockAscending ? "↑" : "↓"}
-                    </button>
-                  </th>
+                  <th>Disponible</th>
+                  <th>Venta diaria</th>
+                  <th>Días</th>
                 </tr>
               </thead>
               <tbody>
-                {lowStock.map((p) => (
+                {stockRows.map((p) => (
                   <tr key={p.key}>
-                    <th scope="row">{p.name}</th>
-                    <td className={r.risk}>{count(p.available!)}</td>
+                    <th scope="row">
+                      {p.name}
+                      <small>{p.sku || "Sin SKU"}</small>
+                    </th>
+                    <td>{number(p.coverage.available)}</td>
+                    <td>{decimalText(p.coverage.dailyUnits)}</td>
+                    <td>
+                      <span className={`${r.chip} ${coverageChip(p.coverage)}`}>
+                        {p.coverage.label}
+                      </span>
+                    </td>
                   </tr>
                 ))}
-                {!lowStock.length && (
+                {!stockRows.length && (
                   <tr>
-                    <td colSpan={2}>
+                    <td colSpan={4}>
                       {sources?.shiphero.status !== "ready"
-                        ? "Inventario pendiente de conexión."
-                        : "Sin alertas entre los SKU identificados."}
+                        ? "Sube el product_table para ver los días de stock."
+                        : `Sin productos con menos de ${t.stockYellowDays} días de stock.`}
                     </td>
                   </tr>
                 )}
@@ -579,7 +801,7 @@ export function TeamReport({
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>02 / Pauta</p>
+            <p className={r.kicker}>05 / Pauta</p>
             <h2>Campañas, presupuesto y producto</h2>
             <p>
               Las cinco cuentas de Meta y TikTok. Presupuesto diario vigente,
@@ -596,10 +818,18 @@ export function TeamReport({
         >
           <summary>
             Ver cuentas y asignar productos{" "}
-            <span>CPA · presupuesto diario · gasto</span>
+            <span>CPA · presupuesto diario · gasto · palabras clave</span>
           </summary>
           {campaignsOpen && (
             <>
+              <KeywordRules
+                rules={settings?.keywords ?? []}
+                families={data.productFamilies ?? []}
+                error={settings?.keywordsError ?? ""}
+                canEdit={canEdit}
+                saving={saving}
+                save={save}
+              />
               <p className={r.caption}>
                 {budgets.loading
                   ? "Consultando presupuestos actuales; puedes revisar el gasto mientras se completa."
@@ -607,7 +837,7 @@ export function TeamReport({
                     (budgets.data?.meta.status === "error"
                       ? "No se pudieron cargar los presupuestos de Meta; se conserva el gasto consultado. "
                       : "") +
-                      "CPA de campaña = gasto / compras reportadas por la plataforma. No equivale al CPA por pedido creado."}
+                      "CPA de campaña = gasto / compras reportadas por la plataforma (píxel). No equivale al CPA real."}
               </p>
               <CampaignGroups
                 sources={campaignSources}
@@ -620,6 +850,8 @@ export function TeamReport({
                 saving={saving}
                 saved={saved}
                 save={save}
+                keywords={keywordIndex}
+                labels={settings?.accountLabels ?? []}
               />
               {!campaignModel.campaigns.length && (
                 <p>Sin campañas consultables para este período.</p>
@@ -631,7 +863,7 @@ export function TeamReport({
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>03 / Tendencias</p>
+            <p className={r.kicker}>06 / Tendencias</p>
             <h2>Cómo se mueve la demanda</h2>
             <p>
               Pedidos creados en el período seleccionado · hora de Costa Rica.
@@ -646,9 +878,13 @@ export function TeamReport({
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>04 / Atención</p>
+            <p className={r.kicker}>07 / Atención</p>
             <h2>Oportunidades y riesgos</h2>
-            <p>CPA objetivo: US$8.50 · Stock mínimo: 100 unidades.</p>
+            <p>
+              CPA objetivo: {usd(t.cpaUsd)} con pedidos reales · Stock: rojo con
+              menos de {t.stockRedDays} días, amarillo con menos de{" "}
+              {t.stockYellowDays}.
+            </p>
           </div>
         </div>
         <div className={r.alertGrid}>
@@ -657,33 +893,35 @@ export function TeamReport({
             {scaling.length ? (
               scaling.slice(0, 5).map((p) => (
                 <p key={p.key} className={r.alert}>
-                  <strong>{p.name}</strong>Stock ≥100; campañas con ≥20 compras
-                  reportadas y CPA ≤US$8.50. Validar margen y atribución antes
-                  de subir presupuesto.
+                  <strong>{p.name}</strong>Stock para {t.stockYellowDays} días o
+                  más; {t.scaleMinRealOrders} o más pedidos reales y CPA real ≤{" "}
+                  {usd(t.cpaUsd)} en el período. Confirma en la tabla de
+                  acciones antes de subir presupuesto.
                 </p>
               ))
             ) : (
               <p className={r.alert}>
-                Sin oportunidades verificables todavía. Se necesitan compras
-                suficientes, campañas asignadas y stock confirmado.
+                Sin oportunidades verificables todavía. Se necesitan pedidos
+                reales suficientes, campañas asignadas y stock confirmado.
               </p>
             )}
           </div>
           <div>
             <h3>CPA por encima del objetivo</h3>
-            {highCpa.length ? (
-              highCpa.slice(0, 5).map((c) => (
-                <p key={c.key} className={`${r.alert} ${r.alertRisk}`}>
-                  <strong>{c.name}</strong>
-                  {usd(asUsd(c.platformCpa, c.currency, fx))} por compra
-                  reportada · {c.accountName}
+            {[...cpaAlerts.products, ...cpaAlerts.campaigns]
+              .slice(0, 8)
+              .map((alert) => (
+                <p key={alert.key} className={`${r.alert} ${r.alertRisk}`}>
+                  <strong>{alert.title}</strong>
+                  {alert.detail}
+                  {alert.pixel && <small> · {alert.pixel}</small>}
                 </p>
-              ))
-            ) : (
+              ))}
+            {!cpaAlerts.products.length && !cpaAlerts.campaigns.length && (
               <p className={r.alert}>
-                {loading
-                  ? "Consultando campañas…"
-                  : "Sin alertas en las campañas con CPA consultable."}
+                {recent.loading || actions.loading || control.loading
+                  ? "Consultando pedidos reales y campañas…"
+                  : `Sin productos ni campañas sobre ${usd(t.cpaUsd)} con pedidos reales.`}
               </p>
             )}
           </div>
@@ -706,7 +944,8 @@ export function TeamReport({
             </p>
             {lowStock.length > 0 && (
               <p className={r.risk}>
-                {lowStock.length} productos por debajo del mínimo.
+                {lowStock.length} productos con menos de {t.stockYellowDays}{" "}
+                días de stock.
               </p>
             )}
           </div>
@@ -729,10 +968,11 @@ export function TeamReport({
         </details>
       </section>
       <p className={r.explanation}>
-        Las ventas son pedidos creados e incluyen anulados. El stock y los
-        presupuestos son actuales. Los importes CRC y PEN se reexpresan en USD
-        con la referencia indicada arriba; no representan cobros ni utilidad
-        final.
+        Los pedidos reales excluyen los anulados en iComfly al momento de
+        consultar; un pedido anulado más tarde cambia el CPA de días anteriores.
+        El stock y los presupuestos son actuales. Los importes CRC y PEN se
+        reexpresan en USD con la referencia indicada arriba; no representan
+        cobros ni utilidad final.
       </p>
     </div>
   );

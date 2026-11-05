@@ -10,6 +10,12 @@ import type { MarketingSources } from "@/lib/marketing-source-types";
 import type { UsdRate } from "@/lib/marketing-charlie-types";
 import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
 import { asUsd } from "@/lib/marketing-usd-rate";
+import {
+  keywordCampaignMatch,
+  type KeywordIndex,
+} from "@/lib/marketing-campaign-keywords";
+import { accountLabel } from "@/lib/marketing-actions";
+import type { AccountLabel } from "@/lib/marketing-settings-types";
 import { money } from "./format";
 import r from "./team-report.module.css";
 import s from "./dashboard.module.css";
@@ -27,6 +33,8 @@ export function CampaignGroups({
   saving,
   saved,
   save,
+  keywords,
+  labels = [],
 }: {
   sources: MarketingSources | null;
   model: MarketingIntelligence;
@@ -38,14 +46,21 @@ export function CampaignGroups({
   saving: string;
   saved: string;
   save: Save;
+  /** Keyword index, to explain campaigns that match several products. */
+  keywords?: KeywordIndex;
+  labels?: AccountLabel[];
 }) {
   const groups = (["meta", "tiktok"] as const).flatMap(
     (platform) =>
-      sources?.[platform].data?.accounts.map((a) => ({
-        name: a.accountName || a.accountId,
-        platform,
-        id: a.accountId,
-      })) ?? [],
+      sources?.[platform].data?.accounts.map((a) => {
+        const name = a.accountName || a.accountId;
+        const short = accountLabel(platform, a.accountId, name, labels);
+        return {
+          name: short === name ? name : `${short} · ${name}`,
+          platform,
+          id: a.accountId,
+        };
+      }) ?? [],
   );
   return (
     <>
@@ -64,6 +79,7 @@ export function CampaignGroups({
           saving={saving}
           saved={saved}
           save={save}
+          keywords={keywords}
         />
       ))}
     </>
@@ -80,6 +96,7 @@ function AccountTable({
   saving,
   saved,
   save,
+  keywords,
 }: {
   title: string;
   rows: MarketingIntelligence["campaigns"];
@@ -91,6 +108,7 @@ function AccountTable({
   saving: string;
   saved: string;
   save: Save;
+  keywords?: KeywordIndex;
 }) {
   const [sort, setSort] = useState<
       "name" | "platformCpa" | "dailyBudget" | "spend"
@@ -205,6 +223,7 @@ function AccountTable({
                     saving={saving}
                     saved={saved}
                     save={save}
+                    keywords={keywords}
                   />
                 </td>
               </tr>
@@ -247,6 +266,7 @@ export function CampaignAssignment({
   saving,
   saved,
   save,
+  keywords,
 }: {
   campaign: MarketingIntelligence["campaigns"][number];
   catalog: MarketingSummary["catalog"];
@@ -255,6 +275,7 @@ export function CampaignAssignment({
   saving: string;
   saved: string;
   save: Save;
+  keywords?: KeywordIndex;
 }) {
   const currentFamily = families.find(
     (f) =>
@@ -276,7 +297,11 @@ export function CampaignAssignment({
     [failed, setFailed] = useState(false);
   const alias = campaignAlias(c.name);
   const family = families.find((f) => f.key === familyKey),
-    suggestion = matchCampaignProduct(c.name, families);
+    suggestion = matchCampaignProduct(c.name, families),
+    keyword =
+      !c.mapping && keywords
+        ? keywordCampaignMatch(c.name, families, keywords)
+        : null;
   const changed =
     familyKey !== (currentFamily?.key ?? "") ||
     learn !== Boolean(c.mapping?.campaign_alias) ||
@@ -345,7 +370,13 @@ export function CampaignAssignment({
           )}
           {c.mapping?.automatic && (
             <small className={s.good}>
-              Automática: {c.mapping.match_reason}
+              Automático · {c.mapping.match_reason}
+            </small>
+          )}
+          {keyword?.kind === "ambiguous" && (
+            <small className={s.warn}>
+              Coincide con varios productos:{" "}
+              {keyword.candidates.map((f) => f.name).join(", ")}. Elige uno.
             </small>
           )}
           {c.mapping?.campaign_alias && !c.mapping.automatic && (
@@ -360,13 +391,16 @@ export function CampaignAssignment({
               producto y sus variantes.
             </small>
           )}
-          {!c.mapping && !c.aliasConflict && suggestion.kind !== "none" && (
-            <small>
-              {suggestion.kind === "ambiguous"
-                ? "Coincidencia ambigua: revisa el producto"
-                : "Sugerencias disponibles, requieren revisión"}
-            </small>
-          )}
+          {!c.mapping &&
+            !c.aliasConflict &&
+            keyword?.kind !== "ambiguous" &&
+            suggestion.kind !== "none" && (
+              <small>
+                {suggestion.kind === "ambiguous"
+                  ? "Coincidencia ambigua: revisa el producto"
+                  : "Sugerencias disponibles, requieren revisión"}
+              </small>
+            )}
           {ready && (
             <div className="flex flex-wrap gap-2 mt-2">
               <button
@@ -419,7 +453,8 @@ export function CampaignAssignment({
             {matches.map((f) => (
               <option key={f.key} value={f.key}>
                 {f.name} · {f.members.length} referencias
-                {suggestion.candidates.some((x) => x.key === f.key)
+                {suggestion.candidates.some((x) => x.key === f.key) ||
+                keyword?.candidates.some((x) => x.key === f.key)
                   ? " · coincidencia sugerida"
                   : ""}
               </option>

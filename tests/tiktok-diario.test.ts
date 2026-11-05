@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { cuentasTiktok, leerFilaTiktok, secretoValido, type FilaTiktok } from "../lib/tiktok-diario";
+import { conAcumulado, cuentasTiktok, leerFilaTiktok, secretoValido, type FilaTiktok } from "../lib/tiktok-diario";
 import { getMarketingSources } from "../lib/marketing-sources";
 
 const guardado = new Map<string, Record<string, unknown>>();
@@ -141,5 +141,21 @@ describe("Marketing con el gasto de Make", () => {
       tiktokDesdeMake: async () => [],
     });
     expect(vacio.tiktok).toMatchObject({ status: "pending", data: null });
+  });
+});
+
+describe("acumulado de TikTok desde el lanzamiento", () => {
+  it("agrega gasto, conversiones y primer dia con gasto por campaña de la misma cuenta", () => {
+    const cuentas = cuentasTiktok([
+      { store_id: 1, advertiser_id: "9", advertiser_name: "TikTok", campaign_id: "5", campaign_name: "CBO HER LOSS", fecha: "2026-11-03", spend: 40, clicks: 1, impressions: 1, conversions: 1, currency: "PEN", timezone: "" },
+      { store_id: 1, advertiser_id: "9", advertiser_name: "TikTok", campaign_id: "6", campaign_name: "Otra", fecha: "2026-11-03", spend: 10, clicks: 1, impressions: 1, conversions: null, currency: "PEN", timezone: "" },
+    ]);
+    const conLifetime = conAcumulado(cuentas, [
+      { advertiser_id: "9", campaign_id: "5", first_date: "2026-10-30", spend: "180.456", conversions: "4" },
+      { advertiser_id: "8", campaign_id: "6", first_date: "2026-10-01", spend: 999, conversions: 9 },
+    ]);
+    expect(conLifetime[0].campaigns.find((c) => c.id === "5")?.lifetime).toEqual({ spend: 180.46, purchases: 4, firstDate: "2026-10-30" });
+    // Otra cuenta con el mismo id de campaña no se mezcla.
+    expect(conLifetime[0].campaigns.find((c) => c.id === "6")?.lifetime).toBeUndefined();
   });
 });

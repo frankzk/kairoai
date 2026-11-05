@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { getMarketingSources, metaAccountIds } from "../lib/marketing-sources";
+import { getMarketingSources, hourOfBreakdown, metaAccountIds } from "../lib/marketing-sources";
 
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const metaEnv = { META_CR_AD_ACCOUNT_ID: "act_123", META_CR_GRAPH_VERSION: "v24.0", META_CR_ACCESS_TOKEN: "private-meta-token" };
@@ -118,5 +118,112 @@ describe("marketing source readers", () => {
     const result = await getMarketingSources("2026-10", { ...metaEnv, META_CR_AD_ACCOUNT_IDS: "123,456" }, fetcher);
     expect(result.meta).toMatchObject({ status: "error", data: null });
     expect(JSON.stringify(result)).not.toContain("private-meta-token");
+  });
+
+  describe("actions and hourly scopes", () => {
+    const now = new Date("2026-11-05T20:35:00Z");
+    const period = { from: "2026-10-23", to: "2026-11-05" };
+    function router(options: { timezone?: string; fail?: string[] } = {}) {
+      return vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        const path = url.pathname;
+        if (options.fail?.some((part) => path.endsWith(part) || url.searchParams.get("date_preset") === part || url.searchParams.get("breakdowns")?.startsWith(part)))
+          return response({ error: { message: "private-meta-token" } }, 400);
+        if (path.endsWith("/act_123"))
+          return response({ id: "act_123", name: "Arqui Nexo DC003 CR4", currency: "USD", timezone_name: options.timezone ?? "America/Costa_Rica" });
+        if (path.endsWith("/campaigns"))
+          return response({ data: [{ id: "1001", name: "COST CAP_SELERB NAD", effective_status: "ACTIVE", bid_strategy: "COST_CAP", created_time: "2026-10-20T10:00:00-0600", start_time: "2026-10-21T00:00:00-0600", updated_time: "2026-11-03T09:00:00-0600" }] });
+        if (path.endsWith("/adsets"))
+          return response({ data: [{ id: "2001", campaign_id: "1001", effective_status: "ACTIVE", daily_budget: "5000", bid_amount: "850", updated_time: "2026-11-04T16:26:00-0600" }] });
+        if (path.endsWith("/activities"))
+          return response({ data: [{ event_type: "update_ad_set_budget", event_time: "2026-11-04T22:26:00+0000", actor_id: "9", object_type: "CAMPAIGN", object_id: "2001" }] });
+        if (path.endsWith("/insights")) {
+          if (url.searchParams.get("date_preset") === "maximum")
+            return response({ data: [{ campaign_id: "1001", spend: "320.5", actions: [{ action_type: "omni_purchase", value: "30" }, { action_type: "purchase", value: "30" }] }] });
+          if (url.searchParams.get("breakdowns"))
+            return response({ data: [
+              { date_start: "2026-11-05", spend: "12.5", hourly_stats_aggregated_by_advertiser_time_zone: "14:00:00 - 14:59:59" },
+              { date_start: "2026-11-05", spend: "2.5", hourly_stats_aggregated_by_advertiser_time_zone: "00:00:00 - 00:59:59" },
+              { date_start: "2026-11-04", spend: "7", hourly_stats_aggregated_by_advertiser_time_zone: "14:00:00 - 14:59:59" },
+            ] });
+          return response({ data: [{ campaign_id: "1001", campaign_name: "COST CAP_SELERB NAD", date_start: "2026-11-04", spend: "40", impressions: "1000", clicks: "20", actions: [{ action_type: "omni_purchase", value: "4" }] }] });
+        }
+        return response({}, 404);
+      });
+    }
+
+    it("parses the hourly breakdown label", () => {
+      expect(hourOfBreakdown("14:00:00 - 14:59:59")).toBe(14);
+      expect(hourOfBreakdown("00:00:00 - 00:59:59")).toBe(0);
+      expect(hourOfBreakdown("24:00:00 - 24:59:59")).toBeNull();
+      expect(hourOfBreakdown("")).toBeNull();
+    });
+
+    it("requests bids, lifetime and activities for scope=actions", async () => {
+      const fetcher = router();
+      const result = await getMarketingSources(period, metaEnv, fetcher, { actions: true, now });
+      expect(result.meta.status).toBe("ready");
+      const urls = fetcher.mock.calls.map(([url]) => new URL(String(url)));
+      expect(urls.find((u) => u.pathname.endsWith("/adsets"))?.searchParams.get("fields")).toContain("bid_amount");
+      expect(urls.find((u) => u.pathname.endsWith("/campaigns"))?.searchParams.get("fields")).toContain("bid_strategy");
+      expect(urls.some((u) => u.searchParams.get("date_preset") === "maximum")).toBe(true);
+      expect(urls.some((u) => u.pathname.endsWith("/activities"))).toBe(true);
+      expect(urls.some((u) => u.searchParams.get("breakdowns"))).toBe(false);
+      const account = result.meta.data!.accounts[0];
+      expect(account.campaigns[0]).toMatchObject({
+        id: "1001",
+        bidStrategy: "COST_CAP",
+        bidAmount: 8.5,
+        bidAmountMixed: false,
+        dailyBudget: 50,
+        startTime: "2026-10-21T06:00:00.000Z",
+        updatedTime: "2026-11-04T22:26:00.000Z",
+        lifetime: { spend: 320.5, purchases: 30, firstDate: "2026-10-21" },
+        daily: [{ date: "2026-11-04", spend: 40, purchases: 4 }],
+      });
+      expect(account.changesStatus).toBe("activity");
+      expect(account.changes).toMatchObject([{ campaignId: "1001", kind: "presupuesto", source: "meta" }]);
+      expect(JSON.stringify(result)).not.toContain("private-meta-token");
+    });
+
+    it("keeps the account ready when lifetime or activities fail, falling back to updated_time", async () => {
+      const result = await getMarketingSources(period, metaEnv, router({ fail: ["maximum", "/activities"] }), { actions: true, now });
+      expect(result.meta.status).toBe("ready");
+      const account = result.meta.data!.accounts[0];
+      expect(account.lifetimeMessage).toBeTruthy();
+      expect(account.campaigns[0].lifetime).toBeUndefined();
+      expect(account.changesStatus).toBe("updated_time");
+      expect(account.changes).toEqual([
+        expect.objectContaining({ campaignId: "1001", source: "meta_edicion", kind: "otro", at: "2026-11-04T22:26:00.000Z" }),
+      ]);
+      const none = await getMarketingSources(period, metaEnv, router({ fail: ["/activities", "/campaigns"] }), { actions: true, now });
+      expect(none.meta.data!.accounts[0]).toMatchObject({ changesStatus: "unavailable", changes: [] });
+      // Activities without the catalog lose ad set events: the log is incomplete.
+      const noCatalog = await getMarketingSources(period, metaEnv, router({ fail: ["/campaigns"] }), { actions: true, now });
+      expect(noCatalog.meta.data!.accounts[0].changesStatus).toBe("unavailable");
+    });
+
+    it("adds hourly spend for the last 8 CR days only on Costa Rica accounts", async () => {
+      const fetcher = router();
+      const result = await getMarketingSources(period, metaEnv, fetcher, { daily: true, hourly: true, now });
+      const hourlyUrl = fetcher.mock.calls.map(([url]) => new URL(String(url))).find((u) => u.searchParams.get("breakdowns"));
+      expect(hourlyUrl?.searchParams.get("level")).toBe("account");
+      expect(JSON.parse(hourlyUrl!.searchParams.get("time_range")!)).toEqual({ since: "2026-10-29", until: "2026-11-05" });
+      const hourly = result.meta.data!.accounts[0].hourly!;
+      expect(hourly.days.map((d) => d.date)).toEqual(["2026-11-04", "2026-11-05"]);
+      expect(hourly.days[1].hours[14]).toBe(12.5);
+      expect(hourly.days[1].hours[0]).toBe(2.5);
+      expect(hourly.days[1].hours).toHaveLength(24);
+
+      const other = router({ timezone: "America/Los_Angeles" });
+      const skipped = await getMarketingSources(period, metaEnv, other, { daily: true, hourly: true, now });
+      expect(other.mock.calls.some(([url]) => new URL(String(url)).searchParams.get("breakdowns"))).toBe(false);
+      expect(skipped.meta.data!.accounts[0]).toMatchObject({ hourlyMessage: expect.stringContaining("Costa Rica") });
+      expect(skipped.meta.data!.accounts[0].hourly).toBeUndefined();
+
+      const failed = await getMarketingSources(period, metaEnv, router({ fail: ["hourly"] }), { daily: true, hourly: true, now });
+      expect(failed.meta.status).toBe("ready");
+      expect(failed.meta.data!.accounts[0].hourlyMessage).toBeTruthy();
+    });
   });
 });

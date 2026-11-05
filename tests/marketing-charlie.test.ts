@@ -406,3 +406,58 @@ describe("official USD reference", () => {
     },
   );
 });
+
+describe("Sustracción con pedidos reales", () => {
+  const ads = [
+    ad("1", [day({ spend: 30, purchases: 1, purchaseValue: 20 })]),
+    ad("2", [day({ spend: 12, purchases: 0, purchaseValue: 0 })]),
+  ];
+  it("uses real orders when the estimator is given, instead of the pixel", () => {
+    const model = buildCharlieModel(
+      summary,
+      null,
+      sources(),
+      report(ads),
+      settings(),
+      "2026-10-28",
+      now,
+      (platform, account, campaign, adId) =>
+        platform === "meta" && account === "123" && campaign === "9"
+          ? { orders: adId === "1" ? 3 : 0, basis: "estimado" }
+          : null,
+    );
+    const first = model.ads.find((a) => a.id === "1")!;
+    const second = model.ads.find((a) => a.id === "2")!;
+    // Pixel CPA would be 30 (one purchase); 3 real orders give 10.
+    expect(first).toMatchObject({
+      platform: "meta",
+      dayRealOrders: 3,
+      dayRealCpa: 10,
+      dayRealBasis: "estimado",
+    });
+    expect(first.reasons[0].replace(/ /g, " ")).toBe(
+      "CPA real del día sobre USD 8,50",
+    );
+    expect(second.reasons).toContain("Gasto del día sin pedidos reales");
+    expect(first.reasons.join()).not.toContain("píxel");
+  });
+  it("labels pixel reasons without real data and keeps TikTok ads as TikTok", () => {
+    const tiktok = report(ads);
+    tiktok.data!.accounts[0].platform = "tiktok";
+    const model = buildCharlieModel(
+      summary,
+      null,
+      sources(),
+      tiktok,
+      settings(),
+      "2026-10-28",
+      now,
+    );
+    const first = model.ads.find((a) => a.id === "1")!;
+    expect(first).toMatchObject({ platform: "tiktok", dayRealOrders: null });
+    expect(first.reasons).toContain("CPA diario sobre el techo (píxel)");
+    expect(model.ads.find((a) => a.id === "2")!.reasons).toContain(
+      "Gasto diario sin compras reportadas (píxel)",
+    );
+  });
+});

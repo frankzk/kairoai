@@ -1,4 +1,5 @@
 "use client";
+import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import { useMemo, useState } from "react";
 import type { UsdRate } from "@/lib/marketing-charlie-types";
 import { asUsd } from "@/lib/marketing-usd-rate";
@@ -289,7 +290,7 @@ export function CampaignWorkspace({
                             : count(campaign.purchases)}
                         </td>
                         <td
-                          className={`${s.numeric} ${campaign.currency === "USD" && (campaign.platformCpa ?? 0) > 8.5 ? s.warn : ""}`}
+                          className={`${s.numeric} ${campaign.currency === "USD" && (campaign.platformCpa ?? 0) > MARKETING_TARGETS.cpaUsd ? s.warn : ""}`}
                         >
                           {money(campaign.platformCpa, campaign.currency)}
                         </td>

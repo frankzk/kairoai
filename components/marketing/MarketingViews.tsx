@@ -1,4 +1,6 @@
 "use client";
+import { MARKETING_TARGETS } from "@/lib/marketing-targets";
+import { moneyText } from "@/lib/marketing-copy";
 import { useState } from "react";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
@@ -190,7 +192,7 @@ export function Overview({
                 <tr>
                   <th>Producto</th>
                   <th className={s.numeric}>Pedidos</th>
-                  <th className={s.numeric}>Costo / pedido</th>
+                  <th className={s.numeric}>CPA real</th>
                   <th className={s.numeric}>Stock</th>
                 </tr>
               </thead>
@@ -205,12 +207,14 @@ export function Overview({
                     </td>
                     <td className={s.numeric}>{count(product.orders)}</td>
                     <td
-                      className={`${s.numeric} ${product.currency === "USD" && (product.cpa ?? 0) > 8.5 ? s.warn : ""}`}
+                      className={`${s.numeric} ${product.currency === "USD" && (product.cpa ?? 0) > MARKETING_TARGETS.cpaUsd ? s.warn : ""}`}
                     >
-                      {money(product.cpa, product.currency)}
+                      {product.cpa != null && !Number.isFinite(product.cpa)
+                        ? "Sin pedidos reales"
+                        : money(product.cpa, product.currency)}
                     </td>
                     <td
-                      className={`${s.numeric} ${product.available != null && product.available < 100 ? s.warn : ""}`}
+                      className={`${s.numeric} ${product.coverage.tone === "red" || product.coverage.tone === "yellow" ? s.warn : ""}`}
                     >
                       {product.available == null
                         ? "Sin datos"
@@ -377,10 +381,12 @@ export function Trends({
           <CampaignPriorityList model={model} />
           <h3 className={`${s.heading} mt-7`}>Límites para decidir</h3>
           <p className={`${s.muted} mt-3`}>
-            CPA máximo: USD 8.50. Stock mínimo: 100 unidades. Una tendencia
-            favorable es una señal para revisar, no una orden de aumentar
-            presupuesto. Los períodos que incluyen hoy están en curso y las
-            entregas siguen cambiando.
+            CPA máximo: {moneyText(MARKETING_TARGETS.cpaUsd)}. Stock: rojo con
+            menos de {MARKETING_TARGETS.stockRedDays} días de cobertura,
+            amarillo con menos de {MARKETING_TARGETS.stockYellowDays}. Una
+            tendencia favorable es una señal para revisar, no una orden de
+            aumentar presupuesto. Los períodos que incluyen hoy están en curso y
+            las entregas siguen cambiando.
           </p>
         </section>
       </div>

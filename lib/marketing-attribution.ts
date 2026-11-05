@@ -1,10 +1,5 @@
-import { readIcomflyAdOrigin, mergeAdOrigins } from "./icomfly-ad-origin";
-import {
-  resolveOriginCampaign,
-  type OriginCampaign,
-  type IcomflyAdOrigin,
-} from "./icomfly-ad-origin";
-import { nombrePedidoIcomfly } from "./icomfly-pedidos";
+import type { OriginCampaign, IcomflyAdOrigin } from "./icomfly-ad-origin";
+import { matchOriginsToOrders } from "./marketing-real-orders";
 import type { OrderProfitabilityRow } from "./finance-orders";
 import type { MarketingPeriod } from "./marketing-dates";
 
@@ -49,48 +44,7 @@ export function buildMarketingAttribution(
     const t = Date.parse(o.created_at || "");
     return t >= period.start && t < period.end && t <= now.getTime();
   });
-  const byName = new Map<string, Set<string>>(),
-    byGuide = new Map<string, Set<string>>();
-  const key = (s: unknown) =>
-    String(s ?? "")
-      .trim()
-      .replace(/^#/, "")
-      .toUpperCase();
-  const add = (map: Map<string, Set<string>>, ref: unknown, order: string) => {
-    const k = key(ref);
-    if (k) {
-      const values = map.get(k) ?? new Set<string>();
-      values.add(order);
-      map.set(k, values);
-    }
-  };
-  for (const o of cohort) {
-    add(byName, o.order_name, o.order_key);
-    add(byGuide, o.guide_number, o.order_key);
-  }
-  const candidates = new Map<
-    string,
-    Array<NonNullable<ReturnType<typeof readIcomflyAdOrigin>>>
-  >();
-  for (const row of rows) {
-    const parsed = row.resolvedOrigin ?? readIcomflyAdOrigin(row.ad_origin);
-    if (!parsed) continue;
-    const origin = resolveOriginCampaign(parsed, catalog);
-    const name =
-      row.shopify_display_number ||
-      nombrePedidoIcomfly(
-        row.order_number,
-        row.icomfly_order_id,
-        row.store_web_seq,
-      );
-    const direct = byName.get(key(name));
-    const matches = direct?.size
-      ? direct
-      : byGuide.get(key(row.tracking_number));
-    if (matches?.size !== 1) continue;
-    const orderKey = Array.from(matches)[0];
-    candidates.set(orderKey, [...(candidates.get(orderKey) ?? []), origin]);
-  }
+  const matched = matchOriginsToOrders(cohort, rows, catalog);
   const groups = new Map<string, AttributionGroup>();
   const channelOrders = { meta: 0, tiktok: 0, other: 0 };
   let withUtm = 0,
@@ -98,15 +52,13 @@ export function buildMarketingAttribution(
     conflicts = 0,
     ambiguous = 0;
   for (const order of cohort) {
-    const variants = candidates.get(order.order_key) ?? [];
-    if (!variants.length) continue;
+    const origin = matched.get(order.order_key);
+    if (!origin) continue;
     withUtm++;
-    const merged = mergeAdOrigins(variants);
-    if (merged.ambiguous) {
+    if (origin === "ambiguous") {
       ambiguous++;
       continue;
     }
-    const origin = merged.origin!;
     if (origin.conflicts.length) {
       conflicts++;
       continue;

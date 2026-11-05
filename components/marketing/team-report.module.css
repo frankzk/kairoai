@@ -661,3 +661,295 @@
   display: block;
   font-size: 10px;
 }
+
+/* Hoy · cómo voy (metas del día) */
+.goals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.goal {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--mk-border);
+  border-radius: 10px;
+  background: var(--mk-surface);
+}
+.goal > p {
+  font-size: 12px;
+}
+.goal > strong {
+  display: block;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+  margin: 6px 0 10px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.goal > small {
+  display: block;
+  font-size: 11px;
+  color: var(--mk-muted);
+  line-height: 1.5;
+  margin-top: 6px;
+}
+.meter {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--mk-soft);
+  border: 1px solid var(--mk-border);
+  overflow: hidden;
+}
+.meterFill {
+  height: 100%;
+  background: var(--mk-accent);
+  border-radius: 999px;
+}
+.meterRisk .meterFill {
+  background: var(--mk-bad);
+}
+.goalLines {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+  font-size: 12px;
+}
+.report .goalLines p {
+  color: var(--mk-text);
+}
+
+/* Chips con texto: el color nunca es la única señal */
+.chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--mk-border);
+  background: var(--mk-soft);
+  color: var(--mk-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.chipRed {
+  background: var(--mk-bad-soft);
+  color: var(--mk-bad);
+  border-color: var(--mk-bad);
+}
+.chipYellow {
+  background: var(--mk-warn-soft);
+  color: var(--mk-warn);
+  border-color: var(--mk-warn);
+}
+.chipOk {
+  background: var(--mk-accent-soft);
+  color: var(--mk-good);
+  border-color: var(--mk-good);
+}
+.chipMuted {
+  background: var(--mk-surface);
+  color: var(--mk-subtle);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* Tabla de acciones */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--mk-muted);
+  min-height: 36px;
+}
+.report .check input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--mk-accent);
+}
+.actionsTable {
+  min-width: 1040px;
+}
+.report .actionsTable tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--mk-surface);
+  min-width: 250px;
+  max-width: 320px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.report .actionsTable tbody tr:hover th {
+  background: var(--mk-hover);
+}
+.report .actionsTable thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+}
+.actionCell {
+  min-width: 240px;
+  max-width: 320px;
+  text-align: left;
+  white-space: normal;
+}
+.report td.actionCell {
+  text-align: left;
+  white-space: normal;
+}
+.actionCell p {
+  font-size: 11px;
+  margin-top: 4px;
+}
+.report .riskRow > * {
+  background: var(--mk-bad-soft);
+}
+.changeForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  text-align: left;
+  white-space: normal;
+}
+.report .changeForm input[type="text"] {
+  width: min(320px, 100%);
+}
+.banner {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--mk-border);
+  border-radius: 7px;
+  background: var(--mk-soft);
+  font-size: 12px;
+}
+.report .bannerRisk {
+  background: var(--mk-bad-soft);
+  border-color: var(--mk-bad);
+  color: var(--mk-bad);
+}
+.rules {
+  margin-top: 16px;
+  font-size: 11px;
+}
+.rules > summary {
+  cursor: pointer;
+  color: var(--mk-accent);
+}
+.rules table {
+  margin-top: 8px;
+}
+.report .rules td {
+  text-align: left;
+  white-space: normal;
+}
+
+/* Inventario (product_table) */
+.upload {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--mk-border);
+  font-size: 12px;
+}
+.report .upload input[type="file"] {
+  height: auto;
+  padding: 6px;
+  width: 100%;
+}
+.preview {
+  display: grid;
+  gap: 8px;
+}
+.preview table {
+  min-width: 420px;
+}
+.errors {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: var(--mk-bad);
+}
+.report .warnText {
+  color: var(--mk-warn);
+}
+
+/* Palabras clave */
+.keywords {
+  margin: 8px 0 20px;
+  padding: 14px;
+  border: 1px solid var(--mk-border);
+  border-radius: 7px;
+  background: var(--mk-soft);
+}
+.keywords ul {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  display: grid;
+  gap: 6px;
+}
+.keywords li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.keywords form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 1000px) {
+  .goals {
+    grid-template-columns: 1fr 1fr;
+  }
+  .goals > div:last-child {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 700px) {
+  .goals {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .report .actionsTable tbody th {
+    min-width: 170px;
+    max-width: 200px;
+  }
+  .filters > * {
+    width: 100%;
+  }
+  .keywords form > * {
+    width: 100%;
+  }
+}
+
+.inlineLink {
+  color: var(--mk-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.chips .chip {
+  white-space: normal;
+  text-align: left;
+}

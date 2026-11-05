@@ -1,5 +1,9 @@
 import type { CampaignProduct } from "./marketing-settings-types";
 import type { MarketingProduct } from "./marketing";
+import {
+  keywordCampaignMatch,
+  type KeywordIndex,
+} from "./marketing-campaign-keywords";
 
 export interface MarketingVariant {
   key: string;
@@ -215,6 +219,7 @@ export function effectiveAssignment(
   name: string,
   enabled: boolean,
   learned: CampaignProduct[] = [],
+  keywords?: KeywordIndex,
 ): CampaignProduct | null {
   if (stored) return stored.variant_scope === "none" ? null : stored;
   if (!enabled) return null;
@@ -231,7 +236,27 @@ export function effectiveAssignment(
       match_reason: `Alias aprendido: ${remembered.mapping.campaign_alias?.toLocaleUpperCase("es")}`,
     };
   const match = matchCampaignProduct(name, families);
-  if (match.kind !== "exact" || !match.family) return null;
+  if (match.kind === "ambiguous") return null;
+  if (match.kind !== "exact" || !match.family) {
+    // Last resort: team keywords and unique words of the catalog.
+    const word = keywords
+      ? keywordCampaignMatch(name, families, keywords)
+      : null;
+    if (word?.kind !== "exact" || !word.family) return null;
+    return {
+      platform,
+      account_id: account,
+      campaign_id: id,
+      product_key: word.family.key,
+      product_name: word.family.name,
+      sku: "",
+      family_key: word.family.key,
+      variant_scope: "all",
+      variant_keys: [],
+      automatic: true,
+      match_reason: `Palabra clave: ${word.keyword!.toLocaleUpperCase("es")}`,
+    };
+  }
   const variant = match.variantKeys?.[0];
   return {
     platform,

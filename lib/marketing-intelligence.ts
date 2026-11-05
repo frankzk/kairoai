@@ -9,8 +9,13 @@ import {
   campaignKey,
   type MarketingSettings,
 } from "./marketing-settings-types";
+import { MARKETING_TARGETS } from "./marketing-targets";
+import { coverageOf, stockFor, stockIndex } from "./marketing-coverage";
+import { buildKeywordIndex } from "./marketing-campaign-keywords";
+import { countText, decimalText, moneyText } from "./marketing-copy";
 
-export const MARKETING_CPA_LIMIT = 8.5;
+export const MARKETING_CPA_LIMIT = MARKETING_TARGETS.cpaUsd;
+/** Reorder floor only; stock alerts use days of coverage. */
 export const MARKETING_STOCK_MIN = 100;
 export function buildMarketingIntelligence(
   summary: MarketingSummary,
@@ -31,6 +36,10 @@ export function buildMarketingIntelligence(
   );
   const plans = new Map(
     settings?.plans.map((plan) => [plan.product_key, plan]) ?? [],
+  );
+  const keywords = buildKeywordIndex(
+    summary.productFamilies ?? [],
+    settings?.keywords ?? [],
   );
   const campaigns = (["meta", "tiktok"] as const).flatMap((platform) => {
     const source = sources?.[platform];
@@ -56,6 +65,7 @@ export function buildMarketingIntelligence(
               campaign.name,
               Boolean(settings) && !summary.familyDataError,
               settings?.mappings ?? [],
+              keywords,
             ),
             aliasConflict:
               learnedCampaignMatch(
@@ -71,12 +81,9 @@ export function buildMarketingIntelligence(
         )
       : [];
   });
-  const stock = new Map<string, number | null>();
-  if (sources?.shiphero.status === "ready")
-    for (const item of sources.shiphero.data?.stock ?? []) {
-      const sku = item.sku.trim().toLowerCase();
-      stock.set(sku, stock.has(sku) ? null : item.available);
-    }
+  const stock = stockIndex(
+    sources?.shiphero.status === "ready" ? sources.shiphero.data?.stock : null,
+  );
   const metrics = new Map(
     summary.products.map((product) => [product.key, product]),
   );
@@ -94,18 +101,27 @@ export function buildMarketingIntelligence(
           ? related.reduce((sum, campaign) => sum + campaign.spend, 0)
           : null;
       const orders = metric?.orders ?? 0;
+      const realOrders = metric?.realOrders ?? 0;
+      // CPA real: annulled orders do not count (documento de mejoras, A1).
+      // Spend with no real order is above any target (Infinity).
+      const comparable = Boolean(ads.aligned && currency && spend != null);
       const cpa =
-        ads.aligned && currency && spend != null && orders > 0
-          ? spend / orders
+        comparable && spend! > 0
+          ? realOrders > 0
+            ? spend! / realOrders
+            : Infinity
           : null;
-      const available = product.sku
-        ? (stock.get(product.sku.toLowerCase()) ?? null)
-        : null;
-      const dailyDemand = (metric?.recentUnits ?? 0) / 7;
-      const coverageDays =
-        available != null && dailyDemand > 0
-          ? Math.max(0, available) / dailyDemand
-          : null;
+      const cpaCreated = comparable && orders > 0 ? spend! / orders : null;
+      const held = stockFor(stock, product.sku);
+      const available = held.available;
+      const coverage = coverageOf(
+        available,
+        metric?.recentUnits ?? 0,
+        MARKETING_TARGETS,
+        { ambiguous: held.ambiguous },
+      );
+      const dailyDemand = coverage.dailyUnits;
+      const coverageDays = coverage.days;
       const reorderPoint =
         plan?.lead_days != null && dailyDemand > 0
           ? Math.max(
@@ -135,6 +151,7 @@ export function buildMarketingIntelligence(
       return {
         ...product,
         orders,
+        realOrders,
         units: metric?.units ?? 0,
         delivered: metric?.delivered ?? 0,
         open: metric?.open ?? 0,
@@ -147,12 +164,14 @@ export function buildMarketingIntelligence(
         currency,
         spend,
         cpa,
+        cpaCreated,
         campaignCount: related.length,
         priority: plan?.priority ?? false,
         plan,
         available,
         dailyDemand,
         coverageDays,
+        coverage,
         reorderPoint,
         suggestedUnits,
       };
@@ -184,38 +203,45 @@ export function buildMarketingIntelligence(
       product.cpa != null &&
       product.cpa > 0 &&
       product.cpa <= MARKETING_CPA_LIMIT &&
-      product.orders >= 20 &&
+      product.realOrders >= MARKETING_TARGETS.scaleMinRealOrders &&
       product.orders >= product.previousOrders &&
-      product.available != null &&
-      product.available >= MARKETING_STOCK_MIN
+      product.coverage.days != null &&
+      product.coverage.days >= MARKETING_TARGETS.stockYellowDays
     )
       alerts.push({
         key: `scale:${product.key}`,
         tone: "opportunity",
         title: `${product.name}: revisar para escalar`,
-        detail:
-          "Costo combinado dentro del objetivo, al menos 20 pedidos y stock suficiente. Validar atribución y margen antes de subir presupuesto.",
+        detail: `CPA real (sin anulados) dentro del objetivo, al menos ${MARKETING_TARGETS.scaleMinRealOrders} pedidos reales y stock suficiente. Validar atribución y margen antes de subir presupuesto.`,
         productKey: product.key,
       });
-    if (product.available != null && product.available < MARKETING_STOCK_MIN)
+    if (
+      product.available != null &&
+      (product.coverage.tone === "red" || product.coverage.tone === "yellow")
+    )
       alerts.push({
         key: `stock:${product.key}`,
         tone: "risk",
-        title: `${product.name}: stock bajo`,
-        detail: `${product.available} unidades disponibles. Mínimo: 100.`,
+        title:
+          product.available <= 0
+            ? `${product.name}: agotado`
+            : `${product.name}: ${product.coverage.label} de stock`,
+        detail: `${countText(product.available)} unidades; vende ${decimalText(product.coverage.dailyUnits)} por día (últimos 7 días).`,
         productKey: product.key,
       });
     if (
       product.cpa != null &&
       product.currency === "USD" &&
       product.cpa > MARKETING_CPA_LIMIT &&
-      (product.spend ?? 0) >= 17
+      (product.spend ?? 0) >= MARKETING_TARGETS.metaTestKillUsd
     )
       alerts.push({
         key: `cpa:${product.key}`,
         tone: "risk",
         title: `${product.name}: costo por pedido alto`,
-        detail: `USD ${product.cpa.toFixed(2)} por pedido del producto. Revisar campañas y cobertura de inversión.`,
+        detail: Number.isFinite(product.cpa)
+          ? `CPA real ${moneyText(product.cpa)} por pedido sin anulados. Revisar campañas y cobertura de inversión.`
+          : `${moneyText(product.spend)} de gasto sin pedidos reales. Revisar campañas y cobertura de inversión.`,
         productKey: product.key,
       });
     if (product.suggestedUnits != null && product.suggestedUnits > 0)
@@ -244,7 +270,7 @@ export function buildMarketingIntelligence(
       campaign.clicks >= 100 &&
       campaign.purchases != null &&
       campaign.purchases < 1 &&
-      campaign.spend >= 17
+      campaign.spend >= MARKETING_TARGETS.metaTestKillUsd
     )
       alerts.push({
         key: `clicks:${campaign.key}`,

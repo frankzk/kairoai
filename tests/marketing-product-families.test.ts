@@ -185,6 +185,23 @@ describe("Campaign product families", () => {
     expect(rows[1]).toMatchObject({ orders: 1, units: 2, yesterdayOrders: 1 });
     expect(rows[2]).toMatchObject({ orders: 2, units: 4, yesterdayOrders: 2 });
     expect(rows[0].daily.reduce((sum, d) => sum + d.orders, 0)).toBe(2);
+    expect(rows[0]).toMatchObject({ yesterdayReal: 2, sevenDayReal: 2 });
+    const annulled = buildGroupMetrics(
+      orders.map((o, i) =>
+        i
+          ? o
+          : ({ ...o, tracking_status: "annulled" } as OrderProfitabilityRow),
+      ),
+      period,
+      targets,
+      now,
+    );
+    expect(annulled[0]).toMatchObject({
+      yesterdayOrders: 2,
+      yesterdayReal: 1,
+      sevenDayOrders: 2,
+      sevenDayReal: 1,
+    });
   });
   it("does not reuse an obsolete subset against a changed family", () => {
     expect(

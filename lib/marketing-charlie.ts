@@ -9,7 +9,10 @@ import type {
 } from "./marketing-charlie-types";
 import type { CharlieRevenue } from "./marketing-charlie-revenue";
 import { marketingDate, shiftDate } from "./marketing-dates";
-export const CHARLIE_CPA_CEILING = 8.5;
+import { MARKETING_TARGETS } from "./marketing-targets";
+import type { AdRealOrders } from "./marketing-real-cpa";
+import { moneyText } from "./marketing-copy";
+export const CHARLIE_CPA_CEILING = MARKETING_TARGETS.cpaUsd;
 export function detectAdsetRole(name: string): "control" | "testing" | "other" {
   const value = name
     .normalize("NFD")
@@ -59,6 +62,8 @@ export function buildCharlieModel(
   settings: CharlieSettings | null,
   frequencyDay?: string,
   now = new Date(),
+  /** Real orders per ad and day (UTM + share by product); without it the reasons use the pixel. */
+  real?: AdRealOrders | null,
 ) {
   const end = summary.period.to,
     start = summary.period.from,
@@ -177,19 +182,40 @@ export function buildCharlieModel(
             : null;
         const share =
           selected && totalDaySpend > 0 ? selected.spend / totalDaySpend : 0;
+        const platform = account.platform ?? "meta";
+        const dayReal = real
+          ? real(platform, account.id, ad.campaignId, ad.id, day)
+          : null;
+        const dayRealCpa =
+          dayReal && dayReal.orders > 0 && daySpend != null
+            ? daySpend / dayReal.orders
+            : null;
         const reasons: string[] = [];
-        if (dayCpa != null && dayCpa > CHARLIE_CPA_CEILING)
-          reasons.push("CPA diario sobre el techo");
+        if (dayReal) {
+          if (dayRealCpa != null && dayRealCpa > CHARLIE_CPA_CEILING)
+            reasons.push(
+              `CPA real del día sobre ${moneyText(CHARLIE_CPA_CEILING)}`,
+            );
+          if (dayReal.orders === 0 && (daySpend ?? 0) >= CHARLIE_CPA_CEILING)
+            reasons.push("Gasto del día sin pedidos reales");
+        } else {
+          if (dayCpa != null && dayCpa > CHARLIE_CPA_CEILING)
+            reasons.push("CPA diario sobre el techo (píxel)");
+          if (
+            selected?.purchases === 0 &&
+            (daySpend ?? 0) >= CHARLIE_CPA_CEILING
+          )
+            reasons.push("Gasto diario sin compras reportadas (píxel)");
+        }
         if (dayGpt != null && averageGpt != null && dayGpt < averageGpt)
           reasons.push("GPT diario bajo el promedio ponderado de la cuenta");
-        if (selected?.purchases === 0 && (daySpend ?? 0) >= CHARLIE_CPA_CEILING)
-          reasons.push("Gasto diario sin compras reportadas");
         const adset = account.adsets.find((set) => set.id === ad.adsetId),
           detectedRole = detectAdsetRole(adset?.name || "");
         const role = roleMap.get(`${account.id}:${ad.adsetId}`) ?? detectedRole;
         return {
           ...ad,
           key: `${account.id}:${ad.id}`,
+          platform,
           accountId: account.id,
           accountName: account.name,
           nativeCurrency: account.currency,
@@ -215,6 +241,9 @@ export function buildCharlieModel(
           daySpendUsd: daySpend,
           dayCpa,
           dayGpt,
+          dayRealOrders: dayReal?.orders ?? null,
+          dayRealCpa,
+          dayRealBasis: dayReal?.basis ?? null,
           accountAverageGpt: averageGpt,
           spendShare: share,
           passive: share >= 0.1 && share <= 0.4 && reasons.length > 0,

@@ -7,6 +7,7 @@ import {
   reportProductMetrics,
 } from "./marketing-product-families";
 import { campaignKey } from "./marketing-settings-types";
+import { buildKeywordIndex } from "./marketing-campaign-keywords";
 import { asUsd } from "./marketing-usd-rate";
 import { marketingDate, shiftDate } from "./marketing-dates";
 
@@ -62,6 +63,10 @@ export function productComparison(
       m,
     ]) ?? [],
   );
+  const keywords = buildKeywordIndex(
+    summary.productFamilies ?? [],
+    settings?.keywords ?? [],
+  );
   const ready = Boolean(
     settings &&
     sources?.meta.status === "ready" &&
@@ -92,6 +97,7 @@ export function productComparison(
             c.name,
             Boolean(settings) && !summary.familyDataError,
             settings?.mappings ?? [],
+            keywords,
           ),
         })),
       ) ?? [],
@@ -110,7 +116,13 @@ export function productComparison(
           (c.mapping?.family_key === p.familyKey ||
             (c.mapping && p.memberKeys?.includes(c.mapping.product_key)))),
     );
-    function observation(start: string, end: string, orders: number) {
+    /** CPA real = spend / real orders; `createdValue` = spend / created orders (reference). */
+    function observation(
+      start: string,
+      end: string,
+      orders: number,
+      created: number,
+    ) {
       const late = related.some(
         (c) => c.platform === "tiktok" && c.observedThrough < end,
       );
@@ -120,35 +132,53 @@ export function productComparison(
         campaignCount: related.length,
         unmapped,
       };
-      if (!settings)
-        return { ...base, value: null, reason: "Asignaciones no disponibles" };
-      if (!related.length)
-        return { ...base, value: null, reason: "Asigna sus campañas" };
-      if (!orders)
-        return { ...base, value: null, reason: "Sin pedidos creados" };
-      if (related.some((c) => !c.daily))
-        return { ...base, value: null, reason: "Detalle diario pendiente" };
-      const values = related.map((c) =>
-        asUsd(
-          c
-            .daily!.filter((d) => d.date >= start && d.date <= end)
-            .reduce((n, d) => n + d.spend, 0),
-          c.currency,
-          fx,
-        ),
-      );
-      if (values.some((v) => v == null))
-        return { ...base, value: null, reason: "Conversión pendiente" };
-      const spend = values.reduce<number>((n, v) => n + v!, 0);
+      const none = (reason: string, spend: number | null = null) => ({
+        ...base,
+        value: null,
+        createdValue: null,
+        reason,
+        /** USD spend of the related campaigns in the range, when known. */
+        spend,
+      });
+      /** USD spend of the related campaigns; "daily" / "fx" when unknown. */
+      const spendIn = (): number | "daily" | "fx" => {
+        if (related.some((c) => !c.daily)) return "daily";
+        const values = related.map((c) =>
+          asUsd(
+            c
+              .daily!.filter((d) => d.date >= start && d.date <= end)
+              .reduce((n, d) => n + d.spend, 0),
+            c.currency,
+            fx,
+          ),
+        );
+        if (values.some((v) => v == null)) return "fx";
+        return values.reduce<number>((n, v) => n + v!, 0);
+      };
+      if (!settings) return none("Asignaciones no disponibles");
+      if (!related.length) return none("Asigna sus campañas");
+      if (!created) {
+        const spend = spendIn();
+        return none(
+          "Sin pedidos creados",
+          typeof spend === "number" ? spend : null,
+        );
+      }
+      const spend = spendIn();
+      if (spend === "daily") return none("Detalle diario pendiente");
+      if (spend === "fx") return none("Conversión pendiente");
       if (base.partial && spend === 0)
+        return none("Sin pauta asignada en estas fechas", 0);
+      if (!orders)
         return {
-          ...base,
-          value: null,
-          reason: "Sin pauta asignada en estas fechas",
+          ...none("Sin pedidos reales", spend),
+          createdValue: spend / created,
         };
       return {
         ...base,
+        spend,
         value: spend / orders,
+        createdValue: spend / created,
         reason: late
           ? "TikTok no reporta todo el rango"
           : partial
@@ -159,9 +189,9 @@ export function productComparison(
       };
     }
     const costs = [
-      observation(today, today, p.todayOrders),
-      observation(yesterday, yesterday, p.yesterdayOrders),
-      observation(from, yesterday, p.sevenDayOrders),
+      observation(today, today, p.todayReal, p.todayOrders),
+      observation(yesterday, yesterday, p.yesterdayReal, p.yesterdayOrders),
+      observation(from, yesterday, p.sevenDayReal, p.sevenDayOrders),
     ];
     return {
       ...p,

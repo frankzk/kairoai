@@ -12,6 +12,10 @@ import { getMarketingInputs, getMarketingData } from "@/lib/marketing-data";
 import { presetPeriod } from "@/lib/marketing-dates";
 import { metaAccountIds } from "@/lib/marketing-sources";
 import { campaignAlias } from "@/lib/marketing-product-families";
+import { marketingAccountIds } from "@/lib/marketing-access";
+import { isMissingRelation } from "@/lib/marketing-inventory-db";
+import { normalKeyword } from "@/lib/marketing-settings-types";
+import { keywordProblem } from "@/lib/marketing-campaign-keywords";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,7 +59,24 @@ export async function GET(req: NextRequest) {
       }
       throw new Error("Settings pagination limit");
     };
-    const [mappings, plans] = await Promise.all([
+    // The keyword and label tables are newer: without them the rest still loads.
+    const optional = async (table: string, fields: string, order: string[]) => {
+      try {
+        const result = await getDB()
+          .from(table)
+          .select(fields)
+          .eq("store_id", allowed!.store.id)
+          .order(order[0])
+          .order(order[1] ?? order[0])
+          .range(0, 999);
+        return result.error || !result.data
+          ? null
+          : (result.data as unknown as Record<string, unknown>[]);
+      } catch {
+        return null;
+      }
+    };
+    const [mappings, plans, keywords, accountLabels] = await Promise.all([
       readAll(
         "marketing_campaign_products",
         "platform,account_id,campaign_id,product_key,product_name,sku,family_key,variant_scope,variant_keys,campaign_alias,updated_at",
@@ -64,8 +85,28 @@ export async function GET(req: NextRequest) {
         "marketing_product_plans",
         "product_key,product_name,sku,priority,supplier,lead_days,cover_days,incoming_units,updated_at",
       ),
+      optional(
+        "marketing_campaign_keywords",
+        "keyword,family_key,product_name,updated_at",
+        ["keyword"],
+      ),
+      optional("marketing_ad_account_labels", "platform,account_id,label", [
+        "platform",
+        "account_id",
+      ]),
     ]);
-    return reply({ mappings, plans });
+    return reply({
+      mappings,
+      plans,
+      keywords: keywords ?? [],
+      accountLabels: accountLabels ?? [],
+      ...(keywords && accountLabels
+        ? {}
+        : {
+            keywordsError:
+              "Pendiente: aplicar migración de palabras clave y nombres de cuentas.",
+          }),
+    });
   } catch {
     return reply(
       {
@@ -93,13 +134,18 @@ export async function PATCH(req: NextRequest) {
     return reply({ error: "Solicitud inválida." }, 400);
   }
   const { store, actor } = allowed;
-  if (!["mapping", "plan"].includes(String(body.kind)))
+  if (
+    !["mapping", "plan", "keyword", "account_label"].includes(String(body.kind))
+  )
     return reply({ error: "Tipo de ajuste inválido." }, 400);
   const audit = {
     store_id: store.id,
     updated_by: `${actor.id}:${actor.nombre}`.slice(0, 200),
     updated_at: new Date().toISOString(),
   };
+  if (body.kind === "keyword") return saveKeyword(body, store, audit);
+  if (body.kind === "account_label")
+    return saveAccountLabel(body, store, audit);
   try {
     if (body.kind === "mapping") {
       const platform = body.platform,
@@ -344,5 +390,127 @@ export async function PATCH(req: NextRequest) {
       },
       503,
     );
+  }
+}
+
+type Audit = { store_id: number; updated_by: string; updated_at: string };
+type Store = NonNullable<ReturnType<typeof access>>["store"];
+const PENDING_KEYWORDS =
+  "Pendiente: aplicar migración de palabras clave y nombres de cuentas.";
+const saveFailed = (error: { code?: string } | null) =>
+  reply(
+    {
+      error: isMissingRelation(error)
+        ? PENDING_KEYWORDS
+        : "No se pudo guardar. El ajuste anterior se conserva; vuelve a intentarlo.",
+    },
+    503,
+  );
+
+/** Keyword → product family rule. `family_key: null` deletes the rule. */
+async function saveKeyword(
+  body: Record<string, unknown>,
+  store: Store,
+  audit: Audit,
+) {
+  const keyword =
+    typeof body.keyword === "string" && body.keyword.length <= 200
+      ? normalKeyword(body.keyword)
+      : "";
+  if (keyword.length < 3 || keyword.length > 60)
+    return reply(
+      { error: "La palabra clave debe tener entre 3 y 60 letras o números." },
+      400,
+    );
+  const problem = body.family_key === null ? null : keywordProblem(keyword);
+  if (problem) return reply({ error: problem }, 400);
+  try {
+    if (body.family_key === null) {
+      const result = await getDB()
+        .from("marketing_campaign_keywords")
+        .delete()
+        .eq("store_id", store.id)
+        .eq("keyword", keyword);
+      if (result.error) return saveFailed(result.error);
+      return reply({ saved: true, keyword });
+    }
+    if (typeof body.family_key !== "string" || body.family_key.length > 300)
+      return reply({ error: "Selecciona un producto del catálogo." }, 400);
+    const input = await getMarketingInputs(store, presetPeriod("today"));
+    const family = input.summary.productFamilies?.find(
+      (f) => f.key === body.family_key,
+    );
+    if (!family)
+      return reply(
+        {
+          error:
+            "El producto agrupado no está disponible en el catálogo de Costa Rica.",
+        },
+        400,
+      );
+    // Families under review are left out of automatic assignment.
+    if (family.review || !family.members.length)
+      return reply(
+        {
+          error:
+            "Ese producto está en revisión: agrúpalo antes de usarlo en una regla.",
+        },
+        400,
+      );
+    const result = await getDB()
+      .from("marketing_campaign_keywords")
+      .upsert(
+        {
+          ...audit,
+          keyword,
+          family_key: family.key,
+          product_name: family.name.slice(0, 200) || family.key,
+        },
+        { onConflict: "store_id,keyword" },
+      );
+    if (result.error) return saveFailed(result.error);
+    return reply({ saved: true, keyword });
+  } catch {
+    return saveFailed(null);
+  }
+}
+
+/** Short account name (Madre, CR2…). `label: null` deletes it. */
+async function saveAccountLabel(
+  body: Record<string, unknown>,
+  store: Store,
+  audit: Audit,
+) {
+  const ids = await marketingAccountIds(body.platform, store.id);
+  if (typeof body.account_id !== "string" || !ids.includes(body.account_id))
+    return reply({ error: "Cuenta no autorizada para Costa Rica." }, 400);
+  const label = typeof body.label === "string" ? body.label.trim() : null;
+  if (body.label !== null && (!label || label.length > 20))
+    return reply(
+      { error: "El nombre corto debe tener entre 1 y 20 caracteres." },
+      400,
+    );
+  try {
+    const table = getDB().from("marketing_ad_account_labels");
+    const result =
+      body.label === null
+        ? await table
+            .delete()
+            .eq("store_id", store.id)
+            .eq("platform", body.platform)
+            .eq("account_id", body.account_id)
+        : await table.upsert(
+            {
+              ...audit,
+              platform: body.platform,
+              account_id: body.account_id,
+              label,
+            },
+            { onConflict: "store_id,platform,account_id" },
+          );
+    if (result.error) return saveFailed(result.error);
+    return reply({ saved: true });
+  } catch {
+    return saveFailed(null);
   }
 }

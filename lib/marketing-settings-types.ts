@@ -25,10 +25,39 @@ export interface ProductPlan {
   incoming_units: number;
   updated_at?: string;
 }
+/** Team rule: a campaign whose name contains `keyword` gets this product family. */
+export interface CampaignKeywordRule {
+  keyword: string;
+  family_key: string;
+  product_name: string;
+  updated_at?: string;
+}
+/** Short name of an ad account (Madre, CR2…CR5). */
+export interface AccountLabel {
+  platform: MarketingPlatform;
+  account_id: string;
+  label: string;
+}
 export interface MarketingSettings {
   mappings: CampaignProduct[];
   plans: ProductPlan[];
+  keywords?: CampaignKeywordRule[];
+  accountLabels?: AccountLabel[];
+  /** Set when the keyword/label tables are not available yet (pending migration). */
+  keywordsError?: string;
 }
+/**
+ * Stored keyword form: lowercase ASCII words separated by one space
+ * (same normalization as product names).
+ */
+export const normalKeyword = (value: string) =>
+  value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
 export const campaignKey = (
   platform: string,
   account: string,

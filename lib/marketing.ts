@@ -44,6 +44,8 @@ export interface MarketingProduct {
   sku: string;
   name: string;
   orders: number;
+  /** Period orders without annulled ones (status at query time). */
+  realOrders: number;
   units: number;
   delivered: number;
   failed: number;
@@ -52,6 +54,10 @@ export interface MarketingProduct {
   todayOrders: number;
   yesterdayOrders: number;
   sevenDayOrders: number;
+  /** Same counters without annulled orders (status at query time). */
+  todayReal: number;
+  yesterdayReal: number;
+  sevenDayReal: number;
   recentUnits: number;
   previousOrders: number;
   daily: Array<{ date: string; orders: number }>;
@@ -235,6 +241,7 @@ export function buildMarketingSummary({
         sku,
         name: item.title.replace(/^\d+x\s+/i, ""),
         orders: 0,
+        realOrders: 0,
         units: 0,
         delivered: 0,
         failed: 0,
@@ -243,6 +250,9 @@ export function buildMarketingSummary({
         todayOrders: 0,
         yesterdayOrders: 0,
         sevenDayOrders: 0,
+        todayReal: 0,
+        yesterdayReal: 0,
+        sevenDayReal: 0,
         recentUnits: 0,
         previousOrders: 0,
         daily: dates.map((date) => ({ date, orders: 0 })),
@@ -250,6 +260,7 @@ export function buildMarketingSummary({
       product.units += Math.max(0, numeric(item.quantity));
       if (!seen.has(key)) {
         product.orders++;
+        if (order.tracking_status !== "annulled") product.realOrders++;
         product.daily[
           Math.floor(
             (Date.parse(order.created_at!) - window.start) / MARKETING_DAY,
@@ -288,6 +299,7 @@ export function buildMarketingSummary({
         product = {
           ...info,
           orders: 0,
+          realOrders: 0,
           units: 0,
           delivered: 0,
           failed: 0,
@@ -296,6 +308,9 @@ export function buildMarketingSummary({
           todayOrders: 0,
           yesterdayOrders: 0,
           sevenDayOrders: 0,
+          todayReal: 0,
+          yesterdayReal: 0,
+          sevenDayReal: 0,
           recentUnits: 0,
           previousOrders: 0,
           daily: [],
@@ -310,9 +325,19 @@ export function buildMarketingSummary({
         product.recentUnits += Math.max(0, numeric(item.quantity));
       if (seen.has(key)) continue;
       seen.add(key);
-      if (date === today) product.todayOrders++;
-      if (date === yesterday) product.yesterdayOrders++;
-      if (date >= recentFrom && date < today) product.sevenDayOrders++;
+      const real = order.tracking_status !== "annulled";
+      if (date === today) {
+        product.todayOrders++;
+        if (real) product.todayReal++;
+      }
+      if (date === yesterday) {
+        product.yesterdayOrders++;
+        if (real) product.yesterdayReal++;
+      }
+      if (date >= recentFrom && date < today) {
+        product.sevenDayOrders++;
+        if (real) product.sevenDayReal++;
+      }
       if (time >= previous.start && time < previous.end)
         product.previousOrders++;
     }

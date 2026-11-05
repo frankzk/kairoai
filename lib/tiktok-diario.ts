@@ -156,8 +156,64 @@ export function cuentasTiktok(filas: FilaTiktok[]): MarketingAdsData[] {
   }));
 }
 
+export const VISTA_RESUMEN = "tiktok_ads_campanas_resumen";
+
+export interface ResumenCampanaTiktok {
+  advertiser_id: string;
+  campaign_id: string;
+  first_date: string | null;
+  spend: number | string | null;
+  conversions: number | string | null;
+}
+
+/**
+ * Agrega a cada campaña su acumulado desde el lanzamiento (vista
+ * tiktok_ads_campanas_resumen). Puro. Una campaña sin fila queda sin lifetime.
+ */
+export function conAcumulado(cuentas: MarketingAdsData[], resumen: ResumenCampanaTiktok[]): MarketingAdsData[] {
+  const porCampana = new Map(resumen.map((r) => [`${r.advertiser_id}:${r.campaign_id}`, r]));
+  const num = (v: unknown) => {
+    const n = Number(v);
+    return v == null || v === "" || !Number.isFinite(n) ? null : n;
+  };
+  return cuentas.map((cuenta) => ({
+    ...cuenta,
+    campaigns: cuenta.campaigns.map((c) => {
+      const r = porCampana.get(`${cuenta.accountId}:${c.id}`);
+      if (!r) return c;
+      return {
+        ...c,
+        lifetime: {
+          spend: Math.round((num(r.spend) ?? 0) * 100) / 100,
+          purchases: num(r.conversions),
+          firstDate: r.first_date ? String(r.first_date).slice(0, 10) : null,
+        },
+      };
+    }),
+  }));
+}
+
+async function leerResumenTiktok(storeId: number, ids: string[]): Promise<ResumenCampanaTiktok[]> {
+  const filas: ResumenCampanaTiktok[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await getDB()
+      .from(VISTA_RESUMEN)
+      .select("advertiser_id,campaign_id,first_date,spend,conversions")
+      .eq("store_id", storeId)
+      .in("campaign_id", ids.slice(i, i + 200));
+    if (error) throw new Error(`leerResumenTiktok: ${error.message}`);
+    filas.push(...((data ?? []) as ResumenCampanaTiktok[]));
+  }
+  return filas;
+}
+
 /** Las cuentas de TikTok con gasto en el periodo, o [] si Make todavia no mando nada. */
-export async function leerCuentasTiktok(storeId: number, desde: string, hasta: string): Promise<MarketingAdsData[]> {
+export async function leerCuentasTiktok(
+  storeId: number,
+  desde: string,
+  hasta: string,
+  opciones: { lifetime?: boolean } = {}
+): Promise<MarketingAdsData[]> {
   const filas: FilaTiktok[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await getDB()
@@ -180,7 +236,15 @@ export async function leerCuentasTiktok(storeId: number, desde: string, hasta: s
   // Marketing no da el CPA combinado (no sabe si los dias coinciden con los
   // de los pedidos en Costa Rica).
   const zona = process.env.TIKTOK_CR_TIMEZONE?.trim() ?? "";
-  return cuentasTiktok(filas.map((f) => (f.timezone ? f : { ...f, timezone: zona })));
+  const cuentas = cuentasTiktok(filas.map((f) => (f.timezone ? f : { ...f, timezone: zona })));
+  if (!opciones.lifetime || !cuentas.length) return cuentas;
+  // Sin la vista (migracion pendiente) el gasto del periodo sigue sirviendo.
+  try {
+    const ids = Array.from(new Set(cuentas.flatMap((c) => c.campaigns.map((x) => x.id))));
+    return conAcumulado(cuentas, await leerResumenTiktok(storeId, ids));
+  } catch {
+    return cuentas.map((c) => ({ ...c, lifetimeMessage: "Pendiente: aplicar migración del acumulado de TikTok." }));
+  }
 }
 
 /** Los anunciantes de TikTok de los que Make ya mando gasto para la tienda. */
