@@ -63,8 +63,19 @@ describe("detectGuideFinal", () => {
     expect(g.exists).toBe(true);
     expect(g.source).toBe("icomfly");
   });
-  it("flags final guide from a shipped status", () => {
-    expect(detectGuideFinal(makeOrder({ status: "Enviado" })).exists).toBe(true);
+  it("Enviada / Enviado and shippedAt alone do not prove a final guide", () => {
+    for (const status of ["Enviada", "Enviado"]) {
+      const order = makeOrder({ status, shippedAt: "2026-11-05T18:00:00Z" });
+      expect(detectGuideFinal(order).exists).toBe(false);
+      expect(computeDispatchState(order, detectGuideFinal(order))).toBe("despacho_solicitado");
+    }
+  });
+  it("actual tracking and imported Boxful guides still prove a final guide", () => {
+    const order = makeOrder({ status: "Enviada", trackingNumber: "TRK123" });
+    expect(detectGuideFinal(order).exists).toBe(true);
+    expect(computeDispatchState(order, detectGuideFinal(order))).toBe("despachado");
+    expect(detectGuideFinal(makeOrder({ status: "Enviada" }), new Set(["mcrc10099"]))).toMatchObject({ exists: true, source: "boxful" });
+    expect(detectGuideFinal(makeOrder({ status: "Guia_Generada" })).exists).toBe(true);
   });
   it("falls back to Boxful keys", () => {
     const boxful = new Set<string>(["mcrc10099"]);

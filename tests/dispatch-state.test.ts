@@ -74,6 +74,15 @@ describe("isMoovinPickedUp", () => {
 });
 
 describe("resolveDispatchState", () => {
+  it("reclasifica Enviada sin guia aun si el sync anterior guardo despachado", () => {
+    const rec = icomfly({ status: "Enviada", shipped_at: "2026-11-05T18:00:00Z", dispatch_state: "despachado", guide_final_source: "icomfly" });
+    expect(resolveDispatchState(rec, undefined, "")).toBe("despacho_solicitado");
+    expect(resolveDispatchState(rec, undefined, "G1")).toBe("despachado");
+    expect(resolveDispatchState({ ...rec, tracking_number: "G1" }, undefined, "")).toBe("despachado");
+    expect(resolveDispatchState({ ...rec, guide_final_source: "boxful" }, undefined, "")).toBe("despachado");
+    expect(resolveDispatchState({ ...rec, status: "Confirmada", dispatch_state: "pendiente" }, undefined, "")).toBe("pendiente");
+    expect(resolveDispatchState(rec, moovin({ latest_status: "Sede de Moovin" }), "")).toBe("recolectado");
+  });
   it("Moovin manda: 'Recolección Solicitada' => despacho_solicitado aunque iComfly diga despachado", () => {
     const rec = icomfly({ dispatch_state: "despachado" });
     const state = resolveDispatchState(rec, moovin({ latest_status: "Recolección Solicitada" }), "2547531");
@@ -113,6 +122,20 @@ describe("resolveDispatchState", () => {
 });
 
 describe("mergeDispatchIntoTracking", () => {
+  it("corrige una fila cacheada Enviada sin guia sin alterar transporte real ni anulados", () => {
+    const row = { icomfly_estado: "Enviada", guide_number: "" };
+    expect(mergeDispatchIntoTracking("pending", "despachado", row)).toBe("despacho_solicitado");
+    expect(mergeDispatchIntoTracking("pending", "pendiente", row)).toBe("despacho_solicitado");
+    expect(mergeDispatchIntoTracking("pending", null, row)).toBe("despacho_solicitado");
+    expect(mergeDispatchIntoTracking("en_route", "despachado", row)).toBe("en_route");
+    expect(mergeDispatchIntoTracking("delivered", "despachado", row)).toBe("delivered");
+    expect(mergeDispatchIntoTracking("incident", "despachado", row)).toBe("incident");
+    expect(mergeDispatchIntoTracking("pending", "recolectado", row)).toBe("recolectado");
+    expect(mergeDispatchIntoTracking("annulled", "despachado", row)).toBe("annulled");
+    expect(mergeDispatchIntoTracking("pending", "despachado", { ...row, shopify_cancelled_at: "2026-11-05" })).toBe("pending");
+    expect(mergeDispatchIntoTracking("pending", "despachado", { ...row, icomfly_estado: "Confirmada" })).toBe("despacho_solicitado");
+    expect(mergeDispatchIntoTracking("pending", "despachado", { ...row, guide_number: "G1" })).toBe("pending");
+  });
   const ok = { shopify_cancelled_at: null, shopify_financial_status: "paid" };
   const cancelled = { shopify_cancelled_at: "2026-06-20T00:00:00Z", shopify_financial_status: "voided" };
 

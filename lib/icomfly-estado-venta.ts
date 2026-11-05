@@ -72,3 +72,8 @@ export function esEnviadaIcomfly(estado: string | null | undefined): boolean {
   const clave = claveEstado(estado);
   return clave === "enviada" || clave === "enviado";
 }
+
+/** Venta confirmada que aun no acredita envio a Boxful ni transporte. */
+export function esConfirmadaIcomfly(estado: string | null | undefined): boolean {
+  return ["confirmada", "confirmado", "pedido_pagado"].includes(claveEstado(estado));
+}

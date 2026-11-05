@@ -77,8 +77,11 @@ const tokens = new Map<number, { token: string; vence: number; asesora: string }
 export async function tokenDeAsesora(
   staffId: number,
   cfg: TelnyxConfig,
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
+  forzarToken = false,
 ): Promise<{ token: string; asesora: string } | null> {
+  // A browser-rejected JWT must not come back from the server cache.
+  if (forzarToken) tokens.delete(staffId);
   const guardado = tokens.get(staffId);
   if (guardado && guardado.vence - MARGEN_TOKEN_MS > Date.now()) {
     return { token: guardado.token, asesora: guardado.asesora };

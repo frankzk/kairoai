@@ -12,6 +12,7 @@ import {
   type TrackableOrderRow,
 } from "@/lib/finance-orders";
 import { mergeDispatchIntoTracking } from "@/lib/dispatch";
+import { getDispatchSubstage, parseDispatchSubstage, type DispatchSubstageCounts } from "@/lib/dispatch-substages";
 import {
   estadoConfirmacion,
   PLAZOS,
@@ -28,6 +29,8 @@ import {
   type OrdersDataset,
 } from "../_shared/orders-dataset";
 import { dayKeyFormatter, matchesPeriod } from "@/lib/finance-order-period";
+import { readKairoConfirmationIndex } from "@/lib/order-confirmations-db";
+import { findKairoConfirmation, type KairoConfirmation } from "@/lib/order-confirmations";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -101,7 +104,7 @@ function parsePositiveInt(value: string | null, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
 }
 
-type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion };
+type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation };
 type ResolvedRow = { row: TrackableOrderRow; traces: SettlementTrace[]; status: string };
 
 function resolveRows(
@@ -244,6 +247,7 @@ export async function GET(req: NextRequest) {
   const settlementFilter = parseSettlementFilter(params.get("settlement"));
   const subetapaFilter = parseSubetapa(params.get("subetapa"));
   const plazoFilter = parsePlazo(params.get("plazo"));
+  const dispatchSubstageFilter = parseDispatchSubstage(params.get("dispatch_subetapa"));
   const period = parsePeriod(params.get("period"));
   const month = (params.get("month") || "").trim();
   const startDate = (params.get("start") || "").trim();
@@ -255,17 +259,24 @@ export async function GET(req: NextRequest) {
   // La primera carga del tab puede pedir conteos y guias globales en la misma
   // respuesta. Asi evitamos tres lecturas concurrentes del dataset completo.
   const includeMetadata = params.get("metadata") === "1";
+  const actorParam = params.get("confirmed_by");
+  if (actorParam !== null && (!/^[1-9]\d*$/.test(actorParam) || !Number.isSafeInteger(Number(actorParam)))) {
+    return NextResponse.json({ error: "Asesora de confirmación inválida." }, { status: 400 });
+  }
+  const confirmedBy = actorParam === null ? null : Number(actorParam);
 
   try {
-    const { rows, settlementTraceByKey } = await getOrdersDataset(store, [
+    const [{ rows, settlementTraceByKey }, confirmations] = await Promise.all([getOrdersDataset(store, [
       "rows",
       "settlementTraceByKey",
-    ]);
+    ]), confirmedBy !== null || includeMetadata ? readKairoConfirmationIndex(store.id) : Promise.resolve(null)]);
     const now = new Date();
     const dayKey = dayKeyFormatter(store.timezone);
 
     // 1) Periodo (Vista actual). Se cuenta aparte para la etiqueta "Vista actual".
-    const periodRows = rows.filter((row) =>
+    const attributedRows = confirmedBy !== null && confirmations
+      ? rows.filter(row => findKairoConfirmation(confirmations, confirmedBy, row) !== null) : rows;
+    const periodRows = attributedRows.filter((row) =>
       matchesPeriod(row, period, month, startDate, endDate, now, dayKey)
     );
 
@@ -289,7 +300,18 @@ export async function GET(req: NextRequest) {
     // 3b) Pendientes: cola de confirmacion (subetapa + plazo).
     const confirmacion =
       trackingFilter === "pending" ? await aplicarConfirmacion(porEstado, store, subetapaFilter, plazoFilter, now) : null;
-    const trackingFiltered = confirmacion ? confirmacion.filtrados : porEstado;
+    let trackingFiltered = confirmacion ? confirmacion.filtrados : porEstado;
+    let dispatchCounts: DispatchSubstageCounts | null = null;
+    if (trackingFilter === "despacho_solicitado") {
+      dispatchCounts = { all: porEstado.length, por_solicitar: 0, esperando_guia: 0, esperando_recoleccion: 0 };
+      for (const item of porEstado) {
+        const substage = getDispatchSubstage(item.status, item.row);
+        if (substage) dispatchCounts[substage] += 1;
+      }
+      if (dispatchSubstageFilter !== "all") {
+        trackingFiltered = porEstado.filter(item => getDispatchSubstage(item.status, item.row) === dispatchSubstageFilter);
+      }
+    }
 
     const settlementCounts = countSettlements(trackingFiltered);
 
@@ -301,7 +323,8 @@ export async function GET(req: NextRequest) {
     const total = finalFiltered.length;
     const attachTraces = (item: { row: TrackableOrderRow; traces: SettlementTrace[] }): RowWithTraces => {
       const estado = confirmacion?.estados.get(item.row.row_key);
-      return { ...item.row, traces: item.traces, ...(estado ? { confirmacion: estado } : {}) };
+      const local = confirmations && confirmedBy !== null ? findKairoConfirmation(confirmations, confirmedBy, item.row) : null;
+      return { ...item.row, traces: item.traces, ...(estado ? { confirmacion: estado } : {}), ...(local ? { confirmation_kairo: local } : {}) };
     };
 
     if (exportAll) {
@@ -341,8 +364,10 @@ export async function GET(req: NextRequest) {
       trackingCounts,
       settlementCounts,
       ...(confirmacion ? { confirmacionCounts: confirmacion.counts } : {}),
+      ...(dispatchCounts ? { dispatchCounts } : {}),
       ...(enRouteGuides ? { enRouteGuides } : {}),
       ...(operationalMetadata ? { operationalMetadata } : {}),
+      ...(includeMetadata ? { confirmationActors: confirmations?.actors ?? [] } : {}),
     });
   } catch (err) {
     if (isOrdersDatasetUnavailableError(err)) {
