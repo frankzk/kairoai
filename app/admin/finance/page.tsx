@@ -1,5 +1,6 @@
 "use client";
 import type { ConfirmationActor, KairoConfirmation } from "@/lib/order-confirmations";
+import { workEvidenceLabel, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
 import {
   DISPATCH_SUBSTAGES,
   dispatchSubstageLabel,
@@ -392,7 +393,7 @@ const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
 // Las filas que devuelve /api/finance/orders ya traen las trazas de liquidacion
 // resueltas server-side, asi la tabla no necesita el settlementTraceByKey en
 // memoria.
-type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation };
+type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork };
 type ConfirmacionCounts = { subetapa: Record<Subetapa | "all", number>; plazo: Record<Plazo | "all", number> };
 
 // Cola de confirmacion de los pendientes (lib/confirmacion.ts): el color dice
@@ -1964,9 +1965,14 @@ function OrdersTab({
   const [orderSearch, setOrderSearch] = useState("");
   const [confirmedBy, setConfirmedBy] = useState("");
   const [confirmationActors, setConfirmationActors] = useState<ConfirmationActor[]>([]);
+  const [advisorActivity, setAdvisorActivity] = useState<AdvisorActivity>("both");
+  const [unmatchedAdvisorOrders, setUnmatchedAdvisorOrders] = useState(0);
   const confirmationStore = useRef(selectedStore.code);
   useEffect(() => {
-    const actor = new URLSearchParams(window.location.search).get("confirmed_by");
+    const params = new URLSearchParams(window.location.search);
+    const actor = params.get("worked_by") ?? params.get("confirmed_by");
+    const activity = params.get("advisor_activity");
+    if (activity === "confirmation" || activity === "dispatch") setAdvisorActivity(activity);
     if (actor && /^[1-9]\d*$/.test(actor) && Number.isSafeInteger(Number(actor))) {
       setConfirmedBy(actor); setTrackingFilter("all"); setSettlementFilter("all");
     }
@@ -1974,7 +1980,8 @@ function OrdersTab({
   useEffect(() => {
     if (confirmationStore.current !== selectedStore.code) {
       confirmationStore.current = selectedStore.code; setConfirmedBy("");
-      const url = new URL(window.location.href); url.searchParams.delete("confirmed_by"); window.history.replaceState(null, "", url);
+      setAdvisorActivity("both");
+      const url = new URL(window.location.href); url.searchParams.delete("confirmed_by"); url.searchParams.delete("worked_by"); url.searchParams.delete("advisor_activity"); window.history.replaceState(null, "", url);
     }
   }, [selectedStore.code]);
   const [periodMode, setPeriodMode] = useState<OrderPeriodMode>("all");
@@ -2040,7 +2047,7 @@ function OrdersTab({
   // Cualquier cambio de filtro vuelve a la primera pagina.
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code, confirmedBy]);
+  }, [debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code, confirmedBy, advisorActivity]);
 
   // La subetapa y el plazo son solo de Pendientes: al salir de ahi se limpian.
   useEffect(() => {
@@ -2063,12 +2070,13 @@ function OrdersTab({
     setSettlementCounts(EMPTY_SETTLEMENT_COUNTS);
     setHasLoadedOnce(false);
     setConfirmationActors([]);
+    setUnmatchedAdvisorOrders(0);
     setDispatchCounts(null);
     setDispatchSubstageFilter("all");
   }, [selectedStore.code]);
 
   // A new advisor must never display the previous advisor's clients after a failed request.
-  useEffect(() => { setServerRows([]); setTotal(0); setHasLoadedOnce(false); }, [confirmedBy]);
+  useEffect(() => { setServerRows([]); setTotal(0); setHasLoadedOnce(false); }, [confirmedBy, advisorActivity]);
 
   // Reintento manual tras un fallo: fuerza una relectura del dataset (pide de
   // nuevo la metadata) sin recargar toda la pagina.
@@ -2088,7 +2096,8 @@ function OrdersTab({
         if (rangeEnd) params.set("end", rangeEnd);
       }
       if (debouncedSearch) params.set("q", debouncedSearch);
-      if (confirmedBy) params.set("confirmed_by", confirmedBy);
+      params.set("advisor_activity", advisorActivity);
+      if (confirmedBy) params.set("worked_by", confirmedBy);
       if (trackingFilter !== "all") params.set("status", trackingFilter);
       if (settlementFilter !== "all") params.set("settlement", settlementFilter);
       if (trackingFilter === "pending") {
@@ -2101,7 +2110,7 @@ function OrdersTab({
       for (const [key, value] of Object.entries(extra)) params.set(key, value);
       return params.toString();
     },
-    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, confirmedBy]
+    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, confirmedBy, advisorActivity]
   );
 
   useEffect(() => {
@@ -2131,6 +2140,8 @@ function OrdersTab({
         setConfirmacionCounts((json.confirmacionCounts as ConfirmacionCounts | undefined) ?? null);
         setDispatchCounts((json.dispatchCounts as DispatchSubstageCounts | undefined) ?? null);
         if (Array.isArray(json.confirmationActors)) setConfirmationActors(json.confirmationActors as ConfirmationActor[]);
+        if (Array.isArray(json.advisorActors)) setConfirmationActors(json.advisorActors as ConfirmationActor[]);
+        setUnmatchedAdvisorOrders(Number(json.unmatchedAdvisorOrders ?? 0));
         setHasLoadedOnce(true);
         if (json.operationalMetadata) {
           const metadata = json.operationalMetadata as OrdersOperationalMetadata;
@@ -2281,7 +2292,14 @@ function OrdersTab({
     setConfirmedBy(value); setTrackingFilter("all"); setSettlementFilter("all");
     setDispatchSubstageFilter("all");
     const url = new URL(window.location.href);
-    if (value) url.searchParams.set("confirmed_by", value); else url.searchParams.delete("confirmed_by");
+    url.searchParams.delete("confirmed_by");
+    if (value) { url.searchParams.set("worked_by", value); url.searchParams.set("advisor_activity", advisorActivity); }
+    else { url.searchParams.delete("worked_by"); url.searchParams.delete("advisor_activity"); }
+    window.history.replaceState(null, "", url);
+  };
+  const chooseAdvisorActivity = (value: AdvisorActivity) => {
+    setAdvisorActivity(value);
+    const url = new URL(window.location.href); url.searchParams.set("advisor_activity", value);
     window.history.replaceState(null, "", url);
   };
   const limpiarFiltros = () => {
@@ -2419,6 +2437,9 @@ function OrdersTab({
             return substage ? dispatchSubstageLabel(substage) : "";
           })(),
           "Confirmó en Kairo": row.confirmation_kairo?.staffName ?? "",
+          "Asesora de gestión": row.advisor_work?.staffName ?? "",
+          "Trabajo registrado": row.advisor_work?.evidence.map(workEvidenceLabel).join(" | ") ?? "",
+          "Fechas de gestión": row.advisor_work?.evidence.map(e => `${workEvidenceLabel(e)}: ${e.at ? new Date(e.at).toLocaleString("es", { timeZone: selectedStore.timezone }) : "Sin fecha informada"}`).join(" | ") ?? "",
           "Fecha confirmación Kairo": row.confirmation_kairo?.at ? new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: selectedStore.timezone }) : "",
           // Primer evento del ciclo del courier (Moovin "PREPARE" / Forza
           // "CREADO"): cuando el remitente empezo a preparar el paquete.
@@ -2654,14 +2675,25 @@ function OrdersTab({
             <div className="sm:hidden">{controlPeriodo}</div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <label className="flex flex-col items-start gap-1 text-xs text-muted-foreground sm:flex-row sm:items-center sm:gap-2">
-                Confirmados en Kairo por
-                <select aria-label="Confirmados en Kairo por" className="h-8 max-w-[220px] rounded-md border border-border bg-background px-2 text-xs text-foreground" value={confirmedBy} onChange={e => chooseConfirmationActor(e.target.value)}>
+                Trabajo de asesora
+                <select aria-label="Trabajo de asesora" className="h-8 max-w-[220px] rounded-md border border-border bg-background px-2 text-xs text-foreground" value={confirmedBy} onChange={e => chooseConfirmationActor(e.target.value)}>
                   <option value="">Todos los pedidos</option>
                   {confirmationActors.map(actor => <option key={actor.id} value={actor.id}>{actor.name}</option>)}
                 </select>
               </label>
-              {confirmedBy && <span className="text-xs text-muted-foreground">Confirmación registrada en Kairo. El período filtra la fecha de creación del pedido.</span>}
+              {confirmedBy && (
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  Actividad
+                  <select aria-label="Actividad de asesora" className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground" value={advisorActivity} onChange={e => chooseAdvisorActivity(e.target.value as AdvisorActivity)}>
+                    <option value="both">Confirmación o despacho</option>
+                    <option value="confirmation">Confirmaciones</option>
+                    <option value="dispatch">Gestiones de despacho</option>
+                  </select>
+                </label>
+              )}
             </div>
+            {confirmedBy && <p className="text-[11px] text-muted-foreground">Kairo + iComfly, sin duplicar pedidos. Incluye solicitudes y autorizaciones de despacho; no acredita recolección física. El período filtra la creación del pedido. Este filtro aplica a la lista; los indicadores superiores corresponden a la tienda.</p>}
+            {confirmedBy && unmatchedAdvisorOrders > 0 && <p className="text-[11px] text-amber-300">Hay {unmatchedAdvisorOrders} atribuciones de iComfly sin un pedido disponible para cruzar en esta tienda.</p>}
             <div>
               {/* Estado: una sola fila de tarjetas, en orden de fase. Sin
                   etiqueta de fila: cada tarjeta dice lo que es. Si no entra
@@ -3038,6 +3070,13 @@ function LineaDespacho({ row, status }: { row: OrderRowWithTraces; status: strin
   return <span className="block text-[11px] leading-4 text-foreground/85">{dispatchSubstageLabel(substage)}</span>;
 }
 
+function AdvisorWorkLine({ work, tz }: { work: AdvisorWork; tz: string }) {
+  return <div className="text-[10px] leading-4 text-muted-foreground">
+    <span className="block text-foreground/85">{work.staffName}</span>
+    {work.evidence.map(e => <span key={`${e.source}:${e.kind}`} className="block" title={e.at ? new Date(e.at).toLocaleString("es", { timeZone: tz }) : "La fuente no informa la fecha de esta gestión"}>{workEvidenceLabel(e)}</span>)}
+  </div>;
+}
+
 // La cola de confirmacion de un pedido pendiente, debajo de su estado: que
 // toca (subetapa), cuando (plazo con su fecha) y cuanto se lo trabajo.
 function LineaConfirmacion({ c, tz }: { c: EstadoConfirmacion; tz: string }) {
@@ -3178,6 +3217,7 @@ function OrdersTable({
                   <StatusBadge status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
                   <DispatchWho row={row} status={trackingStatus} />
                   <LineaDespacho row={row} status={trackingStatus} />
+                  {row.advisor_work && <AdvisorWorkLine work={row.advisor_work} tz={tz} />}
                   {row.confirmation_kairo && <span className="text-[10px] text-muted-foreground" title={new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: tz })}>Confirmó en Kairo: {row.confirmation_kairo.staffName}</span>}
                   {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
                 </div>
@@ -3348,6 +3388,7 @@ function OrdersTable({
                     />
                     <DispatchWho row={row} status={trackingStatus} />
                     <LineaDespacho row={row} status={trackingStatus} />
+                    {row.advisor_work && <AdvisorWorkLine work={row.advisor_work} tz={tz} />}
                     {row.confirmation_kairo && <span className="text-[10px] text-muted-foreground" title={new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: tz })}>Confirmó en Kairo: {row.confirmation_kairo.staffName}</span>}
                     {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
                   </div>
