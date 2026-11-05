@@ -65,3 +65,49 @@ describe("getKpiWindows — rango custom", () => {
     }
   });
 });
+
+// El 04/11/2026 "Ayer" de Gestión daba 98 pedidos y iComfly 128: el servidor
+// (UTC en Vercel) cortaba los días a las 6 p. m. de Costa Rica.
+describe("getKpiWindows — días en la hora de la tienda", () => {
+  const CR = "America/Costa_Rica";
+  // 2026-11-04 01:00 UTC = 2026-11-03 19:00 en Costa Rica.
+  const noche = new Date("2026-11-04T01:00:00Z");
+  it("Hoy y Ayer empiezan a la medianoche de Costa Rica (06:00 UTC)", () => {
+    const hoy = getKpiWindows("today", noche, undefined, CR);
+    expect(new Date(hoy.curStart).toISOString()).toBe("2026-11-03T06:00:00.000Z");
+    const ayer = getKpiWindows("yesterday", noche, undefined, CR);
+    expect(new Date(ayer.curStart).toISOString()).toBe("2026-11-02T06:00:00.000Z");
+    expect(new Date(ayer.curEnd).toISOString()).toBe("2026-11-03T06:00:00.000Z");
+  });
+  it("rango y mes también en la hora de la tienda", () => {
+    const win = getKpiWindows("custom", noche, { start: "2026-11-03", end: "2026-11-03" }, CR);
+    expect(new Date(win.curStart).toISOString()).toBe("2026-11-03T06:00:00.000Z");
+    expect(new Date(win.curEnd).toISOString()).toBe("2026-11-04T06:00:00.000Z");
+    const mes = getKpiWindows("month", noche, undefined, CR);
+    expect(new Date(mes.curStart).toISOString()).toBe("2026-11-01T06:00:00.000Z");
+    expect(new Date(mes.prevStart!).toISOString()).toBe("2026-10-01T06:00:00.000Z");
+    // Enero: el mes anterior es diciembre del año anterior.
+    const enero = getKpiWindows("month", new Date("2027-01-10T12:00:00Z"), undefined, CR);
+    expect(new Date(enero.prevStart!).toISOString()).toBe("2026-12-01T06:00:00.000Z");
+  });
+});
+
+// Ninguna tienda de hoy tiene horario de verano, pero los días se cuentan por
+// calendario y no restando 24 h, para que "Ayer" no corra una hora el día del cambio.
+describe("getKpiWindows — días de 23 o 25 horas", () => {
+  const iso = (t: number | null) => (t == null ? null : new Date(t).toISOString());
+  it("Ayer el día del cambio de hora va de medianoche a medianoche", () => {
+    const win = getKpiWindows("yesterday", new Date("2026-03-30T10:00:00Z"), undefined, "Europe/Rome");
+    expect(iso(win.curStart)).toBe("2026-03-28T23:00:00.000Z");
+    expect(iso(win.curEnd)).toBe("2026-03-29T22:00:00.000Z");
+  });
+  it("si la medianoche no existe, el día empieza a la 01:00", () => {
+    const win = getKpiWindows("custom", new Date("2026-09-10T10:00:00Z"), { start: "2026-09-06", end: "2026-09-06" }, "America/Santiago");
+    expect(iso(win.curStart)).toBe("2026-09-06T04:00:00.000Z");
+    expect(iso(win.curEnd)).toBe("2026-09-07T03:00:00.000Z");
+  });
+  it("7 días en Costa Rica incluye hoy y 6 días atrás", () => {
+    const win = getKpiWindows("7d", new Date("2026-11-05T03:00:00Z"), undefined, "America/Costa_Rica");
+    expect(iso(win.curStart)).toBe("2026-10-29T06:00:00.000Z");
+  });
+});

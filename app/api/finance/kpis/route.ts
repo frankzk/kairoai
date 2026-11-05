@@ -88,7 +88,8 @@ export async function GET(req: NextRequest) {
     // Misma logica que el useMemo operationalKpis de page.tsx: ventana actual y
     // ventana previa "like-for-like", filtrando por shopify_created_at antes de
     // computeOpMetricsFromTrackableRows.
-    const win = getKpiWindows(period, new Date(), { start: customStart, end: customEnd });
+    // Dias en la hora de la tienda, no la del servidor (UTC en Vercel).
+    const win = getKpiWindows(period, new Date(), { start: customStart, end: customEnd }, store.timezone);
     const current = computeOpMetricsFromTrackableRows(
       rows.filter((row: TrackableOrderRow) => inWindow(row.shopify_created_at, win.curStart, win.curEnd)),
       settlementTraceByKey

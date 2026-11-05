@@ -27,6 +27,7 @@ import {
   isOrdersDatasetUnavailableError,
   type OrdersDataset,
 } from "../_shared/orders-dataset";
+import { dayKeyFormatter, matchesPeriod } from "@/lib/finance-order-period";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -98,46 +99,6 @@ function parseSettlementFilter(value: string | null): SettlementFilter {
 function parsePositiveInt(value: string | null, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
-}
-
-// Clave de fecha (YYYY-MM-DD) del pedido, igual que getOrderDateKey en page.tsx.
-function getOrderDateKey(row: TrackableOrderRow): string {
-  return row.shopify_created_at ? row.shopify_created_at.slice(0, 10) : "";
-}
-
-// Replica matchesOrderPeriod (page.tsx ~9406) para los modos del tab Pedidos, y
-// resuelve today/7d/30d como ventanas relativas sobre shopify_created_at.
-function matchesPeriod(
-  row: TrackableOrderRow,
-  mode: PeriodMode,
-  month: string,
-  startDate: string,
-  endDate: string,
-  now: Date
-): boolean {
-  if (mode === "all") return true;
-  const orderDate = getOrderDateKey(row);
-  if (!orderDate) return false;
-
-  if (mode === "month") {
-    if (!month) return true;
-    return orderDate.slice(0, 7) === month;
-  }
-
-  if (mode === "range") {
-    if (startDate && orderDate < startDate) return false;
-    if (endDate && orderDate > endDate) return false;
-    return true;
-  }
-
-  // today / 7d / 30d: ventana relativa por dia, limite superior inclusivo.
-  const DAY = 24 * 60 * 60 * 1000;
-  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const ts = new Date(row.shopify_created_at as string).getTime();
-  if (Number.isNaN(ts)) return false;
-  if (mode === "today") return ts >= dayStart;
-  const days = mode === "7d" ? 7 : 30;
-  return ts >= dayStart - (days - 1) * DAY;
 }
 
 type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion };
@@ -301,10 +262,11 @@ export async function GET(req: NextRequest) {
       "settlementTraceByKey",
     ]);
     const now = new Date();
+    const dayKey = dayKeyFormatter(store.timezone);
 
     // 1) Periodo (Vista actual). Se cuenta aparte para la etiqueta "Vista actual".
     const periodRows = rows.filter((row) =>
-      matchesPeriod(row, period, month, startDate, endDate, now)
+      matchesPeriod(row, period, month, startDate, endDate, now, dayKey)
     );
 
     // 2) Busqueda. trackingCounts se mide sobre este conjunto (= searchedRows).
