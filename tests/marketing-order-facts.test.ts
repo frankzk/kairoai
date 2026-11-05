@@ -63,7 +63,7 @@ describe("orderOrigin", () => {
         creator: "Conector IA",
       }),
     ).toBe("bot");
-    expect(orderOrigin({ ...base, creator: "Conector IA" })).toBe("ia");
+    expect(orderOrigin({ ...base, creator: "Conector IA" })).toBe("bot");
     expect(orderOrigin({ ...base, creator: "María" })).toBe("asesora");
     expect(orderOrigin({ ...base, labels: ["Retomó la compra"] })).toBe(
       "formulario",
@@ -168,7 +168,7 @@ describe("encodeOrderFacts", () => {
         "San José",
         [expect.any(Number)],
       ],
-      ["2026-11-02", 1, "lista_negra", "ia", "", [expect.any(Number)]],
+      ["2026-11-02", 1, "lista_negra", "bot", "", [expect.any(Number)]],
       [
         "2026-11-03",
         0,

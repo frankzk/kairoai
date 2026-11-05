@@ -23,7 +23,6 @@ const SEGMENT: Record<OrderOrigin, string> = {
   shopify: r.originShopify,
   carrito: r.originCarrito,
   bot: r.originBot,
-  ia: r.originIa,
   asesora: r.originAsesora,
   formulario: r.originFormulario,
 };

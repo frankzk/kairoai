@@ -3,7 +3,7 @@
 // (lib/marketing-order-facts.ts).
 //
 // - Origen: de dónde entró cada pedido (Shopify, carrito recuperado, bot de
-//   WhatsApp, asistente IA, asesora o formulario de iComfly).
+//   WhatsApp e IA, asesora o formulario de iComfly).
 // - Complementos: en un pedido real con varios productos, el primero es el
 //   principal y los demás son complementos (orden de las líneas de iComfly; el
 //   precio no sirve porque muchas veces se reparte igual). El mismo producto

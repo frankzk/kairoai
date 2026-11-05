@@ -59,9 +59,10 @@ export function labelNames(labels: unknown): string[] {
 
 /**
  * Where the order came from. Precedence: Shopify number → Shopify; label
- * "Carrito abandonado recuperado" → carrito; label "Venta por bot" or channel
- * whatsapp → bot; creator "Conector IA" → ia; any other creator → asesora;
- * else the iComfly web form. Labels by name, not id.
+ * "Carrito abandonado recuperado" → carrito; label "Venta por bot", channel
+ * whatsapp or creator "Conector IA" → bot (the team counts the IA assistant
+ * as the bot); any other creator → asesora; else the iComfly web form.
+ * Labels by name, not id.
  */
 export function orderOrigin(signals: {
   shopifyNumber: string | null;
@@ -79,7 +80,7 @@ export function orderOrigin(signals: {
   )
     return "bot";
   const creator = norm(signals.creator);
-  if (creator === "conector ia") return "ia";
+  if (creator === "conector ia") return "bot";
   if (creator) return "asesora";
   return "formulario";
 }

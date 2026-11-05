@@ -231,7 +231,7 @@ describe("buildCancelReport", () => {
     expect(report.byOrigin).toEqual([
       {
         origin: "bot",
-        label: "Bot de WhatsApp",
+        label: "Bot de WhatsApp e IA",
         orders: 2,
         annulled: 1,
         rate: 0.5,

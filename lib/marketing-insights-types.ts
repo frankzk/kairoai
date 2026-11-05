@@ -18,7 +18,6 @@ export type OrderOrigin =
   | "shopify"
   | "carrito"
   | "bot"
-  | "ia"
   | "asesora"
   | "formulario";
 
@@ -26,7 +25,6 @@ export const ORDER_ORIGINS: readonly OrderOrigin[] = [
   "shopify",
   "carrito",
   "bot",
-  "ia",
   "asesora",
   "formulario",
 ];
@@ -34,8 +32,7 @@ export const ORDER_ORIGINS: readonly OrderOrigin[] = [
 export const ORDER_ORIGIN_LABEL: Record<OrderOrigin, string> = {
   shopify: "Shopify",
   carrito: "Carrito recuperado",
-  bot: "Bot de WhatsApp",
-  ia: "Asistente IA",
+  bot: "Bot de WhatsApp e IA",
   asesora: "Creado por asesora",
   formulario: "Formulario iComfly",
 };

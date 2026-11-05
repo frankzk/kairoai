@@ -52,7 +52,7 @@ describe("buildOriginMix", () => {
       ["carrito", 1, 1],
     ]);
     expect(mix.rows[0].share).toBeCloseTo(0.6);
-    expect(mix.rows[0].label).toBe("Bot de WhatsApp");
+    expect(mix.rows[0].label).toBe("Bot de WhatsApp e IA");
     expect(mix.daily).toHaveLength(2);
     expect(mix.daily[1]).toMatchObject({
       date: "2026-11-04",
