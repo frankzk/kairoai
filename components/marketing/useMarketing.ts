@@ -15,6 +15,12 @@ import type { CharlieRevenue } from "@/lib/marketing-charlie-revenue";
 import { marketingLoadPlan, type MarketingView } from "@/lib/marketing-loading";
 import type { MarketingControl } from "@/lib/marketing-real-orders";
 import type { ManualCampaignChange } from "@/lib/marketing-source-types";
+import type {
+  AccountsPayload,
+  OrderFactsPayload,
+  ProductInsightsPayload,
+  SegmentationPayload,
+} from "@/lib/marketing-insights-types";
 
 /** Manual change log (`/api/marketing/changes`). */
 export interface MarketingChanges {
@@ -31,6 +37,9 @@ export interface InventorySnapshotMeta {
   rowCount: number;
   errorCount: number;
   availableColumn: string;
+  /** "" when the CSV had no Backorder / Incoming column (or before the migration). */
+  backorderColumn?: string;
+  incomingColumn?: string;
   skus: number;
 }
 export interface MarketingInventoryStatus {
@@ -198,6 +207,95 @@ export function useMarketing(
       : null,
     revision,
   );
+  // Account status (M11). In the report it waits for the main resources so it
+  // never competes with the hero; the route caches it 10 minutes. Only a saved
+  // rate asks for a fresh one (saveRate), never the regular loads.
+  const mainSettled =
+    view !== "report" || (!summary.loading && !actions.loading);
+  const accountsUrl = "/api/marketing/insights?store=mireva-cr&section=cuentas";
+  const accounts = useResource<AccountsPayload>(
+    period && plan.accounts && mainSettled ? accountsUrl : null,
+    revision,
+  );
+  const ordersInsights = useResource<OrderFactsPayload>(
+    period && plan.ordersInsights && period.to <= today
+      ? `/api/marketing/insights?${periodQuery(period)}&section=pedidos`
+      : null,
+    revision,
+  );
+  const productsInsights = useResource<ProductInsightsPayload>(
+    period && plan.productsInsights
+      ? "/api/marketing/insights?store=mireva-cr&section=productos"
+      : null,
+    revision,
+  );
+  // Age and gender (M12): only when someone asks for it (one Meta call per account).
+  const [segmentation, setSegmentation] = useState<{
+    data: SegmentationPayload | null;
+    loading: boolean;
+    error: string;
+  }>({ data: null, loading: false, error: "" });
+  async function loadSegmentation(from: string, to: string) {
+    setSegmentation((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const response = await fetch(
+        `/api/marketing/insights?store=mireva-cr&section=segmentacion&from=${from}&to=${to}`,
+        { cache: "no-store" },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new Error(
+          typeof body.error === "string"
+            ? body.error
+            : "No se pudo consultar la edad y el género en Meta.",
+        );
+      setSegmentation({
+        data: body as SegmentationPayload,
+        loading: false,
+        error: "",
+      });
+    } catch (error) {
+      setSegmentation({
+        data: null,
+        loading: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "No se pudo consultar la edad y el género en Meta.",
+      });
+    }
+  }
+  /**
+   * Fixes the CRC or PEN rate to `rate` (today's date) or, with null, goes
+   * back to the official one; then reloads the account status. Returns the
+   * route's Spanish error or null.
+   */
+  async function saveRate(currency: "CRC" | "PEN", rate: number | null) {
+    const date = rate == null ? null : marketingDate();
+    const result = await sendMarketing(
+      "/api/marketing/charlie-settings?store=mireva-cr",
+      "PATCH",
+      currency === "PEN"
+        ? { kind: "pen", pen_per_usd: rate, pen_rate_date: date }
+        : { kind: "crc", crc_per_usd: rate, rate_date: date },
+    );
+    if (!result.ok) return result.error;
+    // One fresh read (it also refreshes the route's cache); later loads use the cache.
+    try {
+      const response = await fetch(`${accountsUrl}&refresh=1`, {
+        cache: "no-store",
+      });
+      if (response.ok)
+        accounts.setState({
+          data: (await response.json()) as AccountsPayload,
+          loading: false,
+          error: "",
+        });
+    } catch {
+      // The rate is saved; the status shows it on the next load.
+    }
+    return null;
+  }
   /** Saves a manual campaign change and reloads the change log. */
   async function logChange(body: Record<string, unknown>) {
     const result = await sendMarketing(
@@ -289,6 +387,12 @@ export function useMarketing(
     actions,
     changes,
     inventory,
+    accounts,
+    ordersInsights,
+    productsInsights,
+    segmentation,
+    loadSegmentation,
+    saveRate,
     logChange,
     saving,
     saveError,

@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingSources } from "@/lib/marketing-source-types";
 import type { MarketingSettings } from "@/lib/marketing-settings-types";
@@ -7,11 +7,13 @@ import type { CharlieReport, UsdRate } from "@/lib/marketing-charlie-types";
 import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
 import type { MarketingControl } from "@/lib/marketing-real-orders";
 import type { Coverage } from "@/lib/marketing-coverage";
+import type { AccountsPayload } from "@/lib/marketing-insights-types";
 import { buildMarketingIntelligence } from "@/lib/marketing-intelligence";
 import { marketingDate, periodQuery, shiftDate } from "@/lib/marketing-dates";
 import { productComparison, reportChannel } from "@/lib/marketing-team-report";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import {
+  assignedCampaigns,
   buildRealEstimate,
   channelOrders,
   realCpa,
@@ -22,6 +24,7 @@ import { buildCostCapControl } from "@/lib/marketing-cost-cap";
 import { buildKeywordIndex } from "@/lib/marketing-campaign-keywords";
 import { highCpaAlerts, stockDaysRows } from "@/lib/marketing-report-alerts";
 import { decimalText } from "@/lib/marketing-copy";
+import { missingStockColumnsText } from "@/lib/marketing-inventory-decide";
 import {
   useResource,
   type MarketingChanges,
@@ -36,6 +39,11 @@ import { CampaignActions } from "./CampaignActions";
 import { CostCapControl } from "./CostCapControl";
 import { InventoryUpload, inventoryStatusText } from "./InventoryUpload";
 import { KeywordRules } from "./KeywordRules";
+import { PixelCheck } from "./PixelCheck";
+import { LaunchTracker } from "./LaunchTracker";
+import { InventoryAlerts } from "./InventoryAlerts";
+import { useInventoryDecision } from "./InventoryDecision";
+import { AccountStatusBanner } from "./AccountStatusBanner";
 
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
 type Resource<T> = { data: T | null; loading: boolean; error: string };
@@ -85,6 +93,8 @@ export function TeamReport({
   saved,
   save,
   onAssign,
+  accounts,
+  onOpenAccounts,
 }: {
   data: MarketingSummary;
   sources: MarketingSources | null;
@@ -111,6 +121,9 @@ export function TeamReport({
   saved: string;
   save: Save;
   onAssign: () => void;
+  /** Account status (M11), loaded after the report; banner only on problems. */
+  accounts: Resource<AccountsPayload>;
+  onOpenAccounts: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [ascending, setAscending] = useState(false);
@@ -203,6 +216,54 @@ export function TeamReport({
       fx,
     ],
   );
+  const actionRows = useMemo(
+    () => (actionResult ? [...actionResult.meta, ...actionResult.tiktok] : []),
+    [actionResult],
+  );
+  // Módulo 9: product names for launches registered by hand (no campaign row yet).
+  const productName = useCallback(
+    (key: string) =>
+      data.productFamilies?.find((f) => f.key === key)?.name ??
+      data.products.find((p) => p.key === key)?.name ??
+      null,
+    [data],
+  );
+  const campaignMembers = useMemo(
+    () =>
+      actions.data
+        ? new Map(
+            assignedCampaigns(data, actions.data, settings).map((c) => [
+              c.key,
+              c.members,
+            ]),
+          )
+        : null,
+    [actions.data, data, settings],
+  );
+  // Módulo 5 in the report: alerts and Esperando / En camino columns (no extra request).
+  const inventoryDecision = useInventoryDecision({
+    data,
+    model,
+    sources,
+    settings,
+    actionRows,
+    campaignMembers,
+  });
+  const decisionRows = useMemo(
+    () =>
+      new Map(
+        (inventoryDecision?.decision.rows ?? []).map((row) => [row.key, row]),
+      ),
+    [inventoryDecision],
+  );
+  const stockColumns = inventoryDecision?.inventory.columns;
+  const showWaiting = Boolean(stockColumns?.backorder);
+  const showIncoming =
+    Boolean(stockColumns?.incoming) ||
+    (inventoryDecision?.decision.rows.some(
+      (row) => row.incomingSource === "plan",
+    ) ??
+      false);
   const costCap = useMemo(
     () =>
       actionResult
@@ -326,6 +387,11 @@ export function TeamReport({
         : count(Math.round(value));
   return (
     <div className={r.report}>
+      <AccountStatusBanner
+        accounts={accounts}
+        settings={settings}
+        onOpen={onOpenAccounts}
+      />
       <DailyGoals
         pace={pace}
         loading={control.loading}
@@ -478,16 +544,32 @@ export function TeamReport({
         save={save}
         logChange={logChange}
       />
+      <LaunchTracker
+        rows={actionResult ? actionRows : null}
+        manual={changes.data?.changes ?? []}
+        manualPending={changes.data?.status === "pending_migration"}
+        loading={actions.loading || control.loading}
+        error={actions.error}
+        fx={fx}
+        productName={productName}
+      />
       <CostCapControl
         control={costCap}
         loading={actions.loading || control.loading}
         error={actions.error}
       />
+      <PixelCheck
+        summary={data}
+        actions={actions}
+        control={control}
+        settings={settings}
+        fx={fx}
+      />
 
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>04 / Productos</p>
+            <p className={r.kicker}>06 / Productos</p>
             <h2>Comparar para decidir</h2>
             <button className={r.assignLink} onClick={onAssign}>
               Asignar campañas para calcular el CPA
@@ -669,6 +751,11 @@ export function TeamReport({
         className={`${r.section} ${r.inventoryGrid}`}
         aria-label="Ventas e inventario"
       >
+        {inventoryDecision && (
+          <InventoryAlerts
+            alerts={inventoryDecision.decision.alerts}
+          />
+        )}
         <div>
           <div className={r.sectionHead}>
             <h3>Top en ventas</h3>
@@ -763,6 +850,8 @@ export function TeamReport({
                 <tr>
                   <th>Producto</th>
                   <th>Disponible</th>
+                  {showWaiting && <th>Esperando</th>}
+                  {showIncoming && <th>En camino</th>}
                   <th>Venta diaria</th>
                   <th>Días</th>
                 </tr>
@@ -775,6 +864,25 @@ export function TeamReport({
                       <small>{p.sku || "Sin SKU"}</small>
                     </th>
                     <td>{number(p.coverage.available)}</td>
+                    {showWaiting && (
+                      <td
+                        className={
+                          (decisionRows.get(p.key)?.backorder ?? 0) > 0
+                            ? r.risk
+                            : undefined
+                        }
+                      >
+                        {number(decisionRows.get(p.key)?.backorder)}
+                      </td>
+                    )}
+                    {showIncoming && (
+                      <td>
+                        {number(decisionRows.get(p.key)?.incoming)}
+                        {decisionRows.get(p.key)?.incomingSource === "plan" && (
+                          <small>a mano</small>
+                        )}
+                      </td>
+                    )}
                     <td>{decimalText(p.coverage.dailyUnits)}</td>
                     <td>
                       <span className={`${r.chip} ${coverageChip(p.coverage)}`}>
@@ -785,7 +893,9 @@ export function TeamReport({
                 ))}
                 {!stockRows.length && (
                   <tr>
-                    <td colSpan={4}>
+                    <td
+                      colSpan={4 + Number(showWaiting) + Number(showIncoming)}
+                    >
                       {sources?.shiphero.status !== "ready"
                         ? "Sube el product_table para ver los días de stock."
                         : `Sin productos con menos de ${t.stockYellowDays} días de stock.`}
@@ -795,13 +905,21 @@ export function TeamReport({
               </tbody>
             </table>
           </div>
+          {inventoryDecision && (!showWaiting || !showIncoming) && (
+            <p className={r.caption}>
+              {missingStockColumnsText(
+                inventoryDecision.inventory.origin === "csv" ? "csv" : "shiphero",
+                { backorder: !showWaiting, incoming: !showIncoming },
+              )}
+            </p>
+          )}
         </div>
       </section>
 
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>05 / Pauta</p>
+            <p className={r.kicker}>07 / Pauta</p>
             <h2>Campañas, presupuesto y producto</h2>
             <p>
               Las cinco cuentas de Meta y TikTok. Presupuesto diario vigente,
@@ -863,7 +981,7 @@ export function TeamReport({
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>06 / Tendencias</p>
+            <p className={r.kicker}>08 / Tendencias</p>
             <h2>Cómo se mueve la demanda</h2>
             <p>
               Pedidos creados en el período seleccionado · hora de Costa Rica.
@@ -878,7 +996,7 @@ export function TeamReport({
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>07 / Atención</p>
+            <p className={r.kicker}>09 / Atención</p>
             <h2>Oportunidades y riesgos</h2>
             <p>
               CPA objetivo: {usd(t.cpaUsd)} con pedidos reales · Stock: rojo con
