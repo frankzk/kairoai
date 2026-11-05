@@ -13,22 +13,47 @@ export const maxDuration = 20;
 export async function POST(req: NextRequest) {
   const { config, faltan } = getTelnyxConfig();
   if (!config) {
-    return NextResponse.json({ error: `Telnyx no configurado: falta ${faltan.join(" y ")}.` }, { status: 503 });
+    return NextResponse.json(
+      { error: `Telnyx no configurado: falta ${faltan.join(" y ")}.` },
+      { status: 503 },
+    );
   }
-  const body = (await req.json().catch(() => null)) as { vendedora_id?: number } | null;
+  const body = (await req.json().catch(() => null)) as {
+    vendedora_id?: number;
+    forzar_token?: boolean;
+  } | null;
   // Una asesora sin permiso de supervision queda SIEMPRE a su nombre
   // (lib/identidad.ts): el navegador no puede pedir el telefono de otra.
   const vendedoraId = vendedoraEfectiva(body?.vendedora_id) ?? NaN;
   if (!Number.isFinite(vendedoraId) || vendedoraId <= 0) {
-    return NextResponse.json({ error: "Selecciona quién eres (asesora) para usar el teléfono." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Selecciona quién eres (asesora) para usar el teléfono." },
+      { status: 400 },
+    );
   }
 
   try {
-    const r = await tokenDeAsesora(vendedoraId, config);
-    if (!r) return NextResponse.json({ error: "Asesora no encontrada o inactiva." }, { status: 404 });
-    return NextResponse.json({ token: r.token, asesora: r.asesora });
+    const r = await tokenDeAsesora(
+      vendedoraId,
+      config,
+      undefined,
+      body?.forzar_token === true,
+    );
+    if (!r)
+      return NextResponse.json(
+        { error: "Asesora no encontrada o inactiva." },
+        { status: 404 },
+      );
+    return NextResponse.json(
+      { token: r.token, asesora: r.asesora },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "No se pudo conectar el teléfono";
-    return NextResponse.json({ error: message }, { status: err instanceof TelnyxError ? 502 : 500 });
+    const message =
+      err instanceof Error ? err.message : "No se pudo conectar el teléfono";
+    return NextResponse.json(
+      { error: message },
+      { status: err instanceof TelnyxError ? 502 : 500 },
+    );
   }
 }

@@ -274,6 +274,18 @@ describe("preparar la llamada", () => {
 });
 
 describe("token del navegador", () => {
+  it("un JWT rechazado se renueva también en el servidor sin recrear la credencial", async () => {
+    const { POST } = await import("../app/api/telnyx/token/route");
+    const pedir = (force = false) => POST(new NextRequest("http://localhost/api/telnyx/token", { method: "POST", body: JSON.stringify({ vendedora_id: 7, forzar_token: force }) }));
+    await pedir();
+    await pedir();
+    expect(pedidos.filter(p => p.url.endsWith("/telephony_credentials/cred-1/token"))).toHaveLength(1);
+    const response = await pedir(true);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(pedidos.filter(p => p.url.endsWith("/telephony_credentials/cred-1/token"))).toHaveLength(2);
+    expect(credencialesCreadas).toBe(1);
+  });
   it("crea la credencial de la asesora una sola vez y la reutiliza", async () => {
     const { POST } = await import("../app/api/telnyx/token/route");
     const pedir = () =>
