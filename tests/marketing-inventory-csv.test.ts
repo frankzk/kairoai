@@ -163,4 +163,53 @@ describe("product_table CSV", () => {
       catalogWithoutStock: 1,
     });
   });
+
+  it("reads the optional Backorder and Incoming columns and sums warehouses", () => {
+    const result = parseInventoryCsv(
+      "SKU,Warehouse,Available,Backorder,Incoming\nFAT.BURN.NEGRO.S,Boxful,0,85,\nFAT.BURN.NEGRO.S,Bodega 2,3,,40\nHER.LOSS,Boxful,300,,\n",
+    );
+    expect(result.columns).toMatchObject({
+      backorder: "Backorder",
+      incoming: "Incoming",
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.rows[0]).toMatchObject({ backorder: 85, incoming: null });
+    expect(result.stock).toEqual([
+      expect.objectContaining({
+        sku: "FAT.BURN.NEGRO.S",
+        available: 3,
+        backorder: 85,
+        incoming: 40,
+        warehouseId: "varias",
+      }),
+      // Empty cells are "sin dato", not zero and not an error.
+      expect.objectContaining({
+        sku: "HER.LOSS",
+        backorder: null,
+        incoming: null,
+      }),
+    ]);
+  });
+
+  it("recognizes Spanish aliases and leaves the extras out when absent", () => {
+    const spanish = parseInventoryCsv(
+      "Código;Disponible;Pedidos en espera;En tránsito\nA;5;2;1.000\n",
+    );
+    expect(spanish.columns).toMatchObject({
+      backorder: "Pedidos en espera",
+      incoming: "En tránsito",
+    });
+    expect(spanish.stock[0]).toMatchObject({ backorder: 2, incoming: 1000 });
+    const plain = parseInventoryCsv("SKU,Available\nA,5\n");
+    expect(plain.columns).toMatchObject({ backorder: null, incoming: null });
+    expect(plain.stock[0]).not.toHaveProperty("backorder");
+    expect(plain.stock[0]).not.toHaveProperty("incoming");
+  });
+
+  it("does not reject a row for an unreadable extra cell", () => {
+    const result = parseInventoryCsv("SKU,Available,On order\nA,5,n/d\n");
+    expect(result.errors).toEqual([]);
+    expect(result.columns.incoming).toBe("On order");
+    expect(result.stock[0]).toMatchObject({ available: 5, incoming: null });
+  });
 });

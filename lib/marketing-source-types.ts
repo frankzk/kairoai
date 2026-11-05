@@ -65,6 +65,10 @@ export interface MarketingStock {
   onHand: number;
   available: number;
   allocated: number;
+  /** Pedidos esperando stock (CSV Backorder). Absent/null = sin dato. */
+  backorder?: number | null;
+  /** Unidades en camino (CSV Incoming). Absent/null = sin dato. */
+  incoming?: number | null;
 }
 
 export interface MarketingInventory {
@@ -76,6 +80,8 @@ export interface MarketingInventory {
   uploadedBy?: string;
   /** The snapshot of the previous day with data, for "entró reposición". */
   previous?: { snapshotDate: string; stock: MarketingStock[] } | null;
+  /** Whether the uploaded CSV carried the optional columns (CSV only). */
+  columns?: { backorder: boolean; incoming: boolean };
 }
 
 export interface MarketingSource<T> {

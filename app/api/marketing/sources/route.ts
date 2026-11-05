@@ -80,6 +80,10 @@ async function csvInventory(
         previous: previous
           ? { snapshotDate: previous.snapshotDate, stock: previous.stock }
           : null,
+        columns: {
+          backorder: Boolean(latest.backorderColumn),
+          incoming: Boolean(latest.incomingColumn),
+        },
       },
     };
   } catch {

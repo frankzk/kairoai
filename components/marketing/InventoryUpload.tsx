@@ -160,6 +160,18 @@ export function InventoryUpload({
             catálogo · {count(match.unmatched.length)} sin coincidencia ·{" "}
             {count(parsed.errors.length)} con error
           </p>
+          <p>
+            {parsed.columns.backorder || parsed.columns.incoming
+              ? `Columnas extra: ${[
+                  parsed.columns.backorder &&
+                    `Esperando (${parsed.columns.backorder})`,
+                  parsed.columns.incoming &&
+                    `En camino (${parsed.columns.incoming})`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}`
+              : "Sin columnas de esperando ni en camino."}
+          </p>
           {parsed.columns.availableFrom === "on_hand" && (
             <p className={r.warnText}>
               El archivo no trae Disponible; se usa On hand.

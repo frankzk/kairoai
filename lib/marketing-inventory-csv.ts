@@ -17,6 +17,10 @@ export interface InventoryCsvRow {
   available: number;
   onHand: number | null;
   allocated: number | null;
+  /** Pedidos esperando stock (columna Backorder); null si no viene o está vacía. */
+  backorder: number | null;
+  /** Unidades en camino (columna Incoming); null si no viene o está vacía. */
+  incoming: number | null;
 }
 export interface InventoryCsvIssue {
   line: number;
@@ -34,6 +38,10 @@ export interface InventoryCsvResult {
     warehouse: string | null;
     onHand: string | null;
     allocated: string | null;
+    /** Header used for "pedidos esperando" (optional column). */
+    backorder: string | null;
+    /** Header used for "en camino" (optional column). */
+    incoming: string | null;
   };
   /** Valid rows; SKUs repeated in the same warehouse are removed. */
   rows: InventoryCsvRow[];
@@ -94,6 +102,30 @@ const ALIASES = {
   ],
   warehouse: ["warehouse", "warehouse_name", "bodega", "almacen"],
   allocated: ["allocated", "reservado", "asignado", "comprometido"],
+  backorder: [
+    "backorder",
+    "backorders",
+    "back_order",
+    "back_orders",
+    "backordered",
+    "backorder_qty",
+    "backorder_quantity",
+    "en_espera",
+    "pedidos_en_espera",
+    "pendientes",
+    "por_surtir",
+  ],
+  incoming: [
+    "incoming",
+    "incoming_qty",
+    "on_order",
+    "en_camino",
+    "en_transito",
+    "inbound",
+    "por_recibir",
+    "cantidad_en_camino",
+    "po_quantity",
+  ],
 } as const;
 
 export const normalHeader = (value: string) =>
@@ -235,7 +267,16 @@ const emptyColumns = (): InventoryCsvResult["columns"] => ({
   warehouse: null,
   onHand: null,
   allocated: null,
+  backorder: null,
+  incoming: null,
 });
+
+const addKnown = (
+  total: number | null | undefined,
+  value: number | null,
+): number | null => (value == null ? (total ?? null) : (total ?? 0) + value);
+const roundKnown = (value: number | null | undefined) =>
+  value == null ? null : Math.round(value * 1000) / 1000;
 
 export function parseInventoryCsv(input: string): InventoryCsvResult {
   const result: InventoryCsvResult = {
@@ -290,7 +331,9 @@ export function parseInventoryCsv(input: string): InventoryCsvResult {
     );
   const nameIndex = find(ALIASES.name),
     warehouseIndex = find(ALIASES.warehouse),
-    allocatedIndex = find(ALIASES.allocated);
+    allocatedIndex = find(ALIASES.allocated),
+    backorderIndex = find(ALIASES.backorder),
+    incomingIndex = find(ALIASES.incoming);
   const useIndex = availableIndex >= 0 ? availableIndex : onHandIndex;
   result.columns = {
     sku: label(skuIndex)!,
@@ -300,6 +343,8 @@ export function parseInventoryCsv(input: string): InventoryCsvResult {
     warehouse: label(warehouseIndex),
     onHand: label(onHandIndex),
     allocated: label(allocatedIndex),
+    backorder: label(backorderIndex),
+    incoming: label(incomingIndex),
   };
   const data = records.filter((record) => {
     const empty = record.cells.every((cell) => !cell.trim());
@@ -339,6 +384,15 @@ export function parseInventoryCsv(input: string): InventoryCsvResult {
       allocated:
         allocatedIndex >= 0
           ? parseInventoryNumber(cellAt(record.cells, allocatedIndex))
+          : null,
+      // Optional extras: an empty or unreadable cell is "sin dato", never an error.
+      backorder:
+        backorderIndex >= 0
+          ? parseInventoryNumber(cellAt(record.cells, backorderIndex))
+          : null,
+      incoming:
+        incomingIndex >= 0
+          ? parseInventoryNumber(cellAt(record.cells, incomingIndex))
           : null,
     });
   }
@@ -380,6 +434,14 @@ export function parseInventoryCsv(input: string): InventoryCsvResult {
     current.entry.available += row.available;
     current.entry.onHand += row.onHand ?? row.available;
     current.entry.allocated += row.allocated ?? 0;
+    // null + n = n; all null stays null (unknown, not zero).
+    if (result.columns.backorder)
+      current.entry.backorder = addKnown(
+        current.entry.backorder,
+        row.backorder,
+      );
+    if (result.columns.incoming)
+      current.entry.incoming = addKnown(current.entry.incoming, row.incoming);
     if (!current.entry.name && row.name) current.entry.name = row.name;
     current.warehouses.add(row.warehouse);
     bySku.set(row.skuKey, current);
@@ -391,6 +453,12 @@ export function parseInventoryCsv(input: string): InventoryCsvResult {
       available: Math.round(entry.available * 1000) / 1000,
       onHand: Math.round(entry.onHand * 1000) / 1000,
       allocated: Math.round(entry.allocated * 1000) / 1000,
+      ...(result.columns.backorder
+        ? { backorder: roundKnown(entry.backorder) }
+        : {}),
+      ...(result.columns.incoming
+        ? { incoming: roundKnown(entry.incoming) }
+        : {}),
       warehouseId: list.length > 1 ? "varias" : list[0] ? list[0] : "csv",
     };
   });

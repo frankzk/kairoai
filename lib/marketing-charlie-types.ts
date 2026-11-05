@@ -57,6 +57,9 @@ export interface CharlieConfig {
   crc_per_usd: number | null;
   rate_date: string | null;
   hero_product_keys: string[];
+  /** Manual PEN per USD (TikTok); absent before migration 20261105120600. */
+  pen_per_usd?: number | null;
+  pen_rate_date?: string | null;
 }
 export interface AdsetRole {
   account_id: string;
@@ -64,11 +67,14 @@ export interface AdsetRole {
   role: "control" | "testing" | "other";
   updated_at?: string;
 }
-/** Soles por dolar (TikTok Costa Rica cobra en PEN): venta SBS publicada por el BCRP. */
+/**
+ * Soles por dolar (TikTok Costa Rica cobra en PEN): venta SBS publicada por el
+ * BCRP, o la tasa fijada a mano en Marketing (marketing_charlie_config.pen_per_usd).
+ */
 export interface PenRate {
   rate: number;
   date: string;
-  source: "bcrp";
+  source: "bcrp" | "manual";
 }
 export interface UsdRate {
   rate: number | null;

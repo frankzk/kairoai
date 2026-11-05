@@ -953,3 +953,545 @@
   white-space: normal;
   text-align: left;
 }
+
+/* Módulo 4: píxel contra pedidos reales */
+.windowChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.report .windowChips button[aria-pressed="true"] {
+  background: var(--mk-accent);
+  border-color: var(--mk-accent);
+  color: var(--mk-surface);
+}
+.pixelPlatforms {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 8px;
+  font-size: 13px;
+}
+.pixelPlatforms p {
+  margin: 0;
+}
+.pixelHealth {
+  margin: 6px 0;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+  color: var(--mk-text);
+}
+.pixelTable {
+  min-width: 620px;
+}
+.report .pixelTable tbody th {
+  white-space: normal;
+  min-width: 180px;
+}
+.report .pixelTable th .inlineLink {
+  display: block;
+  margin-top: 4px;
+  padding: 0;
+  height: auto;
+  border: 0;
+  background: none;
+  font-size: 11px;
+}
+.report .pixelChild > * {
+  background: var(--mk-soft);
+}
+.report .pixelChild th {
+  padding-left: 22px;
+  font-weight: 400;
+}
+
+/* Módulo 5: inventario para decidir */
+.inventoryAlerts {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.alertList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.report .alertList .chip {
+  margin-bottom: 4px;
+}
+.inventoryTable {
+  min-width: 860px;
+}
+.report .inventoryTable tbody th {
+  white-space: normal;
+  min-width: 200px;
+  max-width: 280px;
+}
+.matrixGroup {
+  margin: 12px 0 18px;
+}
+.matrixGroup h4 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.matrixGroup h4 small {
+  font-weight: 400;
+  color: var(--mk-subtle);
+  font-size: 11px;
+}
+.matrix {
+  min-width: 320px;
+}
+.report .matrixEmpty {
+  color: var(--mk-subtle);
+}
+
+/* Pestaña Análisis */
+.analysisNav {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 10px 0;
+  margin-bottom: 4px;
+  background: var(--mk-canvas);
+  border-bottom: 1px solid var(--mk-border);
+  font-size: 12px;
+}
+.analysisNav a {
+  color: var(--mk-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (max-width: 700px) {
+  .pixelPlatforms {
+    font-size: 12px;
+  }
+  .report .pixelTable tbody th,
+  .report .inventoryTable tbody th {
+    min-width: 150px;
+  }
+}
+
+/* Módulo 6: stock sin publicidad */
+.unadvertisedTable {
+  min-width: 560px;
+}
+.report .unadvertisedTable tbody th {
+  white-space: normal;
+  min-width: 180px;
+  max-width: 280px;
+}
+.spark {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 26px;
+  width: 72px;
+  vertical-align: middle;
+}
+.spark > span {
+  flex: 1 1 0;
+  min-height: 1px;
+  background: var(--mk-bar);
+  border-radius: 2px 2px 0 0;
+}
+.spark > .sparkLast {
+  background: var(--mk-bad);
+}
+
+/* Módulo 7: cancelaciones */
+.cancelBarsWrap {
+  overflow-x: auto;
+  max-width: 100%;
+  padding-bottom: 4px;
+}
+.cancelBarsWrap:focus-visible {
+  outline: 2px solid var(--mk-accent);
+  outline-offset: 3px;
+}
+.cancelBars {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0 0;
+  display: flex;
+  gap: 6px;
+  min-width: min-content;
+}
+.cancelBars > li {
+  flex: 1 0 34px;
+  max-width: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.cancelBarValue {
+  color: var(--mk-text);
+  white-space: nowrap;
+}
+.cancelBarTrack {
+  height: 110px;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  border-bottom: 1px solid var(--mk-border);
+}
+.cancelBarTrack > span {
+  width: 100%;
+  background: var(--mk-bar);
+  border-radius: 3px 3px 0 0;
+}
+.cancelBarTrack > .cancelBarHigh {
+  background: var(--mk-bad);
+}
+.cancelBarTrack > .cancelBarOpen {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent 0 3px,
+    var(--mk-surface) 3px 6px
+  );
+}
+.cancelBarDate {
+  color: var(--mk-muted);
+  white-space: nowrap;
+}
+.cancelTable {
+  min-width: 480px;
+}
+.report .cancelTable tbody th {
+  white-space: normal;
+  min-width: 180px;
+}
+@media (max-width: 700px) {
+  .report .unadvertisedTable tbody th,
+  .report .cancelTable tbody th {
+    min-width: 140px;
+  }
+}
+
+/* Módulo 8: origen de los pedidos y complementos */
+.originShopify {
+  background: var(--mk-subtle);
+}
+.originCarrito {
+  background: var(--mk-chart-2);
+}
+.originBot {
+  background: var(--mk-chart-1);
+}
+.originAsesora {
+  background: var(--mk-bar);
+}
+.originFormulario {
+  background: oklch(72% 0.045 230);
+}
+.originTrack {
+  height: 110px;
+  width: 100%;
+  display: flex;
+  flex-direction: column-reverse;
+  border-bottom: 1px solid var(--mk-border);
+}
+.originTrack > span {
+  width: 100%;
+  flex: 0 0 auto;
+}
+.originTrack > span:last-child {
+  border-radius: 3px 3px 0 0;
+}
+.originLegend {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 11px;
+  color: var(--mk-muted);
+}
+.originLegend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.originLegend li > span {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+.pairList {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 12px;
+}
+.pairList li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--mk-border);
+}
+.pairList li > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pairList strong {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Módulo 9: seguimiento de lanzamientos */
+.launchGroups {
+  display: grid;
+  gap: 16px;
+}
+.launchCard {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--mk-border);
+  border-radius: 10px;
+  background: var(--mk-surface);
+}
+.launchCard h3 {
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+.launchTable {
+  min-width: 720px;
+}
+.report .launchTable tbody th {
+  white-space: normal;
+  min-width: 180px;
+  max-width: 280px;
+}
+.launchMeter {
+  height: 6px;
+  margin-top: 6px;
+  min-width: 80px;
+}
+@media (max-width: 700px) {
+  .launchCard {
+    padding: 12px;
+  }
+  .report .launchTable tbody th {
+    min-width: 140px;
+  }
+}
+
+/* Módulo 10: simulador del camino a 200 */
+.simGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.simActions {
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+}
+.report .simGrid input {
+  width: 100%;
+}
+.report .simGrid input[aria-invalid="true"] {
+  border-color: var(--mk-bad);
+}
+.simResult {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--mk-border);
+  border-radius: 10px;
+  background: var(--mk-surface);
+  min-width: 0;
+}
+.report .simHeadline {
+  color: var(--mk-text);
+  font-size: 15px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.simHeadline strong {
+  font-variant-numeric: tabular-nums;
+}
+.simBar {
+  position: relative;
+  display: flex;
+  height: 18px;
+  margin: 14px 0 4px;
+  border-radius: 4px;
+  background: var(--mk-soft);
+  border: 1px solid var(--mk-border);
+  overflow: hidden;
+}
+.simBar > span {
+  height: 100%;
+  flex: 0 0 auto;
+}
+.simAds {
+  background: var(--mk-chart-1);
+}
+.simOther {
+  background: var(--mk-bar);
+}
+.simCarts {
+  background: var(--mk-chart-2);
+}
+.simRepeat {
+  background: var(--mk-chart-3);
+}
+.simBar > .simGoal {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -2px;
+  background: var(--mk-text);
+}
+.originLegend li > .simGoalKey {
+  width: 2px;
+  height: 12px;
+  border-radius: 0;
+  background: var(--mk-text);
+}
+.report .simAnswer {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--mk-text);
+}
+.report .simAnswer.risk {
+  color: var(--mk-bad);
+}
+
+/* Módulo 11: estado de las cuentas */
+.statusList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--mk-border);
+  border-radius: 8px;
+  background: var(--mk-surface);
+}
+.statusRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--mk-border);
+}
+.statusRow:last-child {
+  border-bottom: 0;
+}
+.statusRow > div {
+  min-width: 0;
+}
+.statusRow strong {
+  color: var(--mk-text);
+  overflow-wrap: anywhere;
+}
+.report .statusRow p {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.statusRow p b {
+  color: var(--mk-text);
+  font-weight: 600;
+}
+.report .statusRisk {
+  background: var(--mk-bad-soft);
+}
+.statusName {
+  font-weight: 400;
+  color: var(--mk-muted);
+}
+.statusRow > .chip {
+  flex: none;
+}
+.statusActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: none;
+}
+.statusBanner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.statusBanner ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.report .statusBanner button.inlineLink {
+  border: 0;
+  background: none;
+  padding: 0;
+  min-height: 0;
+  font-size: 12px;
+}
+
+/* Módulo 12: segmentación */
+.segBars {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.segBars li {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) minmax(0, 220px);
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.segLabel {
+  color: var(--mk-text);
+  overflow-wrap: anywhere;
+}
+.segTrack {
+  height: 12px;
+  border-radius: 3px;
+  background: var(--mk-soft);
+  overflow: hidden;
+}
+.segTrack > span {
+  display: block;
+  height: 100%;
+  background: var(--mk-chart-1);
+  border-radius: 3px;
+}
+.segValue {
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+}
+.segValue small {
+  color: var(--mk-muted);
+}
+.segmentTable {
+  min-width: 460px;
+}
+@media (max-width: 700px) {
+  .simGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .statusRow {
+    flex-direction: column;
+  }
+  .segBars li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+}

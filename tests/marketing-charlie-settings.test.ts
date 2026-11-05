@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   settings: vi.fn(),
   catalog: vi.fn(),
   failed: false,
+  errorCode: "",
 }));
 vi.mock("@/lib/identidad", () => ({ identidadActual: () => mocks.actor }));
 vi.mock("@/lib/stores", () => ({
@@ -56,7 +57,9 @@ vi.mock("@/lib/db", () => ({
           reject: (reason: unknown) => unknown,
         ) =>
           Promise.resolve({
-            error: mocks.failed ? { message: "private database error" } : null,
+            error: mocks.failed
+              ? { message: "private database error", code: mocks.errorCode }
+              : null,
           }).then(resolve, reject),
       };
       return query;
@@ -93,6 +96,7 @@ beforeEach(() => {
   };
   mocks.writes.length = 0;
   mocks.failed = false;
+  mocks.errorCode = "";
   mocks.settings.mockResolvedValue({ config });
   mocks.catalog.mockResolvedValue({ catalog: [{ key: "sku:a" }] });
 });
@@ -215,5 +219,97 @@ describe("Charlie configuration and role boundaries", () => {
     expect(JSON.stringify(await response.json())).not.toContain(
       "private database error",
     );
+  });
+});
+
+describe("Exchange rates of the account status (M11)", () => {
+  it("fixes or clears only the PEN rate with audit identity", async () => {
+    const response = await PATCH(
+      request({ kind: "pen", pen_per_usd: 3.5, pen_rate_date: "2026-11-04" }),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.writes[0]).toMatchObject({
+      table: "marketing_charlie_config",
+      action: "upsert",
+      data: {
+        store_id: 1,
+        pen_per_usd: 3.5,
+        pen_rate_date: "2026-11-04",
+        updated_by: "7:Marketing CR",
+      },
+    });
+    expect(mocks.writes[0].data).not.toHaveProperty("hero_product_keys");
+    expect(mocks.writes[0].data).not.toHaveProperty("crc_per_usd");
+    expect(
+      (
+        await PATCH(
+          request({ kind: "pen", pen_per_usd: null, pen_rate_date: null }),
+        )
+      ).status,
+    ).toBe(200);
+  });
+
+  it("fixes only the CRC rate without touching the offer", async () => {
+    expect(
+      (
+        await PATCH(
+          request({ kind: "crc", crc_per_usd: 505, rate_date: "2026-11-04" }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(mocks.writes[0].data).toMatchObject({
+      crc_per_usd: 505,
+      rate_date: "2026-11-04",
+    });
+    expect(mocks.writes[0].data).not.toHaveProperty("hero_product_keys");
+  });
+
+  it.each([
+    { kind: "pen", pen_per_usd: 0, pen_rate_date: "2026-11-04" },
+    { kind: "pen", pen_per_usd: 150, pen_rate_date: "2026-11-04" },
+    { kind: "pen", pen_per_usd: 3.5, pen_rate_date: null },
+    { kind: "pen", pen_per_usd: "3.5", pen_rate_date: "2026-11-04" },
+    { kind: "pen", pen_per_usd: 3.5, pen_rate_date: "2099-01-01" },
+    { kind: "crc", crc_per_usd: 505 },
+  ])("rejects an invalid rate %j", async (body) => {
+    expect((await PATCH(request(body))).status).toBe(400);
+    expect(mocks.writes).toEqual([]);
+  });
+
+  it("answers pending migration when the PEN columns do not exist", async () => {
+    mocks.failed = true;
+    mocks.errorCode = "PGRST204";
+    const response = await PATCH(
+      request({ kind: "pen", pen_per_usd: 3.5, pen_rate_date: "2026-11-04" }),
+    );
+    expect(response.status).toBe(503);
+    const text = JSON.stringify(await response.json());
+    expect(text).toContain("Pendiente: aplicar migración");
+    expect(text).not.toContain("private");
+  });
+
+  it("applies the manual PEN rate only when the rate and its date are set", async () => {
+    const { appliedPenRate } = await vi.importActual<
+      typeof import("../lib/marketing-charlie-settings")
+    >("../lib/marketing-charlie-settings");
+    const bcrp = { rate: 3.52, date: "2026-11-04", source: "bcrp" as const };
+    const base = { crc_per_usd: null, rate_date: null, hero_product_keys: [] };
+    expect(
+      appliedPenRate(
+        { ...base, pen_per_usd: 3.5, pen_rate_date: "2026-11-01" },
+        bcrp,
+      ),
+    ).toEqual({ rate: 3.5, date: "2026-11-01", source: "manual" });
+    expect(
+      appliedPenRate({ ...base, pen_per_usd: 3.5, pen_rate_date: null }, bcrp),
+    ).toBe(bcrp);
+    expect(appliedPenRate(base, bcrp)).toBe(bcrp);
+    expect(appliedPenRate(base, null)).toBeNull();
+    expect(
+      appliedPenRate(
+        { ...base, pen_per_usd: 3.5, pen_rate_date: "2026-11-01" },
+        null,
+      ),
+    ).toMatchObject({ source: "manual" });
   });
 });

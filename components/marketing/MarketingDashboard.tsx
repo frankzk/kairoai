@@ -16,6 +16,11 @@ import { useCharlie } from "./useCharlie";
 import { buildCharlieModel } from "@/lib/marketing-charlie";
 import { subtractionRealOrders } from "@/lib/marketing-subtraction-real";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
+import {
+  appliedRates,
+  appliedRatesShortText,
+} from "@/lib/marketing-account-status";
+import type { CharlieSettings } from "@/lib/marketing-charlie-types";
 import { UsdProvider } from "./UsdContext";
 import {
   CharlieCurrency,
@@ -25,6 +30,7 @@ import {
   CharlieSubtraction,
 } from "./CharliePanels";
 import { TeamReport } from "./TeamReport";
+import { MarketingAnalysis } from "./MarketingAnalysis";
 import { Overview, SourceConnections, Trends } from "./MarketingViews";
 import { CampaignWorkspace } from "./CampaignWorkspace";
 import AttributionWorkspace from "./AttributionWorkspace";
@@ -94,6 +100,7 @@ export default function MarketingDashboard() {
         "matrix",
         "structure",
         "subtraction",
+        "analysis",
       ].includes(requested || "")
     )
       setView(requested as View);
@@ -147,6 +154,37 @@ export default function MarketingDashboard() {
     () => setFinancialRevision((value) => value + 1),
   );
   const [frequencyDay, setFrequencyDay] = useState("");
+  // Módulo 11: after fixing a rate, reload the applied rates so every
+  // section converts with the new one (conversion happens in the browser).
+  async function saveRate(currency: "CRC" | "PEN", rate: number | null) {
+    const error = await api.saveRate(currency, rate);
+    if (error) return error;
+    try {
+      const response = await fetch(
+        "/api/marketing/charlie-settings?store=mireva-cr",
+        { cache: "no-store" },
+      );
+      if (response.ok)
+        charlie.settings.setState({
+          data: (await response.json()) as CharlieSettings,
+          loading: false,
+          error: "",
+        });
+    } catch {
+      // The saved rate applies on the next update.
+    }
+    return null;
+  }
+  // Report banner → Análisis, section "Estado de las cuentas".
+  const [scrollTo, setScrollTo] = useState("");
+  useEffect(() => {
+    if (view !== "analysis" || !scrollTo) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(scrollTo)?.scrollIntoView({ block: "start" });
+      setScrollTo("");
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [view, scrollTo]);
   // Sustracción: real orders per ad (UTM + share by product) once the
   // period's orders, the catalogue and the assignments are loaded.
   const realOrders = useMemo(
@@ -366,6 +404,7 @@ export default function MarketingDashboard() {
             ["matrix", "Matriz 4Pi"],
             ["structure", "Control y Testing"],
             ["subtraction", "Sustracción"],
+            ["analysis", "Análisis"],
           ].map(([key, label], index) => (
             <button
               key={key}
@@ -400,8 +439,8 @@ export default function MarketingDashboard() {
           <span className={s.muted}>
             {charlie.settings.loading
               ? "USD · consultando referencia de conversión"
-              : charlie.settings.data?.fx.rate
-                ? `USD · ${charlie.settings.data.fx.rate} CRC/USD · referencia ${charlie.settings.data.fx.date}${charlie.settings.data.fx.pen ? ` · ${charlie.settings.data.fx.pen.rate} PEN/USD (BCRP ${charlie.settings.data.fx.pen.date})` : ""}`
+              : charlie.settings.data?.fx
+                ? appliedRatesShortText(appliedRates(charlie.settings.data.fx))
                 : "USD · referencia de conversión pendiente"}
           </span>
         </div>
@@ -538,6 +577,28 @@ export default function MarketingDashboard() {
                 saving={api.saving}
                 saved={api.saved}
                 save={api.save}
+                accounts={api.accounts}
+                onOpenAccounts={() => {
+                  setScrollTo("analisis-cuentas");
+                  setView("analysis");
+                }}
+              />
+            ) : view === "analysis" ? (
+              <MarketingAnalysis
+                data={data}
+                model={model}
+                sources={api.sources}
+                settings={api.settings.data}
+                fx={charlie.settings.data?.fx ?? null}
+                actions={api.actions}
+                control={api.control}
+                productsInsights={api.productsInsights}
+                ordersInsights={api.ordersInsights}
+                accounts={api.accounts}
+                segmentation={api.segmentation}
+                loadSegmentation={api.loadSegmentation}
+                saveRate={saveRate}
+                canEdit={canEdit}
               />
             ) : view === "summary" ? (
               <>

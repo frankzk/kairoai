@@ -83,3 +83,60 @@ export function anulacionExcluida(motivo: string | null | undefined): boolean {
 export function tasaConfirmacion(confirmados: number, generados: number): number | null {
   return generados > 0 ? (confirmados / generados) * 100 : null;
 }
+
+// Motivo de anulación para Marketing (05/11/2026, módulo 7 "Cancelaciones").
+// Un código, nunca el texto libre (puede traer nombres o teléfonos). Primero
+// los grupos que no cuentan para Gestión; después dos extras que Gestión no
+// separa (pedidos de prueba de integración y reemplazos por otro pedido, que
+// no eran clientes) y "Cliente canceló".
+export type MotivoMarketing =
+  | GrupoAnulacionExcluida
+  | "cliente_cancelo"
+  | "sin_motivo"
+  | "otro";
+
+export const MOTIVO_MARKETING_LABEL: Record<MotivoMarketing, string> = {
+  duplicado: "Duplicado",
+  numero_errado: "Número errado",
+  producto_agotado: "Producto agotado",
+  lista_negra: "Cliente con devoluciones o lista negra",
+  cambio_en_la_orden: "Error en el pedido",
+  fraude: "Fraude / sospechoso",
+  upsell: "Reemplazado por upsell u otro pedido",
+  prueba: "Prueba",
+  cliente_cancelo: "Cliente canceló",
+  sin_motivo: "Sin motivo",
+  otro: "Otro motivo",
+};
+
+export const MOTIVOS_MARKETING = Object.keys(
+  MOTIVO_MARKETING_LABEL,
+) as MotivoMarketing[];
+
+const REGLAS_MARKETING: Array<[MotivoMarketing, RegExp]> = [
+  ["prueba", /pedido de prueba|prueba tecnica|^prueba\b/],
+  ["upsell", /reemplazad[oa] por (el )?pedido/],
+  [
+    "cliente_cancelo",
+    /cliente (cancel|ya no|no (lo )?(quiere|desea)|no tiene (el )?dinero|no le parece esperar)|ya no lo (quiere|desea)|(compr[oa]|consigui[oa]) en +otro lado/,
+  ],
+];
+
+/** Código de motivo para Marketing. Vacío → sin_motivo; sin regla → otro. */
+export function motivoMarketing(
+  motivo: string | null | undefined,
+): MotivoMarketing {
+  const texto = normalizar(String(motivo ?? ""));
+  if (!texto) return "sin_motivo";
+  const grupo = grupoAnulacionExcluida(texto);
+  if (grupo) return grupo;
+  for (const [codigo, regla] of REGLAS_MARKETING)
+    if (regla.test(texto)) return codigo;
+  return "otro";
+}
+
+/** true si el código es uno de los grupos que Gestión saca de la tasa. */
+export const esGrupoGestion = (
+  codigo: MotivoMarketing,
+): codigo is GrupoAnulacionExcluida =>
+  codigo in GRUPO_ANULACION_LABEL;
