@@ -31,6 +31,8 @@ import {
 import { dayKeyFormatter, matchesPeriod } from "@/lib/finance-order-period";
 import { readKairoConfirmationIndex } from "@/lib/order-confirmations-db";
 import { findKairoConfirmation, type KairoConfirmation } from "@/lib/order-confirmations";
+import { buildAdvisorWorkIndex, matchesAdvisorActivity, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
+import { readAdvisorWorkActors, readAdvisorWorkData } from "@/lib/advisor-work-db";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -104,7 +106,7 @@ function parsePositiveInt(value: string | null, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
 }
 
-type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation };
+type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork };
 type ResolvedRow = { row: TrackableOrderRow; traces: SettlementTrace[]; status: string };
 
 function resolveRows(
@@ -264,17 +266,31 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Asesora de confirmación inválida." }, { status: 400 });
   }
   const confirmedBy = actorParam === null ? null : Number(actorParam);
+  const workParam = params.get("worked_by");
+  if (workParam !== null && (!/^[1-9]\d*$/.test(workParam) || !Number.isSafeInteger(Number(workParam)))) {
+    return NextResponse.json({ error: "Asesora de gestión inválida." }, { status: 400 });
+  }
+  if (workParam !== null && actorParam !== null) return NextResponse.json({ error: "Elige un solo filtro de asesora." }, { status: 400 });
+  const workedBy = workParam === null ? null : Number(workParam);
+  const activity = params.get("advisor_activity") ?? "both";
+  if (!["both", "confirmation", "dispatch"].includes(activity)) return NextResponse.json({ error: "Actividad de asesora inválida." }, { status: 400 });
+  const workMode = workParam !== null || params.has("advisor_activity");
 
   try {
-    const [{ rows, settlementTraceByKey }, confirmations] = await Promise.all([getOrdersDataset(store, [
+    const [{ rows, settlementTraceByKey }, confirmations, workData, workActors] = await Promise.all([getOrdersDataset(store, [
       "rows",
       "settlementTraceByKey",
-    ]), confirmedBy !== null || includeMetadata ? readKairoConfirmationIndex(store.id) : Promise.resolve(null)]);
+    ]), confirmedBy !== null || (includeMetadata && !workMode) ? readKairoConfirmationIndex(store.id) : Promise.resolve(null),
+    workedBy !== null ? readAdvisorWorkData(store.id, workedBy) : Promise.resolve(null),
+    includeMetadata && workMode ? readAdvisorWorkActors(store.id) : Promise.resolve(null)]);
+    const workIndex = workedBy !== null && workData ? buildAdvisorWorkIndex(workedBy, rows, workData.events, workData.native) : null;
     const now = new Date();
     const dayKey = dayKeyFormatter(store.timezone);
 
     // 1) Periodo (Vista actual). Se cuenta aparte para la etiqueta "Vista actual".
-    const attributedRows = confirmedBy !== null && confirmations
+    const attributedRows = workedBy !== null && workIndex
+      ? rows.filter(row => matchesAdvisorActivity(workIndex.byRow.get(row.row_key), activity as AdvisorActivity))
+      : confirmedBy !== null && confirmations
       ? rows.filter(row => findKairoConfirmation(confirmations, confirmedBy, row) !== null) : rows;
     const periodRows = attributedRows.filter((row) =>
       matchesPeriod(row, period, month, startDate, endDate, now, dayKey)
@@ -324,7 +340,8 @@ export async function GET(req: NextRequest) {
     const attachTraces = (item: { row: TrackableOrderRow; traces: SettlementTrace[] }): RowWithTraces => {
       const estado = confirmacion?.estados.get(item.row.row_key);
       const local = confirmations && confirmedBy !== null ? findKairoConfirmation(confirmations, confirmedBy, item.row) : null;
-      return { ...item.row, traces: item.traces, ...(estado ? { confirmacion: estado } : {}), ...(local ? { confirmation_kairo: local } : {}) };
+      const work = workIndex?.byRow.get(item.row.row_key);
+      return { ...item.row, traces: item.traces, ...(estado ? { confirmacion: estado } : {}), ...(local ? { confirmation_kairo: local } : {}), ...(work ? { advisor_work: work } : {}) };
     };
 
     if (exportAll) {
@@ -368,6 +385,8 @@ export async function GET(req: NextRequest) {
       ...(enRouteGuides ? { enRouteGuides } : {}),
       ...(operationalMetadata ? { operationalMetadata } : {}),
       ...(includeMetadata ? { confirmationActors: confirmations?.actors ?? [] } : {}),
+      ...(workActors ? { advisorActors: workActors } : {}),
+      ...(workIndex ? { unmatchedAdvisorOrders: workIndex.unmatchedNative } : {}),
     });
   } catch (err) {
     if (isOrdersDatasetUnavailableError(err)) {
