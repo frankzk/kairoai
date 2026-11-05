@@ -6,7 +6,7 @@
 
 import { normalizeMatchKey } from "./order-matching";
 import { moovinTransitPhase } from "./moovin-status";
-import { esEnviadaIcomfly } from "./icomfly-estado-venta";
+import { esConfirmadaIcomfly, esEnviadaIcomfly } from "./icomfly-estado-venta";
 import type { MoovinTrackingRow, IcomflyOrderRecord } from "./finance-types";
 
 // ─── Configuracion (pendiente de confirmar con iComfly) ──────────────────────
@@ -406,10 +406,12 @@ export function mergeDispatchIntoTracking(
   if (baseStatus !== "pending" && baseStatus !== "en_route") return baseStatus;
   // El dataset durable puede contener el dispatch_view anterior al despliegue.
   // Corrige su lectura sin esperar a un sync ni degradar evidencia de transito.
+  // Confirmada sin guia entra a la misma etapa operativa, en la subetapa
+  // "Pendiente de solicitar". No modifica la solicitud real de iComfly.
   if (
     baseStatus === "pending" &&
     !row.guide_number?.trim() &&
-    esEnviadaIcomfly(row.icomfly_estado) &&
+    (esEnviadaIcomfly(row.icomfly_estado) || esConfirmadaIcomfly(row.icomfly_estado)) &&
     (dispatchState == null || dispatchState === "pendiente" || dispatchState === "despachado")
   ) {
     return "despacho_solicitado";

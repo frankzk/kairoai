@@ -12,6 +12,7 @@ import {
   type TrackableOrderRow,
 } from "@/lib/finance-orders";
 import { mergeDispatchIntoTracking } from "@/lib/dispatch";
+import { getDispatchSubstage, parseDispatchSubstage, type DispatchSubstageCounts } from "@/lib/dispatch-substages";
 import {
   estadoConfirmacion,
   PLAZOS,
@@ -246,6 +247,7 @@ export async function GET(req: NextRequest) {
   const settlementFilter = parseSettlementFilter(params.get("settlement"));
   const subetapaFilter = parseSubetapa(params.get("subetapa"));
   const plazoFilter = parsePlazo(params.get("plazo"));
+  const dispatchSubstageFilter = parseDispatchSubstage(params.get("dispatch_subetapa"));
   const period = parsePeriod(params.get("period"));
   const month = (params.get("month") || "").trim();
   const startDate = (params.get("start") || "").trim();
@@ -298,7 +300,18 @@ export async function GET(req: NextRequest) {
     // 3b) Pendientes: cola de confirmacion (subetapa + plazo).
     const confirmacion =
       trackingFilter === "pending" ? await aplicarConfirmacion(porEstado, store, subetapaFilter, plazoFilter, now) : null;
-    const trackingFiltered = confirmacion ? confirmacion.filtrados : porEstado;
+    let trackingFiltered = confirmacion ? confirmacion.filtrados : porEstado;
+    let dispatchCounts: DispatchSubstageCounts | null = null;
+    if (trackingFilter === "despacho_solicitado") {
+      dispatchCounts = { all: porEstado.length, por_solicitar: 0, esperando_guia: 0, esperando_recoleccion: 0 };
+      for (const item of porEstado) {
+        const substage = getDispatchSubstage(item.status, item.row);
+        if (substage) dispatchCounts[substage] += 1;
+      }
+      if (dispatchSubstageFilter !== "all") {
+        trackingFiltered = porEstado.filter(item => getDispatchSubstage(item.status, item.row) === dispatchSubstageFilter);
+      }
+    }
 
     const settlementCounts = countSettlements(trackingFiltered);
 
@@ -351,6 +364,7 @@ export async function GET(req: NextRequest) {
       trackingCounts,
       settlementCounts,
       ...(confirmacion ? { confirmacionCounts: confirmacion.counts } : {}),
+      ...(dispatchCounts ? { dispatchCounts } : {}),
       ...(enRouteGuides ? { enRouteGuides } : {}),
       ...(operationalMetadata ? { operationalMetadata } : {}),
       ...(includeMetadata ? { confirmationActors: confirmations?.actors ?? [] } : {}),

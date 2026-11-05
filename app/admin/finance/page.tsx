@@ -1,5 +1,12 @@
 "use client";
 import type { ConfirmationActor, KairoConfirmation } from "@/lib/order-confirmations";
+import {
+  DISPATCH_SUBSTAGES,
+  dispatchSubstageLabel,
+  getDispatchSubstage,
+  type DispatchSubstageCounts,
+  type DispatchSubstageFilter,
+} from "@/lib/dispatch-substages";
 import { KENKU_MANAGEMENT_STORES } from "@/lib/kenku-management";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1979,6 +1986,8 @@ function OrdersTab({
   const [subetapaFilter, setSubetapaFilter] = useState<Subetapa | "all">("all");
   const [plazoFilter, setPlazoFilter] = useState<Plazo | "all">("all");
   const [confirmacionCounts, setConfirmacionCounts] = useState<ConfirmacionCounts | null>(null);
+  const [dispatchSubstageFilter, setDispatchSubstageFilter] = useState<DispatchSubstageFilter>("all");
+  const [dispatchCounts, setDispatchCounts] = useState<DispatchSubstageCounts | null>(null);
   const [settlementFilter, setSettlementFilter] = useState<OrderSettlementFilter>("all");
   // En mobile los filtros (periodo/estado/liquidacion) se colapsan detras de un
   // boton para no saturar la vista; en desktop siempre se muestran.
@@ -2031,7 +2040,7 @@ function OrdersTab({
   // Cualquier cambio de filtro vuelve a la primera pagina.
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code, confirmedBy]);
+  }, [debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code, confirmedBy]);
 
   // La subetapa y el plazo son solo de Pendientes: al salir de ahi se limpian.
   useEffect(() => {
@@ -2054,6 +2063,8 @@ function OrdersTab({
     setSettlementCounts(EMPTY_SETTLEMENT_COUNTS);
     setHasLoadedOnce(false);
     setConfirmationActors([]);
+    setDispatchCounts(null);
+    setDispatchSubstageFilter("all");
   }, [selectedStore.code]);
 
   // A new advisor must never display the previous advisor's clients after a failed request.
@@ -2084,10 +2095,13 @@ function OrdersTab({
         if (subetapaFilter !== "all") params.set("subetapa", subetapaFilter);
         if (plazoFilter !== "all") params.set("plazo", plazoFilter);
       }
+      if (trackingFilter === "despacho_solicitado" && dispatchSubstageFilter !== "all") {
+        params.set("dispatch_subetapa", dispatchSubstageFilter);
+      }
       for (const [key, value] of Object.entries(extra)) params.set(key, value);
       return params.toString();
     },
-    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, confirmedBy]
+    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, confirmedBy]
   );
 
   useEffect(() => {
@@ -2115,6 +2129,7 @@ function OrdersTab({
         setTrackingCounts((json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS);
         setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
         setConfirmacionCounts((json.confirmacionCounts as ConfirmacionCounts | undefined) ?? null);
+        setDispatchCounts((json.dispatchCounts as DispatchSubstageCounts | undefined) ?? null);
         if (Array.isArray(json.confirmationActors)) setConfirmationActors(json.confirmationActors as ConfirmationActor[]);
         setHasLoadedOnce(true);
         if (json.operationalMetadata) {
@@ -2260,9 +2275,11 @@ function OrdersTab({
     trackingFilter !== ESTADO_INICIAL ||
     settlementFilter !== "all" ||
     subetapaFilter !== "all" ||
+    dispatchSubstageFilter !== "all" ||
     plazoFilter !== "all";
   const chooseConfirmationActor = (value: string) => {
     setConfirmedBy(value); setTrackingFilter("all"); setSettlementFilter("all");
+    setDispatchSubstageFilter("all");
     const url = new URL(window.location.href);
     if (value) url.searchParams.set("confirmed_by", value); else url.searchParams.delete("confirmed_by");
     window.history.replaceState(null, "", url);
@@ -2273,6 +2290,7 @@ function OrdersTab({
     setTrackingFilter(ESTADO_INICIAL);
     setSettlementFilter("all");
     setSubetapaFilter("all");
+    setDispatchSubstageFilter("all");
     setPlazoFilter("all");
   };
   const boxfulSinMatch = latestLogisticsImport?.unmatched_rows ?? 0;
@@ -2396,6 +2414,10 @@ function OrdersTab({
           Apellido: row.last_name ?? "",
           Celular: row.phone ?? "",
           "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
+          "Subetapa de despacho": (() => {
+            const substage = getDispatchSubstage(status, row);
+            return substage ? dispatchSubstageLabel(substage) : "";
+          })(),
           "Confirmó en Kairo": row.confirmation_kairo?.staffName ?? "",
           "Fecha confirmación Kairo": row.confirmation_kairo?.at ? new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: selectedStore.timezone }) : "",
           // Primer evento del ciclo del courier (Moovin "PREPARE" / Forza
@@ -2664,12 +2686,31 @@ function OrdersTab({
                         active={trackingFilter === valor}
                         onClick={() => setTrackingFilter(valor)}
                         dotClass={TRACKING_DOT_COLORS[valor]}
-                        abre={valor === "pending" && !!confirmacionCounts}
+                        abre={(valor === "pending" && !!confirmacionCounts) || (valor === "despacho_solicitado" && !!dispatchCounts)}
                       />
                     ))}
                   </GrupoChips>
                 ))}
               </div>
+              {trackingFilter === "despacho_solicitado" && dispatchCounts && (
+                <div role="group" aria-label="Subetapas de despacho" className="-mt-px space-y-1.5 border border-border bg-seleccion px-3 py-2.5">
+                  <FilaFiltros etiqueta="Subetapa" sub>
+                    <GrupoChips>
+                      <FilterChip label="Todas" todos count={dispatchCounts.all} active={dispatchSubstageFilter === "all"} onClick={() => setDispatchSubstageFilter("all")} />
+                    </GrupoChips>
+                    <GrupoChips>
+                      {DISPATCH_SUBSTAGES.map(substage => (
+                        <FilterChip key={substage.value} label={substage.label} count={dispatchCounts[substage.value]} active={dispatchSubstageFilter === substage.value} onClick={() => setDispatchSubstageFilter(substage.value)} />
+                      ))}
+                    </GrupoChips>
+                  </FilaFiltros>
+                  <p className="text-[11px] text-muted-foreground">
+                    {dispatchSubstageFilter === "all"
+                      ? "Confirmados por solicitar, solicitudes sin guía y guías pendientes de recolección."
+                      : DISPATCH_SUBSTAGES.find(s => s.value === dispatchSubstageFilter)?.description}
+                  </p>
+                </div>
+              )}
               {/* Pendientes = la cola de confirmacion: que hacer (subetapa) y
                   cuando (plazo), dos filtros independientes. Viven en un panel
                   que SALE de la tarjeta Pendientes: el panel sube 1px y la
@@ -2991,6 +3032,12 @@ function DispatchWho({
   );
 }
 
+function LineaDespacho({ row, status }: { row: OrderRowWithTraces; status: string }) {
+  const substage = getDispatchSubstage(status, row);
+  if (!substage) return null;
+  return <span className="block text-[11px] leading-4 text-foreground/85">{dispatchSubstageLabel(substage)}</span>;
+}
+
 // La cola de confirmacion de un pedido pendiente, debajo de su estado: que
 // toca (subetapa), cuando (plazo con su fecha) y cuanto se lo trabajo.
 function LineaConfirmacion({ c, tz }: { c: EstadoConfirmacion; tz: string }) {
@@ -3130,6 +3177,7 @@ function OrdersTable({
                 <div className="flex flex-col items-end gap-0.5">
                   <StatusBadge status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
                   <DispatchWho row={row} status={trackingStatus} />
+                  <LineaDespacho row={row} status={trackingStatus} />
                   {row.confirmation_kairo && <span className="text-[10px] text-muted-foreground" title={new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: tz })}>Confirmó en Kairo: {row.confirmation_kairo.staffName}</span>}
                   {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
                 </div>
@@ -3299,6 +3347,7 @@ function OrdersTable({
                       label={getTrackingStatusLabel(row, traces, trackingStatus)}
                     />
                     <DispatchWho row={row} status={trackingStatus} />
+                    <LineaDespacho row={row} status={trackingStatus} />
                     {row.confirmation_kairo && <span className="text-[10px] text-muted-foreground" title={new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: tz })}>Confirmó en Kairo: {row.confirmation_kairo.staffName}</span>}
                     {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
                   </div>
