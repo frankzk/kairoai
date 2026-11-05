@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
   snapshots: [] as Array<Record<string, unknown>>,
   items: {} as Record<string, Array<Record<string, unknown>>>,
   error: null as null | { code?: string; message: string },
+  /** Simulates the database before 20261105120400 (no backorder/incoming columns). */
+  oldSchema: false,
+  selects: [] as string[],
 }));
 vi.mock("@/lib/identidad", () => ({ identidadActual: () => mocks.identity }));
 vi.mock("@/lib/stores", () => ({
@@ -30,8 +33,13 @@ vi.mock("@/lib/db", () => ({
     rpc: mocks.rpc,
     from: (table: string) => {
       const filters: Record<string, unknown> = {};
+      let columns = "";
       const query = {
-        select: () => query,
+        select: (value: string) => {
+          columns = value;
+          mocks.selects.push(`${table}:${value}`);
+          return query;
+        },
         eq: (key: string, value: unknown) => {
           filters[key] = value;
           return query;
@@ -46,6 +54,11 @@ vi.mock("@/lib/db", () => ({
           Promise.resolve(
             mocks.error
               ? { data: null, error: mocks.error }
+              : mocks.oldSchema && /backorder|incoming/.test(columns)
+                ? {
+                    data: null,
+                    error: { code: "42703", message: "private column detail" },
+                  }
               : table === "marketing_inventory_snapshots"
                 ? { data: mocks.snapshots, error: null }
                 : {
@@ -84,6 +97,8 @@ beforeEach(() => {
   mocks.snapshots = [];
   mocks.items = {};
   mocks.error = null;
+  mocks.oldSchema = false;
+  mocks.selects = [];
 });
 
 describe("inventory upload route", () => {
@@ -280,5 +295,94 @@ describe("inventory upload route", () => {
       restocked: [{ sku: "HER.LOSS", delta: 300 }],
     });
     expect(body.latest.stock).toBeUndefined();
+  });
+
+  it("previews and saves the optional Backorder and Incoming columns", async () => {
+    const extra =
+      "SKU,Name,Available,Backorder,Incoming\nHER.LOSS,Her Loss,0,85,\nNUEVO,Nuevo,3,,40\n";
+    const preview = await POST(
+      request({ fileName: "product_table.csv", csv: extra, dryRun: true }),
+    );
+    expect(await preview.json()).toMatchObject({
+      columns: { backorder: "Backorder", incoming: "Incoming" },
+    });
+    const saved = await POST(
+      request({ fileName: "product_table.csv", csv: extra }),
+    );
+    expect(saved.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      "marketing_replace_inventory_snapshot",
+      expect.objectContaining({
+        p_meta: expect.objectContaining({
+          backorder_column: "Backorder",
+          incoming_column: "Incoming",
+        }),
+        p_items: [
+          expect.objectContaining({
+            sku: "HER.LOSS",
+            backorder: 85,
+            incoming: null,
+          }),
+          expect.objectContaining({ sku: "NUEVO", backorder: null, incoming: 40 }),
+        ],
+      }),
+    );
+  });
+
+  it("reads the extra columns and falls back to the old schema without them", async () => {
+    mocks.snapshots = [
+      {
+        id: "s2",
+        snapshot_date: "2026-11-05",
+        source: "csv",
+        file_name: "b.csv",
+        uploaded_at: "2026-11-05T14:10:00Z",
+        uploaded_by: "7:Ana",
+        row_count: 1,
+        error_count: 0,
+        available_column: "Available",
+        backorder_column: "Backorder",
+        incoming_column: "",
+      },
+    ];
+    mocks.items = {
+      s2: [
+        {
+          sku: "HER.LOSS",
+          warehouses: [],
+          available: 0,
+          on_hand: null,
+          allocated: null,
+          backorder: 85,
+          incoming: null,
+        },
+      ],
+    };
+    const fresh = await (await GET(request())).json();
+    expect(fresh.latest).toMatchObject({
+      backorderColumn: "Backorder",
+      incomingColumn: "",
+    });
+    expect(mocks.selects.some((q) => q.includes("backorder,incoming"))).toBe(
+      true,
+    );
+    mocks.oldSchema = true;
+    mocks.selects = [];
+    // The old schema has no header columns either.
+    delete mocks.snapshots[0].backorder_column;
+    delete mocks.snapshots[0].incoming_column;
+    const old = await GET(request());
+    expect(old.status).toBe(200);
+    const body = await old.json();
+    expect(body).toMatchObject({
+      status: "ok",
+      latest: { backorderColumn: "", incomingColumn: "" },
+    });
+    expect(JSON.stringify(body)).not.toContain("private column detail");
+    // Retried with the old column list (the snapshot read without extras).
+    expect(
+      mocks.selects.filter((q) => q.startsWith("marketing_inventory_snapshots"))
+        .length,
+    ).toBe(2);
   });
 });

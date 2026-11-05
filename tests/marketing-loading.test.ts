@@ -284,3 +284,43 @@ describe("Team report loading", () => {
     });
   });
 });
+
+describe("Analysis tab loading (modules 4–12)", () => {
+  it("loads orders and product insights only in the analysis tab", () => {
+    expect(marketingLoadPlan("analysis")).toMatchObject({
+      summary: true,
+      settings: true,
+      sourceScope: "basic",
+      reportScope: null,
+      actions: true,
+      control: true,
+      periodControl: false,
+      changes: false,
+      inventory: true,
+      accounts: true,
+      ordersInsights: true,
+      productsInsights: true,
+    });
+  });
+  it("keeps the report light: account status only (deferred), no heavy insights", () => {
+    expect(marketingLoadPlan("report")).toMatchObject({
+      accounts: true,
+      ordersInsights: false,
+      productsInsights: false,
+    });
+    for (const view of [
+      "summary",
+      "details",
+      "trends",
+      "sources",
+      "matrix",
+      "structure",
+      "subtraction",
+    ] as const)
+      expect(marketingLoadPlan(view)).toMatchObject({
+        accounts: false,
+        ordersInsights: false,
+        productsInsights: false,
+      });
+  });
+});

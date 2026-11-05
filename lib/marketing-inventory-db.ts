@@ -18,6 +18,10 @@ export interface InventorySnapshot {
   rowCount: number;
   errorCount: number;
   availableColumn: string;
+  /** CSV header used for "pedidos esperando"; "" when the file had none (or before the migration). */
+  backorderColumn: string;
+  /** CSV header used for "en camino"; "" when the file had none (or before the migration). */
+  incomingColumn: string;
   stock: MarketingStock[];
 }
 
@@ -32,6 +36,10 @@ export class InventoryStorageError extends Error {
     this.name = "InventoryStorageError";
   }
 }
+
+/** Postgres "undefined column": 20261105120400 (backorder/incoming) not applied yet. */
+export const isMissingColumn = (error: { code?: string } | null | undefined) =>
+  ["42703", "PGRST204"].includes(String(error?.code));
 
 /** PostgREST/Postgres "relation or function does not exist" (migration not applied). */
 export const isMissingRelation = (
@@ -68,6 +76,11 @@ export async function saveInventorySnapshot(
       available: entry.available,
       on_hand: input.parsed.columns.onHand ? entry.onHand : null,
       allocated: input.parsed.columns.allocated ? entry.allocated : null,
+      // Before 20261105120400 the function ignores these keys (jsonb_to_recordset).
+      backorder: input.parsed.columns.backorder
+        ? (entry.backorder ?? null)
+        : null,
+      incoming: input.parsed.columns.incoming ? (entry.incoming ?? null) : null,
     };
   });
   const { data, error } = await getDB().rpc(
@@ -80,6 +93,8 @@ export async function saveInventorySnapshot(
         error_count: input.parsed.errors.length,
         unmatched_count: input.unmatched,
         available_column: input.parsed.columns.available.slice(0, 60),
+        backorder_column: (input.parsed.columns.backorder ?? "").slice(0, 60),
+        incoming_column: (input.parsed.columns.incoming ?? "").slice(0, 60),
         uploaded_by: input.uploadedBy.slice(0, 200),
       },
       p_items: items,
@@ -100,24 +115,36 @@ type SnapshotRow = {
   row_count: number;
   error_count: number;
   available_column: string;
+  backorder_column?: string | null;
+  incoming_column?: string | null;
 };
 
-async function readItems(snapshotId: string): Promise<MarketingStock[]> {
+const ITEM_COLUMNS = "sku,warehouses,available,on_hand,allocated";
+const SNAPSHOT_COLUMNS =
+  "id,snapshot_date,source,file_name,uploaded_at,uploaded_by,row_count,error_count,available_column";
+
+async function readItems(
+  snapshotId: string,
+  extras: { backorder: boolean; incoming: boolean },
+): Promise<MarketingStock[]> {
   const stock: MarketingStock[] = [];
+  const withExtras = extras.backorder || extras.incoming;
   for (let page = 0; page < 25; page++) {
     const { data, error } = await getDB()
       .from("marketing_inventory_items")
-      .select("sku,warehouses,available,on_hand,allocated")
+      .select(withExtras ? `${ITEM_COLUMNS},backorder,incoming` : ITEM_COLUMNS)
       .eq("snapshot_id", snapshotId)
       .order("sku_key")
       .range(page * 1000, page * 1000 + 999);
     if (error) throw new InventoryStorageError(isMissingRelation(error));
-    const rows = (data ?? []) as Array<{
+    const rows = (data ?? []) as unknown as Array<{
       sku: string;
       warehouses: string[] | null;
       available: number | string;
       on_hand: number | string | null;
       allocated: number | string | null;
+      backorder?: number | string | null;
+      incoming?: number | string | null;
     }>;
     for (const row of rows) {
       const available = Number(row.available);
@@ -128,6 +155,12 @@ async function readItems(snapshotId: string): Promise<MarketingStock[]> {
         available,
         onHand: row.on_hand == null ? available : Number(row.on_hand),
         allocated: row.allocated == null ? 0 : Number(row.allocated),
+        ...(extras.backorder
+          ? { backorder: row.backorder == null ? null : Number(row.backorder) }
+          : {}),
+        ...(extras.incoming
+          ? { incoming: row.incoming == null ? null : Number(row.incoming) }
+          : {}),
       });
     }
     if (rows.length < 1000) return stock;
@@ -148,6 +181,8 @@ const snapshotOf = (
   rowCount: Number(row.row_count),
   errorCount: Number(row.error_count),
   availableColumn: row.available_column,
+  backorderColumn: row.backorder_column ?? "",
+  incomingColumn: row.incoming_column ?? "",
   stock,
 });
 
@@ -159,21 +194,35 @@ export async function readInventorySnapshots(
   latest: InventorySnapshot | null;
   previous: InventorySnapshot | null;
 }> {
-  const { data, error } = await getDB()
-    .from("marketing_inventory_snapshots")
-    .select(
-      "id,snapshot_date,source,file_name,uploaded_at,uploaded_by,row_count,error_count,available_column",
-    )
-    .eq("store_id", storeId)
-    .eq("source", "csv")
-    .order("snapshot_date", { ascending: false })
-    .limit(2);
+  const query = (columns: string) =>
+    getDB()
+      .from("marketing_inventory_snapshots")
+      .select(columns)
+      .eq("store_id", storeId)
+      .eq("source", "csv")
+      .order("snapshot_date", { ascending: false })
+      .limit(2);
+  // Before 20261105120400 the extra columns do not exist: read the old list.
+  let { data, error } = await query(
+    `${SNAPSHOT_COLUMNS},backorder_column,incoming_column`,
+  );
+  if (isMissingColumn(error)) ({ data, error } = await query(SNAPSHOT_COLUMNS));
   if (error) throw new InventoryStorageError(isMissingRelation(error));
-  const rows = (data ?? []) as SnapshotRow[];
+  const rows = (data ?? []) as unknown as SnapshotRow[];
   const withItems = options.items !== false;
   const [latest, previous] = await Promise.all(
     [rows[0], rows[1]].map(async (row) =>
-      row ? snapshotOf(row, withItems ? await readItems(row.id) : []) : null,
+      row
+        ? snapshotOf(
+            row,
+            withItems
+              ? await readItems(row.id, {
+                  backorder: Boolean(row.backorder_column),
+                  incoming: Boolean(row.incoming_column),
+                })
+              : [],
+          )
+        : null,
     ),
   );
   return { latest, previous };

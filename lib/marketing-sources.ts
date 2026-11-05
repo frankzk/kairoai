@@ -72,9 +72,9 @@ const PURCHASE_TYPES = [
   "purchase",
   "offsite_conversion.fb_pixel_purchase",
 ];
-const ATTRIBUTION_WINDOWS = JSON.stringify(["7d_click", "1d_view"]);
+export const ATTRIBUTION_WINDOWS = JSON.stringify(["7d_click", "1d_view"]);
 /** The first canonical purchase type only, so the same purchase is never counted twice. */
-function purchasesOf(row: Json): number {
+export function purchasesOf(row: Json): number {
   const actions = list(row.actions).map(obj);
   const purchase = PURCHASE_TYPES.map((type) =>
     actions.find((action) => action.action_type === type),
@@ -154,7 +154,7 @@ interface MetaExtras {
   now?: Date;
 }
 
-async function metaPages(
+export async function metaPages(
   fetcher: typeof fetch,
   build: (after: string) => URL,
   headers: Record<string, string>,

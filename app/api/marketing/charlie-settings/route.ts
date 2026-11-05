@@ -6,6 +6,7 @@ import { readCharlieSettings } from "@/lib/marketing-charlie-settings";
 import { metaAccountIds } from "@/lib/marketing-sources";
 import { dateTime, marketingDate } from "@/lib/marketing-dates";
 import { getMarketingData } from "@/lib/marketing-data";
+import { isMissingColumn } from "@/lib/marketing-inventory-db";
 import { presetPeriod } from "@/lib/marketing-dates";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -110,6 +111,37 @@ export async function PATCH(req: NextRequest) {
           },
           { onConflict: "store_id" },
         );
+      if (result.error) throw new Error();
+    } else if (body.kind === "pen" || body.kind === "crc") {
+      // Only the exchange rate (Estado de las cuentas, M11): the offer and the
+      // other currency stay as they are. Both null = back to the official rate.
+      const pen = body.kind === "pen";
+      const rate = pen ? body.pen_per_usd : body.crc_per_usd,
+        date = pen ? body.pen_rate_date : body.rate_date;
+      const max = pen ? 100 : 100000;
+      if (
+        !(
+          (rate === null && date === null) ||
+          (typeof rate === "number" &&
+            Number.isFinite(rate) &&
+            rate > 0 &&
+            rate < max &&
+            typeof date === "string" &&
+            Number.isFinite(dateTime(date)) &&
+            date <= marketingDate())
+        )
+      )
+        return reply({ error: "Revisa la tasa y la fecha." }, 400);
+      const result = await getDB()
+        .from("marketing_charlie_config")
+        .upsert(
+          pen
+            ? { ...audit, pen_per_usd: rate, pen_rate_date: date }
+            : { ...audit, crc_per_usd: rate, rate_date: date },
+          { onConflict: "store_id" },
+        );
+      if (result.error && pen && isMissingColumn(result.error))
+        return reply({ error: "Pendiente: aplicar migración." }, 503);
       if (result.error) throw new Error();
     } else if (body.kind === "role") {
       const account = body.account_id,

@@ -7,7 +7,15 @@
 // "Cliente no contesta") maquillaria la tasa.
 
 import { describe, expect, it } from "vitest";
-import { anulacionExcluida, grupoAnulacionExcluida, tasaConfirmacion } from "../lib/anulacion-motivos";
+import {
+  anulacionExcluida,
+  esGrupoGestion,
+  grupoAnulacionExcluida,
+  MOTIVO_MARKETING_LABEL,
+  MOTIVOS_MARKETING,
+  motivoMarketing,
+  tasaConfirmacion,
+} from "../lib/anulacion-motivos";
 import { computeOpMetricsFromTrackableRows, type TrackableOrderRow } from "../lib/finance-orders";
 
 describe("motivos de anulación de iComfly", () => {
@@ -161,5 +169,49 @@ describe("KPIs de Finanzas", () => {
       new Map()
     );
     expect(m).toMatchObject({ generated: 2, confirmed: 1, inProgress: 1, confirmRate: 50 });
+  });
+});
+
+describe("motivoMarketing (Marketing, módulo 7)", () => {
+  it.each([
+    ["Duplicado", "duplicado"],
+    ["Error en el pedido", "cambio_en_la_orden"],
+    ["error en  el pedido", "cambio_en_la_orden"],
+    ["Número errado", "numero_errado"],
+    ["cliente tiene 2 devoluciones \n", "lista_negra"],
+    ["Lista negra", "lista_negra"],
+    ["Cliente canceló", "cliente_cancelo"],
+    ["cliente ya no lo quiere \n", "cliente_cancelo"],
+    ["Cliente no lo desea", "cliente_cancelo"],
+    ["cliente compro en otro lado", "cliente_cancelo"],
+    ["lo consiguio en  otro lado mas barato", "cliente_cancelo"],
+    ["Cancelado desde Shopify: other", "otro"],
+    [
+      "Reemplazado por pedido con upsell MANUAL-1 (id 877314). Evitar doble despacho y cobro.",
+      "upsell",
+    ],
+    [
+      "Reemplazado por el pedido #233 (792965), aceptado en Boxful/ShipHero.",
+      "upsell",
+    ],
+    ["Pedido de prueba de integracion Kairo. No despachar.", "prueba"],
+    ["Prueba técnica autorizada de etiqueta Kairo", "prueba"],
+    ["prueba", "prueba"],
+    ["Producto agotado", "producto_agotado"],
+    ["", "sin_motivo"],
+    ["   ", "sin_motivo"],
+    [null, "sin_motivo"],
+    ["quiere 2x1 en 19900", "otro"],
+  ] as const)("%j → %s", (motivo, code) => {
+    expect(motivoMarketing(motivo)).toBe(code);
+  });
+
+  it("has a Spanish label for every code and knows which ones Gestión excludes", () => {
+    for (const code of MOTIVOS_MARKETING)
+      expect(MOTIVO_MARKETING_LABEL[code]).toBeTruthy();
+    expect(MOTIVO_MARKETING_LABEL.cambio_en_la_orden).toBe("Error en el pedido");
+    expect(esGrupoGestion("duplicado")).toBe(true);
+    expect(esGrupoGestion("cliente_cancelo")).toBe(false);
+    expect(esGrupoGestion("otro")).toBe(false);
   });
 });

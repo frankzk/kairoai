@@ -12,6 +12,23 @@ Reglas:
 
 Estado actual:
 
+Mejoras de Marketing, módulos 4–12: las tres se aplicaron el 05/11/2026, en
+este orden. Si faltara alguna, Marketing funciona igual que antes y la parte
+nueva lo dice ("Pendiente: aplicar migración"):
+
+- `20261105120400_marketing_inventory_extra_columns.sql`: columnas
+  `backorder` (pedidos esperando stock) e `incoming` (unidades en camino) en
+  `marketing_inventory_items`, el encabezado usado en
+  `marketing_inventory_snapshots` y la función
+  `marketing_replace_inventory_snapshot` que ahora las guarda (misma firma).
+- `20261105120500_marketing_repeat_orders.sql`: función
+  `marketing_repeat_orders(tienda, desde, hasta, días)` con pedidos no anulados
+  por día de Costa Rica y cuántos son de un teléfono que ya había comprado.
+  Solo conteos; solo service role.
+- `20261105120600_marketing_charlie_pen_rate.sql`: `pen_per_usd` y
+  `pen_rate_date` en `marketing_charlie_config` (tasa manual de soles por dólar
+  para TikTok; null = BCRP).
+
 Mejoras de Marketing: las cuatro se aplicaron el 05/11/2026, en este orden.
 Si faltara alguna, Marketing sigue funcionando y la parte nueva muestra
 "Pendiente: aplicar migración":

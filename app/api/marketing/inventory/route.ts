@@ -46,6 +46,8 @@ const meta = (snapshot: InventorySnapshot | null) =>
         rowCount: snapshot.rowCount,
         errorCount: snapshot.errorCount,
         availableColumn: snapshot.availableColumn,
+        backorderColumn: snapshot.backorderColumn,
+        incomingColumn: snapshot.incomingColumn,
         skus: snapshot.stock.length,
       }
     : null;
@@ -142,6 +144,7 @@ export async function POST(req: NextRequest) {
       matched: match?.matched ?? null,
       catalogWithoutStock: match?.catalogWithoutStock ?? null,
       availableFrom: parsed.columns.availableFrom,
+      // Includes the optional extras: columns.backorder / columns.incoming (header or null).
       columns: parsed.columns,
       errorList: parsed.errors.slice(0, 50),
       unmatchedSkus: match?.unmatched.slice(0, 100) ?? [],

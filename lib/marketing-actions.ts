@@ -195,6 +195,98 @@ export function effectiveRealCpa(
 const hoursBetween = (from: string, to: Date) =>
   Math.max(0, (to.getTime() - Date.parse(from)) / 3_600_000);
 
+/** Active for the rules: status ACTIVE, or unknown status with spend today, yesterday or in the last 3 days. */
+export function campaignActive(
+  row: Pick<CampaignActionRow, "status" | "today" | "yesterday" | "days3">,
+): boolean {
+  const spentRecently = [row.today, row.yesterday, row.days3].some(
+    (w) => (w.spendNative ?? 0) > 0,
+  );
+  return row.status === "activa" || (row.status === null && spentRecently);
+}
+
+/**
+ * Step 4 of the rules: the launch test (Meta in USD, TikTok in soles), with
+ * real orders only. Null when the campaign is not in test or its spend is not
+ * convertible. `passed` = "Pasó la prueba", which the rules put after the
+ * hold, scale and CPA actions.
+ */
+export function testRuleAction(
+  row: Pick<CampaignActionRow, "platform" | "launch">,
+  active: boolean,
+  t: MarketingTargets = MARKETING_TARGETS,
+): { action: SuggestedAction; passed: boolean } | null {
+  if (!row.launch.inTest || row.launch.testSpend == null) return null;
+  const meta = row.platform === "meta";
+  const kill = meta ? t.metaTestKillUsd : t.tiktokTestKillPen;
+  const pass = meta ? t.metaTestPassUsd : t.tiktokTestPassPen;
+  const need = meta ? t.metaTestPassOrders : t.tiktokTestPassOrders;
+  const money = (v: number) => moneyText(v, meta ? "USD" : "PEN");
+  const spend = row.launch.testSpend;
+  const orders = row.launch.lifetimeReal;
+  const pixel = row.launch.lifetimePixel;
+  const result = (action: SuggestedAction, passed = false) => ({
+    action,
+    passed,
+  });
+  if (orders == null)
+    return result({
+      code: "en_prueba",
+      label: "En prueba",
+      tone: "wait",
+      detail: `${money(spend)} gastados · pedidos reales no disponibles${pixel != null ? ` (píxel: ${countText(pixel)})` : ""}. No se decide con el píxel.`,
+    });
+  // An estimate above zero means some sale was assigned to the campaign.
+  if (spend >= kill && orders === 0 && (pixel ?? 0) === 0)
+    return result(
+      active
+        ? {
+            code: "apagar_prueba",
+            label: "Apagar",
+            tone: "risk",
+            detail: `Prueba: ${money(spend)} gastados sin venta (meta: venta antes de ${money(kill)}).`,
+          }
+        : {
+            code: "pausada",
+            label: "Prueba apagada",
+            tone: "info",
+            detail: `${money(spend)} sin venta; sin gasto en los últimos 3 días.`,
+          },
+    );
+  if (spend >= pass && orders >= need)
+    return result(
+      {
+        code: "paso_prueba",
+        label: "Pasó la prueba",
+        tone: "good",
+        detail: `${money(spend)} con ${ordersText(orders)} pedidos reales.`,
+      },
+      true,
+    );
+  if (spend >= pass)
+    return result({
+      code: "cpa_alto",
+      label: "No pasó la prueba",
+      tone: "risk",
+      detail: `${money(spend)} y ${ordersText(orders)} pedidos reales (se piden ${need}).`,
+    });
+  return result(
+    active
+      ? {
+          code: "en_prueba",
+          label: "En prueba",
+          tone: "wait",
+          detail: `${money(spend)} de ${money(pass)} · ${ordersText(orders)} pedidos reales.`,
+        }
+      : {
+          code: "pausada",
+          label: "Prueba sin gasto",
+          tone: "info",
+          detail: `Sin gasto en los últimos 3 días (${money(spend)} de ${money(pass)}).`,
+        },
+  );
+}
+
 /** Rules of the team table, in order. The first match is the action; later matches are notes. */
 export function evaluateCampaignRules(
   row: Omit<CampaignActionRow, "action" | "notes">,
@@ -215,11 +307,7 @@ export function evaluateCampaignRules(
     });
     return finish();
   }
-  const spentRecently = [row.today, row.yesterday, row.days3].some(
-    (w) => (w.spendNative ?? 0) > 0,
-  );
-  const active =
-    row.status === "activa" || (row.status === null && spentRecently);
+  const active = campaignActive(row);
 
   // 2. Stock for less than 3 days (only with a current inventory file).
   if (active && !row.stockStale && row.coverage?.tone === "red")
@@ -284,70 +372,9 @@ export function evaluateCampaignRules(
   // 4. Test rules (Meta in USD, TikTok in soles), with real orders only:
   // deciding on the pixel is what the team asked to stop (A4).
   let passed: SuggestedAction | null = null;
-  if (row.launch.inTest && row.launch.testSpend != null) {
-    const meta = row.platform === "meta";
-    const kill = meta ? t.metaTestKillUsd : t.tiktokTestKillPen;
-    const pass = meta ? t.metaTestPassUsd : t.tiktokTestPassPen;
-    const need = meta ? t.metaTestPassOrders : t.tiktokTestPassOrders;
-    const money = (v: number) => moneyText(v, meta ? "USD" : "PEN");
-    const spend = row.launch.testSpend;
-    const orders = row.launch.lifetimeReal;
-    const pixel = row.launch.lifetimePixel;
-    if (orders == null)
-      out.push({
-        code: "en_prueba",
-        label: "En prueba",
-        tone: "wait",
-        detail: `${money(spend)} gastados · pedidos reales no disponibles${pixel != null ? ` (píxel: ${countText(pixel)})` : ""}. No se decide con el píxel.`,
-      });
-    // An estimate above zero means some sale was assigned to the campaign.
-    else if (spend >= kill && orders === 0 && (pixel ?? 0) === 0)
-      out.push(
-        active
-          ? {
-              code: "apagar_prueba",
-              label: "Apagar",
-              tone: "risk",
-              detail: `Prueba: ${money(spend)} gastados sin venta (meta: venta antes de ${money(kill)}).`,
-            }
-          : {
-              code: "pausada",
-              label: "Prueba apagada",
-              tone: "info",
-              detail: `${money(spend)} sin venta; sin gasto en los últimos 3 días.`,
-            },
-      );
-    else if (spend >= pass && orders >= need)
-      passed = {
-        code: "paso_prueba",
-        label: "Pasó la prueba",
-        tone: "good",
-        detail: `${money(spend)} con ${ordersText(orders)} pedidos reales.`,
-      };
-    else if (spend >= pass)
-      out.push({
-        code: "cpa_alto",
-        label: "No pasó la prueba",
-        tone: "risk",
-        detail: `${money(spend)} y ${ordersText(orders)} pedidos reales (se piden ${need}).`,
-      });
-    else
-      out.push(
-        active
-          ? {
-              code: "en_prueba",
-              label: "En prueba",
-              tone: "wait",
-              detail: `${money(spend)} de ${money(pass)} · ${ordersText(orders)} pedidos reales.`,
-            }
-          : {
-              code: "pausada",
-              label: "Prueba sin gasto",
-              tone: "info",
-              detail: `Sin gasto en los últimos 3 días (${money(spend)} de ${money(pass)}).`,
-            },
-      );
-  }
+  const test = testRuleAction(row, active, t);
+  if (test?.passed) passed = test.action;
+  else if (test) out.push(test.action);
 
   // 5. Hold after a change (48–72 h).
   const scale = `+${Math.round(t.scaleStep * 100)}%`;
