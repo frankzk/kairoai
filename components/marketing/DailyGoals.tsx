@@ -1,6 +1,7 @@
 "use client";
 import type { DailyPace } from "@/lib/marketing-pace";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
+import { relativeChangeCopy } from "@/lib/kpi-comparison-copy";
 import { count, money, percentage, shortDate } from "./format";
 import r from "./team-report.module.css";
 
@@ -65,6 +66,7 @@ function Goals({
           progress={orders.progress}
           valueNow={orders.real}
           max={orders.goal}
+          comparison={relativeChangeCopy(orders.real, orders.yesterday?.real)}
           lines={[
             `${percentage(orders.progress)} de la meta · ${count(orders.created)} creados hoy`,
             orders.yesterday
@@ -148,6 +150,7 @@ function Goal({
   valueNow,
   max,
   lines,
+  comparison,
   risk = false,
 }: {
   label: string;
@@ -156,6 +159,7 @@ function Goal({
   valueNow: number | null;
   max: number;
   lines: string[];
+  comparison?: ReturnType<typeof relativeChangeCopy>;
   risk?: boolean;
 }) {
   const width = progress == null ? 0 : Math.min(1, Math.max(0, progress));
@@ -176,6 +180,11 @@ function Goal({
       >
         <div className={r.meterFill} style={{ width: `${width * 100}%` }} />
       </div>
+      {comparison && (
+        <small className={r.goalComparison} data-trend={comparison.direction ?? "unavailable"}>
+          {comparison.text}
+        </small>
+      )}
       {lines.filter(Boolean).map((line) => (
         <small key={line}>{line}</small>
       ))}

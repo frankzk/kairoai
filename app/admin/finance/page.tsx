@@ -1,5 +1,7 @@
 "use client";
 import { getKpiWindows, type KpiRange, type KpiWindow } from "@/lib/kpi-windows";
+import { buildKpiComparisonCopy, type KpiComparisonCopy } from "@/lib/kpi-comparison-copy";
+import { OperationalKpiCard } from "@/components/OperationalKpiCard";
 import type { ConfirmationActor, KairoConfirmation } from "@/lib/order-confirmations";
 import { workEvidenceLabel, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
 import {
@@ -1334,7 +1336,10 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
         const previous = (json.previous as OpMetrics | null | undefined) ?? null;
         if (!current) throw new Error("Respuesta de KPIs invalida");
         if (json.window) setKpiWindowSnapshot({ key: kpiWindowKey, value: json.window as KpiWindow });
-        setKpiCards(buildOperationalKpiCards(current, previous));
+        setKpiCards(buildOperationalKpiCards(current, previous, {
+          range: kpiRange,
+          window: json.window ?? getKpiWindows(kpiRange, new Date(), { start: kpiCustomStart, end: kpiCustomEnd }, selectedStore.timezone),
+        }));
         setCourierPerformance(
           (json.courierPerformance as CourierPerformanceReport | null | undefined) ?? null
         );
@@ -1349,7 +1354,7 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
       }
     })();
     return () => controller.abort();
-  }, [selectedStoreCode, kpiRange, kpiCustomStart, kpiCustomEnd, tab, ordersDatasetReadyStore, kpiWindowKey, kpiReload]);
+  }, [selectedStoreCode, selectedStore.timezone, kpiRange, kpiCustomStart, kpiCustomEnd, tab, ordersDatasetReadyStore, kpiWindowKey, kpiReload]);
 
   // Productos server-side (Carril 2 inc.2): /api/finance/product-analysis devuelve
   // las filas ya agregadas (buildFinanceControlCenter + buildProductAnalysisRows en
@@ -9017,6 +9022,8 @@ interface KpiCardVM {
   tone: KpiTone;
   deltaLabel: string | null;
   deltaTone: DeltaTone;
+  comparison?: KpiComparisonCopy | null;
+  hideSubWhenComparing?: boolean;
   /** Explicacion al pasar el mouse. */
   title?: string;
 }
@@ -9154,9 +9161,9 @@ function confirmTone(rate: number): KpiTone {
 // Fila operativa COD: embudo de izquierda a derecha (volumen -> despacho ->
 // entrega -> anulacion -> reparto -> velocidad -> cesta). Cada card lleva valor,
 // comparativo vs periodo anterior y semaforo contra meta.
-function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCardVM[] {
+function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null, context?: { range: KpiRange; window: KpiWindow }): KpiCardVM[] {
   const prevLead = prev?.leadAvg ?? null;
-  return [
+  const cards: KpiCardVM[] = [
     {
       id: "generated",
       label: "Pedidos generados",
@@ -9165,6 +9172,7 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCa
       deltaLabel: pctDelta(cur.generated, prev?.generated ?? null),
       deltaTone: deltaTone(cur.generated, prev?.generated ?? null, "up"),
       sub: "pedidos creados",
+      hideSubWhenComparing: true,
     },
     {
       id: "dispatch",
@@ -9254,72 +9262,26 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null): KpiCa
       sub: "valor por pedido",
     },
   ];
-}
-
-function OperationalKpiCard({
-  label,
-  value,
-  sub,
-  star = false,
-  tone = "neutral",
-  deltaLabel = null,
-  deltaTone: deltaToneValue = "muted",
-  loading = false,
-  title,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  star?: boolean;
-  tone?: KpiTone;
-  deltaLabel?: string | null;
-  deltaTone?: DeltaTone;
-  loading?: boolean;
-  title?: string;
-}) {
-  const borderClass =
-    tone === "good"
-      ? "border-emerald-500/40"
-      : tone === "warn"
-        ? "border-amber-500/40"
-        : tone === "bad"
-          ? "border-red-500/40"
-          : "border-border";
-  const valueClass =
-    tone === "good"
-      ? "text-emerald-300"
-      : tone === "warn"
-        ? "text-amber-300"
-        : tone === "bad"
-          ? "text-red-300"
-          : "text-foreground";
-  const deltaClass =
-    deltaToneValue === "good"
-      ? "text-emerald-400"
-      : deltaToneValue === "bad"
-        ? "text-red-400"
-        : "text-muted-foreground";
-  return (
-    <Card className={borderClass} title={title}>
-      <CardContent className="p-2.5 sm:p-3">
-        <div className="flex items-baseline justify-between gap-1.5">
-          <p className="truncate text-[11px] text-muted-foreground">{label}</p>
-          <span className="flex shrink-0 items-baseline gap-1">
-            {star && <span className="text-[9px] text-primary">★</span>}
-            <span className={`text-base font-bold leading-none sm:text-xl ${valueClass}`}>{loading ? "..." : value}</span>
-          </span>
-        </div>
-        {(sub || deltaLabel) && (
-          <div className="mt-0.5 flex items-baseline justify-between gap-1.5">
-            <p className="truncate text-[10px] leading-tight text-muted-foreground">{sub ?? ""}</p>
-            {deltaLabel && !loading && (
-              <span className={`shrink-0 text-[10px] font-medium ${deltaClass}`}>{deltaLabel}</span>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
+  if (!prev || !context) return cards;
+  const previousValues: Record<string, string | null> = {
+    generated: formatInt(prev.generated),
+    dispatch: prev.generated > 0 ? fmtPct1(prev.dispatchRate) : "sin pedidos",
+    delivery: prev.dispatched > 0 ? fmtPct1(prev.deliveryRate) : "sin despachos",
+    confirm: prev.confirmRate != null && prev.generated > 0 ? fmtPct1(prev.confirmRate) : "sin pedidos",
+    annul: prev.generated > 0 ? fmtPct1(prev.annulRate) : "sin pedidos",
+    lead: cur.leadAvg != null && prev.leadAvg != null ? `${prev.leadAvg.toFixed(1)} d` : null,
+    ticket: cur.ticket > 0 && prev.ticket > 0 ? currency(prev.ticket) : null,
+  };
+  return cards.map((card) => {
+    const rateWithoutBase = (card.id === "delivery" && (!cur.dispatched || !prev.dispatched)) ||
+      (["dispatch", "confirm", "annul"].includes(card.id) && (!cur.generated || !prev.generated));
+    return { ...card, comparison: buildKpiComparisonCopy({
+      ...context,
+      deltaLabel: rateWithoutBase ? null : card.deltaLabel,
+      previousValue: previousValues[card.id] ?? null,
+      unavailableText: card.id === "generated" && prev.generated === 0 ? "Sin base porcentual" : undefined,
+    }) };
+  });
 }
 
 const COURIER_STATUS_LABELS: Array<[CourierKairoStatus, string]> = [
