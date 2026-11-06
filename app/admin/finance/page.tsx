@@ -1,4 +1,5 @@
 "use client";
+import { getKpiWindows, type KpiRange, type KpiWindow } from "@/lib/kpi-windows";
 import type { ConfirmationActor, KairoConfirmation } from "@/lib/order-confirmations";
 import { workEvidenceLabel, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
 import {
@@ -588,6 +589,8 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
   // /api/finance/kpis para no depender de cargar las ~11k filas en el navegador.
   const [kpiCards, setKpiCards] = useState<KpiCardVM[]>([]);
   const [kpiLoading, setKpiLoading] = useState(true);
+  const [kpiReload, setKpiReload] = useState(0);
+  const [kpiWindowSnapshot, setKpiWindowSnapshot] = useState<{ key: string; value: KpiWindow } | null>(null);
   const [courierPerformance, setCourierPerformance] = useState<CourierPerformanceReport | null>(null);
   const [courierReportOpen, setCourierReportOpen] = useState(false);
   // La barra de alertas se actualiza con la metadata de la primera respuesta de
@@ -692,6 +695,7 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
     const isCurrentRun = () => refreshRunRef.current === refreshRun;
     const activeStoreCode = selectedStore.code;
     setLoading(true);
+    setKpiReload(value => value + 1);
     setError("");
     setImports([]);
     setLogisticsImports([]);
@@ -1276,16 +1280,18 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
   // La barra de alertas usa los metadatos devueltos junto con la primera pagina
   // de pedidos. Asi la vista operativa necesita una sola carga inicial.
 
-  // La ventana (etiqueta de rango / comparativo / "tasas en maduracion") es
-  // pura y barata: se calcula en cliente. Las tarjetas de KPIs vienen del
-  // endpoint server-side (efecto de abajo). Mientras no hay datos, mostramos las
-  // 7 tarjetas en cero para conservar el layout (OperationalKpiCard pinta "...").
+  // La etiqueta usa el corte EXACTO devuelto con los numeros del API. Mientras
+  // carga, el mismo calculador compartido sirve de vista previa en hora de tienda.
+  const kpiWindowKey = `${selectedStoreCode}|${kpiRange}|${kpiCustomStart}|${kpiCustomEnd}`;
   const operationalKpis = useMemo(
     () => ({
-      win: getKpiWindows(kpiRange, new Date(), { start: kpiCustomStart, end: kpiCustomEnd }),
+      win: kpiWindowSnapshot?.key === kpiWindowKey ? kpiWindowSnapshot.value
+        : kpiRange === "custom" && (!kpiCustomStart || !kpiCustomEnd || kpiCustomStart > kpiCustomEnd)
+          ? { ...getKpiWindows("all", new Date(), undefined, selectedStore.timezone), rangeLabel: "Rango: elegí desde y hasta" }
+          : getKpiWindows(kpiRange, new Date(), { start: kpiCustomStart, end: kpiCustomEnd }, selectedStore.timezone),
       cards: kpiCards.length ? kpiCards : buildOperationalKpiCards(EMPTY_OP_METRICS, null),
     }),
-    [kpiRange, kpiCustomStart, kpiCustomEnd, kpiCards]
+    [kpiRange, kpiCustomStart, kpiCustomEnd, kpiCards, kpiWindowKey, kpiWindowSnapshot, selectedStore.timezone]
   );
   const operationalCountsLoading = ordersDatasetReadyStore !== selectedStoreCode;
 
@@ -1323,9 +1329,11 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
         );
         const json = await readApiJson(res);
         if (!res.ok) throw new Error(json.error ?? "No se pudieron calcular los KPIs");
+        if (controller.signal.aborted) return;
         const current = json.current as OpMetrics | undefined;
         const previous = (json.previous as OpMetrics | null | undefined) ?? null;
         if (!current) throw new Error("Respuesta de KPIs invalida");
+        if (json.window) setKpiWindowSnapshot({ key: kpiWindowKey, value: json.window as KpiWindow });
         setKpiCards(buildOperationalKpiCards(current, previous));
         setCourierPerformance(
           (json.courierPerformance as CourierPerformanceReport | null | undefined) ?? null
@@ -1341,7 +1349,7 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
       }
     })();
     return () => controller.abort();
-  }, [selectedStoreCode, kpiRange, kpiCustomStart, kpiCustomEnd, tab, ordersDatasetReadyStore]);
+  }, [selectedStoreCode, kpiRange, kpiCustomStart, kpiCustomEnd, tab, ordersDatasetReadyStore, kpiWindowKey, kpiReload]);
 
   // Productos server-side (Carril 2 inc.2): /api/finance/product-analysis devuelve
   // las filas ya agregadas (buildFinanceControlCenter + buildProductAnalysisRows en
@@ -1539,12 +1547,13 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
               )}
             </div>
             <div className="flex items-center gap-3">
-              <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground" aria-label="Comparación de KPIs" title={operationalKpis.win.comparisonDetail}>
                 <span>
                   {operationalKpis.win.rangeLabel} · {operationalKpis.win.compareLabel}
                 </span>
+                {operationalKpis.win.cutoffLabel && <span>{operationalKpis.win.cutoffLabel} · {selectedStore.shortLabel}</span>}
                 {operationalKpis.win.maturing && (
-                  <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-amber-200">
+                  <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-amber-200" title="Las tasas reflejan el estado actual de cada cohorte. Los pedidos del período anterior han tenido más tiempo para confirmar, despachar y entregar.">
                     tasas en maduración
                   </span>
                 )}
@@ -8936,7 +8945,6 @@ function BreakdownLine({ label, value }: { label: string; value: number }) {
   );
 }
 
-type KpiRange = "today" | "yesterday" | "7d" | "30d" | "month" | "all" | "custom";
 type KpiTone = "neutral" | "good" | "warn" | "bad";
 type DeltaTone = "good" | "bad" | "muted";
 
@@ -8950,16 +8958,6 @@ const KPI_RANGE_OPTIONS: { value: KpiRange; label: string }[] = [
   { value: "month", label: "Mes" },
   { value: "all", label: "Todo" },
 ];
-
-interface KpiWindow {
-  curStart: number;
-  curEnd: number;
-  prevStart: number | null;
-  prevEnd: number | null;
-  rangeLabel: string;
-  compareLabel: string;
-  maturing: boolean;
-}
 
 interface OpMetrics {
   generated: number;
@@ -9021,123 +9019,6 @@ interface KpiCardVM {
   deltaTone: DeltaTone;
   /** Explicacion al pasar el mouse. */
   title?: string;
-}
-
-function startOfDayMs(date: Date): number {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
-// Fecha YYYY-MM-DD -> medianoche local en ms, o null si no parsea (copiado
-// VERBATIM de lib/finance-orders para el rango custom de KPIs).
-function parseDateKeyMs(value: string | undefined): number | null {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const [y, m, d] = value.split("-").map(Number);
-  const time = new Date(y, m - 1, d).getTime();
-  return Number.isNaN(time) ? null : time;
-}
-
-function formatDateKeyLabel(value: string): string {
-  return `${value.slice(8, 10)}/${value.slice(5, 7)}/${value.slice(0, 4)}`;
-}
-
-// Ventana actual + ventana previa "like-for-like" (mismo largo, inmediatamente
-// anterior). "Mes" compara MTD contra el mismo tramo del mes anterior, no contra
-// el mes completo. `maturing` marca rangos donde la tasa de entrega aun no madura
-// por el lag logistico del COD (un pedido de hoy no se entrega hoy).
-function getKpiWindows(
-  range: KpiRange,
-  now: Date,
-  custom?: { start?: string; end?: string }
-): KpiWindow {
-  const end = now.getTime();
-  const dayStart = startOfDayMs(now);
-  const DAY = 24 * 60 * 60 * 1000;
-  if (range === "all") {
-    return {
-      curStart: 0,
-      curEnd: end,
-      prevStart: null,
-      prevEnd: null,
-      rangeLabel: "Todo el histórico",
-      compareLabel: "sin comparativo",
-      maturing: false,
-    };
-  }
-  if (range === "custom") {
-    const startMs = parseDateKeyMs(custom?.start);
-    const endDayMs = parseDateKeyMs(custom?.end);
-    if (startMs == null || endDayMs == null || startMs > endDayMs) {
-      // Rango incompleto: etiqueta neutral mientras el usuario elige fechas.
-      return {
-        curStart: 0,
-        curEnd: end,
-        prevStart: null,
-        prevEnd: null,
-        rangeLabel: "Rango: elegí desde y hasta",
-        compareLabel: "sin comparativo",
-        maturing: false,
-      };
-    }
-    const curEnd = endDayMs + DAY; // fin inclusivo: el dia completo del "hasta"
-    const span = curEnd - startMs;
-    return {
-      curStart: startMs,
-      curEnd,
-      prevStart: startMs - span,
-      prevEnd: startMs,
-      rangeLabel: `${formatDateKeyLabel(custom!.start!)} – ${formatDateKeyLabel(custom!.end!)}`,
-      compareLabel: "vs. periodo previo (mismo largo)",
-      maturing: curEnd > end - 7 * DAY,
-    };
-  }
-  if (range === "today") {
-    return {
-      curStart: dayStart,
-      curEnd: end,
-      prevStart: dayStart - DAY,
-      prevEnd: dayStart,
-      rangeLabel: "Hoy",
-      compareLabel: "vs. ayer",
-      maturing: true,
-    };
-  }
-  if (range === "yesterday") {
-    return {
-      curStart: dayStart - DAY,
-      curEnd: dayStart,
-      prevStart: dayStart - 2 * DAY,
-      prevEnd: dayStart - DAY,
-      rangeLabel: "Ayer",
-      compareLabel: "vs. anteayer",
-      maturing: true,
-    };
-  }
-  if (range === "month") {
-    const curStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    const elapsed = end - curStart;
-    const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
-    return {
-      curStart,
-      curEnd: end,
-      prevStart,
-      prevEnd: prevStart + elapsed,
-      rangeLabel: "Mes actual",
-      compareLabel: "vs. mes anterior (mismo tramo)",
-      maturing: true,
-    };
-  }
-  const days = range === "7d" ? 7 : 30;
-  const curStart = dayStart - (days - 1) * DAY;
-  const span = end - curStart;
-  return {
-    curStart,
-    curEnd: end,
-    prevStart: curStart - span,
-    prevEnd: curStart,
-    rangeLabel: `Últimos ${days} días`,
-    compareLabel: `vs. ${days} días previos`,
-    maturing: range === "7d",
-  };
 }
 
 function isDispatchedStatus(status: string): boolean {
