@@ -74,13 +74,13 @@ export interface MarketingStock {
 export interface MarketingInventory {
   stock: MarketingStock[];
   origin?: "shiphero" | "csv";
-  /** CR date of the uploaded snapshot (CSV only). */
+  /** CR date of the saved snapshot (CSV and ShipHero snapshots; absent on a live read). */
   snapshotDate?: string;
   uploadedAt?: string;
   uploadedBy?: string;
   /** The snapshot of the previous day with data, for "entró reposición". */
   previous?: { snapshotDate: string; stock: MarketingStock[] } | null;
-  /** Whether the uploaded CSV carried the optional columns (CSV only). */
+  /** Whether the snapshot carried the optional columns (CSV and ShipHero snapshots). */
   columns?: { backorder: boolean; incoming: boolean };
 }
 
@@ -89,6 +89,8 @@ export interface MarketingSource<T> {
   checkedAt: string;
   message: string;
   data: T | null;
+  /** ShipHero only: state of the Kairo connection, when there is one in use. */
+  connection?: "connected" | "needs_scope" | "reconnect";
 }
 
 /** Account-level spend per hour of the account day (account currency). */

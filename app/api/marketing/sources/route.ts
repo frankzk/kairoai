@@ -7,6 +7,8 @@ import { leerCuentasTiktok } from "@/lib/tiktok-diario";
 import { rememberOriginCatalog } from "@/lib/marketing-origin-catalog";
 
 import { readInventorySnapshots } from "@/lib/marketing-inventory-db";
+import { pickInventory } from "@/lib/marketing-inventory-pick";
+import { readShipHeroInventory } from "@/lib/shiphero-connection";
 import type {
   MarketingInventory,
   MarketingSource,
@@ -40,9 +42,14 @@ export async function GET(req: NextRequest) {
     // Sin acceso a la API de TikTok, el gasto que manda Make (lib/tiktok-diario.ts).
     tiktokDesdeMake: (from, to) =>
       leerCuentasTiktok(store.id, from, to, { lifetime: actions }),
+    // Foto guardada por la conexión de ShipHero (cron); nunca llama a ShipHero.
+    shipheroGuardado: () => readShipHeroInventory(store.id),
   });
-  if (sources.shiphero.status !== "ready")
-    sources.shiphero = await csvInventory(store.id, sources.shiphero);
+  // The CSV covers a missing ShipHero, and wins when it is strictly newer.
+  sources.shiphero = pickInventory(
+    sources.shiphero,
+    await csvInventory(store.id, sources.shiphero),
+  );
   // A cache write must not hide a successfully read advertising report.
   await rememberOriginCatalog(store.id, sources).catch(() => {});
   return NextResponse.json(sources, {
@@ -59,7 +66,7 @@ const shortDate = (date: string) =>
     .format(new Date(`${date}T12:00:00Z`))
     .replace(".", "");
 
-/** Without ShipHero, the latest uploaded product_table. A failed read keeps the pending source. */
+/** The latest uploaded product_table; without one (or on a failed read) the fallback source. */
 async function csvInventory(
   storeId: number,
   fallback: MarketingSource<MarketingInventory>,

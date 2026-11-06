@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 const root = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  // tsconfig usa "jsx": "preserve" (lo compila Next). Para que un test pueda
+  // renderizar un componente .tsx en el servidor, vitest lo transforma aquí.
+  oxc: { jsx: { runtime: "automatic" } },
   resolve: {
     alias: [{ find: /^@\/(.*)$/, replacement: path.join(root, "$1") }],
   },
