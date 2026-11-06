@@ -12,6 +12,23 @@ Reglas:
 
 Estado actual:
 
+ShipHero: aplicada el 06/11/2026. Si faltara, Marketing funciona igual con el
+CSV y la tarjeta dice «Pendiente: aplicar migración de ShipHero»:
+
+- `20261106120000_marketing_shiphero_connection.sql`: tabla
+  `marketing_shiphero_connection` (una fila por tienda; refresh y access token
+  de ShipHero cifrados en la app con `SHIPHERO_TOKEN_KEY`, nunca la
+  contraseña; sin permiso de DELETE) y las funciones
+  `marketing_shiphero_connect_attempt` (5 intentos cada 15 min),
+  `marketing_shiphero_lease` / `marketing_shiphero_release` (una
+  sincronización a la vez) y `marketing_replace_shiphero_snapshot(…,
+  p_generation, p_scope)` (reemplaza solo la foto `source='shiphero'` del día
+  y solo si la conexión no cambió durante la lectura; no toca CSV ni días
+  anteriores). Agrega `marketing_inventory_snapshots.scope_key` (alcance de
+  cada foto ShipHero). Solo service role. Es re-ejecutable: si se aplicó una
+  versión anterior de este archivo, volver a aplicarlo agrega la columna y la
+  función con guardia y deja sin permisos la de 4 argumentos.
+
 Mejoras de Marketing, módulos 4–12: las tres se aplicaron el 05/11/2026, en
 este orden. Si faltara alguna, Marketing funciona igual que antes y la parte
 nueva lo dice ("Pendiente: aplicar migración"):
