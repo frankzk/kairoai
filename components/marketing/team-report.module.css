@@ -695,6 +695,16 @@
   line-height: 1.5;
   margin-top: 6px;
 }
+.goal > .goalComparison {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.goal > .goalComparison[data-trend="up"] {
+  color: var(--mk-good);
+}
+.goal > .goalComparison[data-trend="down"] {
+  color: var(--mk-bad);
+}
 .meter {
   height: 10px;
   border-radius: 999px;

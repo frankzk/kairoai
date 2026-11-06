@@ -7,6 +7,7 @@ const sql = readFileSync(
   "utf8",
 );
 const code = sql
+  .replace(/\r\n/g, "\n")
   .split("\n")
   .map((line) => line.replace(/--.*$/, ""))
   .join("\n")
