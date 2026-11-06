@@ -14,7 +14,7 @@ describe("getKpiWindows — Ayer", () => {
     expect(win.prevStart).toBe(DAY_START - 2 * DAY);
     expect(win.prevEnd).toBe(DAY_START - DAY);
     expect(win.rangeLabel).toBe("Ayer");
-    expect(win.compareLabel).toBe("vs. anteayer");
+    expect(win.compareLabel).toBe("vs. anteayer (días completos)");
     expect(win.maturing).toBe(true);
   });
 
@@ -82,7 +82,7 @@ describe("getKpiWindows — días en la hora de la tienda", () => {
   it("rango y mes también en la hora de la tienda", () => {
     const win = getKpiWindows("custom", noche, { start: "2026-11-03", end: "2026-11-03" }, CR);
     expect(new Date(win.curStart).toISOString()).toBe("2026-11-03T06:00:00.000Z");
-    expect(new Date(win.curEnd).toISOString()).toBe("2026-11-04T06:00:00.000Z");
+    expect(new Date(win.curEnd).toISOString()).toBe("2026-11-04T01:00:00.000Z"); // hoy: solo hasta ahora
     const mes = getKpiWindows("month", noche, undefined, CR);
     expect(new Date(mes.curStart).toISOString()).toBe("2026-11-01T06:00:00.000Z");
     expect(new Date(mes.prevStart!).toISOString()).toBe("2026-10-01T06:00:00.000Z");
