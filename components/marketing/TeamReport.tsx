@@ -95,6 +95,7 @@ export function TeamReport({
   onAssign,
   accounts,
   onOpenAccounts,
+  onOpenSources,
 }: {
   data: MarketingSummary;
   sources: MarketingSources | null;
@@ -124,6 +125,8 @@ export function TeamReport({
   /** Account status (M11), loaded after the report; banner only on problems. */
   accounts: Resource<AccountsPayload>;
   onOpenAccounts: () => void;
+  /** Opens Fuentes, where the ShipHero connection lives. */
+  onOpenSources?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [ascending, setAscending] = useState(false);
@@ -510,7 +513,9 @@ export function TeamReport({
             <strong>Inventario:</strong>{" "}
             {sources?.shiphero.status === "ready"
               ? `${sources.shiphero.message || "Inventario consultado."} `
-              : "ShipHero sin conectar. "}
+              : sources?.shiphero.connection
+                ? `${sources.shiphero.message} `
+                : "ShipHero sin conectar. "}
             {inventoryLine.text}
             {inventoryLine.warning && (
               <span className={r.warnText}> {inventoryLine.warning}</span>
@@ -518,6 +523,24 @@ export function TeamReport({
             <a href="#inventario" className={r.inlineLink}>
               Ir al inventario
             </a>
+            {onOpenSources &&
+              (sources?.shiphero.data?.origin === "shiphero" ||
+                sources?.shiphero.connection ||
+                canUpload) && (
+                <>
+                  {" · "}
+                  <button
+                    type="button"
+                    className={r.inlineLink}
+                    onClick={onOpenSources}
+                  >
+                    {sources?.shiphero.data?.origin === "shiphero" ||
+                    sources?.shiphero.connection
+                      ? "Ver conexión"
+                      : "Conectar ShipHero"}
+                  </button>
+                </>
+              )}
           </li>
           <li>
             <strong>CPA:</strong> CPA real = gasto / pedidos reales (sin

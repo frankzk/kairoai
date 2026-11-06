@@ -11,6 +11,7 @@ import {
   buildUnadvertised,
   type UnadvertisedRow,
 } from "@/lib/marketing-unadvertised";
+import { inventoryStaleDate } from "@/lib/marketing-inventory-decide";
 import { decimalText } from "@/lib/marketing-copy";
 import { marketingDate, shiftDate } from "@/lib/marketing-dates";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
@@ -111,11 +112,7 @@ export function UnadvertisedStock({
     insights.data,
   ]);
 
-  const yesterday = shiftDate(marketingDate(), -1);
-  const staleDate =
-    inventory?.snapshotDate && inventory.snapshotDate < yesterday
-      ? inventory.snapshotDate
-      : null;
+  const staleDate = inventory ? inventoryStaleDate(inventory) : null;
   const missingPlatforms = (["meta", "tiktok"] as const).filter(
     (p) => actions.data && actions.data[p].status !== "ready",
   );
@@ -160,8 +157,9 @@ export function UnadvertisedStock({
         <>
           {staleDate && (
             <p role="alert" className={r.warnText}>
-              El inventario es del {shortDate(staleDate)}. Sube el archivo de
-              hoy: el stock puede haber cambiado.
+              {inventory.origin === "csv"
+                ? `El inventario es del ${shortDate(staleDate)}. Sube el archivo de hoy: el stock puede haber cambiado.`
+                : `El inventario de ShipHero es del ${shortDate(staleDate)}: el stock puede haber cambiado. Revisa la conexión en Fuentes.`}
             </p>
           )}
           {missingPlatforms.length > 0 && (

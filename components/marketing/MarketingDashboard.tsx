@@ -470,6 +470,8 @@ export default function MarketingDashboard() {
           <SourceConnections
             sources={api.sources.data}
             loading={api.sources.loading}
+            canEdit={canEdit}
+            onChanged={() => setRevision((value) => value + 1)}
           />
         ) : ["matrix", "structure", "subtraction"].includes(view) ? (
           charlie.report.loading || !charlieModel || !period ? (
@@ -573,6 +575,7 @@ export default function MarketingDashboard() {
                 logChange={api.logChange}
                 canUpload={canEdit}
                 onInventorySaved={() => setRevision((value) => value + 1)}
+                onOpenSources={() => setView("sources")}
                 canEdit={settingsReady}
                 saving={api.saving}
                 saved={api.saved}

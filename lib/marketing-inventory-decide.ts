@@ -7,7 +7,10 @@
 // Pedidos esperando y en camino solo existen si el product_table trae esas
 // columnas (o, en camino, el plan manual del producto); sin ellas se dice.
 // Puro: se prueba en tests/marketing-inventory-decide.test.ts.
-import type { MarketingStock } from "./marketing-source-types";
+import type {
+  MarketingInventory,
+  MarketingStock,
+} from "./marketing-source-types";
 import type { ProductPlan } from "./marketing-settings-types";
 import type { MarketingFamily } from "./marketing-product-families";
 import type { CampaignActionRow } from "./marketing-actions";
@@ -15,6 +18,7 @@ import type { WaitingStock } from "./marketing-insights-types";
 import { MARKETING_TARGETS, type MarketingTargets } from "./marketing-targets";
 import { coverageOf, restockDelta, type Coverage } from "./marketing-coverage";
 import { countText, shortDateText } from "./marketing-copy";
+import { marketingDate, shiftDate } from "./marketing-dates";
 
 /* ---------- Talla y color desde el SKU y el nombre ---------- */
 
@@ -160,6 +164,60 @@ export function variantAttributes(sku: string, name = ""): VariantAttrs {
 
 /** Where the stock came from: the uploaded product_table or the ShipHero API. */
 export type StockSource = "csv" | "shiphero";
+
+/** ShipHero cron (vercel.json "13 0,12,16,20 * * *", UTC = 18:13, 06:13, 10:13 y 14:13 en CR). */
+const SHIPHERO_RUNS_UTC_MIN = [13, 12 * 60 + 13, 16 * 60 + 13, 20 * 60 + 13];
+/** Time a scheduled run may take (with retries) before it counts as missed. */
+const SHIPHERO_RUN_GRACE_MS = 45 * 60_000;
+
+/**
+ * Snapshot date when the inventory is too old to drive stock rules, else null.
+ * CSV (uploaded by hand once a day): older than yesterday. ShipHero (synced 4
+ * times a day): one missed run is tolerated, two in a row are not, so a broken
+ * sync shows the same day. A live read (no snapshotDate) is never stale.
+ */
+export function inventoryStaleDate(
+  inventory: Pick<MarketingInventory, "origin" | "snapshotDate" | "uploadedAt">,
+  now: Date = new Date(),
+): string | null {
+  const date = inventory.snapshotDate;
+  if (!date) return null;
+  const uploaded = inventory.uploadedAt ? Date.parse(inventory.uploadedAt) : NaN;
+  if (inventory.origin !== "shiphero" || !Number.isFinite(uploaded))
+    return date < shiftDate(marketingDate(now), -1) ? date : null;
+  const due = now.getTime() - SHIPHERO_RUN_GRACE_MS;
+  const runs: number[] = [];
+  const midnight = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+  for (let day = 0; day < 3; day++)
+    for (const minute of SHIPHERO_RUNS_UTC_MIN) {
+      const at = midnight - day * 86_400_000 + minute * 60_000;
+      if (at <= due) runs.push(at);
+    }
+  runs.sort((a, b) => b - a);
+  // Older than the second-to-last run that should have finished.
+  return runs.length > 1 && uploaded < runs[1] - 5 * 60_000 ? date : null;
+}
+
+/**
+ * "Old inventory" warning by source. `date` is the display text of the
+ * snapshot date. The CSV wording is the original one.
+ */
+export function staleInventoryText(source: StockSource, date: string): string {
+  return source === "shiphero"
+    ? `El inventario de ShipHero es del ${date}. Revisa la conexión en Fuentes.`
+    : `El inventario es del ${date}. Sube el archivo de hoy.`;
+}
+
+/** No earlier snapshot to compare restock against, by source. */
+export function noPreviousSnapshotText(source: StockSource): string {
+  return source === "shiphero"
+    ? "Sin registro de reposición (falta la foto de ShipHero de un día anterior)."
+    : "Sin registro de reposición (falta el archivo de un día anterior).";
+}
 
 /** Why orders waiting / units on the way are missing, by stock source. */
 export function missingStockColumnsText(
@@ -466,7 +524,9 @@ export function buildInventoryDecision(input: {
       key: "inventario_viejo",
       title: `Inventario del ${shortDateText(input.staleDate)}`,
       detail:
-        "Las alertas de stock quedan sin evaluar. Sube el archivo de hoy.",
+        input.source === "shiphero"
+          ? "Las alertas de stock quedan sin evaluar. Revisa la conexión de ShipHero en Fuentes."
+          : "Las alertas de stock quedan sin evaluar. Sube el archivo de hoy.",
     });
   const covered = new Set<string>();
   for (const row of stale ? [] : rows) {
@@ -621,7 +681,9 @@ export function buildInventoryDecision(input: {
   if (!variantDemand) notes.push(VARIANT_DEMAND_MISSING);
   if (uncataloged)
     notes.push(
-      `${countText(uncataloged)} SKU del archivo sin producto en el catálogo de ventas.`,
+      source === "shiphero"
+        ? `${countText(uncataloged)} SKU de ShipHero sin producto en el catálogo de ventas.`
+        : `${countText(uncataloged)} SKU del archivo sin producto en el catálogo de ventas.`,
     );
   return {
     rows,

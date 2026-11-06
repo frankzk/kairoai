@@ -19,6 +19,7 @@ import type {
   MarketingAdsData,
   MarketingCampaign,
   MarketingHourlySpend,
+  MarketingInventory,
   MarketingSource,
   MarketingSources,
   MarketingStock,
@@ -601,7 +602,7 @@ async function shipheroStock(
   env: Env,
   fetcher: typeof fetch,
   signal: AbortSignal,
-): Promise<{ stock: MarketingStock[] }> {
+): Promise<{ stock: MarketingStock[]; origin: "shiphero" }> {
   // Both IDs are explicit to avoid reading another 3PL customer's inventory.
   const warehouse = env.SHIPHERO_CR_WAREHOUSE_ID!;
   const account = env.SHIPHERO_CR_ACCOUNT_ID!;
@@ -656,7 +657,7 @@ async function shipheroStock(
       });
     }
     const paging = obj(data.pageInfo);
-    if (paging.hasNextPage === false) return { stock };
+    if (paging.hasNextPage === false) return { stock, origin: "shiphero" };
     const next = str(paging.endCursor);
     if (paging.hasNextPage !== true || !next || next === after)
       throw new Error("Incomplete ShipHero inventory");
@@ -715,6 +716,13 @@ export async function getMarketingSources(
      * acceso directo a la API. Recibe los dias YYYY-MM-DD, inclusivos.
      */
     tiktokDesdeMake?: (from: string, to: string) => Promise<MarketingAdsData[]>;
+    /**
+     * Foto guardada por la conexión de ShipHero (lib/shiphero-connection.ts).
+     * null = sin conexión (o desconectada): se usa SHIPHERO_CR_* o el CSV.
+     * Sin foto lista (pendiente) y con SHIPHERO_CR_* completo, también se usa
+     * SHIPHERO_CR_*.
+     */
+    shipheroGuardado?: () => Promise<MarketingSource<MarketingInventory> | null>;
   } = {},
 ): Promise<MarketingSources> {
   const period = periodFromInput(input);
@@ -766,14 +774,22 @@ export async function getMarketingSources(
           }),
         )
       : tiktokDesdeMake(options.tiktokDesdeMake, period),
-    source(
-      has(
+    (async () => {
+      // A ready snapshot of the Kairo connection goes first. Without one (no
+      // connection, disconnected, pending or waiting for a choice), the static
+      // SHIPHERO_CR_* configuration works exactly as before.
+      const saved = options.shipheroGuardado
+        ? await options.shipheroGuardado().catch(() => null)
+        : null;
+      if (saved?.status === "ready") return saved;
+      const staticEnv = has(
         "SHIPHERO_CR_ACCESS_TOKEN",
         "SHIPHERO_CR_ACCOUNT_ID",
         "SHIPHERO_CR_WAREHOUSE_ID",
-      ),
-      (signal) => shipheroStock(env, fetcher, signal),
-    ),
+      );
+      if (saved && !staticEnv) return saved;
+      return source(staticEnv, (signal) => shipheroStock(env, fetcher, signal));
+    })(),
   ]);
   return { meta, tiktok, shiphero };
 }

@@ -10,6 +10,7 @@ import { OrdersChart, ProductTrend } from "./MarketingCharts";
 import { CampaignPriorityList } from "./CampaignWorkspace";
 import s from "./dashboard.module.css";
 import { useUsdMoney } from "./UsdContext";
+import { ShipHeroConnect } from "./ShipHeroConnect";
 
 export function AlertList({
   model,
@@ -396,9 +397,13 @@ export function Trends({
 export function SourceConnections({
   sources,
   loading,
+  canEdit = false,
+  onChanged = () => {},
 }: {
   sources: MarketingSources | null;
   loading: boolean;
+  canEdit?: boolean;
+  onChanged?: () => void;
 }) {
   const rows = [
     {
@@ -419,65 +424,78 @@ export function SourceConnections({
       key: "shiphero" as const,
       name: "ShipHero",
       detail:
-        "Stock actual por coincidencia única de SKU. Se necesita para calcular cobertura y reposición.",
-      needs:
-        "Falta acceso API, cuenta y almacén de Costa Rica. El usuario y contraseña de la web no son un token API.",
+        "Stock por SKU, pedidos esperando y unidades en camino. Se necesita para cobertura y reposición.",
+      needs: "Conéctalo abajo con tu usuario de ShipHero.",
     },
   ];
   return (
-    <section className={s.section}>
-      <h2 className={s.heading}>Fuentes y disponibilidad</h2>
-      <p className={`${s.muted} mt-2 mb-5`}>
-        Pedidos, logística y liquidaciones proceden de la conciliación de
-        Gestión. Los anuncios y el stock se consultan con sus conexiones
-        independientes.
-      </p>
-      <div className={s.tableWrap}>
-        <table className={`${s.table} min-w-[650px]`}>
-          <thead>
-            <tr>
-              <th>Fuente</th>
-              <th>Estado</th>
-              <th>Datos disponibles</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const source = sources?.[row.key];
-              return (
-                <tr key={row.key}>
-                  <td className="font-medium">{row.name}</td>
-                  <td className={source?.status === "ready" ? s.good : s.warn}>
-                    {loading
-                      ? "Consultando…"
-                      : source?.status === "ready"
-                        ? "Conectado"
-                        : source?.status === "error"
-                          ? "Error de consulta"
-                          : "Pendiente"}
-                  </td>
-                  <td className={s.muted}>
-                    {row.detail}
-                    {!loading && source?.status !== "ready" && (
-                      <p className="mt-2">{row.needs}</p>
-                    )}
-                    {source?.checkedAt && (
-                      <p className="mt-2 text-[10px]">
-                        Última consulta:{" "}
-                        {new Intl.DateTimeFormat("es-CR", {
-                          timeZone: "America/Costa_Rica",
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        }).format(new Date(source.checkedAt))}
-                      </p>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <>
+      <section className={s.section}>
+        <h2 className={s.heading}>Fuentes y disponibilidad</h2>
+        <p className={`${s.muted} mt-2 mb-5`}>
+          Pedidos, logística y liquidaciones proceden de la conciliación de
+          Gestión. Los anuncios y el stock se consultan con sus conexiones
+          independientes.
+        </p>
+        <div className={s.tableWrap}>
+          <table className={`${s.table} min-w-[650px]`}>
+            <thead>
+              <tr>
+                <th>Fuente</th>
+                <th>Estado</th>
+                <th>Datos disponibles</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const source = sources?.[row.key];
+                return (
+                  <tr key={row.key}>
+                    <td className="font-medium">{row.name}</td>
+                    <td className={source?.status === "ready" ? s.good : s.warn}>
+                      {loading
+                        ? "Consultando…"
+                        : row.key === "shiphero" &&
+                            source?.status === "ready" &&
+                            sources?.shiphero.data?.origin === "csv"
+                          ? "Archivo CSV"
+                          : row.key === "shiphero" &&
+                              source?.status === "ready" &&
+                              source.connection === "reconnect"
+                            ? "Volver a conectar"
+                          : source?.status === "ready"
+                          ? "Conectado"
+                          : source?.status === "error"
+                            ? "Error de consulta"
+                            : "Pendiente"}
+                    </td>
+                    <td className={s.muted}>
+                      {row.detail}
+                      {!loading && source?.status !== "ready" && (
+                        <p className="mt-2">
+                          {/* A Kairo connection says what it is waiting for. */}
+                          {source?.connection ? source.message : row.needs}
+                        </p>
+                      )}
+                      {source?.checkedAt && (
+                        <p className="mt-2 text-[10px]">
+                          Última consulta:{" "}
+                          {new Intl.DateTimeFormat("es-CR", {
+                            timeZone: "America/Costa_Rica",
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          }).format(new Date(source.checkedAt))}
+                        </p>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <ShipHeroConnect canEdit={canEdit} onChanged={onChanged} />
+    </>
   );
 }

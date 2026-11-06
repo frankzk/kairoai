@@ -9,12 +9,13 @@ import type { Coverage } from "@/lib/marketing-coverage";
 import type { ProductInsightsPayload } from "@/lib/marketing-insights-types";
 import {
   buildInventoryDecision,
+  inventoryStaleDate,
+  staleInventoryText,
   type PresentationRow,
   type SizeColorGroup,
   VARIANT_DEMAND_MISSING,
 } from "@/lib/marketing-inventory-decide";
 import { decimalText } from "@/lib/marketing-copy";
-import { marketingDate, shiftDate } from "@/lib/marketing-dates";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import { count, shortDate } from "./format";
 import { InventoryAlerts } from "./InventoryAlerts";
@@ -50,14 +51,12 @@ export function useInventoryDecision(input: {
     const inventory =
       sources?.shiphero.status === "ready" ? sources.shiphero.data : null;
     if (!inventory) return null;
-    const yesterday = shiftDate(marketingDate(), -1);
-    const staleDate =
-      inventory.snapshotDate && inventory.snapshotDate < yesterday
-        ? inventory.snapshotDate
-        : null;
+    const staleDate = inventoryStaleDate(inventory);
     return {
       inventory,
       staleDate,
+      /** The Kairo ShipHero connection asks to reconnect (its snapshot still shows). */
+      reconnect: sources?.shiphero.connection === "reconnect",
       decision: buildInventoryDecision({
         products: model.products.map((p) => ({
           key: p.key,
@@ -247,18 +246,30 @@ export function InventoryDecision({
             {decision.inventory.origin === "csv" &&
             decision.inventory.snapshotDate
               ? `Archivo product_table del ${shortDate(decision.inventory.snapshotDate)}`
-              : "Inventario de ShipHero"}
+              : decision.inventory.snapshotDate
+                ? `Inventario de ShipHero del ${shortDate(decision.inventory.snapshotDate)}`
+                : "Inventario de ShipHero"}
             {decision.inventory.previous
               ? ` · reposición contra el ${shortDate(decision.inventory.previous.snapshotDate)}`
-              : " · sin archivo anterior para comparar la reposición"}
+              : decision.inventory.origin === "csv"
+                ? " · sin archivo anterior para comparar la reposición"
+                : " · sin foto anterior para comparar la reposición"}
             {result.variantDemand
               ? " · venta diaria por talla y color (últimos 7 días completos)."
               : " · venta diaria por SKU (últimos 7 días, sin anulados)."}
           </p>
+          {decision.reconnect && (
+            <p role="alert" className={r.warnText}>
+              ShipHero pide volver a conectar: el inventario no se actualiza.
+              Revisa la conexión en Fuentes.
+            </p>
+          )}
           {decision.staleDate && (
             <p role="alert" className={r.warnText}>
-              El inventario es del {shortDate(decision.staleDate)}. Sube el
-              archivo de hoy.
+              {staleInventoryText(
+                decision.inventory.origin === "csv" ? "csv" : "shiphero",
+                shortDate(decision.staleDate),
+              )}
             </p>
           )}
           <InventoryAlerts

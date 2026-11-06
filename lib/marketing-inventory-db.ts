@@ -1,11 +1,14 @@
-// Fotos diarias del inventario de Marketing (CSV product_table). Solo
-// servidor. Tablas en supabase/migrations/20261105120000_marketing_inventory_snapshots.sql.
+// Fotos diarias del inventario de Marketing (CSV product_table y, desde el
+// 06/11/2026, la sincronización de ShipHero). Solo servidor. Tablas en
+// supabase/migrations/20261105120000_marketing_inventory_snapshots.sql; la
+// foto de ShipHero se guarda con 20261106120000_marketing_shiphero_connection.sql.
 import { getDB } from "./db";
 import {
   inventoryWarehouses,
   type InventoryCsvResult,
 } from "./marketing-inventory-csv";
 import type { MarketingStock } from "./marketing-source-types";
+import type { ShipHeroStockItem } from "./shiphero-client";
 
 export interface InventorySnapshot {
   id: string;
@@ -105,6 +108,64 @@ export async function saveInventorySnapshot(
   return { id: data };
 }
 
+/**
+ * Saves today's ShipHero snapshot (replaces only that day's ShipHero snapshot;
+ * CSV snapshots and earlier days are never touched). The database saves it
+ * only while the connection still has the generation and scope the read
+ * started with; otherwise nothing is saved and `id` is null.
+ */
+export async function saveShipHeroSnapshot(
+  storeId: number,
+  input: {
+    snapshotDate: string;
+    items: ShipHeroStockItem[];
+    /** false = "en camino" incomplete: saved as null and the column stays "". */
+    incomingComplete: boolean;
+    warehouseName: string | null;
+    unmatched: number;
+    /** "cron" or `id:nombre`. */
+    uploadedBy: string;
+    /** token_generation read when the sync started. */
+    generation: number;
+    /** shipheroScopeKey() of the connection the rows were read from. */
+    scopeKey: string;
+  },
+): Promise<{ id: string | null }> {
+  const items = input.items.map((entry) => ({
+    sku: entry.sku.trim(),
+    name: entry.name,
+    warehouses: entry.warehouses,
+    available: entry.available,
+    on_hand: entry.onHand,
+    allocated: entry.allocated,
+    backorder: entry.backorder ?? null,
+    // A SKU without an open PO line has no data (null), never 0.
+    incoming: input.incomingComplete ? (entry.incoming ?? null) : null,
+  }));
+  const { data, error } = await getDB().rpc(
+    "marketing_replace_shiphero_snapshot",
+    {
+      p_store: storeId,
+      p_date: input.snapshotDate,
+      p_meta: {
+        file_name: `ShipHero · ${input.warehouseName || "todas"}`.slice(0, 200),
+        unmatched_count: input.unmatched,
+        backorder_column: "backorder",
+        incoming_column: input.incomingComplete ? "incoming" : "",
+        uploaded_by: input.uploadedBy.slice(0, 200),
+      },
+      p_items: items,
+      p_generation: input.generation,
+      p_scope: input.scopeKey,
+    },
+  );
+  if (error) throw new InventoryStorageError(isMissingRelation(error));
+  // null = the connection changed during the read: nothing was saved.
+  if (data == null) return { id: null };
+  if (typeof data !== "string" || !data) throw new InventoryStorageError();
+  return { id: data };
+}
+
 type SnapshotRow = {
   id: string;
   snapshot_date: string;
@@ -186,22 +247,32 @@ const snapshotOf = (
   stock,
 });
 
-/** Latest CSV snapshot and the one of the previous day with data. */
+/**
+ * Latest snapshot of one source (CSV by default) and the one of the previous
+ * day with data. `scopeKey` (ShipHero) keeps only snapshots read from that
+ * account/customer/warehouse.
+ */
 export async function readInventorySnapshots(
   storeId: number,
-  options: { items?: boolean } = {},
+  options: {
+    items?: boolean;
+    source?: "csv" | "shiphero";
+    scopeKey?: string;
+  } = {},
 ): Promise<{
   latest: InventorySnapshot | null;
   previous: InventorySnapshot | null;
 }> {
-  const query = (columns: string) =>
-    getDB()
+  const query = (columns: string) => {
+    let builder = getDB()
       .from("marketing_inventory_snapshots")
       .select(columns)
       .eq("store_id", storeId)
-      .eq("source", "csv")
-      .order("snapshot_date", { ascending: false })
-      .limit(2);
+      .eq("source", options.source ?? "csv");
+    if (options.scopeKey !== undefined)
+      builder = builder.eq("scope_key", options.scopeKey);
+    return builder.order("snapshot_date", { ascending: false }).limit(2);
+  };
   // Before 20261105120400 the extra columns do not exist: read the old list.
   let { data, error } = await query(
     `${SNAPSHOT_COLUMNS},backorder_column,incoming_column`,

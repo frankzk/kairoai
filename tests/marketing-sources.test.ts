@@ -227,3 +227,45 @@ describe("marketing source readers", () => {
     });
   });
 });
+
+describe("ShipHero: saved connection snapshot before the static env", () => {
+  const saved = {
+    status: "ready" as const,
+    checkedAt: "2026-11-06T16:13:00Z",
+    message: "Inventario de ShipHero del 6 nov, 10:13.",
+    data: { stock: [{ sku: "SKU1", warehouseId: "w", onHand: 1, available: 1, allocated: 0 }], origin: "shiphero" as const, snapshotDate: "2026-11-06" },
+  };
+
+  it("uses the saved snapshot and never calls ShipHero live", async () => {
+    const fetcher = vi.fn();
+    const result = await getMarketingSources("2026-10", shipEnv, fetcher, { shipheroGuardado: async () => saved });
+    expect(result.shiphero).toBe(saved);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("without a saved connection (null or a failed read) the static env still works, now with origin", async () => {
+    for (const shipheroGuardado of [async () => null, async () => { throw new Error("db down"); }]) {
+      const fetcher = vi.fn().mockResolvedValue(response({ data: { warehouse_products: { data: {
+        pageInfo: { hasNextPage: false, endCursor: null },
+        edges: [{ node: { id: "wp1", account_id: "account-cr", warehouse_id: "warehouse-cr", sku: "SKU1", on_hand: 3, allocated: 3, available: 0 } }],
+      } } } }));
+      const result = await getMarketingSources("2026-10", shipEnv, fetcher, { shipheroGuardado });
+      expect(result.shiphero).toMatchObject({ status: "ready", data: { origin: "shiphero", stock: [{ sku: "SKU1", available: 0 }] } });
+    }
+    const none = await getMarketingSources("2026-10", {}, vi.fn(), { shipheroGuardado: async () => null });
+    expect(none.shiphero.status).toBe("pending");
+  });
+
+  it("a connection without a ready snapshot does not shadow a working static env", async () => {
+    const pending = { status: "pending" as const, checkedAt: "x", message: "ShipHero conectado. Falta elegir qué inventario leer.", data: null, connection: "needs_scope" as const };
+    const fetcher = vi.fn().mockResolvedValue(response({ data: { warehouse_products: { data: {
+      pageInfo: { hasNextPage: false, endCursor: null },
+      edges: [{ node: { id: "wp1", account_id: "account-cr", warehouse_id: "warehouse-cr", sku: "SKU1", on_hand: 3, allocated: 0, available: 3 } }],
+    } } } }));
+    const live = await getMarketingSources("2026-10", shipEnv, fetcher, { shipheroGuardado: async () => pending });
+    expect(live.shiphero).toMatchObject({ status: "ready", data: { origin: "shiphero", stock: [{ sku: "SKU1" }] } });
+    // Without the static env the pending connection says what it waits for.
+    const alone = await getMarketingSources("2026-10", {}, vi.fn(), { shipheroGuardado: async () => pending });
+    expect(alone.shiphero).toBe(pending);
+  });
+});

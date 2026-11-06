@@ -23,6 +23,11 @@ import {
 } from "./marketing-dates";
 import { asUsd } from "./marketing-usd-rate";
 import {
+  inventoryStaleDate,
+  noPreviousSnapshotText,
+  type StockSource,
+} from "./marketing-inventory-decide";
+import {
   buildRealEstimate,
   sumWindow,
   type AssignedCampaign,
@@ -101,6 +106,8 @@ export interface CampaignActionRow {
   restockedFromLow: boolean | null;
   /** Date of the inventory file when it is older than yesterday (stock rules are not evaluated). */
   stockStale: string | null;
+  /** Where the stock came from (only changes the wording; default "csv"). */
+  stockSource?: StockSource;
   /** Last day with spend data (TikTok arrives a day late). */
   dataThrough: string | null;
   today: Window;
@@ -363,8 +370,7 @@ export function evaluateCampaignRules(
         code: "pausada",
         label: "Sin registro de reposición",
         tone: "info",
-        detail:
-          "Sin registro de reposición (falta el archivo de un día anterior).",
+        detail: noPreviousSnapshotText(row.stockSource ?? "csv"),
       });
     return finish();
   }
@@ -553,11 +559,11 @@ export function buildCampaignActionRows(input: {
       : null;
   const index = inventory ? stockIndex(inventory.stock) : null;
   // A product_table file older than yesterday no longer says what is in
-  // stock now (InventoryUpload asks for today's file from then on).
-  const stockStale =
-    inventory?.snapshotDate && inventory.snapshotDate < yesterday
-      ? inventory.snapshotDate
-      : null;
+  // stock now (InventoryUpload asks for today's file from then on); a ShipHero
+  // snapshot that missed two scheduled syncs neither.
+  const stockStale = inventory ? inventoryStaleDate(inventory, now) : null;
+  const stockSource: StockSource =
+    inventory?.origin === "shiphero" ? "shiphero" : "csv";
   const restock =
     inventory?.previous != null
       ? restockDelta(inventory.stock, inventory.previous.stock)
@@ -685,6 +691,7 @@ export function buildCampaignActionRows(input: {
         restocked,
         restockedFromLow,
         stockStale,
+        stockSource,
         dataThrough: c.observedThrough,
         today: windowOf(c, estimates, today, today, input.fx),
         yesterday: windowOf(c, estimates, yesterday, yesterday, input.fx),
@@ -765,7 +772,9 @@ export function buildCampaignActionRows(input: {
     );
   if (stockStale)
     notes.push(
-      `El inventario es del ${shortDateText(stockStale)}: las reglas de stock quedan sin evaluar. Sube el archivo de hoy.`,
+      stockSource === "shiphero"
+        ? `El inventario de ShipHero es del ${shortDateText(stockStale)}: las reglas de stock quedan sin evaluar. Revisa la conexión en Fuentes.`
+        : `El inventario es del ${shortDateText(stockStale)}: las reglas de stock quedan sin evaluar. Sube el archivo de hoy.`,
     );
   return {
     meta: rows.filter((r) => r.platform === "meta"),

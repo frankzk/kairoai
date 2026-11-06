@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildInventoryDecision,
+  inventoryStaleDate,
   isAdActive,
+  noPreviousSnapshotText,
+  staleInventoryText,
   variantAttributes,
 } from "../lib/marketing-inventory-decide";
 import type { CampaignActionRow, Window } from "../lib/marketing-actions";
@@ -335,6 +338,21 @@ describe("buildInventoryDecision", () => {
     );
   });
 
+  it("a ShipHero SKU with no open PO line (null) keeps the plan; a real PO number wins", () => {
+    const out = buildInventoryDecision({
+      products,
+      stock: [stock("TURK", 5, { incoming: null }), stock("85999875", 5, { incoming: 40 })],
+      previous: null,
+      columns: { backorder: true, incoming: true },
+      source: "shiphero",
+      plans: [plan("sku:turk", 120), plan("sku:85999875", 10)],
+      actionRows: [],
+      families,
+    });
+    expect(out.rows.find((r) => r.key === "sku:turk")).toMatchObject({ incoming: 120, incomingSource: "plan" });
+    expect(out.rows.find((r) => r.sku === "85999875")).toMatchObject({ incoming: 40, incomingSource: "csv" });
+  });
+
   it("keeps each presentation apart and lists stock-only SKUs", () => {
     const out = buildInventoryDecision({
       products,
@@ -592,5 +610,73 @@ describe("buildInventoryDecision", () => {
       "Sin pedidos esperando: el inventario de ShipHero no trae ese dato.",
     );
     expect(out.notes.join(" ")).not.toContain("product_table");
+  });
+});
+
+describe("origin-aware inventory texts", () => {
+  it("keeps the CSV wording and points ShipHero to Fuentes", () => {
+    expect(staleInventoryText("csv", "2 nov")).toBe(
+      "El inventario es del 2 nov. Sube el archivo de hoy.",
+    );
+    expect(staleInventoryText("shiphero", "2 nov")).toBe(
+      "El inventario de ShipHero es del 2 nov. Revisa la conexión en Fuentes.",
+    );
+    expect(noPreviousSnapshotText("csv")).toBe(
+      "Sin registro de reposición (falta el archivo de un día anterior).",
+    );
+    expect(noPreviousSnapshotText("shiphero")).toBe(
+      "Sin registro de reposición (falta la foto de ShipHero de un día anterior).",
+    );
+  });
+
+  it("a stale ShipHero snapshot does not ask to upload a file", () => {
+    const out = buildInventoryDecision({
+      products: [{ key: "sku:a", sku: "A", name: "A", recentUnits: 7 }],
+      stock: [{ sku: "A", warehouseId: "w", onHand: 1, available: 1, allocated: 0, backorder: 0 }],
+      previous: null,
+      columns: { backorder: true, incoming: false },
+      source: "shiphero",
+      plans: [],
+      actionRows: [],
+      families: [],
+      staleDate: "2026-11-01",
+    });
+    const stale = out.alerts.find((a) => a.code === "inventario_viejo");
+    expect(stale?.detail).toBe(
+      "Las alertas de stock quedan sin evaluar. Revisa la conexión de ShipHero en Fuentes.",
+    );
+    expect(out.notes.join(" ")).not.toContain("archivo");
+  });
+});
+
+describe("inventoryStaleDate", () => {
+  // Costa Rica = UTC-6. ShipHero runs 06:13, 10:13, 14:13 and 18:13 CR.
+  const cr = (date: string, time: string) => new Date(`${date}T${time}:00-06:00`);
+  const ship = (date: string, time: string) => ({
+    origin: "shiphero" as const,
+    snapshotDate: date,
+    uploadedAt: cr(date, time).toISOString(),
+  });
+
+  it("CSV: stale only when older than yesterday (as before)", () => {
+    const now = cr("2026-11-06", "16:00");
+    expect(inventoryStaleDate({ origin: "csv", snapshotDate: "2026-11-05" }, now)).toBeNull();
+    expect(inventoryStaleDate({ origin: "csv", snapshotDate: "2026-11-04" }, now)).toBe("2026-11-04");
+  });
+
+  it("ShipHero: one missed run is fine, two in a row are flagged the same day", () => {
+    // Last good run yesterday 18:13; today's 06:13 missed: fine at 07:30.
+    expect(inventoryStaleDate(ship("2026-11-05", "18:13"), cr("2026-11-06", "07:30"))).toBeNull();
+    // Overnight is never flagged.
+    expect(inventoryStaleDate(ship("2026-11-05", "18:13"), cr("2026-11-06", "05:00"))).toBeNull();
+    // 06:13 and 10:13 missed: flagged at 11:00, with yesterday's date.
+    expect(inventoryStaleDate(ship("2026-11-05", "18:13"), cr("2026-11-06", "11:00"))).toBe("2026-11-05");
+    // Today's 06:13 snapshot, 10:13 and 14:13 missed: flagged at 16:00.
+    expect(inventoryStaleDate(ship("2026-11-06", "06:14"), cr("2026-11-06", "16:00"))).toBe("2026-11-06");
+    expect(inventoryStaleDate(ship("2026-11-06", "10:14"), cr("2026-11-06", "16:00"))).toBeNull();
+  });
+
+  it("a live read (no snapshot date) is never stale", () => {
+    expect(inventoryStaleDate({ origin: "shiphero" }, new Date())).toBeNull();
   });
 });
