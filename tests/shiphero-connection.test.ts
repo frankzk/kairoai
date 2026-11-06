@@ -18,7 +18,9 @@ import {
   connectShipHero,
   disconnectShipHero,
   getValidAccessToken,
+  labelWarehouses,
   readShipHeroInventory,
+  shipheroScopeKey,
   statusFromRow,
   syncShipHeroInventory,
   type ConnectionRow,
@@ -557,5 +559,223 @@ describe("sync guards", () => {
     expect(order[0]).toBe("catalog");
     const save = fakeDb.state.calls.find((call) => call.op === "marketing_replace_shiphero_snapshot")!.args[0] as Record<string, any>;
     expect(save.p_meta.unmatched_count).toBe(1);
+  });
+});
+
+describe("«Todos los almacenes»", () => {
+  const deadline = () => Date.now() + 40_000;
+  // Production (Mireva CR): three active warehouses, two with the same name.
+  const BOXFUL_1 = "V2FyZWhvdXNlOjEzMjUwOQ=="; // Warehouse:132509
+  const PRIMARY = "V2FyZWhvdXNlOjEzMzY0Nw=="; // Warehouse:133647
+  const BOXFUL_2 = "V2FyZWhvdXNlOjEzMzY0OQ=="; // Warehouse:133649
+  const three = {
+    warehouses: [
+      { id: BOXFUL_1, name: "boxful Costa Rica", active: true },
+      { id: PRIMARY, name: "Primary", active: true },
+      { id: BOXFUL_2, name: "boxful Costa Rica", active: true },
+    ],
+    customers: [],
+  };
+  const threeRow = (over: Partial<ConnectionRow> = {}) =>
+    connectedRow({ warehouse_id: BOXFUL_1, warehouse_name: "boxful Costa Rica", choices: three, ...over });
+  const row = (id: string, sku: string, warehouseId: string, name: string, onHand: number, accountId = ACCOUNT) => ({
+    node: {
+      id, sku, account_id: accountId, warehouse_id: warehouseId, warehouse_identifier: name,
+      on_hand: onHand, available: onHand - 1, allocated: 1, backorder: 0, product: { name: sku },
+    },
+  });
+  const stock = (edges: unknown[]) =>
+    jsonResponse({ data: { warehouse_products: { complexity: 30, data: { pageInfo: { hasNextPage: false }, edges } } } });
+  const noPos = () => jsonResponse({ data: { purchase_orders: { data: { pageInfo: { hasNextPage: false }, edges: [] } } } });
+
+  it("the scope key uses the sentinel, like the SQL guard", () => {
+    expect(shipheroScopeKey({ sh_account_id: ACCOUNT, customer_account_id: null, warehouse_id: "*" })).toBe(`${ACCOUNT}||*`);
+    expect(shipheroScopeKey({ sh_account_id: ACCOUNT, customer_account_id: CUSTOMER, warehouse_id: "*" })).toBe(`${ACCOUNT}|${CUSTOMER}|*`);
+  });
+
+  it("is accepted with 2+ active warehouses: new generation, no sync wait, status with the count; back to one works", async () => {
+    fakeDb.state.row = threeRow({ token_generation: 3, last_sync_at: NOW.toISOString() });
+    const status = await chooseShipHeroScope(1, { warehouseId: "*" }, "7:Ana", env);
+    expect(status).toMatchObject({
+      state: "connected",
+      warehouse: { id: "*", name: "Todos los almacenes", count: 3 },
+      syncInMs: 0,
+    });
+    expect(fakeDb.state.row).toMatchObject({
+      warehouse_id: "*",
+      warehouse_name: "Todos los almacenes",
+      token_generation: 4,
+      last_sync_at: null,
+    });
+    // Viewers see the same status line (no choices, but the count).
+    expect(statusFromRow(fakeDb.state.row, env).warehouse).toEqual({ id: "*", name: "Todos los almacenes", count: 3 });
+    // Back to a single warehouse: allowed, and invalidates again.
+    fakeDb.state.row!.last_sync_at = NOW.toISOString();
+    const single = await chooseShipHeroScope(1, { warehouseId: PRIMARY }, "7:Ana", env);
+    expect(single).toMatchObject({ state: "connected", warehouse: { id: PRIMARY, name: "Primary" }, syncInMs: 0 });
+    expect(fakeDb.state.row).toMatchObject({ warehouse_id: PRIMARY, token_generation: 5, last_sync_at: null });
+  });
+
+  it("is refused with fewer than 2 active warehouses", async () => {
+    fakeDb.state.row = connectedRow({ token_generation: 3 });
+    await expect(chooseShipHeroScope(1, { warehouseId: "*" }, "7:Ana", env)).rejects.toThrow(
+      "«Todos los almacenes» solo está disponible con dos o más almacenes activos.",
+    );
+    fakeDb.state.row = connectedRow({
+      token_generation: 3,
+      choices: { warehouses: [{ id: WAREHOUSE, name: "Costa Rica", active: true }, { id: b64("Warehouse:9"), name: "Viejo", active: false }], customers: [] },
+    });
+    await expect(chooseShipHeroScope(1, { warehouseId: "*" }, "7:Ana", env)).rejects.toThrow("dos o más almacenes activos");
+    expect(fakeDb.state.row).toMatchObject({ warehouse_id: WAREHOUSE, token_generation: 3 });
+  });
+
+  it("a 3PL still needs its customer: all warehouses without one stays needs_scope", async () => {
+    fakeDb.state.row = threeRow({
+      state: "needs_scope",
+      is_3pl: true,
+      warehouse_id: null,
+      warehouse_name: null,
+      choices: { ...three, customers: [{ id: CUSTOMER, name: "Mireva" }, { id: "c2", name: "Otra" }] },
+    });
+    const pending = await chooseShipHeroScope(1, { warehouseId: "*" }, "7:Ana", env);
+    expect(pending).toMatchObject({ state: "needs_scope", warehouse: { id: "*" }, customer: null });
+    const done = await chooseShipHeroScope(1, { customerAccountId: CUSTOMER }, "7:Ana", env);
+    expect(done).toMatchObject({ state: "connected", warehouse: { id: "*" }, customer: { id: CUSTOMER } });
+  });
+
+  it("duplicate warehouse names get the legacy id; unique names stay as they are", async () => {
+    expect(labelWarehouses(three.warehouses).map((w) => w.name)).toEqual([
+      "boxful Costa Rica (132509)",
+      "Primary",
+      "boxful Costa Rica (133649)",
+    ]);
+    fakeDb.state.row = threeRow();
+    const editor = statusFromRow(fakeDb.state.row, env, { canEdit: true });
+    expect(editor.choices.warehouses.map((w) => w.name)).toEqual([
+      "boxful Costa Rica (132509)",
+      "Primary",
+      "boxful Costa Rica (133649)",
+    ]);
+    expect(editor.warehouse).toEqual({ id: BOXFUL_1, name: "boxful Costa Rica (132509)" });
+    // The stored choices keep ShipHero's names; a chosen duplicate is saved labeled.
+    expect((fakeDb.state.row!.choices as typeof three).warehouses[0].name).toBe("boxful Costa Rica");
+    await chooseShipHeroScope(1, { warehouseId: BOXFUL_2 }, "7:Ana", env);
+    expect(fakeDb.state.row!.warehouse_name).toBe("boxful Costa Rica (133649)");
+  });
+
+  it("syncs every warehouse without a filter, sums per SKU and saves the '*' scope", async () => {
+    fakeDb.state.row = threeRow({ warehouse_id: "*", warehouse_name: "Todos los almacenes" });
+    const bodies: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const fetcher = vi.fn(
+      shipheroFetcher({
+        graphql: (body) => {
+          bodies.push(body);
+          if (body.query.includes("purchase_orders")) return noPos();
+          return stock([
+            row("a", "SKU1", BOXFUL_1, "boxful Costa Rica", 5),
+            row("b", "SKU1", PRIMARY, "Primary", 3),
+            row("c", "SKU1", BOXFUL_2, "boxful Costa Rica", 10),
+            row("d", "SKU2", BOXFUL_2, "boxful Costa Rica", 2),
+          ]);
+        },
+      }),
+    );
+    const result = await syncShipHeroInventory(1, { by: "7:Ana", deadline: deadline(), env, fetcher, now: () => NOW });
+    expect(result).toMatchObject({ ok: true, rows: 2, incoming: true });
+    for (const body of bodies) {
+      expect(body.query).not.toContain("warehouse_id: $warehouse");
+      expect(body.variables).not.toHaveProperty("warehouse");
+      expect(JSON.stringify(body)).not.toContain('"*"');
+    }
+    const save = fakeDb.state.calls.find((call) => call.op === "marketing_replace_shiphero_snapshot")!.args[0] as Record<string, any>;
+    expect(save.p_scope).toBe(`${ACCOUNT}||*`);
+    expect(save.p_meta.file_name).toBe("ShipHero · Todos los almacenes");
+    expect(save.p_items).toEqual([
+      { sku: "SKU1", name: "SKU1", warehouses: ["boxful Costa Rica", "Primary"], available: 15, on_hand: 18, allocated: 3, backorder: 0, incoming: null },
+      { sku: "SKU2", name: "SKU2", warehouses: ["boxful Costa Rica"], available: 1, on_hand: 2, allocated: 1, backorder: 0, incoming: null },
+    ]);
+    expect(fakeDb.state.row).toMatchObject({ state: "connected", last_sync_rows: 2, last_error: null });
+  });
+
+  it("a deactivated warehouse is not summed: the total matches the count shown", async () => {
+    const OLD = b64("Warehouse:9");
+    fakeDb.state.row = threeRow({
+      warehouse_id: "*",
+      warehouse_name: "Todos los almacenes",
+      choices: { ...three, warehouses: [...three.warehouses, { id: OLD, name: "Viejo", active: false }] },
+    });
+    expect(statusFromRow(fakeDb.state.row, env).warehouse).toEqual({ id: "*", name: "Todos los almacenes", count: 3 });
+    const fetcher = vi.fn(
+      shipheroFetcher({
+        graphql: (body) =>
+          body.query.includes("purchase_orders")
+            ? noPos()
+            : stock([row("a", "SKU1", BOXFUL_1, "boxful Costa Rica", 5), row("b", "SKU1", OLD, "Viejo", 40), row("c", "SKU1", PRIMARY, "Primary", 3)]),
+      }),
+    );
+    const result = await syncShipHeroInventory(1, { by: "7:Ana", deadline: deadline(), env, fetcher, now: () => NOW });
+    expect(result).toMatchObject({ ok: true, rows: 1 });
+    const save = fakeDb.state.calls.find((call) => call.op === "marketing_replace_shiphero_snapshot")!.args[0] as Record<string, any>;
+    expect(save.p_items).toEqual([
+      { sku: "SKU1", name: "SKU1", warehouses: ["boxful Costa Rica", "Primary"], available: 6, on_hand: 8, allocated: 2, backorder: 0, incoming: null },
+    ]);
+  });
+
+  it("needs_scope offers «Todos los almacenes» only when 2+ warehouses are active", async () => {
+    const OLD = b64("Warehouse:9");
+    const twoWarehouses = () =>
+      vi.fn(
+        shipheroFetcher({
+          graphql: (body) =>
+            body.query.includes("purchase_orders")
+              ? noPos()
+              : stock([row("a", "SKU1", WAREHOUSE, "Costa Rica", 5), row("b", "SKU1", OLD, "Viejo", 4)]),
+        }),
+      );
+    // One active and one deactivated warehouse: no «Todos» in the message.
+    fakeDb.state.row = connectedRow({
+      warehouse_id: null,
+      warehouse_name: null,
+      choices: { warehouses: [{ id: WAREHOUSE, name: "Costa Rica", active: true }, { id: OLD, name: "Viejo", active: false }], customers: [] },
+    });
+    const lone = await syncShipHeroInventory(1, { by: "7:Ana", deadline: deadline(), env, fetcher: twoWarehouses(), now: () => NOW });
+    expect(lone).toMatchObject({ ok: true, skipped: "falta_elegir", error: "Hay más de un almacén. Elige cuál leer." });
+    expect(fakeDb.state.row).toMatchObject({ state: "needs_scope", last_error: "Hay más de un almacén. Elige cuál leer." });
+    // Both discovered as new (active): «Todos» is offered.
+    fakeDb.reset();
+    fakeDb.state.row = connectedRow({ warehouse_id: null, warehouse_name: null, choices: { warehouses: [], customers: [] } });
+    const both = await syncShipHeroInventory(1, { by: "7:Ana", deadline: deadline(), env, fetcher: twoWarehouses(), now: () => NOW });
+    expect(both).toMatchObject({ skipped: "falta_elegir", error: "Hay más de un almacén. Elige cuál leer o «Todos los almacenes»." });
+  });
+
+  it("a foreign account's row in all-warehouses mode saves nothing", async () => {
+    fakeDb.state.row = threeRow({ warehouse_id: "*", warehouse_name: "Todos los almacenes" });
+    const fetcher = vi.fn(
+      shipheroFetcher({
+        graphql: (body) =>
+          body.query.includes("purchase_orders")
+            ? noPos()
+            : stock([row("a", "SKU1", BOXFUL_1, "boxful Costa Rica", 5), row("b", "SKU1", PRIMARY, "Primary", 3, CUSTOMER)]),
+      }),
+    );
+    const result = await syncShipHeroInventory(1, { by: "cron", deadline: deadline(), env, fetcher, now: () => NOW });
+    expect(result).toMatchObject({ ok: false, error: SHIPHERO_MESSAGES.scope_mismatch });
+    expect(fakeDb.state.calls.some((call) => call.op === "marketing_replace_shiphero_snapshot")).toBe(false);
+    expect(fakeDb.state.row!.warehouse_id).toBe("*");
+  });
+
+  it("the dashboard never mixes: a single-warehouse snapshot is not served in all-warehouses mode", async () => {
+    const snap = (id: string, scopeKey: string) => ({
+      id, snapshot_date: "2026-11-06", source: "shiphero", file_name: "ShipHero · x", uploaded_at: "2026-11-06T16:13:00Z",
+      uploaded_by: "cron", row_count: 1, error_count: 0, available_column: "available", backorder_column: "backorder",
+      incoming_column: "", scope_key: scopeKey,
+    });
+    fakeDb.state.row = threeRow({ warehouse_id: "*", warehouse_name: "Todos los almacenes" });
+    fakeDb.state.snapshots = [snap("s1", `${ACCOUNT}||${BOXFUL_1}`)];
+    fakeDb.state.items = { s1: [{ sku: "SKU1", warehouses: ["boxful Costa Rica"], available: 4 }] };
+    expect(await readShipHeroInventory(1)).toMatchObject({ status: "pending", message: "ShipHero conectado. Falta la primera sincronización." });
+    fakeDb.state.snapshots.push(snap("s2", `${ACCOUNT}||*`));
+    fakeDb.state.items.s2 = [{ sku: "SKU1", warehouses: ["boxful Costa Rica", "Primary"], available: 15 }];
+    expect(await readShipHeroInventory(1)).toMatchObject({ status: "ready", data: { stock: [{ sku: "SKU1", available: 15 }] } });
   });
 });

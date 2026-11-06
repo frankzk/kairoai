@@ -152,6 +152,42 @@ describe("ShipHeroConnect card", () => {
     expect(html).not.toContain("<form");
   });
 
+  it("«Todos los almacenes» is offered only with 2+ active warehouses", () => {
+    const warehouses = [
+      { id: "w1", name: "boxful Costa Rica (132509)", active: true },
+      { id: "w2", name: "Primary", active: true },
+      { id: "w3", name: "boxful Costa Rica (133649)", active: true },
+    ];
+    const many = render(ok({ state: "needs_scope", userEmail: "ana@mireva.cr", accountKind: "cuenta", choices: { warehouses, customers: [], customersTruncated: false } }));
+    expect(many).toContain('<option value="*">Todos los almacenes (suma el stock de todos)</option>');
+    expect(many).toContain("boxful Costa Rica (132509)");
+    expect(many).toContain("boxful Costa Rica (133649)");
+    // The "all" option comes first, right after "Elige…".
+    expect(many.indexOf('value="*"')).toBeLessThan(many.indexOf('value="w1"'));
+    const oneActive = render(ok({
+      state: "needs_scope",
+      userEmail: "ana@mireva.cr",
+      accountKind: "cuenta",
+      choices: { warehouses: [warehouses[0], { ...warehouses[1], active: false }], customers: [], customersTruncated: false },
+    }));
+    expect(oneActive).toContain("Almacén");
+    expect(oneActive).not.toContain('value="*"');
+    expect(oneActive).not.toContain("Todos los almacenes");
+  });
+
+  it("connected to all warehouses: the status line says so, with the count", () => {
+    const html = render(
+      ok({
+        state: "connected",
+        userEmail: "ana@mireva.cr",
+        accountKind: "cuenta",
+        warehouse: { id: "*", name: "Todos los almacenes", count: 3 },
+      }),
+    );
+    expect(html).toContain("Almacén: Todos los almacenes (3)");
+    expect(html).toContain("Sincronizar ahora");
+  });
+
   it("connected during the cooldown: the sync button waits", () => {
     const html = render(
       ok({ state: "connected", userEmail: "ana@mireva.cr", syncInMs: 300_000 }),

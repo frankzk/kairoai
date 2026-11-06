@@ -11,6 +11,11 @@
 // - Cada foto guarda su alcance (cuenta|cliente|almacén). El tablero solo usa
 //   fotos del alcance actual, y la base solo guarda una foto si la conexión
 //   no cambió durante la lectura (token_generation + alcance).
+// - «Todos los almacenes» (warehouse_id "*", elegido a mano y solo con 2 o más
+//   almacenes activos): se lee sin filtro de almacén y el stock se suma por
+//   SKU. Cada fila debe seguir siendo de la cuenta (o del cliente 3PL); se
+//   acepta cualquier almacén de esa cuenta, también uno nuevo que aún no esté
+//   en la lista guardada.
 // Tabla: supabase/migrations/20261106120000_marketing_shiphero_connection.sql.
 import { getDB } from "./db";
 import { timeCrText } from "./marketing-copy";
@@ -37,6 +42,8 @@ import {
   secretKeyStatus,
 } from "./secret-box";
 import {
+  SHIPHERO_ALL_WAREHOUSES,
+  SHIPHERO_ALL_WAREHOUSES_NAME,
   SHIPHERO_MESSAGES,
   ShipHeroError,
   aggregateShipHeroStock,
@@ -45,6 +52,7 @@ import {
   readIncoming,
   readWarehouseProducts,
   refreshAccess,
+  shipheroLegacyId,
   type ShipHeroAuth,
   type ShipHeroDeps,
   type ShipHeroScope,
@@ -93,8 +101,11 @@ export interface ShipHeroStatus {
   userEmail: string | null;
   accountKind: "3pl" | "cuenta" | null;
   customer: { id: string; name: string } | null;
-  /** null = sin filtro (una sola bodega visible). */
-  warehouse: { id: string; name: string } | null;
+  /**
+   * null = sin filtro (una sola bodega visible). id "*" = «Todos los
+   * almacenes» (suma); `count` = almacenes activos que suma.
+   */
+  warehouse: { id: string; name: string; count?: number } | null;
   choices: ShipHeroChoices;
   connectedBy: string | null;
   connectedAt: string | null;
@@ -219,6 +230,30 @@ function choicesOf(value: unknown): ShipHeroChoices {
   };
 }
 
+/** "boxful Costa Rica" twice → "boxful Costa Rica (132509)" and "(133649)". Only colliding names change. */
+export function labelWarehouses<T extends { id: string; name: string }>(
+  warehouses: T[],
+): T[] {
+  const norm = (name: string) => name.trim().toLowerCase();
+  const seen = new Map<string, number>();
+  for (const item of warehouses)
+    seen.set(norm(item.name), (seen.get(norm(item.name)) ?? 0) + 1);
+  return warehouses.map((item) =>
+    (seen.get(norm(item.name)) ?? 0) > 1
+      ? {
+          ...item,
+          name: `${item.name} (${shipheroLegacyId(item.id) ?? item.id.slice(-8)})`.slice(
+            0,
+            200,
+          ),
+        }
+      : item,
+  );
+}
+
+const activeCount = (choices: ShipHeroChoices) =>
+  choices.warehouses.filter((item) => item.active).length;
+
 export async function readConnectionRow(
   storeId: number,
 ): Promise<ConnectionRow | null> {
@@ -269,7 +304,9 @@ export function statusFromRow(
   const live = state !== "not_connected";
   const showChoices =
     viewer.canEdit === true && (state === "connected" || state === "needs_scope");
-  const choices = showChoices ? choicesOf(row?.choices) : EMPTY_CHOICES;
+  const stored = choicesOf(row?.choices);
+  const labeled = labelWarehouses(stored.warehouses);
+  const choices = showChoices ? { ...stored, warehouses: labeled } : EMPTY_CHOICES;
   if (showChoices && row?.customer_account_id)
     choices.customers = choices.customers.filter(
       (item) => item.id === row.customer_account_id,
@@ -294,7 +331,19 @@ export function statusFromRow(
         : null,
     warehouse:
       live && row?.warehouse_id
-        ? { id: row.warehouse_id, name: row.warehouse_name || row.warehouse_id }
+        ? row.warehouse_id === SHIPHERO_ALL_WAREHOUSES
+          ? {
+              id: SHIPHERO_ALL_WAREHOUSES,
+              name: SHIPHERO_ALL_WAREHOUSES_NAME,
+              count: activeCount(stored),
+            }
+          : {
+              id: row.warehouse_id,
+              name:
+                labeled.find((item) => item.id === row.warehouse_id)?.name ||
+                row.warehouse_name ||
+                row.warehouse_id,
+            }
         : null,
     choices,
     connectedBy: row?.connected_by ? displayUploader(row.connected_by) : null,
@@ -368,7 +417,9 @@ export async function connectShipHero(
       ? account.customers[0]
       : null;
   if (customer) choices.customers = [{ id: customer.id, name: customer.name }];
-  const active = account.warehouses.filter((item) => item.active);
+  const active = labelWarehouses(account.warehouses).filter(
+    (item) => item.active,
+  );
   const warehouse = active.length === 1 ? active[0] : null;
   const complete = scopeComplete(
     account.is3pl,
@@ -468,8 +519,17 @@ export async function chooseShipHeroScope(
       warehouseId = null;
       values.warehouse_id = null;
       values.warehouse_name = null;
+    } else if (input.warehouseId === SHIPHERO_ALL_WAREHOUSES) {
+      // Explicit opt-in: the stock of every warehouse of the account is summed.
+      if (activeCount(choices) < 2)
+        throw new ShipHeroChoiceError(
+          "«Todos los almacenes» solo está disponible con dos o más almacenes activos.",
+        );
+      warehouseId = SHIPHERO_ALL_WAREHOUSES;
+      values.warehouse_id = SHIPHERO_ALL_WAREHOUSES;
+      values.warehouse_name = SHIPHERO_ALL_WAREHOUSES_NAME;
     } else {
-      const found = choices.warehouses.find(
+      const found = labelWarehouses(choices.warehouses).find(
         (item) => item.id === input.warehouseId,
       );
       if (!found) throw new ShipHeroChoiceError();
@@ -762,12 +822,22 @@ export async function syncShipHeroInventory(
         return renewed.token;
       },
     };
+    const allWarehouses = conn.warehouse_id === SHIPHERO_ALL_WAREHOUSES;
+    // Deactivated warehouses are not summed: the total matches the count shown.
+    const excludeWarehouseIds = allWarehouses
+      ? choicesOf(conn.choices)
+          .warehouses.filter((item) => !item.active)
+          .map((item) => item.id)
+      : [];
     const scope: ShipHeroScope = {
       is3pl: Boolean(conn.is_3pl),
       accountId: conn.sh_account_id ?? "",
       accountLegacyId: conn.sh_account_legacy_id,
       customerAccountId: conn.customer_account_id,
-      warehouseId: conn.warehouse_id,
+      // «Todos los almacenes»: no warehouse filter, rows summed per SKU.
+      warehouseId: allWarehouses ? null : conn.warehouse_id,
+      allWarehouses,
+      ...(excludeWarehouseIds.length ? { excludeWarehouseIds } : {}),
     };
     const rows = await readWarehouseProducts(auth, scope, deps, (page) => {
       if (page.complexity != null)
@@ -848,7 +918,11 @@ export async function syncShipHeroInventory(
           choices.warehouses.push({ ...found, active: true });
       values.choices = choices;
       values.state = "needs_scope";
-      values.last_error = "Hay más de un almacén. Elige cuál leer.";
+      // «Todos los almacenes» is offered (and accepted) only with 2+ active.
+      values.last_error =
+        activeCount(choices) >= 2
+          ? "Hay más de un almacén. Elige cuál leer o «Todos los almacenes»."
+          : "Hay más de un almacén. Elige cuál leer.";
     }
     if (error instanceof ShipHeroError && error.code === "reconnect") {
       values.state = "reconnect";

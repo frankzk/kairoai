@@ -5,6 +5,10 @@
 // en la URL, en localStorage ni en el estado de otro componente.
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { ShipHeroStatus } from "@/lib/shiphero-connection";
+import {
+  SHIPHERO_ALL_WAREHOUSES,
+  SHIPHERO_ALL_WAREHOUSES_NAME,
+} from "@/lib/shiphero-scope";
 import { count, dateTimeCr } from "./format";
 import { sendMarketing, useResource } from "./useMarketing";
 import s from "./dashboard.module.css";
@@ -216,7 +220,9 @@ export function ShipHeroConnect({
             )}
             <li>
               Almacén:{" "}
-              {c.warehouse
+              {c.warehouse?.id === SHIPHERO_ALL_WAREHOUSES
+                ? `${SHIPHERO_ALL_WAREHOUSES_NAME}${c.warehouse.count ? ` (${c.warehouse.count})` : ""}`
+                : c.warehouse
                 ? c.warehouse.name
                 : activeWarehouses.length > 1
                   ? "sin elegir"
@@ -285,6 +291,11 @@ export function ShipHeroConnect({
                   disabled={busy !== ""}
                 >
                   <option value="">Elige…</option>
+                  {activeWarehouses.length >= 2 && (
+                    <option value={SHIPHERO_ALL_WAREHOUSES}>
+                      {`${SHIPHERO_ALL_WAREHOUSES_NAME} (suma el stock de todos)`}
+                    </option>
+                  )}
                   {c.choices.warehouses.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}

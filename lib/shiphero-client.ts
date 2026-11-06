@@ -10,6 +10,12 @@
 // cuenta/almacén en cada fila y "en camino" solo cuando la lectura es completa.
 import { inventorySkuKey } from "./marketing-inventory-csv";
 import type { MarketingStock } from "./marketing-source-types";
+import { SHIPHERO_ALL_WAREHOUSES } from "./shiphero-scope";
+
+export {
+  SHIPHERO_ALL_WAREHOUSES,
+  SHIPHERO_ALL_WAREHOUSES_NAME,
+} from "./shiphero-scope";
 
 export const SHIPHERO_BASE = "https://public-api.shiphero.com";
 
@@ -586,6 +592,35 @@ export interface ShipHeroScope {
   customerAccountId: string | null;
   /** null = no warehouse filter (customer token with 0 visible warehouses). */
   warehouseId: string | null;
+  /**
+   * «Todos los almacenes», chosen explicitly: no warehouse filter and the rows
+   * of several warehouses are summed (no needs_scope). The account guard on
+   * every row still applies.
+   */
+  allWarehouses?: boolean;
+  /**
+   * With allWarehouses: warehouses deactivated in the stored choices. Their
+   * rows and purchase orders are skipped, so the sum covers exactly the
+   * active warehouses the card counts. Unknown warehouses of the same account
+   * stay accepted.
+   */
+  excludeWarehouseIds?: string[];
+}
+
+/** All-warehouses mode: true when the warehouse was deactivated (not summed). */
+function excludedWarehouse(scope: ShipHeroScope, warehouseId: string): boolean {
+  if (!scope.allWarehouses || !warehouseId) return false;
+  return (scope.excludeWarehouseIds ?? []).some((id) =>
+    sameShipHeroId(warehouseId, id),
+  );
+}
+
+/** Warehouse filter sent to ShipHero (null = none). The sentinel never leaves Kairo. */
+function warehouseFilter(scope: ShipHeroScope): string | null {
+  if (scope.allWarehouses) return null;
+  if (scope.warehouseId === SHIPHERO_ALL_WAREHOUSES)
+    throw new ShipHeroError("unexpected");
+  return scope.warehouseId || null;
 }
 
 export interface ShipHeroStockRow {
@@ -605,10 +640,11 @@ function scopeArgs(scope: ShipHeroScope) {
   const defs: string[] = [];
   const args: string[] = [];
   const variables: Record<string, unknown> = {};
-  if (scope.warehouseId) {
+  const warehouse = warehouseFilter(scope);
+  if (warehouse) {
     defs.push("$warehouse: String");
     args.push("warehouse_id: $warehouse");
-    variables.warehouse = scope.warehouseId;
+    variables.warehouse = warehouse;
   }
   if (scope.is3pl) {
     defs.push("$customer: String");
@@ -652,6 +688,7 @@ export async function readWarehouseProducts(
   const expectedAccount = scope.is3pl
     ? scope.customerAccountId!
     : scope.accountId;
+  const warehouse = warehouseFilter(scope);
   const { query, variables } = stockQuery(scope);
   const rows: ShipHeroStockRow[] = [];
   const seen = new Set<string>();
@@ -675,8 +712,12 @@ export async function readWarehouseProducts(
         throw new ShipHeroError("scope_mismatch");
       const warehouseId = str(row.warehouse_id);
       if (!warehouseId) throw new ShipHeroError("unexpected");
-      if (scope.warehouseId && !sameShipHeroId(warehouseId, scope.warehouseId))
+      // All warehouses: any warehouse of the account is accepted (the rows
+      // are still the account's own, checked above).
+      if (warehouse && !sameShipHeroId(warehouseId, warehouse))
         throw new ShipHeroError("scope_mismatch");
+      // Deactivated warehouse: not part of «Todos los almacenes».
+      if (excludedWarehouse(scope, warehouseId)) continue;
       if (seen.has(id)) throw new ShipHeroError("unexpected");
       seen.add(id);
       rows.push({
@@ -696,7 +737,7 @@ export async function readWarehouseProducts(
     }
     const paging = obj(data.pageInfo);
     if (paging.hasNextPage === false) {
-      if (!scope.warehouseId) {
+      if (!warehouse && !scope.allWarehouses) {
         // Stock of different warehouses (countries) is never added up silently.
         const distinct = new Map<string, string>();
         for (const row of rows)
@@ -821,6 +862,8 @@ export async function readIncoming(
   if (scope.is3pl && !scope.customerAccountId) return incomplete;
   try {
     const { query, variables } = incomingQuery(scope, deps.since);
+    // All warehouses: no filter, every open PO of the account counts.
+    const warehouse = warehouseFilter(scope);
     let after: string | null = null;
     for (let page = 0; page < MAX_PO_PAGES; page++) {
       const result = await authedGraphql(
@@ -836,11 +879,12 @@ export async function readIncoming(
         if (CLOSED.has(str(po.fulfillment_status).trim().toLowerCase()))
           continue;
         if (
-          scope.warehouseId &&
+          warehouse &&
           str(po.warehouse_id) &&
-          !sameShipHeroId(str(po.warehouse_id), scope.warehouseId)
+          !sameShipHeroId(str(po.warehouse_id), warehouse)
         )
           continue;
+        if (excludedWarehouse(scope, str(po.warehouse_id))) continue;
         const lines = obj(po.line_items);
         if (obj(lines.pageInfo).hasNextPage !== false) return incomplete;
         if (!Array.isArray(lines.edges)) return incomplete;
