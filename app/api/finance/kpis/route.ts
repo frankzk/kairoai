@@ -9,6 +9,7 @@ import {
   type KpiRange,
   type OpMetrics,
   type TrackableOrderRow,
+  type KpiWindow,
 } from "@/lib/finance-orders";
 import { getOrdersDataset } from "../_shared/orders-dataset";
 
@@ -42,6 +43,8 @@ function inWindow(value: string | null, start: number, end: number): boolean {
 // este evita recomputar las metricas en rafagas de requests.
 const KPIS_TTL_MS = 30_000;
 type KpisPayload = {
+  window: KpiWindow;
+  timeZone: string;
   current: OpMetrics;
   previous: OpMetrics | null;
   courierPerformance: CourierPerformanceReport | null;
@@ -109,7 +112,7 @@ export async function GET(req: NextRequest) {
     // Antes estaba limitado a mireva-cr y Honduras recibia null.
     const courierPerformance = buildCourierPerformanceReport(rows, settlementTraceByKey, win);
 
-    const data: KpisPayload = { current, previous, courierPerformance };
+    const data: KpisPayload = { current, previous, courierPerformance, window: win, timeZone: store.timezone };
     // Poda de vencidos: las claves de rango custom son abiertas (una por par de
     // fechas) y sin esto el mapa creceria sin tope en instancias longevas.
     if (kpisCache.size > 50) {
