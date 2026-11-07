@@ -7,39 +7,49 @@ import r from "./team-report.module.css";
 
 const usd = (value: number | null | undefined) => money(value, "USD");
 
-/** "Hoy · cómo voy": real orders, spend and real CPA against the day's goals. */
+/**
+ * Today's pace: real orders, spend and real CPA against the day's goals.
+ * - "primary": the selected period is today; it is the report's main block
+ *   (the report heading already names the day).
+ * - "inPeriod": the period reaches today but is longer (Este mes, 7 días):
+ *   a secondary block under the period's results, named as today's part.
+ * Periods that end before today do not show it.
+ */
 export function DailyGoals({
   pace,
   loading,
   spendLoading = false,
   error,
-  filterLabel = null,
+  variant = "primary",
 }: {
   pace: DailyPace | null;
   loading: boolean;
   /** Meta and TikTok spend of the last 8 days still loading. */
   spendLoading?: boolean;
   error: string;
-  /** Name of the top filter when it is not today ("Ayer"): this section is always today. */
-  filterLabel?: string | null;
+  variant?: "primary" | "inPeriod";
 }) {
+  const inPeriod = variant === "inPeriod";
+  const goalText = `Meta del día: ${count(MARKETING_TARGETS.dailyOrders)} pedidos reales, ${usd(MARKETING_TARGETS.dailySpendUsd)} de gasto y CPA real de ${usd(MARKETING_TARGETS.cpaUsd)}.`;
+  const updated = pace
+    ? `Actualizado ${pace.asOf}, hora de Costa Rica. Pedidos reales al momento de consultar.`
+    : goalText;
   return (
-    <section className={r.section} aria-labelledby="goals-title">
-      <div className={r.sectionHead}>
-        <div>
-          <p className={r.kicker}>
-            01 / Hoy{filterLabel ? " (no depende del filtro)" : ""}
-          </p>
-          <h2 id="goals-title">Hoy · cómo voy</h2>
+    <section
+      className={inPeriod ? r.todayPart : r.todayMain}
+      aria-labelledby={inPeriod ? "goals-title" : undefined}
+      aria-label={inPeriod ? undefined : "Hoy contra la meta del día"}
+    >
+      {inPeriod ? (
+        <div className={r.todayHead}>
+          <h3 id="goals-title">Hoy, en curso</h3>
           <p>
-            {pace
-              ? `Actualizado ${pace.asOf} · hora de Costa Rica. Pedidos reales al momento de consultar.`
-              : `Meta: ${count(MARKETING_TARGETS.dailyOrders)} pedidos reales, ${usd(MARKETING_TARGETS.dailySpendUsd)} de gasto y CPA real de ${usd(MARKETING_TARGETS.cpaUsd)}.`}
-            {filterLabel &&
-              ` Siempre es el día de hoy: el período elegido arriba (${filterLabel}) está en «Reporte del equipo», más abajo.`}
+            Parte del período de arriba. {updated}
           </p>
         </div>
-      </div>
+      ) : (
+        <p className={r.todayNote}>{updated}</p>
+      )}
       {loading && !pace ? (
         <p role="status">Consultando los pedidos de hoy…</p>
       ) : !pace ? (

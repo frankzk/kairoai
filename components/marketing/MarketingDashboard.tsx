@@ -577,6 +577,11 @@ export default function MarketingDashboard() {
                 canUpload={canEdit}
                 onInventorySaved={() => setRevision((value) => value + 1)}
                 onOpenSources={() => setView("sources")}
+                periodName={
+                  preset === "custom"
+                    ? null
+                    : (presets.find(([key]) => key === preset)?.[1] ?? null)
+                }
                 canEdit={settingsReady}
                 saving={api.saving}
                 saved={api.saved}
