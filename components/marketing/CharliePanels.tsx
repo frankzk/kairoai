@@ -253,9 +253,15 @@ function RevenueChart({ model }: { model: CharlieModel }) {
         </div>
       </details>
       <p className={`${s.muted} mt-3`}>
-        El gasto de esta serie es Meta, no el total combinado. La serie termina
-        en la fecha final del filtro o en hoy. El ingreso es el valor al crear
-        pedidos; no es cobro.
+        El gasto de esta serie es Meta, no el total combinado.{" "}
+        {model.trailing.length
+          ? `La serie termina el ${shortDate(model.trailing[model.trailing.length - 1].date)}, último día del filtro${
+              model.trailing[model.trailing.length - 1].date === marketingDate()
+                ? " (hoy, todavía en curso)"
+                : ""
+            }.`
+          : "La serie termina en el último día del filtro."}{" "}
+        El ingreso es el valor al crear pedidos; no es cobro.
       </p>
     </div>
   );

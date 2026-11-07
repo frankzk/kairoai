@@ -6,6 +6,8 @@ import {
   noPreviousSnapshotText,
   staleInventoryText,
   variantAttributes,
+  variantLabel,
+  variantListText,
 } from "../lib/marketing-inventory-decide";
 import type { CampaignActionRow, Window } from "../lib/marketing-actions";
 import type { MarketingStock } from "../lib/marketing-source-types";
@@ -115,6 +117,47 @@ describe("variantAttributes", () => {
       color: null,
       size: null,
     });
+  });
+});
+
+describe("variantLabel", () => {
+  const family = {
+    name: "Fat Burn Shorts",
+    members: [
+      { key: "sku:a", sku: "A", name: "Negro / S" },
+      { key: "sku:b", sku: "B", name: "Fat Burn Shorts" },
+    ],
+  };
+  it("prefers the Shopify variant title, then color/size, then the name rest", () => {
+    expect(variantLabel({ key: "sku:a", sku: "A", name: "Fat Burn Shorts" }, family)).toBe(
+      "Negro / S",
+    );
+    expect(
+      variantLabel({ key: "sku:fat.burn.beige.m", sku: "FAT.BURN.BEIGE.M", name: "Fat Burn" }, family),
+    ).toBe("Beige / M");
+    expect(
+      variantLabel({ key: "sku:x", sku: "X1", name: "Fat Burn Shorts - Edición 2" }, family),
+    ).toBe("Edición 2");
+    expect(variantLabel({ key: "sku:b", sku: "B", name: "Fat Burn Shorts" }, family)).toBe("B");
+  });
+  it("caps the list and tells repeated labels apart", () => {
+    const rows = Array.from({ length: 9 }, (_, i) => ({
+      key: `sku:v${i}`,
+      sku: `V${i}`,
+      name: `Producto - Variante ${i}`,
+    }));
+    expect(variantListText(rows, { name: "Producto", members: [] })).toBe(
+      "Variante 0, Variante 1, Variante 2, Variante 3, Variante 4, Variante 5 y 3 más",
+    );
+    expect(
+      variantListText(
+        [
+          { key: "sku:p", sku: "P1", name: "Producto - Negro" },
+          { key: "sku:q", sku: "P2", name: "Producto - Negro" },
+        ],
+        null,
+      ),
+    ).toBe("Negro (P1), Negro (P2)");
   });
 });
 
@@ -543,6 +586,202 @@ describe("buildInventoryDecision", () => {
     expect(fresh.alerts.map((a) => plain(a).detail)).toEqual([
       "CBO FAT BURN (CR4). Disponible 0.",
     ]);
+  });
+
+  describe("products with variants (familia talla/color)", () => {
+    const fatFamily: MarketingFamily[] = [
+      {
+        key: "family:shopify:1",
+        name: "Fat Burn Shorts",
+        source: "shopify",
+        review: false,
+        members: [
+          ["NEGRO.S", "Negro / S"],
+          ["NEGRO.M", "Negro / M"],
+          ["NEGRO.L", "Negro / L"],
+          ["BEIGE.S", "Beige / S"],
+          ["BEIGE.M", "Beige / M"],
+          ["BEIGE.L", "Beige / L"],
+          ["ROSA.S", "Rosa / S"],
+          ["ROSA.M", "Rosa / M"],
+          ["ROSA.L", "Rosa / L"],
+        ].map(([v, name]) => ({
+          key: `sku:fat.${v.toLowerCase()}`,
+          sku: `FAT.${v}`,
+          name,
+        })),
+      },
+    ];
+    // The iComfly catalog names the product, not the variant.
+    const fatProducts = fatFamily[0].members.map((m) => ({
+      key: m.key,
+      sku: m.sku,
+      name: "Fat Burn Shorts",
+      recentUnits: 7,
+    }));
+    const familyAd = ad({
+      key: "meta:4:9",
+      name: "CBO FAT BURN",
+      product: {
+        key: "family:shopify:1",
+        name: "Fat Burn Shorts",
+        automatic: true,
+        reason: "",
+      },
+    });
+    const run = (
+      available: Record<string, number>,
+      extra: Partial<Parameters<typeof buildInventoryDecision>[0]> = {},
+    ) =>
+      plain(
+        buildInventoryDecision({
+          products: fatProducts,
+          stock: fatFamily[0].members.map((m) =>
+            stock(m.sku, available[m.sku] ?? 0),
+          ),
+          previous: null,
+          columns: null,
+          plans: [],
+          actionRows: [familyAd],
+          families: fatFamily,
+          ...extra,
+        }),
+      );
+
+    it("a family with stock in some variants is not «sin stock»: one grouped variant alert", () => {
+      const out = run({ "FAT.BEIGE.S": 120, "FAT.BEIGE.M": 80 });
+      expect(out.alerts.filter((a) => a.code === "anuncio_sin_stock")).toEqual(
+        [],
+      );
+      expect(out.alerts).toEqual([
+        {
+          code: "variantes_agotadas",
+          tone: "wait",
+          key: "variantes:family:shopify:1",
+          title: "Fat Burn Shorts: tallas/colores agotados",
+          detail:
+            "Sin stock: Negro / S, Negro / M, Negro / L, Beige / L, Rosa / S, Rosa / M y 1 más. 7 de 9 variantes sin stock · disponible total 200 (22 días). Anuncio activo: CBO FAT BURN (CR4).",
+        },
+      ]);
+      expect(JSON.stringify(out.alerts)).not.toMatch(/sin stock: Fat/i);
+      // The rows stay per SKU.
+      expect(out.rows).toHaveLength(9);
+    });
+
+    it("a family fully at 0 says «sin stock» once, at family level", () => {
+      const out = run({});
+      expect(out.alerts).toEqual([
+        {
+          code: "anuncio_sin_stock",
+          tone: "risk",
+          key: "anuncio:family:shopify:1",
+          title: "Anuncio activo sin stock: Fat Burn Shorts",
+          detail: "CBO FAT BURN (CR4). Disponible 0 entre 9 variantes.",
+        },
+      ]);
+    });
+
+    it("judges red coverage on the family total, not on one variant", () => {
+      // 9 a day for the family: 20 units are 2,2 days (red) even if spread out.
+      const red = run({ "FAT.BEIGE.S": 20 });
+      expect(red.alerts.map((a) => [a.code, a.title, a.detail])).toEqual([
+        [
+          "anuncio_sin_stock",
+          "Anuncio activo con poco stock: Fat Burn Shorts",
+          "CBO FAT BURN (CR4). Disponible 20 entre 9 variantes · 2,2 días.",
+        ],
+      ]);
+      // Every variant in stock: nothing to say.
+      const full = run(
+        Object.fromEntries(fatFamily[0].members.map((m) => [m.sku, 50])),
+      );
+      expect(full.alerts).toEqual([]);
+    });
+
+    it("groups the orders waiting of a family and does not say it has no stock", () => {
+      const out = run(
+        { "FAT.BEIGE.S": 300 },
+        {
+          stock: fatFamily[0].members.map((m) =>
+            stock(m.sku, m.sku === "FAT.BEIGE.S" ? 300 : m.sku === "FAT.NEGRO.S" ? 0 : 40, {
+              backorder: m.sku === "FAT.NEGRO.S" ? 12 : m.sku === "FAT.ROSA.M" ? 3 : 0,
+            }),
+          ),
+          columns: { backorder: true, incoming: false },
+          actionRows: [],
+        },
+      );
+      expect(out.alerts).toEqual([
+        {
+          code: "esperando_stock",
+          tone: "risk",
+          key: "esperando:family:shopify:1",
+          title: "Fat Burn Shorts: 15 pedidos esperando stock",
+          detail:
+            "En Negro / S (12), Rosa / M (3) · disponible total del producto 580.",
+        },
+      ]);
+    });
+
+    it("a campaign of one variant keeps the per-SKU alert, named with its variant", () => {
+      const out = run(
+        { "FAT.BEIGE.S": 120 },
+        {
+          actionRows: [
+            ad({
+              key: "meta:4:10",
+              name: "ABO NEGRO S",
+              product: {
+                key: "sku:fat.negro.s",
+                name: "Fat Burn Shorts",
+                automatic: true,
+                reason: "",
+              },
+            }),
+          ],
+        },
+      );
+      expect(out.alerts.map((a) => [a.code, a.title])).toEqual([
+        ["anuncio_sin_stock", "Anuncio activo sin stock: Fat Burn Shorts (Negro / S)"],
+      ]);
+    });
+
+    it("single-SKU products keep the per-SKU alert", () => {
+      const out = plain(
+        buildInventoryDecision({
+          products,
+          stock: [stock("TURK", 0)],
+          previous: null,
+          columns: null,
+          plans: [],
+          actionRows: [
+            ad({
+              key: "meta:4:t",
+              name: "CBO TURK",
+              product: { key: "sku:turk", name: "Turk", automatic: true, reason: "" },
+            }),
+          ],
+          families: [
+            {
+              key: "family:name:turk",
+              name: "Turkesterone",
+              source: "name",
+              review: false,
+              members: [{ key: "sku:turk", sku: "TURK", name: "Turkesterone" }],
+            },
+          ],
+        }),
+      );
+      expect(out.alerts).toEqual([
+        {
+          code: "anuncio_sin_stock",
+          tone: "risk",
+          key: "anuncio:sku:turk",
+          title: "Anuncio activo sin stock: Turkesterone",
+          detail: "CBO TURK (CR4). Disponible 0.",
+        },
+      ]);
+    });
   });
 
   it("sorts an active ad without stock first, even without recent sales", () => {

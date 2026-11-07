@@ -1,6 +1,8 @@
 // Textos con números para Marketing (es-CR). Puro y usable en el navegador:
 // las reglas de lib/ arman sus mensajes con los mismos formatos que la
 // interfaz (components/marketing/format.ts).
+import { shiftDate } from "./marketing-dates";
+
 const NUMBER = new Intl.NumberFormat("es-CR");
 const ONE_DECIMAL = new Intl.NumberFormat("es-CR", {
   minimumFractionDigits: 1,
@@ -57,3 +59,37 @@ export const dateTimeCrText = (value: string | Date) => {
   }).format(date);
   return `${day}, ${timeCrText(date)}`;
 };
+
+/** Whether the selected period reaches today (Costa Rica): today's numbers are still moving. */
+export const periodIncludesToday = (
+  period: { from: string; to: string },
+  today: string,
+) => period.from <= today && period.to >= today;
+
+/** Whether the selected period is exactly today. */
+export const periodIsToday = (
+  period: { from: string; to: string },
+  today: string,
+) => period.from === today && period.to === today;
+
+/**
+ * Name of the selected period for labels: "Hoy", "Ayer", "6 nov",
+ * "1 al 6 nov", "28 oct al 3 nov". `withDate` adds the date to Hoy/Ayer
+ * ("Ayer · 6 nov"). Labels of numbers that depend on the period use this
+ * instead of a fixed "hoy".
+ */
+export function periodLabelText(
+  period: { from: string; to: string },
+  today: string,
+  options: { withDate?: boolean } = {},
+): string {
+  const { from, to } = period;
+  if (from === to) {
+    const relative =
+      to === today ? "Hoy" : to === shiftDate(today, -1) ? "Ayer" : null;
+    if (!relative) return shortDateText(to);
+    return options.withDate ? `${relative} · ${shortDateText(to)}` : relative;
+  }
+  const sameMonth = from.slice(0, 7) === to.slice(0, 7);
+  return `${sameMonth ? String(Number(from.slice(8, 10))) : shortDateText(from)} al ${shortDateText(to)}`;
+}

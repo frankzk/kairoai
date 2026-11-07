@@ -13,6 +13,7 @@ import { MARKETING_TARGETS } from "./marketing-targets";
 import { coverageOf, stockFor, stockIndex } from "./marketing-coverage";
 import { buildKeywordIndex } from "./marketing-campaign-keywords";
 import { countText, decimalText, moneyText } from "./marketing-copy";
+import { variantListText } from "./marketing-inventory-decide";
 
 export const MARKETING_CPA_LIMIT = MARKETING_TARGETS.cpaUsd;
 /** Reorder floor only; stock alerts use days of coverage. */
@@ -194,6 +195,54 @@ export function buildMarketingIntelligence(
     detail: string;
     productKey?: string;
   }> = [];
+  // Products with variants (talla/color): stock is judged on the family
+  // (Σ disponible y demanda), so one size at 0 does not read as "agotado".
+  const families = summary.productFamilies ?? [];
+  const familyOf = new Map<string, string>();
+  for (const family of families)
+    for (const member of family.members) familyOf.set(member.key, family.key);
+  const familyStock = new Map<string, typeof products>();
+  for (const product of products) {
+    const key = familyOf.get(product.key);
+    if (key && product.available != null)
+      familyStock.set(key, [...(familyStock.get(key) ?? []), product]);
+  }
+  for (const [key, members] of Array.from(familyStock))
+    if (members.length < 2) familyStock.delete(key);
+  for (const [key, members] of Array.from(familyStock)) {
+    const family = families.find((f) => f.key === key)!;
+    const available = members.reduce((n, p) => n + Math.max(0, p.available!), 0);
+    const coverage = coverageOf(
+      available,
+      members.reduce((n, p) => n + p.recentUnits, 0),
+      MARKETING_TARGETS,
+    );
+    if (coverage.tone === "red" || coverage.tone === "yellow") {
+      alerts.push({
+        key: `stock:${key}`,
+        tone: "risk",
+        title:
+          available <= 0
+            ? `${family.name}: agotado`
+            : `${family.name}: ${coverage.label} de stock`,
+        detail: `${countText(available)} unidades entre ${countText(members.length)} variantes; vende ${decimalText(coverage.dailyUnits)} por día (últimos 7 días).`,
+        productKey: key,
+      });
+      continue;
+    }
+    // The product has stock: the variants that sell and ran out, in one line.
+    const out = members.filter(
+      (p) => p.available! <= 0 && p.coverage.tone === "red",
+    );
+    if (out.length)
+      alerts.push({
+        key: `stock-variantes:${key}`,
+        tone: "risk",
+        title: `${family.name}: tallas/colores agotados`,
+        detail: `Sin stock: ${variantListText(out, family)}. ${countText(out.length)} de ${countText(members.length)} variantes sin stock · disponible total ${countText(available)} (${coverage.label}).`,
+        productKey: key,
+      });
+  }
   for (const product of products) {
     if (
       !ads.partial &&
@@ -217,6 +266,7 @@ export function buildMarketingIntelligence(
       });
     if (
       product.available != null &&
+      !familyStock.has(familyOf.get(product.key) ?? "") &&
       (product.coverage.tone === "red" || product.coverage.tone === "yellow")
     )
       alerts.push({

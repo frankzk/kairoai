@@ -13,10 +13,13 @@ export function CostCapControl({
   control,
   loading,
   error,
+  filterLabel = null,
 }: {
   control: { rows: CostCapRow[]; candidates: CostCapCandidate[] } | null;
   loading: boolean;
   error: string;
+  /** Name of the top filter when it is not today ("Ayer"): these columns are always today. */
+  filterLabel?: string | null;
 }) {
   return (
     <section className={r.section} aria-labelledby="cost-cap-title">
@@ -29,6 +32,8 @@ export function CostCapControl({
             del píxel mayor al doble de la puja. No entrega: menos de{" "}
             {usd(t.costCapNoDeliveryUsd)} al día. (Gomitas CR4 gastó {usd(1166)}{" "}
             el 27 oct.)
+            {filterLabel &&
+              ` No depende del filtro de período (${filterLabel}): «hoy» es siempre el día de hoy.`}
           </p>
         </div>
       </div>

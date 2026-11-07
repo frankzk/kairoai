@@ -241,6 +241,7 @@ export function missingStockColumnsText(
 export interface InventoryAlert {
   code:
     | "anuncio_sin_stock"
+    | "variantes_agotadas"
     | "esperando_stock"
     | "reposicion"
     | "inventario_viejo";
@@ -345,6 +346,65 @@ const listText = (items: string[], max = 2) =>
   items.length <= max
     ? items.join(", ")
     : `${items.slice(0, max).join(", ")} y ${countText(items.length - max)} más`;
+
+/** Variants named in a grouped alert before "y N más". */
+export const VARIANT_LIST_MAX = 6;
+
+const lower = (value: string) => value.toLocaleLowerCase("es").trim();
+
+/**
+ * Short name of a variant inside its product ("Negro / S"): the Shopify
+ * variant title, else color and size read from the SKU or the name, else the
+ * name without the product part, else the SKU.
+ */
+export function variantLabel(
+  row: { key: string; sku: string; name: string },
+  family?: Pick<MarketingFamily, "name" | "members"> | null,
+): string {
+  const familyName = family?.name?.trim() ?? "";
+  const member = family?.members.find((m) => m.key === row.key);
+  const title = member?.name?.trim() ?? "";
+  if (
+    title &&
+    title !== row.name.trim() &&
+    title !== member?.sku &&
+    lower(title) !== lower(familyName) &&
+    !/^default title$/i.test(title)
+  )
+    return title;
+  const attrs = variantAttributes(row.sku, row.name);
+  const parts = [attrs.color, attrs.size].filter(Boolean);
+  if (parts.length) return parts.join(" / ");
+  for (const base of [familyName, productName(row.name)]) {
+    if (!base || !lower(row.name).startsWith(lower(base))) continue;
+    const rest = row.name
+      .slice(base.length)
+      .replace(/^[\s\-–—:·/|,(]+/, "")
+      .replace(/\)\s*$/, "")
+      .trim();
+    if (rest) return rest;
+  }
+  return row.sku.trim() || row.name;
+}
+
+/** "Negro / S, Beige / M y 3 más": variant labels, repeated ones told apart by SKU. */
+export function variantListText(
+  rows: Array<{ key: string; sku: string; name: string }>,
+  family?: Pick<MarketingFamily, "name" | "members"> | null,
+  max = VARIANT_LIST_MAX,
+): string {
+  const labels = rows.map((row) => variantLabel(row, family));
+  const seen = new Map<string, number>();
+  for (const label of labels) seen.set(label, (seen.get(label) ?? 0) + 1);
+  return listText(
+    labels.map((label, i) =>
+      (seen.get(label) ?? 0) > 1 && rows[i].sku && label !== rows[i].sku
+        ? `${label} (${rows[i].sku})`
+        : label,
+    ),
+    max,
+  );
+}
 
 /** A campaign that is selling now: Meta active, TikTok with spend in the last reported days. */
 export function isAdActive(
@@ -528,9 +588,97 @@ export function buildInventoryDecision(input: {
           ? "Las alertas de stock quedan sin evaluar. Revisa la conexión de ShipHero en Fuentes."
           : "Las alertas de stock quedan sin evaluar. Sube el archivo de hoy.",
     });
+  // Products with variants (talla/color): the active ad sells the whole
+  // family, so stock is judged on the family (Σ disponible y demanda). A
+  // variant at 0 while its siblings have stock is not "sin stock".
+  const familyById = new Map(input.families.map((f) => [f.key, f]));
+  const familyRows = new Map<string, PresentationRow[]>();
+  for (const row of rows)
+    if (row.familyKey && row.available != null)
+      familyRows.set(row.familyKey, [
+        ...(familyRows.get(row.familyKey) ?? []),
+        row,
+      ]);
+  const groupOf = (row: PresentationRow) => {
+    const group = row.familyKey ? familyRows.get(row.familyKey) : undefined;
+    return group && group.length > 1 ? group : null;
+  };
+  const familyName = (familyKey: string, group: PresentationRow[]) =>
+    familyById.get(familyKey)?.name?.trim() || productName(group[0].name);
+  const sum = (group: PresentationRow[], pick: (r: PresentationRow) => number) =>
+    group.reduce((n, r) => n + pick(r), 0);
+  const adsText = (ads: ActiveAd[]) =>
+    `${listText(Array.from(new Set(ads.map((a) => a.name))))} (${Array.from(
+      new Set(ads.map((a) => a.accountLabel)),
+    ).join(", ")})`;
+
+  /** A variant of a product with variants reads "Producto (Negro / S)". */
+  const rowName = (row: PresentationRow) => {
+    const group = groupOf(row);
+    return group
+      ? `${familyName(row.familyKey!, group)} (${variantLabel(row, familyById.get(row.familyKey!))})`
+      : row.name;
+  };
+
   const covered = new Set<string>();
+  const doneFamilies = new Set<string>();
   for (const row of stale ? [] : rows) {
     if (!row.activeAds.length || row.available == null) continue;
+    const group = groupOf(row);
+    // The variants the active ads sell: the whole family for a family
+    // campaign, the selection for a campaign of some variants.
+    const advertised = group?.filter((r) => r.activeAds.length) ?? [];
+    if (advertised.length > 1) {
+      const familyKey = row.familyKey!;
+      if (doneFamilies.has(familyKey)) continue;
+      doneFamilies.add(familyKey);
+      const name = familyName(familyKey, group!);
+      const family = familyById.get(familyKey) ?? null;
+      const whole = advertised.length === group!.length;
+      const ads = advertised.flatMap((r) => r.activeAds);
+      const total = sum(advertised, (r) => r.available ?? 0);
+      const daily = sum(advertised, (r) => r.dailyUnits);
+      const backorder = sum(advertised, (r) => r.backorder ?? 0);
+      const coverage = coverageOf(total, daily * 7, t);
+      const empty =
+        total <= 0 &&
+        (daily > 0 ||
+          backorder > 0 ||
+          sum(advertised, (r) => r.waitingProxy ?? 0) > 0);
+      const variantsText = `${countText(advertised.length)} variantes${whole ? "" : " anunciadas"}`;
+      if (empty || coverage.tone === "red") {
+        for (const r of advertised) covered.add(r.key);
+        alerts.push({
+          code: "anuncio_sin_stock",
+          tone: "risk",
+          key: `anuncio:${familyKey}`,
+          title:
+            total <= 0
+              ? `Anuncio activo sin stock: ${name}`
+              : `Anuncio activo con poco stock: ${name}`,
+          detail: `${adsText(ads)}. Disponible ${countText(total)} entre ${variantsText}${
+            total > 0 ? ` · ${coverage.label}` : ""
+          }${backorder ? ` · ${countText(backorder)} pedidos esperando` : ""}.`,
+        });
+        continue;
+      }
+      // The product has stock: one grouped, lower-severity alert for the
+      // advertised variants at 0 that sell or have orders waiting.
+      const out = advertised.filter((r) => (r.available ?? 0) <= 0);
+      if (!out.length) continue;
+      alerts.push({
+        code: "variantes_agotadas",
+        tone: "wait",
+        key: `variantes:${familyKey}`,
+        title: `${name}: tallas/colores agotados`,
+        detail: `Sin stock: ${variantListText(out, family)}. ${countText(out.length)} de ${variantsText} sin stock · disponible total ${countText(total)}${
+          coverage.tone === "ok" || coverage.tone === "yellow"
+            ? ` (${coverage.label})`
+            : ""
+        }. Anuncio activo: ${adsText(ads)}.`,
+      });
+      continue;
+    }
     const empty =
       row.available <= 0 &&
       (row.dailyUnits > 0 ||
@@ -539,48 +687,115 @@ export function buildInventoryDecision(input: {
     if (!empty && !(row.backorder ?? 0) && row.coverage.tone !== "red")
       continue;
     covered.add(row.key);
-    const campaigns = Array.from(new Set(row.activeAds.map((a) => a.name)));
-    const accounts = Array.from(
-      new Set(row.activeAds.map((a) => a.accountLabel)),
-    );
     alerts.push({
       code: "anuncio_sin_stock",
       tone: "risk",
       key: `anuncio:${row.key}`,
-      title: `Anuncio activo sin stock: ${row.name}`,
-      detail: `${listText(campaigns)} (${accounts.join(", ")}). Disponible ${countText(row.available)}${
+      title: `Anuncio activo sin stock: ${rowName(row)}`,
+      detail: `${adsText(row.activeAds)}. Disponible ${countText(row.available)}${
         row.available > 0 ? ` · ${row.coverage.label}` : ""
       }${row.backorder ? ` · ${countText(row.backorder)} pedidos esperando` : ""}.`,
     });
   }
+  // Orders waiting: one alert per SKU, or per family for products with
+  // variants (the family total says whether the product still has stock).
+  const waitingByFamily = new Map<
+    string,
+    Array<{ row: PresentationRow; waiting: WaitingStock | null }>
+  >();
   for (const row of rows) {
     if (covered.has(row.key)) continue;
+    let waiting: WaitingStock | null = null;
     if (columns.backorder) {
       if (stale || !row.backorder || row.backorder <= 0) continue;
+    } else {
+      waiting = input.waiting?.[row.key] ?? null;
+      const proxy = waiting ? waiting.confirmedNoGuide + waiting.agotado : 0;
+      if (!waiting || proxy < t.waitingProxyMinOrders) continue;
+    }
+    const group = groupOf(row);
+    if (group) {
+      waitingByFamily.set(row.familyKey!, [
+        ...(waitingByFamily.get(row.familyKey!) ?? []),
+        { row, waiting },
+      ]);
+      continue;
+    }
+    if (columns.backorder) {
       alerts.push({
         code: "esperando_stock",
         tone: "risk",
         key: `esperando:${row.key}`,
-        title: `${row.name}: ${countText(row.backorder)} pedidos esperando stock`,
+        title: `${row.name}: ${countText(row.backorder!)} pedidos esperando stock`,
         detail: `Disponible ${row.available == null ? "sin dato" : countText(row.available)}${
           row.incoming != null ? ` · ${countText(row.incoming)} en camino` : ""
         }.`,
       });
       continue;
     }
-    const waiting = input.waiting?.[row.key];
-    const proxy = waiting ? waiting.confirmedNoGuide + waiting.agotado : 0;
-    if (!waiting || proxy < t.waitingProxyMinOrders) continue;
+    const proxy = waiting!.confirmedNoGuide + waiting!.agotado;
     alerts.push({
       code: "esperando_stock",
       tone: "wait",
       key: `esperando:${row.key}`,
       title: `${row.name}: ${countText(proxy)} pedidos confirmados sin guía`,
       detail: `En iComfly hace más de ${countText(t.waitingMinHours)} h${
-        waiting.agotado
-          ? ` (${countText(waiting.agotado)} en Producto Agotado)`
+        waiting!.agotado
+          ? ` (${countText(waiting!.agotado)} en Producto Agotado)`
           : ""
-      }; el más viejo tiene ${countText(waiting.oldestDays)} días. Puede ser stock, almacén o retraso.`,
+      }; el más viejo tiene ${countText(waiting!.oldestDays)} días. Puede ser stock, almacén o retraso.`,
+    });
+  }
+  for (const [familyKey, entries] of Array.from(waitingByFamily)) {
+    const group = familyRows.get(familyKey)!;
+    const name = familyName(familyKey, group);
+    const family = familyById.get(familyKey) ?? null;
+    const total = sum(group, (r) => r.available ?? 0);
+    // "Negro / S (12), Beige / M (3)": largest first.
+    const variants = (n: (e: (typeof entries)[number]) => number) =>
+      listText(
+        entries
+          .map((e) => ({ e, units: n(e) }))
+          .sort((a, b) => b.units - a.units)
+          .map(
+            ({ e, units }) =>
+              `${variantLabel(e.row, family)} (${countText(units)})`,
+          ),
+        VARIANT_LIST_MAX,
+      );
+    const stockText = `disponible total del producto ${countText(total)}`;
+    if (columns.backorder) {
+      const backorder = sum(
+        entries.map((e) => e.row),
+        (r) => r.backorder ?? 0,
+      );
+      const incoming = entries.some((e) => e.row.incoming != null)
+        ? sum(group, (r) => r.incoming ?? 0)
+        : null;
+      alerts.push({
+        code: "esperando_stock",
+        tone: "risk",
+        key: `esperando:${familyKey}`,
+        title: `${name}: ${countText(backorder)} pedidos esperando stock`,
+        detail: `En ${variants((e) => e.row.backorder ?? 0)} · ${stockText}${
+          incoming != null ? ` · ${countText(incoming)} en camino` : ""
+        }.`,
+      });
+      continue;
+    }
+    const proxyOf = (e: (typeof entries)[number]) =>
+      e.waiting!.confirmedNoGuide + e.waiting!.agotado;
+    const proxy = entries.reduce((n, e) => n + proxyOf(e), 0);
+    const agotado = entries.reduce((n, e) => n + e.waiting!.agotado, 0);
+    const oldest = Math.max(...entries.map((e) => e.waiting!.oldestDays));
+    alerts.push({
+      code: "esperando_stock",
+      tone: "wait",
+      key: `esperando:${familyKey}`,
+      title: `${name}: ${countText(proxy)} pedidos confirmados sin guía`,
+      detail: `En ${variants(proxyOf)}. En iComfly hace más de ${countText(t.waitingMinHours)} h${
+        agotado ? ` (${countText(agotado)} en Producto Agotado)` : ""
+      }; el más viejo tiene ${countText(oldest)} días · ${stockText}. Puede ser stock, almacén o retraso.`,
     });
   }
   // Real restocks only: a SKU of the previous file that went up at least

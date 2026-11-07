@@ -36,7 +36,8 @@ import { CampaignWorkspace } from "./CampaignWorkspace";
 import AttributionWorkspace from "./AttributionWorkspace";
 import { ProductWorkspace } from "./ProductWorkspace";
 import CampaignsTable from "./CampaignsTable";
-import { money, shortDate } from "./format";
+import { money } from "./format";
+import { periodLabelText } from "@/lib/marketing-copy";
 import s from "./dashboard.module.css";
 import { marketingLoadPlan, type MarketingView } from "@/lib/marketing-loading";
 
@@ -287,7 +288,7 @@ export default function MarketingDashboard() {
             <h1 className={s.title}>Marketing</h1>
             <p className={`${s.muted} mt-1`}>
               {period
-                ? `${shortDate(period.from)} al ${shortDate(period.to)}`
+                ? periodLabelText(period, marketingDate(), { withDate: true })
                 : "Preparando período"}{" "}
               · Hora de Costa Rica
             </p>
