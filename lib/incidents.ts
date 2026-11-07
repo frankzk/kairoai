@@ -521,9 +521,10 @@ export async function listIncidentsMissingContact(storeId: number): Promise<Inci
       .from("incidents")
       .select("*")
       .eq("store_id", storeId)
-      .eq("manual_override", false)
       .neq("guide_number", "")
-      .or("customer_name.is.null,customer_name.eq.,customer_phone.is.null,customer_phone.eq.")
+      .or(
+        "customer_name.is.null,customer_name.eq.,customer_phone.is.null,customer_phone.eq.,order_name.is.null,order_name.eq."
+      )
       .order("id")
       .range(from, to)
   );
@@ -531,14 +532,20 @@ export async function listIncidentsMissingContact(storeId: number): Promise<Inci
   return data;
 }
 
-// Rellena nombre/telefono vacios SIN marcar manual_override (lo hace el cron de
-// deteccion, no el operador): asi la novedad sigue abierta a futuras
-// actualizaciones automaticas.
+// Rellena nombre/telefono/pedido VACIOS SIN marcar manual_override (lo hace el
+// cron de deteccion, no el operador): asi la novedad sigue abierta a futuras
+// actualizaciones automaticas. Tambien en novedades ya gestionadas: solo llena
+// campos vacios, nunca pisa lo que escribio la asesora.
 export async function backfillIncidentContact(
   id: number,
-  patch: { customer_name?: string; customer_phone?: string }
+  patch: {
+    customer_name?: string;
+    customer_phone?: string;
+    order_name?: string;
+    shopify_order_id?: string;
+  }
 ): Promise<void> {
-  if (!patch.customer_name && !patch.customer_phone) return;
+  if (!patch.customer_name && !patch.customer_phone && !patch.order_name) return;
   const { error } = await getDB()
     .from("incidents")
     .update({ ...patch, updated_at: new Date().toISOString() })

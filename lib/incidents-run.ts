@@ -16,6 +16,7 @@ import { FINANCE_STORES } from "@/lib/store-config";
 import type { LogisticsRow } from "@/lib/finance-types";
 import { persistedOrderToSummary, type ShopifyOrderSummary } from "@/lib/finance-orders";
 import { corteIcomflyDe, pedidosDeIcomfly } from "@/lib/icomfly-pedidos";
+import { normalizeMatchKey } from "@/lib/order-matching";
 import type { DetectedIncident } from "@/lib/incidents-types";
 import {
   detectC807Incident,
@@ -100,7 +101,34 @@ export async function loadShopifyByGuide(storeId: number): Promise<Map<string, S
   ]);
   const deShopify = persisted.map((order) => persistedOrderToSummary(order as unknown as Record<string, unknown>));
   const currency = FINANCE_STORES.find((s) => s.id === storeId)?.currency ?? "CRC";
-  return indexShopifyByGuide([...deShopify, ...pedidosDeIcomfly(crudos, deShopify, { currency, corte: corteIcomflyDe(storeId) })]);
+  const corte = corteIcomflyDe(storeId);
+  const map = indexShopifyByGuide([...deShopify, ...pedidosDeIcomfly(crudos, deShopify, { currency, corte })]);
+  return withIcomflyGuides(map, deShopify, pedidosDeIcomfly(crudos, [], { currency, corte }));
+}
+
+// Pedidos de Shopify cuya guia se asigno en iComfly (WYN y otros): en Shopify
+// el pedido no trae tracking_number, y pedidosDeIcomfly lo descarta por estar
+// en Shopify, asi que la novedad salia sin cliente, telefono ni pedido. Para
+// las guias que todavia no estan en el indice, se usa la guia de iComfly y se
+// apunta al pedido de Shopify con ese numero (#MCRC...); si no esta en
+// Shopify, al pedido de iComfly. Nunca pisa una guia ya indexada.
+export function withIcomflyGuides(
+  map: Map<string, ShopifyOrderSummary>,
+  shopifyOrders: ShopifyOrderSummary[],
+  icomflyOrders: ShopifyOrderSummary[],
+): Map<string, ShopifyOrderSummary> {
+  const byName = new Map<string, ShopifyOrderSummary>();
+  for (const order of shopifyOrders) {
+    const key = normalizeMatchKey(order.name || "");
+    if (key && !byName.has(key)) byName.set(key, order);
+  }
+  for (const order of icomflyOrders) {
+    const keys = guideKeys(order.tracking_number);
+    if (!keys.length || keys.some((key) => map.has(key))) continue;
+    const target = byName.get(normalizeMatchKey(order.name || "")) ?? order;
+    for (const key of keys) map.set(key, target);
+  }
+  return map;
 }
 
 // Maximo checked_at de un lote. Viene en ISO-UTC consistente desde Supabase, asi
@@ -123,19 +151,32 @@ async function backfillMissingContact(): Promise<number> {
     for (const inc of incompletes) {
       const shopify = inc.guide_number ? lookupShopify(shopifyByGuide, inc.guide_number) : undefined;
       if (!shopify) continue;
-      const patch: { customer_name?: string; customer_phone?: string } = {};
-      if (!inc.customer_name) {
-        const name = (shopify.customer_name || "").trim();
-        if (name && name.toLowerCase() !== "sin nombre") patch.customer_name = name;
-      }
-      if (!inc.customer_phone && shopify.phone) patch.customer_phone = shopify.phone;
-      if (patch.customer_name || patch.customer_phone) {
+      const patch = contactPatch(inc, shopify);
+      if (patch) {
         await backfillIncidentContact(inc.id, patch);
         filled += 1;
       }
     }
   }
   return filled;
+}
+
+// Lo que falta de una novedad y trae su pedido: solo campos vacios.
+export function contactPatch(
+  inc: { customer_name?: string | null; customer_phone?: string | null; order_name?: string | null; shopify_order_id?: string | null },
+  order: Pick<ShopifyOrderSummary, "customer_name" | "phone" | "name" | "id">
+): { customer_name?: string; customer_phone?: string; order_name?: string; shopify_order_id?: string } | null {
+  const patch: { customer_name?: string; customer_phone?: string; order_name?: string; shopify_order_id?: string } = {};
+  if (!inc.customer_name) {
+    const name = (order.customer_name || "").trim();
+    if (name && name.toLowerCase() !== "sin nombre") patch.customer_name = name;
+  }
+  if (!inc.customer_phone && order.phone) patch.customer_phone = order.phone;
+  if (!inc.order_name && order.name) {
+    patch.order_name = order.name;
+    if (!inc.shopify_order_id && order.id) patch.shopify_order_id = String(order.id);
+  }
+  return Object.keys(patch).length ? patch : null;
 }
 
 // Recorre el tracking de UN courier en UNA tienda (Forza, WYN: los que ya vienen
