@@ -25,9 +25,11 @@ import { buildKeywordIndex } from "@/lib/marketing-campaign-keywords";
 import { highCpaAlerts, stockDaysRows } from "@/lib/marketing-report-alerts";
 import {
   decimalText,
+  periodIncludesToday,
   periodIsToday,
   periodLabelText,
 } from "@/lib/marketing-copy";
+import { periodGoals } from "@/lib/marketing-period-goals";
 import { missingStockColumnsText } from "@/lib/marketing-inventory-decide";
 import {
   useResource,
@@ -100,6 +102,7 @@ export function TeamReport({
   accounts,
   onOpenAccounts,
   onOpenSources,
+  periodName = null,
 }: {
   data: MarketingSummary;
   sources: MarketingSources | null;
@@ -131,6 +134,8 @@ export function TeamReport({
   onOpenAccounts: () => void;
   /** Opens Fuentes, where the ShipHero connection lives. */
   onOpenSources?: () => void;
+  /** Name of the top filter preset ("Este mes", "Últimos 7 días"); null for a custom range. */
+  periodName?: string | null;
 }) {
   const [query, setQuery] = useState("");
   const [ascending, setAscending] = useState(false);
@@ -144,7 +149,9 @@ export function TeamReport({
   // The top filter names the period of the report ("Ayer", "1 al 6 nov");
   // the sections that are always today say so when the filter is not today.
   const periodText = periodLabelText(data.period, today);
-  const filterLabel = periodIsToday(data.period, today) ? null : periodText;
+  const isToday = periodIsToday(data.period, today);
+  const includesToday = periodIncludesToday(data.period, today);
+  const filterLabel = isToday ? null : periodText;
   const budgets = useResource<MarketingSources>(
     campaignsOpen
       ? `/api/marketing/sources?${periodQuery(data.period)}&scope=details`
@@ -333,6 +340,15 @@ export function TeamReport({
     ),
   );
   const cpa = realCpa(spend, data.totals.generated, data.totals.annulled);
+  // The first block follows the top filter: the period against its goals
+  // (daily goals × days). Today's pace only when the period is or reaches today.
+  const goals = periodGoals({
+    period: data.period,
+    today,
+    realOrders: cpa.real,
+    spendUsd: spend,
+    cpaReal: cpa.cpaReal,
+  });
   const products = [
     ...(data.groupedProducts?.filter((p) => p.scope === "all") ??
       model.products),
@@ -403,50 +419,81 @@ export function TeamReport({
         settings={settings}
         onOpen={onOpenAccounts}
       />
-      <DailyGoals
-        pace={pace}
-        loading={control.loading}
-        spendLoading={recent.loading}
-        error={control.error}
-        filterLabel={filterLabel}
-      />
       <div className={r.reportHeading}>
-        <div>
-          <p className={r.kicker}>Reporte del equipo · {periodText}</p>
-          <h2>Ventas, inversión y próximos pasos</h2>
-        </div>
+        <h2>Ventas, inversión y próximos pasos</h2>
         <span className={r.period}>
+          {periodName && data.period.from !== data.period.to
+            ? `${periodName} · `
+            : ""}
           {periodLabelText(data.period, today, { withDate: true })} · USD
         </span>
       </div>
-      <section
-        className={r.heroMetrics}
-        aria-label={`Resultados principales del período: ${periodText}`}
-      >
-        <Metric
-          label="Pedidos reales"
-          value={count(cpa.real)}
-          note={`${count(data.totals.generated)} creados · ${count(data.totals.annulled)} anulados`}
+      {isToday ? (
+        <DailyGoals
+          pace={pace}
+          loading={control.loading}
+          spendLoading={recent.loading}
+          error={control.error}
         />
-        <Metric
-          label="CPA real"
-          value={
-            loading
-              ? "Consultando…"
-              : `${!aligned && cpa.cpaReal != null ? "≈ " : ""}${usd(cpa.cpaReal)}`
-          }
-          note={
-            cpa.cpaReal == null
-              ? "Gasto completo y pedidos reales requeridos"
-              : `${aligned ? "Gasto / pedidos reales (sin anulados)" : "Orientativo: calendarios de cuenta distintos"} · con creados: ${usd(cpa.cpaCreated)}`
-          }
-        />
-        <Metric
-          label="Total de gasto en pauta"
-          value={loading ? "Consultando…" : usd(spend)}
-          note="Meta + TikTok · convertido a USD"
-        />
-      </section>
+      ) : (
+        <section
+          className={r.heroMetrics}
+          aria-label={`Resultados del período contra la meta: ${periodText}`}
+        >
+          <Metric
+            label="Pedidos reales"
+            value={`${count(goals.orders.value)} de ${count(goals.orders.goal)}`}
+            progress={goals.orders.progress}
+            max={goals.orders.goal}
+            valueNow={goals.orders.value}
+            notes={[
+              `Meta ${count(t.dailyOrders)} por día × ${count(goals.days)} ${goals.days === 1 ? "día" : "días"} · promedio ${count(Math.round(goals.orders.perDay))} por día`,
+              `${count(data.totals.generated)} creados · ${count(data.totals.annulled)} anulados${goals.includesToday ? " · hoy sigue en curso" : ""}`,
+            ]}
+          />
+          <Metric
+            label="CPA real"
+            value={
+              loading
+                ? "Consultando…"
+                : `${!aligned && cpa.cpaReal != null ? "≈ " : ""}${usd(cpa.cpaReal)} · meta ${usd(t.cpaUsd)}`
+            }
+            progress={loading ? null : goals.cpa.progress}
+            max={t.cpaUsd}
+            valueNow={goals.cpa.value}
+            risk={goals.cpa.over}
+            notes={[
+              cpa.cpaReal == null
+                ? "Gasto completo y pedidos reales requeridos"
+                : goals.cpa.over
+                  ? `Sobre la meta por ${usd(cpa.cpaReal - t.cpaUsd)}`
+                  : "Dentro de la meta",
+              cpa.cpaReal == null
+                ? ""
+                : `${aligned ? "Gasto / pedidos reales (sin anulados)" : "Orientativo: calendarios de cuenta distintos"} · con creados: ${usd(cpa.cpaCreated)}`,
+            ]}
+          />
+          <Metric
+            label="Gasto en pauta"
+            value={
+              loading
+                ? "Consultando…"
+                : spend == null
+                  ? "Sin datos"
+                  : `${usd(spend)} de ${usd(goals.spend.goal)}`
+            }
+            progress={loading ? null : goals.spend.progress}
+            max={goals.spend.goal}
+            valueNow={spend}
+            notes={[
+              `Meta + TikTok, en USD · meta ${usd(t.dailySpendUsd)} por día`,
+              goals.spend.perDay == null
+                ? ""
+                : `Promedio ${usd(goals.spend.perDay)} por día`,
+            ]}
+          />
+        </section>
+      )}
       <section className={r.channelMetrics} aria-label="Desglose por canal">
         <Metric
           label="Pedidos Meta"
@@ -486,6 +533,15 @@ export function TeamReport({
           }
         />
       </section>
+      {includesToday && !isToday && (
+        <DailyGoals
+          pace={pace}
+          loading={control.loading}
+          spendLoading={recent.loading}
+          error={control.error}
+          variant="inPeriod"
+        />
+      )}
       {!aligned && (
         <p className={r.explanation}>
           Los pedidos usan hora de Costa Rica; TikTok reporta con el calendario
@@ -1135,16 +1191,45 @@ function Metric({
   label,
   value,
   note,
+  notes,
+  progress,
+  max,
+  valueNow,
+  risk = false,
 }: {
   label: string;
   value: string;
-  note: string;
+  note?: string;
+  notes?: string[];
+  /** With a goal: share of the goal reached (meter). */
+  progress?: number | null;
+  max?: number;
+  valueNow?: number | null;
+  risk?: boolean;
 }) {
+  const meter = progress !== undefined;
+  const width = progress == null ? 0 : Math.min(1, Math.max(0, progress));
   return (
     <div className={r.metric}>
       <p>{label}</p>
       <strong>{value}</strong>
-      <small>{note}</small>
+      {meter && (
+        <div
+          className={`${r.meter} ${r.metricMeter} ${risk ? r.meterRisk : ""}`}
+          role="meter"
+          aria-label={`${label} contra la meta`}
+          aria-valuemin={0}
+          aria-valuemax={max}
+          aria-valuenow={
+            valueNow == null ? undefined : Math.round(valueNow * 100) / 100
+          }
+          aria-valuetext={value}
+        >
+          <div className={r.meterFill} style={{ width: `${width * 100}%` }} />
+        </div>
+      )}
+      {note && <small>{note}</small>}
+      {notes?.filter(Boolean).map((line) => <small key={line}>{line}</small>)}
     </div>
   );
 }

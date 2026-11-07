@@ -1505,3 +1505,54 @@
     gap: 3px;
   }
 }
+
+/* Primer bloque del reporte: sigue al filtro de período.
+   Período = hoy → el ritmo del día es el bloque principal.
+   Período que llega a hoy (Este mes, 7 días) → hoy va debajo, como parte. */
+.metric .metricMeter {
+  margin: 2px 0 10px;
+  height: 8px;
+}
+.todayMain {
+  margin-bottom: 4px;
+}
+.report .todayNote {
+  font-size: 12px;
+  margin: -8px 0 16px;
+}
+.todayPart {
+  margin-top: 24px;
+  padding: 20px 22px 22px;
+  border: 1px solid var(--mk-border);
+  border-radius: 10px;
+  background: var(--mk-soft);
+}
+.todayHead {
+  display: flex;
+  align-items: baseline;
+  gap: 6px 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.report .todayHead h3 {
+  margin: 0;
+}
+.report .todayHead p {
+  font-size: 12px;
+}
+.todayPart .goals {
+  gap: 12px;
+}
+.todayPart .goal {
+  padding: 14px 16px;
+}
+.todayPart .goal > strong {
+  font-size: 20px;
+  margin: 4px 0 8px;
+}
+.todayPart .meter {
+  height: 8px;
+}
+.todayPart .goalLines {
+  margin-top: 12px;
+}
