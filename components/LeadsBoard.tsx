@@ -50,11 +50,12 @@ import {
   buildWorkQueue,
   followupStateAt,
   groupQueueByBand,
-  isTrabajoDeHoy,
+  esDeSeguimiento,
   QUEUE_BAND_META,
   QUEUE_STAGES,
   vencidosEnCola,
 } from "@/lib/leads-queue";
+import { assignmentCounts } from "@/lib/leads-assignment";
 import {
   buildUncalledLeadBuckets,
   isUncalledLeadOnDate,
@@ -299,12 +300,33 @@ interface LeadRow {
   crm_conversation_id: string | null;
   first_seen_at: string | null;
   created_at: string;
+  /** Dueña segun el reparto automatico (kairo_users.id). Se ignora apagado. */
+  claimed_by: number | null;
 }
 
 interface BoardCounts {
   total: number;
   byStage: Record<BoardStage, number>;
 }
+
+/** Lo que la API dice del reparto automatico de leads (Configuracion). */
+interface AssignmentInfo {
+  enabled: boolean;
+  users: Array<{ id: number; nombre: string }>;
+  /** Usuario que mira el tablero (null = admin de contraseña compartida). */
+  me: number | null;
+  /** Supervision o productividad del equipo: ve a todas por defecto. */
+  team: boolean;
+}
+
+/**
+ * De quien son los leads que se miran, con el reparto encendido.
+ *   mine        los mios (por defecto para una asesora)
+ *   all         todos (por defecto para supervision)
+ *   unassigned  sin dueña todavia
+ *   number      los de esa persona (solo supervision)
+ */
+type OwnerFilter = "mine" | "all" | "unassigned" | number;
 
 export default function LeadsBoard() {
   const [store, setStore] = useSelectedStore();
@@ -332,6 +354,12 @@ export default function LeadsBoard() {
   // pantalla a los leads que si hay que llamar. null = todavia no se pidieron.
   const [archive, setArchive] = useState<LeadRow[] | null>(null);
   const [archiveLoading, setArchiveLoading] = useState(false);
+  // Reparto automatico. Apagado (o sin dato) el tablero es el de siempre.
+  const [assignment, setAssignment] = useState<AssignmentInfo | null>(null);
+  const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>("all");
+  // Para que el filtro por defecto se elija una sola vez por tienda y no pise
+  // lo que la persona elija despues al refrescar.
+  const ownerFilterDe = useRef<string | null>(null);
   // Lo que devolvio el servidor para la busqueda actual. null = no se busco.
   const [searchResults, setSearchResults] = useState<LeadRow[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -395,6 +423,16 @@ export default function LeadsBoard() {
       setChartNow(new Date());
       setDataAt(new Date());
       setCounts(data.counts ?? null);
+      const info = (data.assignment ?? null) as AssignmentInfo | null;
+      setAssignment(info);
+      if (!info?.enabled) {
+        ownerFilterDe.current = null;
+        setOwnerFilter("all");
+      } else if (ownerFilterDe.current !== store) {
+        ownerFilterDe.current = store;
+        // La asesora arranca en sus leads; supervision, en todos.
+        setOwnerFilter(!info.team && info.me != null ? "mine" : "all");
+      }
       // Los contadores pueden fallar solos sin llevarse la lista (ver la ruta).
       // Se avisa, pero el tablero se sigue trabajando.
       setError(data.counts_error ? `Contadores no disponibles: ${data.counts_error}` : null);
@@ -579,6 +617,41 @@ export default function LeadsBoard() {
     [hasInteractionRange, allLeads, matchesInteractionRange]
   );
 
+  // Reparto encendido: de quien son los leads que se miran. La busqueda NO pasa
+  // por aca: sigue buscando en todos los leads de la tienda.
+  const repartoActivo = assignment?.enabled === true;
+  const filtrandoPorDuena = repartoActivo && ownerFilter !== "all";
+  const matchesOwner = useCallback(
+    (lead: LeadRow) => {
+      if (!filtrandoPorDuena) return true;
+      if (ownerFilter === "mine") return assignment?.me != null && lead.claimed_by === assignment.me;
+      if (ownerFilter === "unassigned") return lead.claimed_by == null;
+      return lead.claimed_by === ownerFilter;
+    },
+    [filtrandoPorDuena, ownerFilter, assignment]
+  );
+  const ownerScopedLeads = useMemo(
+    () => (filtrandoPorDuena ? rangeFilteredLeads.filter(matchesOwner) : rangeFilteredLeads),
+    [filtrandoPorDuena, rangeFilteredLeads, matchesOwner]
+  );
+
+  // Leads abiertos (Hoy + Seguimiento) por dueña: los numeros del filtro y la
+  // columna "Asignados" de Productividad. Misma definicion que usa el reparto.
+  const asignados = useMemo(
+    () => (repartoActivo ? assignmentCounts(leads, chartNow) : null),
+    [repartoActivo, leads, chartNow]
+  );
+  const nombreDe = useCallback(
+    (userId: number) =>
+      assignment?.users.find((u) => u.id === userId)?.nombre ?? `Usuario ${userId}`,
+    [assignment]
+  );
+  /** "ti", el nombre de la dueña, o null (apagado o sin dueña). */
+  const etiquetaDuena = (lead: LeadRow): string | null => {
+    if (!repartoActivo || lead.claimed_by == null) return null;
+    return lead.claimed_by === assignment?.me ? "ti" : nombreDe(lead.claimed_by);
+  };
+
   /**
    * Los ids que el servidor devolvio para esta busqueda.
    *
@@ -649,9 +722,7 @@ export default function LeadsBoard() {
   const matchesTab = useCallback(
     (lead: LeadRow) =>
       activeStage === "seguimiento"
-        ? lead.in_call_queue &&
-          lead.work_state === "seguimiento" &&
-          !isTrabajoDeHoy(lead, chartNow.getTime())
+        ? esDeSeguimiento(lead, chartNow.getTime())
         : lead.board_stage === activeStage,
     [activeStage, chartNow]
   );
@@ -667,7 +738,7 @@ export default function LeadsBoard() {
       // Ya viene en orden de atencion: pagos -> recontactos vencidos -> por
       // cerrar -> sin llamar por segmento (carrito primero). Ver leads-queue.
       return buildWorkQueue(
-        rangeFilteredLeads.filter(matchesSelectedBucket).filter(matchesSegment),
+        ownerScopedLeads.filter(matchesSelectedBucket).filter(matchesSegment),
         chartNow
       );
     }
@@ -675,13 +746,13 @@ export default function LeadsBoard() {
       const cmp = (a.last_interaction_at ?? "").localeCompare(b.last_interaction_at ?? "");
       return sortDir === "desc" ? -cmp : cmp;
     };
-    return rangeFilteredLeads
+    return ownerScopedLeads
       .filter(matchesTab)
       .filter(matchesSelectedBucket)
       .filter(matchesSegment)
       .sort(byInteraction);
   }, [
-    rangeFilteredLeads,
+    ownerScopedLeads,
     enHoy,
     matchesTab,
     searching,
@@ -812,13 +883,13 @@ export default function LeadsBoard() {
 
   const chartContextLeads = useMemo(() => {
     if (searching) return searchMatches.filter(matchesSegment);
-    if (enHoy) return buildWorkQueue(rangeFilteredLeads.filter(matchesSegment), chartNow);
-    return rangeFilteredLeads.filter(matchesTab).filter(matchesSegment);
+    if (enHoy) return buildWorkQueue(ownerScopedLeads.filter(matchesSegment), chartNow);
+    return ownerScopedLeads.filter(matchesTab).filter(matchesSegment);
   }, [
     enHoy,
     matchesTab,
     matchesSegment,
-    rangeFilteredLeads,
+    ownerScopedLeads,
     searchMatches,
     searching,
     chartNow,
@@ -832,15 +903,15 @@ export default function LeadsBoard() {
   const uncalledTotal = uncalledBuckets.reduce((total, bucket) => total + bucket.count, 0);
 
   const facetedLeads = useMemo(() => {
-    let result = searching ? searchMatches : rangeFilteredLeads;
+    let result = searching ? searchMatches : ownerScopedLeads;
     if (selectedUncalledBucket) result = result.filter(matchesSelectedBucket);
     return result;
-  }, [matchesSelectedBucket, rangeFilteredLeads, searchMatches, searching, selectedUncalledBucket]);
+  }, [matchesSelectedBucket, ownerScopedLeads, searchMatches, searching, selectedUncalledBucket]);
 
   // Conteo por etapa: refleja los resultados de busqueda cuando hay query.
   // Salta la faceta de segmento a proposito (regla de abajo).
   const stageCount = (stage: BoardStage) =>
-    searching || selectedUncalledBucket || hasInteractionRange
+    searching || selectedUncalledBucket || hasInteractionRange || filtrandoPorDuena
       ? facetedLeads.filter((l) => l.board_stage === stage).length
       : counts?.byStage[stage] ?? 0;
 
@@ -886,7 +957,7 @@ export default function LeadsBoard() {
   // primero en Hoy" y la cola subia 7. Ahora el contador ES la banda de Hoy, y
   // con el reloj del tablero, no con `Date.now()`.
   const overdue = useMemo(() => {
-    const vencidos = vencidosEnCola(leads, chartNow);
+    const vencidos = vencidosEnCola(filtrandoPorDuena ? leads.filter(matchesOwner) : leads, chartNow);
     return {
       total: vencidos.length,
       // Prometio el cliente ("llamame el jueves"): es una cita, no un reintento.
@@ -894,7 +965,7 @@ export default function LeadsBoard() {
       // Los agendo el sistema al marcar buzon / no responde / cuelga.
       reintentos: vencidos.filter((l) => isNoAnswerStatus(l.status)).length,
     };
-  }, [leads, chartNow]);
+  }, [leads, chartNow, filtrandoPorDuena, matchesOwner]);
 
   // Descartados solo aparece con el toggle; el resto son fijos.
   const tabs: BoardTab[] = showHidden ? [...TABS_VISIBLES, "descartado"] : TABS_VISIBLES;
@@ -902,17 +973,15 @@ export default function LeadsBoard() {
   // Conteo de cada tab. "Hoy" y "Seguimiento" salen de la misma poblacion (la
   // cola de llamadas) partida por si es trabajo de hoy o no, asi que juntos
   // suman el total de la cola sin repetir a nadie.
-  const tabCount = (tab: BoardTab): number => {
+  const tabCount = (tab: BoardTab): number | null => {
     if (tab === "hoy") return buildWorkQueue(facetedLeads, chartNow).length;
     if (tab === "seguimiento") {
-      return facetedLeads.filter(
-        (l) =>
-          l.in_call_queue &&
-          l.work_state === "seguimiento" &&
-          !isTrabajoDeHoy(l, chartNow.getTime())
-      ).length;
+      return facetedLeads.filter((l) => esDeSeguimiento(l, chartNow.getTime())).length;
     }
-    return searching || selectedUncalledBucket || hasInteractionRange
+    // Filtrando por dueña, Cerrado y Descartados solo se pueden contar cuando
+    // el archivo ya llego; el total del servidor seria de todas.
+    if (filtrandoPorDuena && !searching && archive === null) return null;
+    return searching || selectedUncalledBucket || hasInteractionRange || filtrandoPorDuena
       ? facetedLeads.filter((l) => l.board_stage === tab).length
       : counts?.byStage[tab] ?? 0;
   };
@@ -985,7 +1054,9 @@ export default function LeadsBoard() {
           </Card>
         )}
 
-        {showProductivity && <ProductivityPanel key={store} store={store} />}
+        {showProductivity && (
+          <ProductivityPanel key={store} store={store} asignados={asignados?.porUsuario ?? null} />
+        )}
 
         <Card className="mb-4 overflow-hidden border-border/80 bg-card/80">
           <CardContent className="p-0">
@@ -1217,7 +1288,7 @@ export default function LeadsBoard() {
                 aria-pressed={active}
                 // La etiqueta se leia como cuatro fragmentos sueltos ("🎯",
                 // "Hoy", "174 vencidos", "619"). Ahora es una frase.
-                aria-label={`${meta.label}: ${count} leads${
+                aria-label={`${meta.label}: ${count ?? "sin contar"} leads${
                   vencidosEnHoy ? `, ${vencidosEnHoy} con recontacto vencido` : ""
                 }`}
                 className={`${TAB_BASE} ${active ? TAB_ACTIVO : TAB_INACTIVO}`}
@@ -1232,7 +1303,7 @@ export default function LeadsBoard() {
                     {vencidosEnHoy} vencidos
                   </span>
                 )}
-                <span className={`${CONTADOR_EN_CHIP} text-xs`}>{count}</span>
+                {count != null && <span className={`${CONTADOR_EN_CHIP} text-xs`}>{count}</span>}
               </button>
             );
           })}
@@ -1251,6 +1322,58 @@ export default function LeadsBoard() {
             {includeOld ? "Ocultar antiguos (+30 días)" : "Incluir antiguos (+30 días)"}
           </button>
         </div>
+
+        {/* Reparto automatico encendido (Configuracion): de quien son los
+            leads que se miran. Los numeros cuentan los leads abiertos (Hoy +
+            Seguimiento) de cada una. La busqueda no se filtra por dueña. */}
+        {repartoActivo && asignados && !searching && (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+              Asignación
+            </span>
+            {(
+              [
+                ...(assignment?.me != null
+                  ? [{ key: "mine" as OwnerFilter, label: "Mis leads", count: asignados.porUsuario[assignment.me] ?? 0 }]
+                  : []),
+                { key: "all" as OwnerFilter, label: "Todos", count: asignados.total },
+                ...(assignment?.team
+                  ? [
+                      { key: "unassigned" as OwnerFilter, label: "Sin asignar", count: asignados.sinAsignar },
+                      ...(assignment?.users ?? [])
+                        .filter((u) => u.id !== assignment?.me)
+                        .filter((u) => (asignados.porUsuario[u.id] ?? 0) > 0 || ownerFilter === u.id)
+                        .map((u) => ({
+                          key: u.id as OwnerFilter,
+                          label: u.nombre,
+                          count: asignados.porUsuario[u.id] ?? 0,
+                        })),
+                    ]
+                  : []),
+              ] as Array<{ key: OwnerFilter; label: string; count: number }>
+            ).map((opcion) => {
+              const active = ownerFilter === opcion.key;
+              return (
+                <button
+                  key={String(opcion.key)}
+                  type="button"
+                  onClick={() => setOwnerFilter(opcion.key)}
+                  aria-pressed={active}
+                  aria-label={`${opcion.label}: ${opcion.count} leads abiertos`}
+                  className={`${CHIP_BASE} ${active ? CHIP_ACTIVO : CHIP_INACTIVO}`}
+                >
+                  <span>{opcion.label}</span>
+                  <span className={CONTADOR_EN_CHIP}>{opcion.count}</span>
+                </button>
+              );
+            })}
+            {!assignment?.team && ownerFilter === "all" && (
+              <span className="text-xs text-muted-foreground">
+                Ves los leads de todas. Los de otras asesoras son solo para consulta.
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Eje 2: intencion de compra. Filtra DENTRO del tab activo, no lo
             reemplaza — por eso los conteos suman el total del tab. Un lead con
@@ -1432,6 +1555,7 @@ export default function LeadsBoard() {
                                 setDrawerLead(lead);
                               }}
                               queuePosition={desde + i + 1}
+                              asignadoA={etiquetaDuena(lead)}
                             />
                           ))}
                         </div>
@@ -1453,6 +1577,7 @@ export default function LeadsBoard() {
                       setCursorId(lead.id);
                       setDrawerLead(lead);
                     }}
+                    asignadoA={etiquetaDuena(lead)}
                   />
                 ))}
               </div>
@@ -1532,12 +1657,15 @@ const LeadCard = forwardRef(function LeadCard(
     queuePosition,
     nowMs,
     isCursor = false,
+    asignadoA = null,
   }: {
     lead: LeadRow;
     onOpen: () => void;
     queuePosition?: number;
     nowMs: number;
     isCursor?: boolean;
+    /** Dueña del lead con el reparto encendido ("ti" o su nombre). */
+    asignadoA?: string | null;
   },
   ref: React.Ref<HTMLDivElement>
 ) {
@@ -1616,6 +1744,11 @@ const LeadCard = forwardRef(function LeadCard(
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
             <PhoneWithCopy phone={lead.phone} />
+            {asignadoA && (
+              <span className="truncate" title="Reparto automático de leads">
+                · Asignado a {asignadoA}
+              </span>
+            )}
           </div>
           {/* Sin el `/70`: medido, el modificador daba 3,43:1 sobre el fondo
               —falla AA— y esta es la frase que explica POR QUE el lead esta en

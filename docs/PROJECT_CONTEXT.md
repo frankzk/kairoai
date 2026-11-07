@@ -936,6 +936,31 @@ Supervisa el despacho de pedidos COD en dos momentos atribuibles a personas:
 - “Sin llamar” se deriva de `status_source = 'auto'`; no se hace una consulta
   extra a `lead_calls`, Supabase o Icomfly para pintar el gráfico.
 
+### Leads de WhatsApp: reparto automático entre asesoras (noviembre 2026)
+
+- Interruptor por tienda en **Configuración → Reparto automático de leads**
+  (apagado por defecto; solo `config` o `usuarios`). API
+  `GET/POST /api/leads/assignment-settings`; tabla `lead_assignment_settings`
+  (migración `20261107120000_lead_assignment.sql`).
+- Encendido, el cron `leads-assignment` (cada 5 min) pone dueña en
+  `leads.claimed_by` (= `kairo_users.id`) / `claimed_at` a los leads abiertos que
+  el tablero muestra en **Hoy** y **Seguimiento** (ventana de 30 días), en el
+  mismo orden de la cola (`buildWorkQueue`, luego Seguimiento del más reciente).
+  Reglas puras en `lib/leads-assignment.ts`; base en
+  `lib/leads-assignment-server.ts`.
+- Reciben leads las personas con `leads` en la tienda, sin `leads_equipo` ni
+  `usuarios`, que Productividad muestra como **Activa**. Los sin dueña van a la
+  activa con menos asignados (intercalado → misma mezcla de segmentos). Si las
+  cargas difieren en más de 10 se emparejan (diferencia ≤ 1) moviendo solo leads
+  que su dueña no trabajó desde `claimed_at` y que nadie trabajó en 30 min
+  (`lead_calls` y llamadas). Una dueña Desconectada más de 2 h devuelve lo no
+  trabajado al reparto. Sin ninguna activa, no se toca nada.
+- Tablero: con el reparto encendido la asesora arranca en **Mis leads** (puede
+  ver **Todos**); supervisión ve todos con filtro por asesora y **Sin asignar**.
+  Las tarjetas dicen «Asignado a …», Productividad suma la columna
+  **Asignados** y el buscador sigue buscando en todos los leads. Apagado, todo
+  se ve como antes y `claimed_by` se ignora.
+
 ## Telefonía Telnyx (reemplazo de Zadarma, noviembre 2026)
 
 Se cambia con `TELEFONIA=telnyx` en Vercel (sin la variable sigue Zadarma). Solo

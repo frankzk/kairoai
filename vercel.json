@@ -66,6 +66,10 @@
       "schedule": "7,17,27,37,47,57 * * * *"
     },
     {
+      "path": "/api/cron/leads-assignment",
+      "schedule": "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"
+    },
+    {
       "path": "/api/cron/leads-shopify-match",
       "schedule": "7 * * * *"
     },
@@ -143,6 +147,9 @@
       "maxDuration": 60
     },
     "app/api/cron/leads-shopify-match/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/cron/leads-assignment/route.ts": {
       "maxDuration": 60
     },
     "app/api/icomfly/sync/route.ts": {

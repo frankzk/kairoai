@@ -12,6 +12,9 @@ import { runLeadsSync, reclassifyStage } from "@/lib/leads-sync";
 import { BOARD_VIEWS } from "@/lib/leads-classify";
 import { isInCallQueue, leadSegment, leadWorkState } from "@/lib/leads-segment";
 import { daysAgoIso } from "@/lib/leads-metrics";
+import { identidadActual } from "@/lib/identidad";
+import { canSeePresenceTeam } from "@/lib/leads-presence-server";
+import { readAssignmentBoardInfo } from "@/lib/leads-assignment-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -25,6 +28,14 @@ export async function GET(req: NextRequest) {
       { status: 400 }
     );
   }
+  // Reparto automatico (Configuracion): si esta encendido, el tablero filtra
+  // por dueña. Nunca rompe el tablero: ante cualquier error, apagado.
+  const yo = identidadActual();
+  const assignmentInfo = readAssignmentBoardInfo(store.id, store.code).then((info) => ({
+    ...info,
+    me: yo && yo.id > 0 ? yo.id : null,
+    team: yo ? canSeePresenceTeam(yo) : true,
+  }));
   try {
     // Busqueda: se resuelve en Postgres sobre toda la tabla de la tienda, sin
     // ventana ni scope. El tablero antes se bajaba el archivo entero (~3.800
@@ -48,6 +59,7 @@ export async function GET(req: NextRequest) {
         store: store.code,
         views: BOARD_VIEWS,
         scope: "busqueda",
+        assignment: await assignmentInfo,
         // El tablero lo usa para avisar que no son coincidencias exactas.
         aproximado,
         counts: null,
@@ -109,6 +121,7 @@ export async function GET(req: NextRequest) {
       store: store.code,
       views: BOARD_VIEWS,
       scope,
+      assignment: await assignmentInfo,
       counts,
       counts_error: countsError,
       leads: withStage,

@@ -11,7 +11,11 @@ import type { ConnectedProductivityRow } from "@/lib/leads-productivity-presence
 const RANGES: RangeKey[] = ["hoy", "ayer", "7d", "30d", "mes"];
 const FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card";
 
-export default function ProductivityPanel({ store }: { store: string }) {
+export default function ProductivityPanel({ store, asignados = null }: {
+  store: string;
+  /** Con el reparto de leads encendido: leads abiertos asignados por usuario. */
+  asignados?: Record<number, number> | null;
+}) {
   const [range, setRange] = useState<RangeKey>("hoy");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -138,7 +142,7 @@ export default function ProductivityPanel({ store }: { store: string }) {
           {rows.length ? <span>{rows.length} {rows.length === 1 ? "persona" : "personas"}</span> : null}
         </div>
         {error ? <p role="status" className="mb-3 text-xs text-amber-300">{error}</p> : null}
-        <ProductivityTable rows={rows} totals={totals} now={now} loading={loading} stale={stale} />
+        <ProductivityTable rows={rows} totals={totals} now={now} loading={loading} stale={stale} asignados={asignados} />
       </CardContent>
     </Card>
   );

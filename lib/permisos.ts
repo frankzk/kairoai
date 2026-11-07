@@ -227,6 +227,8 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/leads/chat-snapshots", exige: P("leads_equipo", "usuarios") },
   { ruta: "/api/leads/productivity", exige: P(...LEADS, "leads_productividad") },
   { ruta: "/api/leads/presence", exige: P(...LEADS) },
+  // Interruptor del reparto automatico de leads (Configuracion).
+  { ruta: "/api/leads/assignment-settings", exige: P("config", "usuarios") },
   { ruta: "/api/leads/*/disposition", exige: P(...LEADS) },
   { ruta: "/api/leads/*/order", exige: P(...LEADS) },
   { ruta: "/api/leads/*/customer", exige: P(...LEADS) },
