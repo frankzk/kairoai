@@ -1001,7 +1001,35 @@ productividad no cambian. La duración se cuenta desde `answered_at` (cuando
 contestó el cliente) hasta el colgado.
 
 Grabar: `TELNYX_GRABAR=1` (apagado por defecto: hay que avisarle al cliente).
-Arranca con `record_start` al contestar.
+Arranca con `record_start` al contestar (mp3, dos canales). Encendido en
+Vercel desde el 07/11/2026; las asesoras avisan de palabra que la llamada se
+graba (no hay mensaje automático).
+
+Grabaciones guardadas en Kairo (`lib/grabaciones.ts`, migración
+`20261107130000_call_recordings.sql`): los enlaces de Telnyx vencen en ~10
+minutos, así que el mp3 se copia al bucket **privado** `call-recordings`
+(`<tienda>/<yyyy>/<mm>/<id de la llamada>.mp3`, columna
+`zadarma_calls.recording_path`):
+
+1. Al llegar `call.recording.saved`, el webhook guarda `recording_id`,
+   `is_recorded` y `record_url` y copia el mp3 **después de responder**
+   (`lib/segundo-plano.ts`, el `waitUntil` de Vercel; Next 14 no tiene `after()`).
+2. El cron `call-recordings` (cada 15 min, minutos 4/19/34/49) copia lo que
+   faltó: pide un enlace nuevo con `GET /v2/recordings/{recording_id}`
+   (`data.download_urls.mp3`) y, con el cupo que quede, intenta las viejas de
+   Zadarma cuyo enlace siga vigente. Un 4xx (enlace vencido) o 6 fallas dejan la
+   llamada como «Grabación no disponible» (`recording_attempts`). Sin
+   `TELNYX_API_KEY` solo intenta las de Zadarma.
+3. Escuchar: `GET /api/calls/[id]/recording` (Leads, Gestión o Novedades + la
+   tienda de la llamada) redirige a una URL firmada de 10 minutos. Si todavía no
+   se copió responde 409 «Grabación procesándose»; nunca entrega el enlace del
+   proveedor. En el historial del lead, la bitácora del pedido y la novedad cada
+   llamada grabada muestra «Escuchar» (`components/GrabacionLlamada.tsx`).
+
+Las llamadas hechas desde Gestión de pedidos o Novedades guardan el pedido en
+`zadarma_calls.order_name`; el historial del pedido y de la novedad
+(`lib/llamadas-historial.ts`) las busca por pedido **o** por teléfono, sin
+repetir. Las de Zadarma (las crea su webhook) no llevan pedido.
 
 El número que ve el cliente tiene que ser local: un +1 de Estados Unidos en
 Costa Rica u Honduras se contesta mucho menos.

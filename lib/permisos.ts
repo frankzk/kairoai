@@ -294,6 +294,9 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/telnyx", exige: P("config") },
   { ruta: "/api/telnyx/llamada", exige: P(...LEADS, "pedidos", "novedades") },
   { ruta: "/api/telnyx/token", exige: P(...LEADS, ...OPERACION, "novedades") },
+  // Escuchar una grabacion desde el historial del lead, del pedido o de la
+  // novedad. La ruta ademas verifica la tienda de la llamada.
+  { ruta: "/api/calls/*/recording", exige: P(...LEADS, ...OPERACION, "novedades") },
 ];
 
 /** Exigencia para lo que no tiene regla: solo quien administra usuarios. */

@@ -12,6 +12,7 @@ import CallButton from "@/components/CallButton";
 import TelefonoWeb from "@/components/TelefonoWeb";
 import { onResultadoLlamada, type SugerenciaLlamada } from "@/lib/telefonia-cliente";
 import type { LlamadaHistorial } from "@/lib/llamadas-historial";
+import GrabacionLlamada from "@/components/GrabacionLlamada";
 import ProductividadNovedades from "@/components/ProductividadNovedades";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1564,12 +1565,19 @@ function DetailModal({
               <p className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1">
                 <Phone className="h-3.5 w-3.5" /> Llamadas ({llamadas.length})
               </p>
-              <div className="space-y-1 max-h-40 overflow-y-auto">
+              <div className="space-y-1 max-h-56 overflow-y-auto">
                 {llamadas.map((l) => (
-                  <div key={l.id} className="text-xs flex gap-2 border-b border-border/30 py-1">
-                    <span className="text-muted-foreground whitespace-nowrap">{fmtDate(l.at)}</span>
-                    <span className="text-muted-foreground flex-1">{l.descripcion}</span>
-                    {l.asesora && <span className="text-muted-foreground whitespace-nowrap">{l.asesora}</span>}
+                  <div key={l.id} className="text-xs border-b border-border/30 py-1">
+                    <div className="flex gap-2">
+                      <span className="text-muted-foreground whitespace-nowrap">{fmtDate(l.at)}</span>
+                      <span className="text-muted-foreground flex-1">{l.descripcion}</span>
+                      {l.asesora && <span className="text-muted-foreground whitespace-nowrap">{l.asesora}</span>}
+                    </div>
+                    {l.grabacion && (
+                      <div className="mt-1">
+                        <GrabacionLlamada callId={l.id} estado={l.grabacion} />
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

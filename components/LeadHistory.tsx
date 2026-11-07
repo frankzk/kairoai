@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, History } from "lucide-react";
 import { getStatusDef } from "@/lib/leads-classify";
+import GrabacionLlamada from "@/components/GrabacionLlamada";
+import type { EstadoGrabacion } from "@/lib/grabaciones";
 
 interface HistoryRow {
   id: number;
@@ -11,6 +13,8 @@ interface HistoryRow {
   note: string | null;
   vendedora_name: string | null;
   occurred_at: string;
+  /** Solo las llamadas de la centralita (kind "phone"). */
+  grabacion?: EstadoGrabacion | null;
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -106,6 +110,11 @@ export default function LeadHistory({
                 {statusLabel && <div className="font-medium">{statusLabel}</div>}
                 {r.vendedora_name && <div className="text-muted-foreground">por {r.vendedora_name}</div>}
                 {r.note && <div className="italic text-muted-foreground/80">“{r.note}”</div>}
+                {r.kind === "phone" && r.grabacion && (
+                  <div className="mt-1">
+                    <GrabacionLlamada callId={r.id} estado={r.grabacion} />
+                  </div>
+                )}
               </div>
             );
           })}

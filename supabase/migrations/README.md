@@ -12,6 +12,17 @@ Reglas:
 
 Estado actual:
 
+Grabaciones de llamadas: `20261107130000_call_recordings.sql` aplicada el
+07/11/2026 (va con el deploy que activa `TELNYX_GRABAR=1`). Sin ella todo sigue
+como antes: las llamadas salen y se ven en los historiales, solo sin «Escuchar»
+ni búsqueda por pedido, y el cron `call-recordings` responde ok sin hacer nada.
+Agrega a `zadarma_calls` `recording_id`, `recording_path`, `recording_saved_at`,
+`recording_error` (≤300 caracteres, sin enlaces), `recording_attempts` (0 por
+defecto; a los 6 el cron deja de intentar) y `order_name` (pedido por el que se
+llamó desde Gestión o Novedades), con índices parciales `(store_id, order_name,
+started_at)` y de pendientes de copia. Crea el bucket PRIVADO `call-recordings`
+(50 MB, solo `audio/mpeg`, sin políticas: solo service role). Re-ejecutable.
+
 Reparto automático de leads: `20261107120000_lead_assignment.sql` aplicada el 07/11/2026.
 Sin ella el interruptor de Configuración dice «Pendiente: aplicar la migración
 del reparto de leads», el cron `leads-assignment` responde ok sin hacer nada y el

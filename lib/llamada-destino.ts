@@ -21,7 +21,11 @@ export interface PedidoDeLlamada {
 }
 
 export type DestinoDeLlamada =
-  | { ok: true; phone: string; leadId: number | null }
+  /**
+   * orderName: el pedido por el que se llama (desde Gestion de pedidos, o el
+   * de la novedad), para encontrar la llamada y su grabacion desde el pedido.
+   */
+  | { ok: true; phone: string; leadId: number | null; orderName: string | null }
   | { ok: false; error: string; status: number };
 
 export async function destinoDeLlamada(store: FinanceStoreConfig, body: PedidoDeLlamada | null): Promise<DestinoDeLlamada> {
@@ -32,6 +36,7 @@ export async function destinoDeLlamada(store: FinanceStoreConfig, body: PedidoDe
   const orderName = String(body?.order_name ?? "").trim();
   const incidentId = Number(body?.incident_id);
   const conLead = Number.isFinite(leadId) && leadId > 0;
+  let pedido: string | null = null;
   if (conLead) {
     const lead = await getLead(store.id, leadId);
     if (!lead) return { ok: false, error: "lead no encontrado", status: 404 };
@@ -42,6 +47,7 @@ export async function destinoDeLlamada(store: FinanceStoreConfig, body: PedidoDe
       return { ok: false, error: `El pedido ${orderName} no tiene teléfono guardado en ${store.shortLabel}.`, status: 404 };
     }
     rawPhone = order.phone;
+    pedido = orderName;
   } else if (Number.isFinite(incidentId) && incidentId > 0) {
     const incident = await getIncident(incidentId, store.id);
     if (!incident) return { ok: false, error: "novedad no encontrada", status: 404 };
@@ -49,11 +55,12 @@ export async function destinoDeLlamada(store: FinanceStoreConfig, body: PedidoDe
       return { ok: false, error: "Esta novedad no tiene teléfono del cliente.", status: 404 };
     }
     rawPhone = incident.customer_phone;
+    pedido = (incident.order_name ?? "").trim() || null;
   }
 
   const phone = normalizePhone(rawPhone, phoneConfigForStore(store.code));
   if (!phone) {
     return { ok: false, error: `Teléfono inválido para ${store.shortLabel}: ${rawPhone || "(vacío)"}`, status: 400 };
   }
-  return { ok: true, phone, leadId: conLead ? leadId : null };
+  return { ok: true, phone, leadId: conLead ? leadId : null, orderName: pedido };
 }

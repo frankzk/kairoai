@@ -26,6 +26,23 @@ import {
 type Fila = Record<string, unknown>;
 const tablas: Record<string, Fila[]> = {};
 let siguienteId = 1;
+/** Simula la base sin la migracion de grabaciones (sin order_name ni recording_id). */
+let sinMigracionGrabaciones = false;
+const COLUMNAS_NUEVAS = ["order_name", "recording_id"];
+
+// Lo que el webhook manda a segundo plano (la copia de la grabacion).
+const tareas: Array<{ nombre: string; tarea: () => Promise<unknown> }> = [];
+vi.mock("@/lib/segundo-plano", () => ({
+  enSegundoPlano: (nombre: string, tarea: () => Promise<unknown>) => tareas.push({ nombre, tarea }),
+}));
+const copias: Array<{ fila: Fila; url: string | null | undefined }> = [];
+vi.mock("@/lib/grabaciones", async (original) => ({
+  ...(await original<typeof import("../lib/grabaciones")>()),
+  copiarGrabacion: async (fila: Fila, opts: { url?: string | null }) => {
+    copias.push({ fila, url: opts.url });
+    return { ok: true, path: "x" };
+  },
+}));
 
 vi.mock("@/lib/db", () => {
   const tabla = (nombre: string) => {
@@ -34,6 +51,9 @@ vi.mock("@/lib/db", () => {
     let cambio: { tipo: "insert" | "update"; fila: Fila } | null = null;
     const correr = () => {
       const filas = (tablas[nombre] ??= []);
+      if (sinMigracionGrabaciones && cambio && COLUMNAS_NUEVAS.some((c) => c in (cambio as { fila: Fila }).fila)) {
+        return { data: null, error: { code: "PGRST204", message: "Could not find the 'order_name' column of 'zadarma_calls'" } };
+      }
       if (cambio?.tipo === "insert") {
         filas.push({ id: siguienteId++, ...cambio.fila });
         return { data: null, error: null };
@@ -52,6 +72,7 @@ vi.mock("@/lib/db", () => {
       is: (col: string, v: unknown) => (filtros.push((f) => (f[col] ?? null) === v), api),
       lt: (col: string, v: string) => (filtros.push((f) => String(f[col] ?? "") < v), api),
       maybeSingle: () => ((una = true), api),
+      limit: () => api,
       abortSignal: () => api,
       insert: (fila: Fila) => ((cambio = { tipo: "insert", fila }), api),
       update: (fila: Fila) => ((cambio = { tipo: "update", fila }), api),
@@ -67,7 +88,7 @@ vi.mock("@/lib/leads", () => ({
 }));
 vi.mock("@/lib/incidents", () => ({
   getIncident: async (id: number, storeId: number) =>
-    id === 9 && storeId === 1 ? { id: 9, store_id: 1, customer_phone: "8888-1234" } : null,
+    id === 9 && storeId === 1 ? { id: 9, store_id: 1, customer_phone: "8888-1234", order_name: "#MCRC900" } : null,
 }));
 vi.mock("@/lib/identidad", () => ({
   vendedoraEfectiva: (v: unknown) => (Number(v) > 0 ? Number(v) : null),
@@ -133,6 +154,9 @@ beforeEach(async () => {
   (await import("../lib/telnyx-calls")).olvidarTokensTelnyx();
   for (const k of Object.keys(tablas)) delete tablas[k];
   siguienteId = 1;
+  sinMigracionGrabaciones = false;
+  tareas.length = 0;
+  copias.length = 0;
   pedidos.length = 0;
   credencialesCreadas = 0;
   vi.stubGlobal("fetch", fetchTelnyx);
@@ -237,6 +261,24 @@ describe("preparar la llamada", () => {
     // La de otra tienda no se encuentra.
     process.env.TELNYX_CALLER_ID_HN = "+504 2200 0000";
     expect((await prepararLlamada({ store: "mireva-hn", vendedora_id: 7, incident_id: 9 })).status).toBe(404);
+  });
+
+  it("desde Gestion de pedidos y Novedades guarda el pedido en la llamada; desde Leads no", async () => {
+    tablas.shopify_orders = [{ store_id: 1, name: "#MCRC20388", phone: "8777-6655", customer_name: "Ana" }];
+    await prepararLlamada({ store: "mireva-cr", vendedora_id: 7, order_name: " #MCRC20388 " });
+    expect(tablas.zadarma_calls[0]).toMatchObject({ order_name: "#MCRC20388", phone: "50687776655", lead_id: null });
+    await prepararLlamada({ store: "mireva-cr", vendedora_id: 7, incident_id: 9 });
+    expect(tablas.zadarma_calls[1]).toMatchObject({ order_name: "#MCRC900", phone: "50688881234" });
+    await prepararLlamada({ store: "mireva-cr", vendedora_id: 7, lead_id: 5 });
+    expect(tablas.zadarma_calls[2].order_name).toBeUndefined();
+  });
+
+  it("sin la migracion de grabaciones la llamada sale igual, sin el pedido", async () => {
+    sinMigracionGrabaciones = true;
+    const res = await prepararLlamada({ store: "mireva-cr", vendedora_id: 7, incident_id: 9 });
+    expect(res.status).toBe(200);
+    expect(llamada()).toMatchObject({ phone: "50688881234", status: "calling" });
+    expect(llamada().order_name).toBeUndefined();
   });
 
   it("una llamada anterior de la asesora que nunca se marco queda como no marcada", async () => {
@@ -371,6 +413,56 @@ describe("webhook", () => {
     });
     await webhook(evento("call.recording.saved", cs, { recording_urls: { mp3: "https://rec.telnyx/x.mp3" } }));
     expect(llamada()).toMatchObject({ is_recorded: true, record_url: "https://rec.telnyx/x.mp3" });
+  });
+
+  it("call.recording.saved guarda el recording_id y manda a copiar el mp3 en segundo plano", async () => {
+    const cs = await estado();
+    const res = await webhook(
+      evento("call.recording.saved", cs, {
+        recording_id: "rec-123",
+        recording_urls: { mp3: "https://s3.telnyx/rec.mp3?X-Amz-Signature=abc" },
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(llamada()).toMatchObject({ is_recorded: true, recording_id: "rec-123" });
+    // La respuesta a Telnyx no espero la copia: quedo en segundo plano.
+    expect(copias).toHaveLength(0);
+    expect(tareas.map((t) => t.nombre)).toEqual([`grabacion ${llamada().id}`]);
+    await tareas[0].tarea();
+    expect(copias).toEqual([
+      {
+        fila: expect.objectContaining({ id: llamada().id, provider: "telnyx", store_id: 1, recording_id: "rec-123" }),
+        url: "https://s3.telnyx/rec.mp3?X-Amz-Signature=abc",
+      },
+    ]);
+  });
+
+  it("los demas eventos no mandan a copiar nada", async () => {
+    const cs = await estado();
+    await webhook(evento("call.answered", cs));
+    await webhook(evento("call.hangup", cs, { hangup_cause: "normal_clearing" }));
+    expect(tareas).toEqual([]);
+  });
+
+  it("sin la migracion, recording.saved guarda lo de siempre y no da 500 (Telnyx no reintenta)", async () => {
+    const cs = await estado();
+    sinMigracionGrabaciones = true;
+    const res = await webhook(evento("call.recording.saved", cs, { recording_id: "rec-9", recording_urls: { mp3: "https://s3/x.mp3" } }));
+    expect(res.status).toBe(200);
+    expect(llamada()).toMatchObject({ is_recorded: true, record_url: "https://s3/x.mp3" });
+    expect(llamada().recording_id).toBeUndefined();
+  });
+
+  it("lee recording_id del evento; grabarLlamadas sigue igual (solo TELNYX_GRABAR=1)", async () => {
+    const { grabarLlamadas } = await import("../lib/telnyx");
+    expect(
+      leerEventoTelnyx(JSON.parse(evento("call.recording.saved", "x", { recording_id: "r1", recording_urls: { mp3: "u" } })))
+    ).toMatchObject({ recordingId: "r1", recordingUrl: "u" });
+    expect(leerEventoTelnyx(JSON.parse(evento("call.hangup", "x")))?.recordingId).toBeNull();
+    expect(grabarLlamadas({ TELNYX_GRABAR: "1" })).toBe(true);
+    expect(grabarLlamadas({ TELNYX_GRABAR: " 1 " })).toBe(true);
+    expect(grabarLlamadas({ TELNYX_GRABAR: "true" })).toBe(false);
+    expect(grabarLlamadas({})).toBe(false);
   });
 
   it("sin grabar no le pide nada a Telnyx", async () => {
