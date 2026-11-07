@@ -2,7 +2,7 @@
 // (200 pedidos reales, USD 1 700 de gasto, CPA real USD 8,50) multiplicadas
 // por los días del período. Así lo primero que se ve sigue al filtro; el ritmo
 // de hoy queda aparte y solo cuando el período incluye hoy.
-import { MARKETING_TARGETS, type MarketingTargets } from "./marketing-targets";
+import { MARKETING_TARGETS } from "./marketing-targets";
 
 export interface PeriodGoalsInput {
   period: { from: string; to: string; days: number };
@@ -13,7 +13,7 @@ export interface PeriodGoalsInput {
   spendUsd: number | null;
   /** CPA real del período (null = sin gasto completo o sin pedidos). */
   cpaReal: number | null;
-  targets?: Pick<MarketingTargets, "dailyOrders" | "dailySpendUsd" | "cpaUsd">;
+  targets?: { dailyOrders: number; dailySpendUsd: number; cpaUsd: number };
 }
 
 export interface PeriodGoals {
