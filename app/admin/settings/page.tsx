@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ZadarmaStatusCard from "@/components/ZadarmaStatusCard";
 import TelnyxStatusCard from "@/components/TelnyxStatusCard";
 import TelnyxCostosCard from "@/components/TelnyxCostosCard";
+import LeadAssignmentSettingsCard from "@/components/LeadAssignmentSettingsCard";
 import type { AgentSettings } from "@/lib/db";
 import { leerYo, tienePermiso } from "@/lib/sesion-cliente";
 
@@ -32,7 +33,13 @@ function fmtMin(m: number) {
 
 export default function SettingsPage() {
   const [puedeUsuarios, setPuedeUsuarios] = useState(false);
-  useEffect(() => setPuedeUsuarios(tienePermiso(leerYo(), "usuarios")), []);
+  // El reparto de leads lo prende o apaga quien administra (config o usuarios).
+  const [puedeReparto, setPuedeReparto] = useState(false);
+  useEffect(() => {
+    const yo = leerYo();
+    setPuedeUsuarios(tienePermiso(yo, "usuarios"));
+    setPuedeReparto(tienePermiso(yo, "config") || tienePermiso(yo, "usuarios"));
+  }, []);
   const [settings, setSettings] = useState<AgentSettings>(DEFAULTS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -127,6 +134,8 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         )}
+        {/* Reparto automático de leads: se guarda solo al tocar el interruptor. */}
+        {puedeReparto && <LeadAssignmentSettingsCard />}
         {loading ? (
           <div className="h-64 rounded-lg border border-border bg-card animate-pulse" />
         ) : (

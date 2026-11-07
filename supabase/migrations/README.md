@@ -12,6 +12,20 @@ Reglas:
 
 Estado actual:
 
+Reparto automático de leads: `20261107120000_lead_assignment.sql` aplicada el 07/11/2026.
+Sin ella el interruptor de Configuración dice «Pendiente: aplicar la migración
+del reparto de leads», el cron `leads-assignment` responde ok sin hacer nada y el
+tablero de Leads se ve como siempre. Crea `lead_assignment_settings` (interruptor
+por tienda, apagado por defecto, quién lo cambió, turno del cron y resumen de la
+última corrida; RLS sin políticas, solo service role); cambia la FK de
+`leads.claimed_by` de `payroll_staff` a `kairo_users` (la columna nunca se usó; la
+primera vez limpia valores sueltos) con índice parcial `(store_id, claimed_by)`; y
+las funciones `lead_assignment_lease` / `_release` (una corrida a la vez por
+tienda), `lead_assignment_activity` (leads que no se pueden mover y quién trabajó
+hace poco los que no tienen dueña, en un jsonb) y `lead_assignment_apply` (aplica
+la corrida en una sentencia, solo con el turno vigente y el reparto encendido).
+Re-ejecutable.
+
 ShipHero: aplicada el 06/11/2026. Si faltara, Marketing funciona igual con el
 CSV y la tarjeta dice «Pendiente: aplicar migración de ShipHero»:
 

@@ -36,6 +36,8 @@ export const CRON_JOBS: CronJob[] = [
   { name: "leads", label: "Leads de WhatsApp", everyMinutes: 5 },
   { name: "leads-reclassify", label: "Clasificación de leads", everyMinutes: 10 },
   { name: "leads-shopify-match", label: "Leads que ya compraron", everyMinutes: 60 },
+  // Apagado (interruptor en Configuración) no hace nada y responde ok.
+  { name: "leads-assignment", label: "Reparto de leads entre asesoras", everyMinutes: 5 },
   // Estuvo apagado del 29/08 al 07/10 (#217, en una caida de Supabase). En ese
   // tiempo 4.863 de 4.872 leads nuevos de Costa Rica quedaron sin conteo y el
   // tablero los mostraba a todos como "Solo saludó".

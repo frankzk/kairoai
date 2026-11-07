@@ -243,6 +243,21 @@ export function isTrabajoDeHoy(lead: QueueLead, nowMs: number): boolean {
 }
 
 /**
+ * El tab Seguimiento: leads de la cola de llamadas que ya trabajo una asesora y
+ * que hoy no tocan (sin recontacto vencido). Hoy y Seguimiento salen de la
+ * misma poblacion partida en dos, asi que nunca comparten un lead.
+ *
+ * Vive aca y no en el tablero para que el reparto automatico de leads
+ * (lib/leads-assignment.ts) use exactamente la misma definicion.
+ */
+export function esDeSeguimiento(
+  lead: QueueLead & { in_call_queue: boolean; work_state: LeadWorkState },
+  nowMs: number
+): boolean {
+  return lead.in_call_queue && lead.work_state === "seguimiento" && !isTrabajoDeHoy(lead, nowMs);
+}
+
+/**
  * Parte la cola YA ORDENADA en bandas contiguas.
  *
  * Recibe la salida de `buildWorkQueue` sin reordenar nada: como esa lista viene
