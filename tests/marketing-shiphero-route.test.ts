@@ -340,6 +340,54 @@ describe("POST /api/marketing/shiphero/sync", () => {
     expect(await second.json()).toMatchObject({ result: { ok: true, rows: 1 } });
   });
 
+  it("choosing «Todos los almacenes» then syncing: 200, no warehouse filter, the stock summed", async () => {
+    fakeDb.state.row!.last_sync_at = new Date(Date.now() - 60_000).toISOString();
+    fakeDb.state.row!.choices = {
+      warehouses: [{ id: WAREHOUSE, name: "CR", active: true }, { id: OTHER, name: "GT", active: true }],
+      customers: [],
+    };
+    const stockBodies: Array<Record<string, unknown>> = [];
+    fetcher.mockImplementation(
+      shipheroFetcher({
+        graphql: (body) => {
+          if (body.query.includes("purchase_orders"))
+            return jsonResponse({ data: { purchase_orders: { data: { pageInfo: { hasNextPage: false }, edges: [] } } } });
+          stockBodies.push(body.variables);
+          return jsonResponse({
+            data: { warehouse_products: { data: { pageInfo: { hasNextPage: false }, edges: [
+              { node: { id: "wp1", sku: "SKU1", account_id: ACCOUNT, warehouse_id: WAREHOUSE, warehouse_identifier: "CR", on_hand: 2, available: 2, allocated: 0, backorder: 0, product: { name: "Uno" } } },
+              { node: { id: "wp2", sku: "SKU1", account_id: ACCOUNT, warehouse_id: OTHER, warehouse_identifier: "GT", on_hand: 9, available: 9, allocated: 0, backorder: 0, product: { name: "Uno" } } },
+            ] } } },
+          });
+        },
+      }),
+    );
+    const chosen = await PATCH(request("PATCH", { action: "scope", warehouseId: "*" }));
+    expect(chosen.status).toBe(200);
+    expect((await chosen.json()).connection).toMatchObject({
+      state: "connected",
+      warehouse: { id: "*", name: "Todos los almacenes", count: 2 },
+      syncInMs: 0,
+    });
+    const res = await sync();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: "ok", result: { ok: true, rows: 1 } });
+    expect(stockBodies).toEqual([{ after: null }]);
+    const save = fakeDb.state.calls.find((call) => call.op === "marketing_replace_shiphero_snapshot")!.args[0] as Record<string, any>;
+    expect(save.p_scope).toBe(`${ACCOUNT}||*`);
+    expect(save.p_items[0]).toMatchObject({ sku: "SKU1", available: 11, on_hand: 11, warehouses: ["CR", "GT"] });
+    const status = await (await GET(request("GET"))).json();
+    expect(status.connection).toMatchObject({ warehouse: { id: "*", name: "Todos los almacenes", count: 2 }, lastSyncRows: 1 });
+  });
+
+  it("«Todos los almacenes» with a single warehouse is a 400", async () => {
+    fakeDb.state.row!.choices = { warehouses: [{ id: WAREHOUSE, name: "CR", active: true }], customers: [] };
+    const res = await PATCH(request("PATCH", { action: "scope", warehouseId: "*" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("«Todos los almacenes» solo está disponible con dos o más almacenes activos.");
+    expect(fakeDb.state.row!.warehouse_id).toBe(WAREHOUSE);
+  });
+
   it("a failure is 502 with the Spanish message", async () => {
     fetcher.mockImplementation(shipheroFetcher({ graphql: () => jsonResponse({ message: "Public API access is disabled for this user" }, 403) }));
     const res = await sync();

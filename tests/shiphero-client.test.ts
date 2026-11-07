@@ -9,6 +9,7 @@ import {
   readIncoming,
   readWarehouseProducts,
   refreshAccess,
+  SHIPHERO_ALL_WAREHOUSES,
   sameShipHeroId,
   shipheroLegacyId,
   type ShipHeroScope,
@@ -25,6 +26,7 @@ const ACCOUNT = b64("Account:42");
 const CUSTOMER = b64("Account:77");
 const WAREHOUSE = b64("Warehouse:11790");
 const OTHER_WAREHOUSE = b64("Warehouse:555");
+const THIRD_WAREHOUSE = b64("Warehouse:133649");
 const NOW = new Date("2026-11-06T16:00:00Z");
 const PASSWORD = "pw-Secreta-123";
 const ACCESS = "access-token-0123456789-abcdef";
@@ -299,6 +301,75 @@ describe("ShipHero inventory", () => {
     }
   });
 
+  it("all warehouses: no warehouse filter, no needs_scope, and the rows of 3 warehouses sum per SKU", async () => {
+    const all: ShipHeroScope = { ...brand, allWarehouses: true };
+    const fetcher = vi.fn().mockResolvedValue(page([
+      node({ id: "wp1", sku: "SKU1", on_hand: 5, available: 4, allocated: 1, backorder: null, warehouse_identifier: "boxful Costa Rica" }),
+      node({ id: "wp2", sku: "sku1", warehouse_id: OTHER_WAREHOUSE, warehouse_identifier: "Primary", on_hand: 3, available: 2, allocated: 1, backorder: 2 }),
+      node({ id: "wp3", sku: "SKU1", warehouse_id: THIRD_WAREHOUSE, warehouse_identifier: "boxful Costa Rica", on_hand: 10, available: 9, allocated: 1, backorder: 1 }),
+      node({ id: "wp4", sku: "SKU2", warehouse_id: THIRD_WAREHOUSE, warehouse_identifier: "boxful Costa Rica", on_hand: 1, available: 1, allocated: 0, backorder: 0 }),
+    ]));
+    const rows = await readWarehouseProducts(ACCESS, all, { fetcher });
+    const body = JSON.parse(fetcher.mock.calls[0][1].body);
+    expect(body.query).not.toContain("warehouse_id:");
+    expect(body.query).not.toContain("customer_account_id");
+    expect(body.variables).toEqual({ after: null });
+    expect(JSON.stringify(body)).not.toContain(`"${SHIPHERO_ALL_WAREHOUSES}"`);
+    expect(rows).toHaveLength(4);
+    const incoming = new Map([["sku1", 6]]);
+    expect(aggregateShipHeroStock(rows, incoming)).toEqual([
+      { sku: "SKU1", name: "Producto 1", warehouseId: "varias", warehouses: ["boxful Costa Rica", "Primary"], onHand: 18, available: 15, allocated: 3, backorder: 3, incoming: 6 },
+      { sku: "SKU2", name: "Producto 1", warehouseId: THIRD_WAREHOUSE, warehouses: ["boxful Costa Rica"], onHand: 1, available: 1, allocated: 0, backorder: 0, incoming: null },
+    ]);
+  });
+
+  it("all warehouses: the account guard still rejects another account's rows; a 3PL keeps its customer", async () => {
+    const all: ShipHeroScope = { ...brand, allWarehouses: true };
+    const foreign = vi.fn().mockResolvedValue(page([node(), node({ id: "wp2", warehouse_id: OTHER_WAREHOUSE, account_id: CUSTOMER })]));
+    expect(await code(readWarehouseProducts(ACCESS, all, { fetcher: foreign }))).toBe("scope_mismatch");
+    const tpl = vi.fn().mockResolvedValue(page([
+      node({ account_id: CUSTOMER }),
+      node({ id: "wp2", account_id: CUSTOMER, warehouse_id: OTHER_WAREHOUSE }),
+    ]));
+    const rows = await readWarehouseProducts(ACCESS, { ...all, is3pl: true, customerAccountId: CUSTOMER }, { fetcher: tpl });
+    expect(rows).toHaveLength(2);
+    const body = JSON.parse(tpl.mock.calls[0][1].body);
+    expect(body.query).toContain("customer_account_id: $customer");
+    expect(body.query).not.toContain("warehouse_id:");
+    expect(body.variables).toEqual({ after: null, customer: CUSTOMER });
+    // 3PL rows of the 3PL itself (not the customer's) are still refused.
+    const own = vi.fn().mockResolvedValue(page([node()]));
+    expect(await code(readWarehouseProducts(ACCESS, { ...all, is3pl: true, customerAccountId: CUSTOMER }, { fetcher: own }))).toBe("scope_mismatch");
+    // Without a customer a 3PL never reads, all warehouses or not.
+    const none = vi.fn();
+    expect(await code(readWarehouseProducts(ACCESS, { ...all, is3pl: true }, { fetcher: none }))).toBe("needs_scope");
+    expect(none).not.toHaveBeenCalled();
+  });
+
+  it("all warehouses: rows of a deactivated warehouse are skipped, unknown ones of the account are kept", async () => {
+    const all: ShipHeroScope = { ...brand, allWarehouses: true, excludeWarehouseIds: [OTHER_WAREHOUSE] };
+    const fetcher = vi.fn().mockResolvedValue(page([
+      node({ id: "wp1", sku: "SKU1", on_hand: 5, available: 4, allocated: 1, backorder: null }),
+      node({ id: "wp2", sku: "SKU1", warehouse_id: OTHER_WAREHOUSE, warehouse_identifier: "Viejo", on_hand: 50, available: 50, allocated: 0, backorder: 0 }),
+      node({ id: "wp3", sku: "SKU1", warehouse_id: THIRD_WAREHOUSE, warehouse_identifier: "Nuevo", on_hand: 2, available: 2, allocated: 0, backorder: null }),
+    ]));
+    const rows = await readWarehouseProducts(ACCESS, all, { fetcher });
+    expect(rows.map((r) => r.id)).toEqual(["wp1", "wp3"]);
+    expect(aggregateShipHeroStock(rows, null)).toMatchObject([{ sku: "SKU1", onHand: 7, available: 6, warehouses: ["Primary", "Nuevo"] }]);
+    // The exclusion never applies outside all-warehouses mode (a chosen warehouse is the filter).
+    const single = vi.fn().mockResolvedValue(page([node({ warehouse_id: OTHER_WAREHOUSE })]));
+    expect(await readWarehouseProducts(ACCESS, { ...brand, warehouseId: OTHER_WAREHOUSE, excludeWarehouseIds: [OTHER_WAREHOUSE] }, { fetcher: single })).toHaveLength(1);
+    // The account guard runs before the exclusion: a foreign row still fails closed.
+    const foreign = vi.fn().mockResolvedValue(page([node({ warehouse_id: OTHER_WAREHOUSE, account_id: CUSTOMER })]));
+    expect(await code(readWarehouseProducts(ACCESS, all, { fetcher: foreign }))).toBe("scope_mismatch");
+  });
+
+  it("never sends the all-warehouses sentinel to ShipHero as a warehouse id", async () => {
+    const fetcher = vi.fn();
+    expect(await code(readWarehouseProducts(ACCESS, { ...brand, warehouseId: SHIPHERO_ALL_WAREHOUSES }, { fetcher }))).toBe("unexpected");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("rejects duplicates, missing ids and bad numbers", async () => {
     expect(await code(readWarehouseProducts(ACCESS, brand, { fetcher: vi.fn().mockResolvedValue(page([node(), node()])) }))).toBe("unexpected");
     expect(await code(readWarehouseProducts(ACCESS, brand, { fetcher: vi.fn().mockResolvedValue(page([node({ sku: "" })])) }))).toBe("unexpected");
@@ -389,6 +460,35 @@ describe("ShipHero incoming (open purchase orders)", () => {
     const body = JSON.parse(fetcher.mock.calls[0][1].body);
     expect(body.query).toContain('created_from: "2026-05-10"');
     expect(body.query).not.toContain("customer_account_id");
+  });
+
+  it("filters by the chosen warehouse, and reads every warehouse's POs in all-warehouses mode", async () => {
+    const edges = () => [
+      po("pending", [{ sku: "SKU1", quantity: 4, quantity_received: 0, quantity_rejected: 0 }]),
+      { node: { ...po("pending", []).node, id: "po-gt", warehouse_id: OTHER_WAREHOUSE, line_items: { pageInfo: { hasNextPage: false }, edges: [{ node: { sku: "SKU1", quantity: 3, quantity_received: 0, quantity_rejected: 0 } }] } } },
+    ];
+    const one = vi.fn().mockResolvedValue(pos(edges()));
+    const single = await readIncoming(ACCESS, { ...brand, warehouseId: WAREHOUSE }, { fetcher: one, since: "2026-05-10" });
+    expect(Array.from(single.bySku)).toEqual([["sku1", 4]]);
+    expect(JSON.parse(one.mock.calls[0][1].body).query).toContain("warehouse_id: $warehouse");
+    const many = vi.fn().mockResolvedValue(pos(edges()));
+    const all = await readIncoming(ACCESS, { ...brand, allWarehouses: true }, { fetcher: many, since: "2026-05-10" });
+    expect(all.complete).toBe(true);
+    expect(Array.from(all.bySku)).toEqual([["sku1", 7]]);
+    const body = JSON.parse(many.mock.calls[0][1].body);
+    expect(body.query).not.toContain("warehouse_id: $warehouse");
+    expect(body.variables).toEqual({ after: null });
+  });
+
+  it("all warehouses: open POs of a deactivated warehouse are not counted", async () => {
+    const edges = [
+      po("pending", [{ sku: "SKU1", quantity: 4, quantity_received: 0, quantity_rejected: 0 }]),
+      { node: { ...po("pending", []).node, id: "po-old", warehouse_id: OTHER_WAREHOUSE, line_items: { pageInfo: { hasNextPage: false }, edges: [{ node: { sku: "SKU1", quantity: 30, quantity_received: 0, quantity_rejected: 0 } }] } } },
+    ];
+    const fetcher = vi.fn().mockResolvedValue(pos(edges));
+    const result = await readIncoming(ACCESS, { ...brand, allWarehouses: true, excludeWarehouseIds: [OTHER_WAREHOUSE] }, { fetcher, since: "2026-05-10" });
+    expect(result.complete).toBe(true);
+    expect(Array.from(result.bySku)).toEqual([["sku1", 4]]);
   });
 
   it("is incomplete (and never throws) on truncated lines or errors", async () => {
