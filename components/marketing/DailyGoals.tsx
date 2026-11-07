@@ -13,23 +13,30 @@ export function DailyGoals({
   loading,
   spendLoading = false,
   error,
+  filterLabel = null,
 }: {
   pace: DailyPace | null;
   loading: boolean;
   /** Meta and TikTok spend of the last 8 days still loading. */
   spendLoading?: boolean;
   error: string;
+  /** Name of the top filter when it is not today ("Ayer"): this section is always today. */
+  filterLabel?: string | null;
 }) {
   return (
     <section className={r.section} aria-labelledby="goals-title">
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>01 / Hoy</p>
+          <p className={r.kicker}>
+            01 / Hoy{filterLabel ? " (no depende del filtro)" : ""}
+          </p>
           <h2 id="goals-title">Hoy · cómo voy</h2>
           <p>
             {pace
               ? `Actualizado ${pace.asOf} · hora de Costa Rica. Pedidos reales al momento de consultar.`
               : `Meta: ${count(MARKETING_TARGETS.dailyOrders)} pedidos reales, ${usd(MARKETING_TARGETS.dailySpendUsd)} de gasto y CPA real de ${usd(MARKETING_TARGETS.cpaUsd)}.`}
+            {filterLabel &&
+              ` Siempre es el día de hoy: el período elegido arriba (${filterLabel}) está en «Reporte del equipo», más abajo.`}
           </p>
         </div>
       </div>

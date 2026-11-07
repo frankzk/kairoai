@@ -80,6 +80,7 @@ export function CampaignActions({
   saving,
   save,
   logChange,
+  filterLabel = null,
 }: {
   result: Result | null;
   loading: boolean;
@@ -92,6 +93,8 @@ export function CampaignActions({
   saving: string;
   save: Save;
   logChange: LogChange;
+  /** Name of the top filter when it is not today ("Ayer"): these columns are always today. */
+  filterLabel?: string | null;
 }) {
   const updatedOnly = result?.meta.some(
     (row) => row.changesStatus === "updated_time",
@@ -106,6 +109,8 @@ export function CampaignActions({
             Gasto, pedidos reales y CPA real de hoy, ayer y los 7 días
             anteriores. Pedidos con ≈: UTM + reparto por producto asignado y
             gasto. Kairo no cambia nada en Meta ni en TikTok.
+            {filterLabel &&
+              ` No depende del filtro de período (${filterLabel}): «Hoy» es siempre el día de hoy.`}
           </p>
         </div>
       </div>

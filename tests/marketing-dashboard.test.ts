@@ -5,7 +5,7 @@ import {
   presetPeriod,
   previousPeriod,
 } from "../lib/marketing-dates";
-import { buildMarketingSummary } from "../lib/marketing";
+import { buildMarketingSummary, type MarketingSummary } from "../lib/marketing";
 import { buildMarketingIntelligence } from "../lib/marketing-intelligence";
 import { readMetaBudgets } from "../lib/marketing-meta-budgets";
 import { getMarketingSources } from "../lib/marketing-sources";
@@ -384,6 +384,71 @@ describe("product spend and replenishment", () => {
     expect(
       withStock(0).alerts.find((a) => a.key.startsWith("stock:"))?.title,
     ).toBe("Producto real: agotado");
+  });
+});
+describe("stock alerts of products with variants", () => {
+  // Fat Burn sells 10 a day in Negro / S (out of stock) and 4 in Beige / M.
+  const orders = Array.from({ length: 7 }, (_, index) =>
+    order(`2026-10-${22 + index}T12:00:00Z`, {
+      items: [
+        { sku: "FAT.NEGRO.S", title: "Fat Burn", quantity: 10, price: 1 },
+        { sku: "FAT.BEIGE.M", title: "Fat Burn", quantity: 4, price: 1 },
+      ],
+    }),
+  );
+  const withFamily = (stock: Record<string, number>) => {
+    const data: MarketingSummary = summary(orders);
+    data.productFamilies = [
+      {
+        key: "family:shopify:7",
+        name: "Fat Burn Shorts",
+        source: "shopify",
+        review: false,
+        members: [
+          { key: "sku:fat.negro.s", sku: "FAT.NEGRO.S", name: "Negro / S" },
+          { key: "sku:fat.beige.m", sku: "FAT.BEIGE.M", name: "Beige / M" },
+        ],
+      },
+    ];
+    const source = sources();
+    source.shiphero = {
+      ...pending,
+      status: "ready",
+      data: {
+        stock: Object.entries(stock).map(([sku, available]) => ({
+          sku,
+          warehouseId: "CR",
+          onHand: available,
+          available,
+          allocated: 0,
+        })),
+      },
+    };
+    return buildMarketingIntelligence(data, source, settings()).alerts.filter(
+      (a) => a.key.startsWith("stock"),
+    );
+  };
+  const plain = (s: string) => s.replace(/\u00a0|\u202f/g, " ");
+
+  it("does not call the product «agotado» when other variants have stock", () => {
+    const alerts = withFamily({ "FAT.NEGRO.S": 0, "FAT.BEIGE.M": 500 });
+    expect(alerts.map((a) => ({ ...a, detail: plain(a.detail) }))).toEqual([
+      {
+        key: "stock-variantes:family:shopify:7",
+        tone: "risk",
+        title: "Fat Burn Shorts: tallas/colores agotados",
+        detail:
+          "Sin stock: Negro / S. 1 de 2 variantes sin stock · disponible total 500 (36 días).",
+        productKey: "family:shopify:7",
+      },
+    ]);
+  });
+
+  it("says «agotado» once, for the family, when every variant is at 0", () => {
+    const alerts = withFamily({ "FAT.NEGRO.S": 0, "FAT.BEIGE.M": 0 });
+    expect(alerts.map((a) => [a.key, a.title])).toEqual([
+      ["stock:family:shopify:7", "Fat Burn Shorts: agotado"],
+    ]);
   });
 });
 describe("daily campaign budgets", () => {

@@ -23,7 +23,11 @@ import { accountLabel, buildCampaignActionRows } from "@/lib/marketing-actions";
 import { buildCostCapControl } from "@/lib/marketing-cost-cap";
 import { buildKeywordIndex } from "@/lib/marketing-campaign-keywords";
 import { highCpaAlerts, stockDaysRows } from "@/lib/marketing-report-alerts";
-import { decimalText } from "@/lib/marketing-copy";
+import {
+  decimalText,
+  periodIsToday,
+  periodLabelText,
+} from "@/lib/marketing-copy";
 import { missingStockColumnsText } from "@/lib/marketing-inventory-decide";
 import {
   useResource,
@@ -137,6 +141,10 @@ export function TeamReport({
   const [comparisonPage, setComparisonPage] = useState(0);
   const today = marketingDate(),
     yesterday = shiftDate(today, -1);
+  // The top filter names the period of the report ("Ayer", "1 al 6 nov");
+  // the sections that are always today say so when the filter is not today.
+  const periodText = periodLabelText(data.period, today);
+  const filterLabel = periodIsToday(data.period, today) ? null : periodText;
   const budgets = useResource<MarketingSources>(
     campaignsOpen
       ? `/api/marketing/sources?${periodQuery(data.period)}&scope=details`
@@ -400,19 +408,20 @@ export function TeamReport({
         loading={control.loading}
         spendLoading={recent.loading}
         error={control.error}
+        filterLabel={filterLabel}
       />
       <div className={r.reportHeading}>
         <div>
-          <p className={r.kicker}>Reporte del equipo</p>
+          <p className={r.kicker}>Reporte del equipo · {periodText}</p>
           <h2>Ventas, inversión y próximos pasos</h2>
         </div>
         <span className={r.period}>
-          {shortDate(data.period.from)} al {shortDate(data.period.to)} · USD
+          {periodLabelText(data.period, today, { withDate: true })} · USD
         </span>
       </div>
       <section
         className={r.heroMetrics}
-        aria-label="Resultados principales del período"
+        aria-label={`Resultados principales del período: ${periodText}`}
       >
         <Metric
           label="Pedidos reales"
@@ -566,6 +575,7 @@ export function TeamReport({
         saving={saving}
         save={save}
         logChange={logChange}
+        filterLabel={filterLabel}
       />
       <LaunchTracker
         rows={actionResult ? actionRows : null}
@@ -580,6 +590,7 @@ export function TeamReport({
         control={costCap}
         loading={actions.loading || control.loading}
         error={actions.error}
+        filterLabel={filterLabel}
       />
       <PixelCheck
         summary={data}
@@ -598,8 +609,9 @@ export function TeamReport({
               Asignar campañas para calcular el CPA
             </button>
             <p>
-              Hoy y ayer; los últimos 7 días completos hasta{" "}
-              {shortDate(yesterday)}. Independiente del período superior.
+              Hoy ({shortDate(today)}) y ayer; los últimos 7 días completos
+              hasta {shortDate(yesterday)}. Independiente del período superior
+              {filterLabel ? ` (${filterLabel})` : ""}.
             </p>
           </div>
           <label className={r.field}>

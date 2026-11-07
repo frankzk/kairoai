@@ -1,6 +1,7 @@
 "use client";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
-import { moneyText } from "@/lib/marketing-copy";
+import { moneyText, periodIncludesToday } from "@/lib/marketing-copy";
+import { marketingDate } from "@/lib/marketing-dates";
 import { useState } from "react";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
@@ -163,7 +164,9 @@ export function Overview({
               {shortDate(data.previous.to)} · {count(data.previous.generated)}{" "}
               pedidos
             </span>
-            <span className={s.muted}>Hoy puede estar en curso</span>
+            {periodIncludesToday(data.period, marketingDate()) && (
+              <span className={s.muted}>Hoy puede estar en curso</span>
+            )}
           </div>
         </section>
         <section className={s.section}>
