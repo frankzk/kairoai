@@ -34,6 +34,7 @@
 import type { ProductLineItem, ShopifyOrderSummary } from "@/lib/finance-orders";
 import { normalizeMatchKey } from "@/lib/order-matching";
 import { getFinanceStoreById } from "@/lib/store-config";
+import { claveEstado, etapaVentaIcomfly } from "@/lib/icomfly-estado-venta";
 
 export const CORTE_PEDIDOS_ICOMFLY = "2026-10-05";
 
@@ -261,3 +262,64 @@ export function direccionIcomfly(p: Pick<PedidoIcomflyCrudo, "shipping" | "custo
 export function esPedidoIcomfly(shopifyOrderId: string | null | undefined): boolean {
   return String(shopifyOrderId ?? "").startsWith("icomfly-");
 }
+
+/** Lo que se lee de iComfly para completar un pedido que vino de Shopify. */
+export interface IcomflyDeShopify {
+  shopify_display_number: string;
+  status: string;
+  tracking_number: string;
+  carrier_name: string;
+  cancelled_at?: string | null;
+  synced_at?: string | null;
+}
+
+/**
+ * Pedidos de Shopify trabajados en iComfly: la guia, la anulacion y las pruebas
+ * se registran en iComfly y Shopify no se entera. Sin esto el pedido seguia en
+ * Pendientes aunque ya estuviera en reparto o anulado.
+ *
+ * - Sin guia en Shopify y con guia en iComfly: toma la guia y la transportadora
+ *   de iComfly (el rastreo del courier decide en reparto/entregado/devuelto).
+ * - Anulado en iComfly y sin guia: queda anulado (cancelled_at de iComfly o, si
+ *   no lo trae, la ultima sincronizacion).
+ * - "Testeos" en iComfly y sin guia: no es una venta; sale de la lista, igual
+ *   que los pedidos de prueba que solo estan en iComfly.
+ * Nunca pisa una guia ni una anulacion que Shopify ya tenga.
+ */
+export function completarShopifyConIcomfly(
+  orders: ShopifyOrderSummary[],
+  registros: IcomflyDeShopify[]
+): ShopifyOrderSummary[] {
+  const porNombre = new Map<string, IcomflyDeShopify>();
+  for (const r of registros) {
+    const key = normalizeMatchKey(texto(r.shopify_display_number));
+    if (key && !porNombre.has(key)) porNombre.set(key, r);
+  }
+  if (!porNombre.size) return orders;
+  const out: ShopifyOrderSummary[] = [];
+  for (const order of orders) {
+    const rec = order.icomfly ? undefined : porNombre.get(normalizeMatchKey(order.name || ""));
+    if (!rec) {
+      out.push(order);
+      continue;
+    }
+    const guiaShopify = texto(order.tracking_number);
+    const guiaIcomfly = texto(rec.tracking_number);
+    const clave = claveEstado(rec.status);
+    if (!guiaShopify && !guiaIcomfly && (clave === "testeos" || clave === "testeo")) continue;
+    let next = order;
+    if (!guiaShopify && guiaIcomfly) {
+      next = {
+        ...next,
+        tracking_number: guiaIcomfly,
+        tracking_company: texto(rec.carrier_name) || next.tracking_company,
+        fulfillment_status: next.fulfillment_status || "fulfilled",
+      };
+    } else if (!guiaShopify && !next.cancelled_at && etapaVentaIcomfly(rec.status) === "anulado") {
+      next = { ...next, cancelled_at: texto(rec.cancelled_at) || texto(rec.synced_at) || next.created_at };
+    }
+    out.push(next);
+  }
+  return out;
+}
+

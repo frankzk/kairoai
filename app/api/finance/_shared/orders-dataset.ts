@@ -21,7 +21,13 @@ import {
   listShipmentTracking,
 } from "@/lib/finance";
 import { resolveDispatchState } from "@/lib/dispatch";
-import { corteIcomflyDe, nombrePedidoIcomfly, pedidosDeIcomfly, skusPorProducto } from "@/lib/icomfly-pedidos";
+import {
+  completarShopifyConIcomfly,
+  corteIcomflyDe,
+  nombrePedidoIcomfly,
+  pedidosDeIcomfly,
+  skusPorProducto,
+} from "@/lib/icomfly-pedidos";
 import { anulacionExcluida } from "@/lib/anulacion-motivos";
 import { normalizeMatchKey } from "@/lib/order-matching";
 import type { IcomflyOrderRecord } from "@/lib/finance-types";
@@ -372,8 +378,11 @@ async function buildDataset(store: FinanceStorePublic): Promise<OrdersDataset> {
     }),
   ]);
 
-  const deShopify = persisted.map((order) =>
-    persistedOrderToSummary(order as unknown as Record<string, unknown>)
+  // La guia, la anulacion y las pruebas de un pedido de Shopify trabajado en
+  // iComfly viven en iComfly (lib/icomfly-pedidos.ts, completarShopifyConIcomfly).
+  const deShopify = completarShopifyConIcomfly(
+    persisted.map((order) => persistedOrderToSummary(order as unknown as Record<string, unknown>)),
+    icomflyOrders
   );
   // Van con los de Shopify para que filas, liquidaciones, productos y notas
   // los traten igual (lib/icomfly-pedidos.ts explica cuando NO se agregan).
