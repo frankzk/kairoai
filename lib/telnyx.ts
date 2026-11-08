@@ -217,6 +217,29 @@ export function vencimientoToken(token: string): number | null {
   }
 }
 
+/**
+ * Llave de la API para lo que no necesita la Credential Connection (bajar
+ * grabaciones): basta TELNYX_API_KEY. null sin la llave.
+ */
+export function telnyxApiConfig(env: Record<string, string | undefined> = process.env): TelnyxConfig | null {
+  const apiKey = (env.TELNYX_API_KEY ?? "").trim();
+  return apiKey ? { apiKey, connectionId: (env.TELNYX_CONNECTION_ID ?? "").trim() } : null;
+}
+
+/**
+ * GET /recordings/{id}: enlace NUEVO para bajar el mp3 de una grabacion. Los
+ * enlaces del webhook (recording_urls) son prefirmados y vencen en ~10
+ * minutos; este se pide justo antes de bajar el archivo. Campo:
+ * data.download_urls.mp3 (Telnyx v2, Recordings API).
+ */
+export async function urlGrabacionTelnyx(cfg: TelnyxConfig, recordingId: string, fetchImpl?: Fetch): Promise<string> {
+  const texto = await telnyxFetch(cfg, `/recordings/${encodeURIComponent(recordingId)}`, {}, fetchImpl);
+  const data = (JSON.parse(texto) as { data?: { download_urls?: { mp3?: unknown } } }).data;
+  const mp3 = data?.download_urls?.mp3;
+  if (typeof mp3 !== "string" || !mp3) throw new TelnyxError("Telnyx no devolvió el enlace del mp3", 502);
+  return mp3;
+}
+
 /** POST /calls/{id}/actions/record_start: graba la conversacion (las dos voces, por separado). */
 export async function iniciarGrabacion(cfg: TelnyxConfig, callControlId: string, fetchImpl?: Fetch): Promise<void> {
   await telnyxFetch(
@@ -329,7 +352,13 @@ export interface EventoTelnyx {
   callControlId: string | null;
   clientState: string | null;
   hangupCause: string | null;
+  /** recording_urls.mp3: prefirmado, vence en ~10 minutos. */
   recordingUrl: string | null;
+  /**
+   * recording_id de call.recording.saved: con el se pide un enlace nuevo
+   * (urlGrabacionTelnyx) cuando el del webhook ya vencio.
+   */
+  recordingId: string | null;
   /** Solo en call.cost, y solo si Telnyx pudo calcularlo. */
   costo: CostoTelnyx | null;
 }
@@ -348,6 +377,7 @@ export function leerEventoTelnyx(cuerpo: unknown): EventoTelnyx | null {
     clientState: texto(p.client_state),
     hangupCause: texto(p.hangup_cause),
     recordingUrl: texto(urls.mp3),
+    recordingId: texto(p.recording_id),
     costo: data.event_type === "call.cost" ? leerCosto(p) : null,
   };
 }

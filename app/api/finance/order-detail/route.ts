@@ -63,8 +63,9 @@ export async function GET(req: NextRequest) {
       }).catch(() => null),
       // Con esto la ficha calcula la cola igual que la tabla (lib/confirmacion.ts).
       leerConfigConfirmacion(store.id, store.code).catch(() => configDeTienda(store.code, null)),
-      // Las llamadas a este cliente (Zadarma y Telnyx), para la bitacora.
-      phone ? llamadasDelTelefono({ storeCode: store.code, phone }).catch(() => []) : Promise.resolve([]),
+      // Las llamadas a este cliente (Zadarma y Telnyx) y las hechas por este
+      // pedido, para la bitacora.
+      llamadasDelTelefono({ storeCode: store.code, storeId: store.id, phone, orderName }).catch(() => []),
       // Los comentarios y etiquetas que le pusieron al pedido en iComfly.
       notasIcomflyDelPedido(store, orderName).catch((err) => {
         console.warn(`[order-detail] notas de iComfly: ${err instanceof Error ? err.message : err}`);

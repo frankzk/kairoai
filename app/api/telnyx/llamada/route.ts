@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
       leadId: destino.leadId,
       vendedoraId,
       phone: destino.phone,
+      orderName: destino.orderName,
     });
     return NextResponse.json({
       ok: true,

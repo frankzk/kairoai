@@ -104,10 +104,13 @@ export async function GET(req: NextRequest) {
           phone: incident.customer_phone,
           orderName: incident.order_name,
         }).catch(() => null),
-        // Las llamadas a este cliente (Zadarma y Telnyx).
-        incident.customer_phone
-          ? llamadasDelTelefono({ storeCode: store.code, phone: incident.customer_phone }).catch(() => [])
-          : Promise.resolve([]),
+        // Las llamadas a este cliente (Zadarma y Telnyx) y las hechas por su pedido.
+        llamadasDelTelefono({
+          storeCode: store.code,
+          storeId: store.id,
+          phone: incident.customer_phone,
+          orderName: incident.order_name,
+        }).catch(() => []),
       ]);
       return NextResponse.json({
         incident,

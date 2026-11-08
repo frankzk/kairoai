@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getTelnyxConfig, grabarLlamadas, leerEventoTelnyx, telnyxPublicKey, verificarFirmaTelnyx } from "@/lib/telnyx";
+import {
+  getTelnyxConfig,
+  grabarLlamadas,
+  leerEventoTelnyx,
+  telnyxApiConfig,
+  telnyxPublicKey,
+  verificarFirmaTelnyx,
+} from "@/lib/telnyx";
 import { aplicarEventoTelnyx } from "@/lib/telnyx-calls";
+import { copiarGrabacion } from "@/lib/grabaciones";
+import { enSegundoPlano } from "@/lib/segundo-plano";
 
 export const runtime = "nodejs";
-export const maxDuration = 20;
+// 30 s: la copia de la grabacion corre despues de responder, dentro de este
+// mismo limite (la descarga se corta a los 15 s; lo que no entre, el cron).
+export const maxDuration = 30;
 
 /**
  * Eventos de las llamadas de Telnyx (la URL va en la Credential Connection:
@@ -42,7 +53,16 @@ export async function POST(req: NextRequest) {
   if (!evento) return NextResponse.json({ ok: true, ignorado: true });
 
   try {
-    const resultado = await aplicarEventoTelnyx(evento, { cfg: getTelnyxConfig().config, grabar: grabarLlamadas() });
+    const cfg = getTelnyxConfig().config;
+    const resultado = await aplicarEventoTelnyx(evento, {
+      cfg,
+      grabar: grabarLlamadas(),
+      // El mp3 se copia a nuestro bucket DESPUES de responder: Telnyx no
+      // espera la descarga. Si no alcanza o falla, lo recoge el cron
+      // call-recordings con un enlace nuevo (lib/grabaciones.ts).
+      copiarGrabacion: (fila, url) =>
+        enSegundoPlano(`grabacion ${fila.id}`, () => copiarGrabacion(fila, { url, cfg: telnyxApiConfig(), timeoutMs: 15_000 })),
+    });
     return NextResponse.json({ ok: true, resultado });
   } catch (err) {
     // 500: Telnyx reintenta, y el evento no se pierde si la base fallo un momento.

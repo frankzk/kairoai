@@ -28,7 +28,8 @@ export interface CronJob {
 //   :00 moovin (~3 min) · :05/:35 icomfly · :10 incidencias · :15 finance-index (~2 min)
 //   :20/:45 wyn · :22 shopify-recheck-stale · :25 icomfly-historial · :30 forza (~2 min)
 //   :40 cargo-expreso · :50 c807 · :55 shopify-refresh
-// Livianos con minuto propio: :13 shiphero-inventario (4 veces al día).
+// Livianos con minuto propio: :13 shiphero-inventario (4 veces al día) ·
+//   :04/:19/:34/:49 call-recordings.
 // Al agregar uno pesado, busca un minuto libre.
 export const CRON_JOBS: CronJob[] = [
   { name: "woo-status", label: "Estados de Kenku Italia", everyMinutes: 5, scheduler: "external" },
@@ -60,6 +61,8 @@ export const CRON_JOBS: CronJob[] = [
   { name: "wyn", label: "Tracking WYN", everyMinutes: 30 },
   // 06:13, 10:13, 14:13 y 18:13 de Costa Rica. Sin conexión responde ok.
   { name: "shiphero-inventario", label: "Inventario de ShipHero (Mireva CR)", everyMinutes: 360 },
+  // Copia las grabaciones de las llamadas a nuestro bucket (lib/grabaciones.ts).
+  { name: "call-recordings", label: "Grabaciones de llamadas", everyMinutes: 15 },
   // Agente de voz Retell: sin llamadas desde el 25/08 y nunca programado.
   { name: "retries", label: "Reintentos del agente de voz", everyMinutes: null },
 ];

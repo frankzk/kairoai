@@ -80,6 +80,10 @@
     {
       "path": "/api/cron/shiphero-inventario",
       "schedule": "13 0,12,16,20 * * *"
+    },
+    {
+      "path": "/api/cron/call-recordings",
+      "schedule": "4,19,34,49 * * * *"
     }
   ],
   "functions": {
@@ -165,6 +169,9 @@
       "maxDuration": 300
     },
     "app/api/cron/shiphero-inventario/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/cron/call-recordings/route.ts": {
       "maxDuration": 60
     }
   }

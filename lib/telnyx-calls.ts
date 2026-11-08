@@ -8,6 +8,7 @@
 
 import crypto from "crypto";
 import { getDB } from "@/lib/db";
+import { esColumnaFaltante, type FilaGrabacion } from "@/lib/grabaciones";
 import {
   claveLlamadaTelnyx,
   crearCredencial,
@@ -109,6 +110,8 @@ export async function crearLlamadaTelnyx(opts: {
   leadId: number | null;
   vendedoraId: number;
   phone: string;
+  /** Pedido por el que se llama (Gestion de pedidos o Novedades), o null. */
+  orderName?: string | null;
 }): Promise<string> {
   const llamadaId = crypto.randomUUID();
   const db = getDB();
@@ -124,26 +127,36 @@ export async function crearLlamadaTelnyx(opts: {
     .lt("started_at", new Date(Date.now() - 60_000).toISOString());
   if (errViejas) console.warn(`[telnyx] no se pudieron cerrar llamadas sin marcar: ${errViejas.message}`);
 
-  const { error } = await db
-    .from("zadarma_calls")
-    .insert({
-      pbx_call_id: claveLlamadaTelnyx(llamadaId),
-      provider: "telnyx",
-      direction: "outgoing",
-      store_id: opts.storeId,
-      lead_id: opts.leadId,
-      vendedora: opts.vendedoraId,
-      phone: opts.phone,
-      raw_phone: opts.phone,
-      status: "calling",
-      started_at: new Date().toISOString(),
-    });
+  const fila: Record<string, unknown> = {
+    pbx_call_id: claveLlamadaTelnyx(llamadaId),
+    provider: "telnyx",
+    direction: "outgoing",
+    store_id: opts.storeId,
+    lead_id: opts.leadId,
+    vendedora: opts.vendedoraId,
+    phone: opts.phone,
+    raw_phone: opts.phone,
+    status: "calling",
+    started_at: new Date().toISOString(),
+  };
+  const orderName = (opts.orderName ?? "").trim();
+  if (orderName) fila.order_name = orderName;
+  let { error } = await db.from("zadarma_calls").insert(fila);
+  // Sin la migracion de grabaciones no existe order_name: la llamada sale
+  // igual, solo sin el pedido (el historial la encuentra por el telefono).
+  if (error && "order_name" in fila && esColumnaFaltante(error)) {
+    delete fila.order_name;
+    ({ error } = await db.from("zadarma_calls").insert(fila));
+  }
   if (error) throw new Error(`crearLlamadaTelnyx: ${error.message}`);
   return llamadaId;
 }
 
 interface FilaLlamada {
   id: number;
+  store_id: number | null;
+  started_at: string | null;
+  created_at: string | null;
   answered_at: string | null;
   ended_at: string | null;
   status: string | null;
@@ -158,7 +171,16 @@ interface FilaLlamada {
  */
 export async function aplicarEventoTelnyx(
   ev: EventoTelnyx,
-  opts: { cfg: TelnyxConfig | null; grabar: boolean; fetchImpl?: typeof fetch }
+  opts: {
+    cfg: TelnyxConfig | null;
+    grabar: boolean;
+    fetchImpl?: typeof fetch;
+    /**
+     * Con call.recording.saved ya anotado: copiar el mp3 a nuestro bucket. La
+     * ruta del webhook lo manda a segundo plano (lib/segundo-plano.ts).
+     */
+    copiarGrabacion?: (fila: FilaGrabacion, url: string | null) => void;
+  }
 ): Promise<"aplicado" | "ignorado"> {
   const llamadaId = leerEstadoCliente(ev.clientState);
   // Sin client_state solo se reconoce por el id de Telnyx guardado en un
@@ -166,7 +188,9 @@ export async function aplicarEventoTelnyx(
   if (!llamadaId && !ev.callControlId) return "ignorado";
 
   const db = getDB();
-  const consulta = db.from("zadarma_calls").select("id, answered_at, ended_at, status, telnyx_call_control_id");
+  const consulta = db
+    .from("zadarma_calls")
+    .select("id, store_id, started_at, created_at, answered_at, ended_at, status, telnyx_call_control_id");
   const { data, error } = await (llamadaId
     ? consulta.eq("pbx_call_id", claveLlamadaTelnyx(llamadaId))
     : consulta.eq("provider", "telnyx").eq("telnyx_call_control_id", ev.callControlId as string)
@@ -205,6 +229,7 @@ export async function aplicarEventoTelnyx(
     case "call.recording.saved":
       cambios.is_recorded = true;
       if (ev.recordingUrl) cambios.record_url = ev.recordingUrl;
+      if (ev.recordingId) cambios.recording_id = ev.recordingId;
       break;
     case "call.cost":
       // Sin costo calculable (status error) no se escribe nada: vacio, no 0.
@@ -217,7 +242,29 @@ export async function aplicarEventoTelnyx(
   }
   if (!Object.keys(cambios).length) return "aplicado";
 
-  const { error: errUpd } = await db.from("zadarma_calls").update(cambios).eq("id", fila.id);
+  let { error: errUpd } = await db.from("zadarma_calls").update(cambios).eq("id", fila.id);
+  // Sin la migracion de grabaciones no existe recording_id: se guarda lo de
+  // siempre (y Telnyx no reintenta el evento por un 500).
+  if (errUpd && "recording_id" in cambios && esColumnaFaltante(errUpd)) {
+    delete cambios.recording_id;
+    ({ error: errUpd } = await db.from("zadarma_calls").update(cambios).eq("id", fila.id));
+  }
   if (errUpd) throw new Error(`aplicarEventoTelnyx: ${errUpd.message}`);
+
+  if (ev.tipo === "call.recording.saved" && opts.copiarGrabacion && (ev.recordingUrl || ev.recordingId)) {
+    opts.copiarGrabacion(
+      {
+        id: fila.id,
+        provider: "telnyx",
+        store_id: fila.store_id,
+        started_at: fila.started_at,
+        created_at: fila.created_at,
+        recording_id: ev.recordingId,
+        record_url: ev.recordingUrl,
+        recording_attempts: 0,
+      },
+      ev.recordingUrl
+    );
+  }
   return "aplicado";
 }

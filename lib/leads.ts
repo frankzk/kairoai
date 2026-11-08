@@ -16,6 +16,7 @@ import {
 import { normalizePhone, phoneConfigForStore } from "./phone-cr";
 import { AGENT_LEG_ANSWERED, describeZadarmaCall } from "./zadarma";
 import { esLlamadaReal } from "./telnyx";
+import { COLUMNAS_GRABACION, esColumnaFaltante, estadoGrabacion, type EstadoGrabacion } from "./grabaciones";
 
 export interface LeadRecord {
   id: number;
@@ -1026,6 +1027,11 @@ export interface LeadHistoryRow {
   note: string | null;
   vendedora_name: string | null;
   occurred_at: string;
+  /**
+   * Solo en las llamadas (kind "phone", id = fila de zadarma_calls): si se
+   * puede escuchar la grabacion (/api/calls/<id>/recording).
+   */
+  grabacion?: EstadoGrabacion | null;
 }
 
 interface ZadarmaCallHistoryRow {
@@ -1037,6 +1043,9 @@ interface ZadarmaCallHistoryRow {
   vendedora: number | null;
   cost?: number | string | null;
   cost_currency?: string | null;
+  is_recorded?: boolean | null;
+  recording_path?: string | null;
+  recording_attempts?: number | null;
 }
 
 
@@ -1062,13 +1071,20 @@ export async function getLeadHistory(storeId: number, leadId: number): Promise<L
   // gestiones: aqui va lo que paso en la linea, no lo que la asesora concluyo.
   // Si la migracion 0028 aun no esta aplicada, el historial de gestiones debe
   // seguir funcionando igual, por eso el error se traga.
-  const { data: callData, error: callError } = await getDB()
-    .from("zadarma_calls")
-    .select("id,direction,status,duration_seconds,started_at,vendedora,cost,cost_currency")
-    .eq("store_id", storeId)
-    .eq("lead_id", leadId)
-    .order("started_at", { ascending: false, nullsFirst: false })
-    .limit(50);
+  const llamadasDelLead = (columnas: string) =>
+    getDB()
+      .from("zadarma_calls")
+      .select(columnas)
+      .eq("store_id", storeId)
+      .eq("lead_id", leadId)
+      .order("started_at", { ascending: false, nullsFirst: false })
+      .limit(50);
+  const COLUMNAS_LLAMADA = "id,direction,status,duration_seconds,started_at,vendedora,cost,cost_currency";
+  let { data: callData, error: callError } = await llamadasDelLead(`${COLUMNAS_LLAMADA},${COLUMNAS_GRABACION}`);
+  // Sin la migracion de grabaciones: las llamadas igual, sin "Escuchar".
+  if (callError && esColumnaFaltante(callError)) {
+    ({ data: callData, error: callError } = await llamadasDelLead(COLUMNAS_LLAMADA));
+  }
   if (callError) {
     console.warn(`[leads] historial sin llamadas Zadarma: ${callError.message}`);
   }
@@ -1078,7 +1094,7 @@ export async function getLeadHistory(storeId: number, leadId: number): Promise<L
   // forma de ver que se intento llamar y el telefono de la asesora nunca
   // descolgo, o sea que el cliente jamas sono.
   // Tampoco las de Telnyx que Kairo preparo y nunca se marcaron (lib/telnyx.ts).
-  const calls = ((callData ?? []) as ZadarmaCallHistoryRow[]).filter(
+  const calls = ((callData ?? []) as unknown as ZadarmaCallHistoryRow[]).filter(
     (r) => r.started_at && r.status !== AGENT_LEG_ANSWERED && esLlamadaReal(r)
   );
 
@@ -1111,6 +1127,7 @@ export async function getLeadHistory(storeId: number, leadId: number): Promise<L
     note: describeZadarmaCall(r),
     vendedora_name: r.vendedora != null ? names.get(r.vendedora) ?? null : null,
     occurred_at: r.started_at as string,
+    grabacion: "recording_path" in r ? estadoGrabacion(r) : null,
   }));
 
   // Orden por instante, no por texto: las dos tablas pueden devolver la fecha

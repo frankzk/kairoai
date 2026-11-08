@@ -47,6 +47,7 @@ import type { ChatLeadSummary } from "@/lib/leads-types";
 import type { CustomerOrder, CustomerSummary } from "@/lib/customer-history";
 import type { OrderAlert } from "@/lib/order-risk";
 import type { LlamadaHistorial } from "@/lib/llamadas-historial";
+import GrabacionLlamada from "@/components/GrabacionLlamada";
 import { fechaComentarioIso, type ComentarioIcomfly, type NotasIcomfly } from "@/lib/icomfly-comentarios";
 import type { IcomflyAdOrigin } from "@/lib/icomfly-ad-origin";
 import {
@@ -862,13 +863,20 @@ export default function OrderDrawer({
                         </div>
                       ) : l ? (
                         // Llamada de la centralita: lo que paso en la linea.
-                        <div key={key} className="flex gap-2 border-b border-border/30 py-1 text-xs">
-                          <span className="whitespace-nowrap text-muted-foreground">{whenCR(l.at)}</span>
-                          <span className="inline-flex items-center gap-1 font-medium">
-                            <Phone className="h-3 w-3" /> Llamada
-                          </span>
-                          <span className="flex-1 text-muted-foreground">{l.descripcion}</span>
-                          {l.asesora && <span className="whitespace-nowrap text-muted-foreground">{l.asesora}</span>}
+                        <div key={key} className="border-b border-border/30 py-1 text-xs">
+                          <div className="flex gap-2">
+                            <span className="whitespace-nowrap text-muted-foreground">{whenCR(l.at)}</span>
+                            <span className="inline-flex items-center gap-1 font-medium">
+                              <Phone className="h-3 w-3" /> Llamada
+                            </span>
+                            <span className="flex-1 text-muted-foreground">{l.descripcion}</span>
+                            {l.asesora && <span className="whitespace-nowrap text-muted-foreground">{l.asesora}</span>}
+                          </div>
+                          {l.grabacion && (
+                            <div className="mt-1">
+                              <GrabacionLlamada callId={l.id} estado={l.grabacion} />
+                            </div>
+                          )}
                         </div>
                       ) : e ? (
                       <div key={key} className="flex gap-2 border-b border-border/30 py-1 text-xs">
