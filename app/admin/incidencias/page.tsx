@@ -477,31 +477,6 @@ function CausasModal({ causas, onClose }: { causas: IncidentCausaStat[]; onClose
   );
 }
 
-// Ventana "Productividad": quien trabaja las novedades, por persona y por dia.
-function ProductividadModal({ storeCode, onClose }: { storeCode: FinanceStoreCode; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <Card className="my-8 w-full max-w-4xl">
-        <div className="flex items-center justify-between border-b border-border p-4">
-          <div>
-            <span className="font-semibold">Productividad de novedades</span>
-            <p className="text-xs text-muted-foreground">{getFinanceStore(storeCode).label}</p>
-          </div>
-          <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
-        </div>
-        <CardContent className="p-4">
-          <ProductividadNovedades storeCode={storeCode} />
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
 
 // ----- Orden de la tabla: columnas ordenables al hacer click en el encabezado.
 type SortKey =
@@ -996,6 +971,27 @@ export default function IncidenciasPage() {
           <EstadoCausasPanel exec={exec} onVerTodas={() => setShowCausas(true)} />
         </div>
 
+        {/* Productividad por persona, como en Leads: se abre con el boton
+            "Productividad" de la fila de busqueda y queda a la vista. */}
+        {showProductividad && (
+          <Card id="productividad-novedades" key={selectedStoreCode}>
+            <CardContent className="p-4 sm:p-5">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold">Productividad</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Quién trabajó novedades en {getFinanceStore(selectedStoreCode).label}, por persona y por día.
+                  </p>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setShowProductividad(false)} aria-label="Cerrar productividad">
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              <ProductividadNovedades storeCode={selectedStoreCode} />
+            </CardContent>
+          </Card>
+        )}
+
         {/* Filtros de la lista y su exportacion. El resumen superior es de la tienda. */}
         <Card>
           <CardContent className="p-3 space-y-2">
@@ -1098,9 +1094,11 @@ export default function IncidenciasPage() {
                 onClick={() => setStatusFilter(statusFilter === "sin_contestar" ? "" : "sin_contestar")}>
                 <CalendarClock className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Reintento fin del día</span>
               </Button>
-              <Button variant="outline" size="sm" className="gap-2 h-9" onClick={() => setShowProductividad(true)}
+              <Button variant={showProductividad ? "default" : "outline"} size="sm" className="gap-2 h-9"
+                onClick={() => setShowProductividad((v) => !v)} aria-expanded={showProductividad}
+                aria-controls="productividad-novedades"
                 title="Quién trabaja las novedades, por persona y por día">
-                <UserCheck className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Productividad</span>
+                <UserCheck className="h-3.5 w-3.5" /> Productividad
               </Button>
               <Button variant="outline" size="sm" className="gap-2 h-9"
                 disabled={exporting || loading || !filtered.length} onClick={exportarExcel}
@@ -1226,7 +1224,6 @@ export default function IncidenciasPage() {
 
       {showNew && <NewModal storeCode={selectedStoreCode} onClose={() => setShowNew(false)} onCreated={() => { setShowNew(false); fetchData(); }} />}
       {showCausas && <CausasModal causas={exec?.causas ?? []} onClose={() => setShowCausas(false)} />}
-      {showProductividad && <ProductividadModal storeCode={selectedStoreCode} onClose={() => setShowProductividad(false)} />}
     </div>
   );
 }
