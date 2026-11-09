@@ -43,10 +43,13 @@ function cargasFinales(leads: PlanLead[], plan: ReturnType<typeof planLeadAssign
 }
 
 describe("quien puede recibir leads y quien prende el reparto", () => {
-  it("asesora con Leads si; supervision y administracion no", () => {
+  it("con Leads o Leads del equipo si; quien administra no", () => {
     expect(esAsesoraRepartible(["leads"])).toBe(true);
     expect(esAsesoraRepartible(["leads", "leads_productividad"])).toBe(true);
-    expect(esAsesoraRepartible(["leads", "leads_equipo"])).toBe(false);
+    expect(esAsesoraRepartible(["leads", "leads_equipo"])).toBe(true);
+    expect(esAsesoraRepartible(["leads_equipo"])).toBe(true);
+    expect(esAsesoraRepartible(["leads", "config"])).toBe(false);
+    expect(esAsesoraRepartible(["leads", "usuarios"])).toBe(false);
     expect(esAsesoraRepartible(["panel", "leads", "leads_equipo", "usuarios", "config"])).toBe(false);
     expect(esAsesoraRepartible(["novedades"])).toBe(false);
   });

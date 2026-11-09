@@ -55,15 +55,16 @@ export function puedeConfigurarReparto(permisos: readonly string[]): boolean {
 }
 
 /**
- * Puede recibir leads: tiene Leads y NO supervisa ni administra. La supervision
- * (leads_equipo) y quien administra usuarios ven el tablero de todas, pero no
- * son asesoras: si el dueño abre Leads no se queda con la mitad de la cola.
+ * Puede recibir leads: tiene Leads (o Leads del equipo: en Costa Rica quien
+ * más vende también supervisa) y NO administra configuracion ni usuarios, para
+ * que el dueño no se quede con la mitad de la cola al abrir Leads. A una
+ * persona puntual se la saca del reparto en Configuración (excluded_user_ids).
  */
 export function esAsesoraRepartible(permisos: readonly string[]): boolean {
   return (
-    permisos.includes("leads") &&
-    !permisos.includes("leads_equipo") &&
-    !permisos.includes("usuarios")
+    (permisos.includes("leads") || permisos.includes("leads_equipo")) &&
+    !permisos.includes("usuarios") &&
+    !permisos.includes("config")
   );
 }
 

@@ -35,6 +35,8 @@ export interface AssignmentSettings {
   updated_at: string | null;
   last_run_at: string | null;
   last_run_summary: unknown;
+  /** Personas que no reciben leads aunque puedan (Configuración). */
+  excluded_user_ids: number[];
 }
 
 /** El error de PostgREST/Postgres cuando la tabla o las funciones del reparto no existen. */
@@ -53,13 +55,14 @@ function sinMigracion(storeId: number): AssignmentSettings {
     updated_at: null,
     last_run_at: null,
     last_run_summary: null,
+    excluded_user_ids: [],
   };
 }
 
 export async function readAssignmentSettings(storeId: number): Promise<AssignmentSettings> {
   const { data, error } = await getDB()
     .from(TABLE)
-    .select("store_id,enabled,updated_by,updated_at,last_run_at,last_run_summary")
+    .select("store_id,enabled,updated_by,updated_at,last_run_at,last_run_summary,excluded_user_ids")
     .eq("store_id", storeId)
     .maybeSingle();
   if (error) {
@@ -75,7 +78,41 @@ export async function readAssignmentSettings(storeId: number): Promise<Assignmen
     updated_at: row?.updated_at ?? null,
     last_run_at: row?.last_run_at ?? null,
     last_run_summary: row?.last_run_summary ?? null,
+    excluded_user_ids: Array.isArray(row?.excluded_user_ids)
+      ? row!.excluded_user_ids.map(Number).filter((n) => Number.isFinite(n))
+      : [],
   };
+}
+
+/** Saca o devuelve a una persona del reparto de una tienda. */
+export async function setAssignmentRecipient(
+  storeId: number,
+  userId: number,
+  recibe: boolean,
+  by: string
+): Promise<AssignmentSettings> {
+  const current = await readAssignmentSettings(storeId);
+  if (!current.available) return current;
+  const excluded = new Set(current.excluded_user_ids);
+  if (recibe) excluded.delete(userId);
+  else excluded.add(userId);
+  const { error } = await getDB()
+    .from(TABLE)
+    .upsert(
+      {
+        store_id: storeId,
+        enabled: current.enabled,
+        excluded_user_ids: Array.from(excluded).sort((a, b) => a - b),
+        updated_by: by.slice(0, 200) || null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "store_id" }
+    );
+  if (error) {
+    if (faltaMigracionReparto(error)) return sinMigracion(storeId);
+    throw new Error(`setAssignmentRecipient: ${error.message}`);
+  }
+  return readAssignmentSettings(storeId);
 }
 
 export async function setAssignmentEnabled(
@@ -129,19 +166,23 @@ export async function readAssignmentBoardInfo(storeId: number, storeCode: string
   }
 }
 
-/** Las personas de la tienda que pueden recibir leads (para Configuración). */
-export async function listRepartibleAdvisors(storeCode: string): Promise<string[]> {
+/** Las personas de la tienda que pueden recibir leads (para Configuración), y si reciben. */
+export async function listRepartibleAdvisors(
+  storeCode: string,
+  excluded: readonly number[] = []
+): Promise<Array<{ id: number; nombre: string; recibe: boolean }>> {
   const { data, error } = await getDB()
     .from("kairo_users")
-    .select("nombre,permisos")
+    .select("id,nombre,permisos")
     .eq("activo", true)
     .contains("tiendas", [storeCode])
-    .overlaps("permisos", ["leads"])
+    .overlaps("permisos", ["leads", "leads_equipo"])
     .order("nombre");
   if (error) throw new Error(`listRepartibleAdvisors: ${error.message}`);
-  return ((data ?? []) as Array<{ nombre: string; permisos: string[] | null }>)
+  const fuera = new Set(excluded);
+  return ((data ?? []) as Array<{ id: number; nombre: string; permisos: string[] | null }>)
     .filter((u) => esAsesoraRepartible(u.permisos ?? []))
-    .map((u) => u.nombre);
+    .map((u) => ({ id: u.id, nombre: u.nombre, recibe: !fuera.has(u.id) }));
 }
 
 export type AssignmentRunSkip = "sin_migracion" | "apagado" | "en_curso" | "turno_perdido";
@@ -186,6 +227,7 @@ export async function runLeadAssignment(
   const settings = await readAssignmentSettings(store.id);
   if (!settings.available) return { store: store.code, skipped: "sin_migracion" };
   if (!settings.enabled) return { store: store.code, skipped: "apagado" };
+  const excluded = new Set(settings.excluded_user_ids);
 
   const db = getDB();
   const lease = await db.rpc("lead_assignment_lease", { p_store: store.id, p_seconds: LEASE_SECONDS });
@@ -227,7 +269,7 @@ export async function runLeadAssignment(
     const advisors = team.map((p) => ({
       userId: p.user_id,
       name: p.name,
-      repartible: esAsesoraRepartible(p.permisos),
+      repartible: esAsesoraRepartible(p.permisos) && !excluded.has(p.user_id),
       status: presenceStatus(p, nowMs),
       lastSeenMs: p.last_seen_at ? Date.parse(p.last_seen_at) : null,
     }));

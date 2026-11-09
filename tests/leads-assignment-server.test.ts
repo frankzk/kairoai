@@ -97,7 +97,7 @@ describe("encendido", () => {
     state.users = [
       { id: 10, nombre: "Ana", staff_id: 1, permisos: ["leads"] },
       { id: 11, nombre: "Bea", staff_id: 2, permisos: ["leads"] },
-      { id: 12, nombre: "Jefa", staff_id: null, permisos: ["leads", "leads_equipo"] },
+      { id: 12, nombre: "Jefa", staff_id: null, permisos: ["leads", "leads_equipo", "usuarios"] },
     ];
     state.tabs = [{ user_id: 10, ...visible }, { user_id: 11, ...visible }, { user_id: 12, ...visible }];
     state.presence = state.tabs.map((t) => ({ user_id: t.user_id, last_seen_at: t.last_seen_at, last_activity_at: t.last_activity_at }));
@@ -117,6 +117,29 @@ describe("encendido", () => {
     expect(apply?.[1]).toMatchObject({ p_store: 1, p_token: "token-1" });
     const release = state.rpc.mock.calls.find((c) => c[0] === "lead_assignment_release");
     expect(release?.[1]).toMatchObject({ p_store: 1, p_token: "token-1" });
+  });
+
+  it("la supervision recibe leads; la persona sacada en Configuracion no", async () => {
+    const visible = { last_seen_at: new Date(NOW.getTime() - 5_000).toISOString(), last_activity_at: new Date(NOW.getTime() - 10_000).toISOString(), visible: true, closed: false };
+    state.settings = { data: { store_id: 1, enabled: true, excluded_user_ids: [11] }, error: null };
+    state.users = [
+      { id: 10, nombre: "Leonor", staff_id: 1, permisos: ["leads", "leads_equipo"] },
+      { id: 11, nombre: "Bea", staff_id: 2, permisos: ["leads"] },
+    ];
+    state.tabs = [{ user_id: 10, ...visible }, { user_id: 11, ...visible }];
+    state.presence = state.tabs.map((t) => ({ user_id: t.user_id, last_seen_at: t.last_seen_at, last_activity_at: t.last_activity_at }));
+    state.leads = [lead(1), lead(2)];
+    state.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+      if (name === "lead_assignment_lease") return { data: "token-1", error: null };
+      if (name === "lead_assignment_activity") return { data: { protected: [], recent: [] }, error: null };
+      if (name === "lead_assignment_apply") return { data: (args.p_changes as unknown[]).length, error: null };
+      return { data: null, error: null };
+    });
+    const r = await runLeadAssignment(STORE, NOW);
+    expect(r).toMatchObject({ skipped: null, activas: ["Leonor"], aplicados: 2 });
+    const apply = state.rpc.mock.calls.find((c) => c[0] === "lead_assignment_apply");
+    const cambios = (apply?.[1] as { p_changes: Array<{ to_user: number }> }).p_changes;
+    expect(cambios.map((c) => c.to_user)).toEqual([10, 10]);
   });
 
   it("si el turno se perdio (o se apago a mitad), lo dice y suelta igual", async () => {

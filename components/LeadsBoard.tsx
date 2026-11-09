@@ -624,7 +624,10 @@ export default function LeadsBoard() {
   const matchesOwner = useCallback(
     (lead: LeadRow) => {
       if (!filtrandoPorDuena) return true;
-      if (ownerFilter === "mine") return assignment?.me != null && lead.claimed_by === assignment.me;
+      // "Mis leads" = los suyos + los que todavia no tienen dueña: si nadie
+      // estaba activa en el ultimo reparto, la cola no queda vacia.
+      if (ownerFilter === "mine")
+        return assignment?.me != null && (lead.claimed_by === assignment.me || lead.claimed_by == null);
       if (ownerFilter === "unassigned") return lead.claimed_by == null;
       return lead.claimed_by === ownerFilter;
     },
@@ -1334,7 +1337,11 @@ export default function LeadsBoard() {
             {(
               [
                 ...(assignment?.me != null
-                  ? [{ key: "mine" as OwnerFilter, label: "Mis leads", count: asignados.porUsuario[assignment.me] ?? 0 }]
+                  ? [{
+                      key: "mine" as OwnerFilter,
+                      label: "Mis leads",
+                      count: (asignados.porUsuario[assignment.me] ?? 0) + asignados.sinAsignar,
+                    }]
                   : []),
                 { key: "all" as OwnerFilter, label: "Todos", count: asignados.total },
                 ...(assignment?.team
