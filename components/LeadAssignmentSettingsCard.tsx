@@ -12,7 +12,7 @@ interface StoreAssignment {
   updated_by: string | null;
   updated_at: string | null;
   last_run_at: string | null;
-  asesoras: string[];
+  asesoras: Array<{ id: number; nombre: string; recibe: boolean }>;
 }
 
 function fmtFecha(iso: string | null): string {
@@ -51,14 +51,18 @@ export default function LeadAssignmentSettingsCard() {
       });
   }, []);
 
-  async function toggle(store: StoreAssignment) {
-    setSaving(store.code);
+  async function toggle(store: StoreAssignment, persona?: { id: number; recibe: boolean }) {
+    setSaving(persona ? `${store.code}:${persona.id}` : store.code);
     setError("");
     try {
       const res = await fetch("/api/leads/assignment-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ store: store.code, enabled: !store.enabled }),
+        body: JSON.stringify(
+          persona
+            ? { store: store.code, user_id: persona.id, recibe: persona.recibe }
+            : { store: store.code, enabled: !store.enabled }
+        ),
       });
       const d = (await res.json().catch(() => ({}))) as Partial<StoreAssignment> & { error?: string };
       if (!res.ok) throw new Error(d.error || "No se pudo guardar el reparto de leads.");
@@ -93,11 +97,27 @@ export default function LeadAssignmentSettingsCard() {
                   <p className="mt-1 text-xs text-amber-400">Pendiente: aplicar la migración del reparto de leads.</p>
                 ) : (
                   <>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {store.asesoras.length
-                        ? `Pueden recibir leads: ${store.asesoras.join(", ")}.`
-                        : "Ninguna asesora con acceso a Leads en esta tienda."}
-                    </p>
+                    {store.asesoras.length ? (
+                      <fieldset className="mt-2">
+                        <legend className="text-xs text-muted-foreground">Reciben leads:</legend>
+                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                          {store.asesoras.map((a) => (
+                            <label key={a.id} className="flex items-center gap-1.5 text-xs">
+                              <input
+                                type="checkbox"
+                                checked={a.recibe}
+                                disabled={!store.available || saving !== null}
+                                onChange={() => toggle(store, { id: a.id, recibe: !a.recibe })}
+                                className="h-3.5 w-3.5 accent-primary"
+                              />
+                              <span className={a.recibe ? "" : "text-muted-foreground line-through"}>{a.nombre}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
+                    ) : (
+                      <p className="mt-1 text-xs text-muted-foreground">Nadie con acceso a Leads en esta tienda.</p>
+                    )}
                     {store.updated_by && store.updated_at && (
                       <p className="text-[11px] text-muted-foreground">
                         {store.enabled ? "Encendido" : "Apagado"} por {store.updated_by} el {fmtFecha(store.updated_at)}
@@ -135,7 +155,9 @@ export default function LeadAssignmentSettingsCard() {
           <p>
             Cada 5 minutos los leads abiertos (Hoy y Seguimiento) se reparten en partes iguales entre las asesoras que
             Productividad muestra como Activa, en el orden de la cola: cada una recibe la misma mezcla de carritos,
-            enganchados y demás. Cada asesora ve sus leads en «Mis leads».
+            enganchados y demás. Cada asesora ve en «Mis leads» los suyos y los que todavía no tienen dueña. Quien
+            administra configuración o usuarios no recibe leads; a cualquier otra persona se la puede sacar
+            desmarcándola.
           </p>
           <p>
             Si se conecta otra asesora, se le pasan leads que nadie ha trabajado. Si una asesora lleva más de 2 horas

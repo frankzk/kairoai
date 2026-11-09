@@ -12,6 +12,9 @@ Reglas:
 
 Estado actual:
 
+Reparto de leads, personas que no reciben: `20261109120000_lead_assignment_excluded.sql`
+aplicada el 09/11/2026 (columna `excluded_user_ids` en `lead_assignment_settings`).
+
 Grabaciones de llamadas: `20261107130000_call_recordings.sql` aplicada el
 07/11/2026 (va con el deploy que activa `TELNYX_GRABAR=1`). Sin ella todo sigue
 como antes: las llamadas salen y se ven en los historiales, solo sin «Escuchar»
