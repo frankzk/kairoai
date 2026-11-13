@@ -6,7 +6,7 @@ import type { TiendaNav } from "@/lib/navegacion";
 import m from "./menu-lateral.module.css";
 
 /** Código del país de la tienda: CR, HN, IT, MX, AR. */
-const sigla = (t: TiendaNav) =>
+export const sigla = (t: TiendaNav) =>
   (t.code.split("-")[1] ?? t.pais.slice(0, 2)).toLocaleUpperCase("es");
 
 /**

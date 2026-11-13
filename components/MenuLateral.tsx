@@ -32,7 +32,7 @@ import {
 import { inicioDe } from "@/lib/permisos";
 import { elegirTienda, useSelectedStore } from "@/lib/use-selected-store";
 import type { FinanceStoreCode } from "@/lib/store-config";
-import { SelectorTienda } from "./SelectorTienda";
+import { SelectorTienda, sigla } from "./SelectorTienda";
 import { aplicarTema, leerTema, type Tema } from "@/lib/tema";
 import m from "./menu-lateral.module.css";
 
@@ -151,8 +151,12 @@ export default function MenuLateral({ children }: { children: ReactNode }) {
           <Menu aria-hidden="true" />
         </button>
         <span className={m.topTitle}>
-          <span className={m.mark} aria-hidden="true">
-            K
+          <span
+            className={tienda ? m.storeMark : m.mark}
+            data-marca={tienda?.marca}
+            aria-hidden="true"
+          >
+            {tienda ? sigla(tienda) : "K"}
           </span>
           {tienda?.label ?? "Kairo"}
           {seccion && (

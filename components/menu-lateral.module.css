@@ -428,7 +428,8 @@
   font-size: 15px;
   font-weight: 600;
 }
-.topTitle .mark {
+.topTitle .mark,
+.topTitle .storeMark {
   width: 24px;
   height: 24px;
   border-radius: 7px;

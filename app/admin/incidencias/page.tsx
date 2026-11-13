@@ -460,9 +460,9 @@ function CausasModal({ causas, onClose }: { causas: IncidentCausaStat[]; onClose
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4"
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[rgb(15_15_30/0.36)] dark:bg-black/60 p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <Card className="my-8 w-full max-w-lg">
+      <Card className="my-8 w-full max-w-lg rounded-xl shadow-xl">
         <div className="flex items-center justify-between border-b border-border p-4">
           <span className="font-semibold">Causas · últimos 30 días</span>
           <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
@@ -1326,10 +1326,10 @@ function DetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-2 sm:p-4"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-[rgb(15_15_30/0.36)] dark:bg-black/60 p-2 sm:p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <Card className="my-1 flex h-[calc(100vh-1rem)] w-full max-w-[96rem] flex-col overflow-hidden sm:my-0 sm:h-[calc(100vh-2rem)]">
+      <Card className="my-1 flex h-[calc(100vh-1rem)] w-full max-w-[96rem] flex-col overflow-hidden rounded-xl shadow-xl sm:my-0 sm:h-[calc(100vh-2rem)]">
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2">
             <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[incident.status].badge}`}>{STATUS_META[incident.status].label}</span>
@@ -1707,8 +1707,8 @@ function NewModal({ storeCode, onClose, onCreated }: { storeCode: FinanceStoreCo
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center overflow-y-auto p-4">
-      <Card className="w-full max-w-md my-8">
+    <div className="fixed inset-0 z-50 bg-[rgb(15_15_30/0.36)] dark:bg-black/60 flex items-start justify-center overflow-y-auto p-4">
+      <Card className="my-8 w-full max-w-md rounded-xl shadow-xl">
         <div className="flex items-center justify-between p-4 border-b border-border">
           <span className="font-semibold">Nueva novedad</span>
           <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>

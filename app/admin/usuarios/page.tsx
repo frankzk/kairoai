@@ -408,7 +408,7 @@ export default function UsuariosPage() {
 
       {cambioClave && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4"
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[rgb(15_15_30/0.36)] dark:bg-black/60 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="titulo-clave"
@@ -472,7 +472,7 @@ export default function UsuariosPage() {
 
       {borrador && catalogo && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4"
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[rgb(15_15_30/0.36)] dark:bg-black/60 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="titulo-usuario"

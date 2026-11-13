@@ -529,12 +529,12 @@ export default function OrderDrawer({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-2 sm:p-4"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-[rgb(15_15_30/0.36)] dark:bg-black/60 p-2 sm:p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <Card className="my-1 flex h-[calc(100vh-1rem)] w-full max-w-[96rem] flex-col overflow-hidden sm:my-0 sm:h-[calc(100vh-2rem)]">
+      <Card className="my-1 flex h-[calc(100vh-1rem)] w-full max-w-[96rem] flex-col overflow-hidden rounded-xl shadow-xl sm:my-0 sm:h-[calc(100vh-2rem)]">
         {/* Cabecera minima: estado + pedido. El resto de los datos vive en la
             primera columna, como en Novedades. */}
         <div className="flex items-center justify-between border-b border-border p-4">

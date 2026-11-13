@@ -1903,7 +1903,7 @@ function LeadDrawer({
   const leadStore = getFinanceStoreById(lead.store_id)?.code ?? store;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex justify-end bg-[rgb(15_15_30/0.36)] dark:bg-black/60" onClick={onClose}>
       {/* Drawer SIEMPRE ancho: columna izquierda solo chat, derecha el panel
           del cliente. "Crear pedido" se superpone sobre la derecha y al
           terminar vuelve al panel. */}
@@ -1915,7 +1915,7 @@ function LeadDrawer({
         aria-modal="true"
         aria-label={`Ficha de ${lead.name || lead.phone}`}
         tabIndex={-1}
-        className="flex h-full w-full max-w-[70rem] flex-col border-l border-border bg-card outline-none"
+        className="flex h-full w-full max-w-[70rem] flex-col border-l border-border bg-card shadow-xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border p-4">

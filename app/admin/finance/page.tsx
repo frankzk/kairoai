@@ -1760,7 +1760,7 @@ function ModalOverlay({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(15_15_30/0.36)] dark:bg-black/60 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby={labelledBy}
