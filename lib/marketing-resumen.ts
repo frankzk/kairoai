@@ -360,8 +360,8 @@ export function buildBrokenItems(input: BrokenInput): BrokenItem[] {
         tone: "risk",
         title: alert.title,
         detail: alert.detail,
-        target: { view: "acciones", anchor: "actions-title" },
-        link: "Pausar en Acciones",
+        target: { view: "report", anchor: "actions-title" },
+        link: "Ver la campaña en Detalle",
       });
     else if (alert.code === "inventario_viejo")
       items.push({

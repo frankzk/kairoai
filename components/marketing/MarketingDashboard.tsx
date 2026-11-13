@@ -665,10 +665,6 @@ export default function MarketingDashboard() {
                 saving={api.saving}
                 saved={api.saved}
                 save={api.save}
-                accounts={api.accounts}
-                onOpenAccounts={() =>
-                  navigate("analysis", "analisis-cuentas")
-                }
               />
             ) : view === "analysis" ? (
               <MarketingAnalysis

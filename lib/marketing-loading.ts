@@ -79,8 +79,8 @@ export function marketingLoadPlan(
       view === "analysis",
     changes: view === "resumen" || view === "acciones" || view === "report",
     inventory: view === "report" || view === "analysis",
-    /** Account status and applied rates; in the report and Resumen it loads after the main resources. */
-    accounts: view === "resumen" || view === "report" || view === "analysis",
+    /** Account status and applied rates; in Resumen it loads after the main resources. */
+    accounts: view === "resumen" || view === "analysis",
     /** Anonymous order facts of the period (cancellations, origin, provinces). */
     ordersInsights: view === "analysis",
     /**
