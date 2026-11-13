@@ -1,6 +1,8 @@
 // Reparto automatico de leads: las reglas puras (lib/leads-assignment.ts).
 import { describe, expect, it } from "vitest";
 import {
+  ASSIGNMENT_KEEP_TOP,
+  ASSIGNMENT_REBALANCE_MAX_PER_RUN,
   ASSIGNMENT_REBALANCE_MIN_GAP,
   ASSIGNMENT_RELEASE_OFFLINE_MS,
   assignableLeadsInOrder,
@@ -169,28 +171,39 @@ describe("planLeadAssignment", () => {
     expect(plan.changes.find((c) => c.lead_id === 1)?.to_user).toBe(2);
   });
 
-  it("se conecta una tercera: se emparejan las cargas moviendo SOLO lo no trabajado", () => {
+  it("se conecta una tercera: se empareja de a poco, sin tocar lo trabajado ni lo de arriba", () => {
     const deA = leadsEnOrden(868, 1, 1);
     const deB = leadsEnOrden(868, 2, 1001);
-    const leads = [...deA, ...deB];
+    let leads = [...deA, ...deB];
     // A trabajo sus primeros 300; esos no se mueven.
     const protegidos = new Set(deA.slice(0, 300).map((l) => l.id));
-    const plan = planLeadAssignment({
-      enabled: true,
-      nowMs: NOW,
-      advisors: [asesora(1), asesora(2), asesora(3)],
-      leads,
-      protectedIds: protegidos,
-    });
-    const { final, cargas } = cargasFinales(leads, plan);
+    const arribaDeB = new Set(deB.slice(0, ASSIGNMENT_KEEP_TOP).map((l) => l.id));
+    let corridas = 0;
+    for (; corridas < 40; corridas++) {
+      const plan = planLeadAssignment({
+        enabled: true,
+        nowMs: NOW,
+        advisors: [asesora(1), asesora(2), asesora(3)],
+        leads,
+        protectedIds: protegidos,
+      });
+      if (!plan.changes.length) break;
+      // Cada corrida mueve poco, solo a la nueva, nada trabajado ni de arriba.
+      expect(plan.changes.length).toBeLessThanOrEqual(ASSIGNMENT_REBALANCE_MAX_PER_RUN);
+      expect(plan.changes.every((c) => c.to_user === 3)).toBe(true);
+      expect(plan.changes.every((c) => !protegidos.has(c.lead_id) && !arribaDeB.has(c.lead_id))).toBe(true);
+      expect(plan.stats.rebalanceados).toBe(plan.changes.length);
+      const { final } = cargasFinales(leads, plan);
+      leads = leads.map((l) => ({ ...l, claimed_by: final.get(l.id) ?? null }));
+    }
+    const cargas = new Map<number, number>();
+    for (const l of leads) cargas.set(l.claimed_by!, (cargas.get(l.claimed_by!) ?? 0) + 1);
     const valores = [cargas.get(1) ?? 0, cargas.get(2) ?? 0, cargas.get(3) ?? 0];
     expect(valores.reduce((a, b) => a + b, 0)).toBe(1736);
-    expect(Math.max(...valores) - Math.min(...valores)).toBeLessThanOrEqual(1);
-    for (const id of Array.from(protegidos)) expect(final.get(id)).toBe(1);
-    expect(plan.changes.every((c) => !protegidos.has(c.lead_id))).toBe(true);
-    expect(plan.changes.every((c) => c.to_user === 3)).toBe(true);
-    expect(plan.stats.rebalanceados).toBe(plan.changes.length);
-    expect(plan.stats.protegidos).toBe(300);
+    // Queda dentro del umbral de rebalanceo, en varias corridas y no de golpe.
+    expect(Math.max(...valores) - Math.min(...valores)).toBeLessThanOrEqual(ASSIGNMENT_REBALANCE_MIN_GAP);
+    expect(corridas).toBeGreaterThan(10);
+    for (const id of Array.from(protegidos)) expect(leads.find((l) => l.id === id)?.claimed_by).toBe(1);
   });
 
   it("si todo lo de la cargada esta trabajado, no se mueve nada", () => {
