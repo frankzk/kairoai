@@ -60,7 +60,12 @@ async function account(
     if (body.error) throw new Error("Meta error");
     return body;
   }
-  async function pages(edge: string, fields: string, insights = false) {
+  async function pages(
+    edge: string,
+    fields: string,
+    insights = false,
+    onlyActive = false,
+  ) {
     const rows: Json[] = [];
     let after = "";
     for (let page = 0; page < 25; page++) {
@@ -68,7 +73,7 @@ async function account(
       url.searchParams.set("fields", fields);
       url.searchParams.set("limit", insights ? "500" : "100");
       if (after) url.searchParams.set("after", after);
-      if (structureOnly && edge === "ads")
+      if ((structureOnly || onlyActive) && edge === "ads")
         url.searchParams.set("effective_status", JSON.stringify(["ACTIVE"]));
       if (insights) {
         url.searchParams.set("level", structureOnly ? "adset" : "ad");
@@ -142,7 +147,19 @@ async function account(
   void metadata.promise.then(([ads, sets]) => {
     if (!ads || !sets) metadataCache.delete(metadataKey);
   });
-  const [rows, [adsMeta, loadedSets]] = await Promise.all([
+  // Lectura liviana (scope=ads, sin estructura): igual trae el Post ID y el
+  // estado de los anuncios ACTIVOS, que necesita "Pasar a COST CAP" para
+  // duplicar el anuncio. Si falla, el reporte sigue sin esos datos.
+  const activePosts =
+    !includeStructure && !structureOnly
+      ? pages(
+          "ads",
+          "id,effective_status,creative{id,effective_object_story_id}",
+          false,
+          true,
+        ).catch(() => null)
+      : Promise.resolve(null);
+  const [rows, [adsMeta, loadedSets], postsMeta] = await Promise.all([
     pages(
       "insights",
       structureOnly
@@ -151,6 +168,7 @@ async function account(
       true,
     ),
     metadata.promise,
+    activePosts,
   ]);
   const setsMeta: Json[] | null = includeStructure
     ? loadedSets
@@ -241,6 +259,26 @@ async function account(
       interactions: action(row.actions, ["post_engagement"]) ?? 0,
     });
     ads.set(adId, ad);
+  }
+  if (postsMeta) {
+    // Con la lista de activos en la mano, un anuncio con gasto que no está
+    // en ella ya no está activo (pausado, en revisión, archivado).
+    const activeIds = new Set(postsMeta.map((row) => string(row.id)));
+    ads.forEach((ad) => {
+      if (!activeIds.has(ad.id)) ad.effectiveStatus = "NO_ACTIVO";
+    });
+  }
+  for (const row of postsMeta ?? []) {
+    // Solo completa anuncios que ya están en el reporte (con gasto).
+    const ad = ads.get(string(row.id));
+    if (!ad) continue;
+    const creative = object(row.creative),
+      post =
+        string(creative.effective_object_story_id) ||
+        string(creative.object_story_id);
+    ad.effectiveStatus = string(row.effective_status);
+    ad.creativeId = string(creative.id) || null;
+    ad.postId = /^\d+_\d+$/.test(post) ? post : null;
   }
   for (const row of adsMeta ?? []) {
     const id = string(row.id);

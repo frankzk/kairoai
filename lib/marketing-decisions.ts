@@ -536,6 +536,8 @@ export interface CreativeDecision {
   campaignName: string;
   adId: string;
   adName: string;
+  /** Post de Facebook/Instagram del anuncio (page_post), para duplicarlo en la COST CAP. */
+  postId: string | null;
   product: string | null;
   productKey: string | null;
   spendUsd: number;
@@ -632,6 +634,7 @@ export function buildCreativeDecisions(input: {
         campaignName: row.name,
         adId: ad.id,
         adName: ad.name,
+        postId: ad.postId ?? null,
         product: row.product?.name ?? null,
         productKey: row.product?.key ?? null,
         spendUsd: Math.round(spend * 100) / 100,
