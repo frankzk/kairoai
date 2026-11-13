@@ -337,6 +337,15 @@ export function useMarketing(
     if (result.ok) setChangesRevision((value) => value + 1);
     return result.ok ? null : result.error;
   }
+  /** Deletes a manual change (undo of "Hecho") and reloads the change log. */
+  async function deleteChange(id: string) {
+    const result = await sendMarketing(
+      `/api/marketing/changes?store=mireva-cr&id=${encodeURIComponent(id)}`,
+      "DELETE",
+    );
+    if (result.ok) setChangesRevision((value) => value + 1);
+    return result.ok ? null : result.error;
+  }
   const [saving, setSaving] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saved, setSaved] = useState("");
@@ -427,6 +436,7 @@ export function useMarketing(
     loadSegmentation,
     saveRate,
     logChange,
+    deleteChange,
     saving,
     saveError,
     saved,

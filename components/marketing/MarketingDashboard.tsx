@@ -192,9 +192,18 @@ export default function MarketingDashboard() {
     });
     return () => window.cancelAnimationFrame(frame);
   });
+  // Acciones opens the queue on the filter of the Resumen link it came from.
+  const [actionsFocus, setActionsFocus] = useState<{
+    id: string;
+    n: number;
+  } | null>(null);
   function navigate(next: View, anchor?: string) {
     setView(next);
     setScrollTo(anchor ?? "");
+    if (next === "acciones")
+      setActionsFocus((current) =>
+        anchor ? { id: anchor, n: (current?.n ?? 0) + 1 } : null,
+      );
     if (!anchor) window.scrollTo({ top: 0 });
   }
   const tab: MarketingTab = marketingTab(view);
@@ -616,6 +625,8 @@ export default function MarketingDashboard() {
                 saving={api.saving}
                 save={api.save}
                 logChange={api.logChange}
+                deleteChange={api.deleteChange}
+                focus={actionsFocus}
                 filterLabel={
                   period && !periodIsToday(period, marketingDate())
                     ? periodLabelText(period, marketingDate())

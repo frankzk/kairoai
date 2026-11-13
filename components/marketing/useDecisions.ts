@@ -34,19 +34,25 @@ export function useDecisions(input: {
   costCapAds: Resource<CharlieReport>;
 }) {
   const { data, actions, control, changes, settings, fx, actionRows } = input;
+  // Meta activity + the manual log (learning guard and "Hecho" marks).
+  const allChanges = useMemo(
+    () =>
+      decisionChanges(
+        actions.data?.meta.data?.accounts ?? [],
+        changes.data?.changes ?? [],
+      ),
+    [actions.data, changes.data],
+  );
   const campaigns = useMemo(
     () =>
       actionRows && control.data
         ? buildCampaignDecisions({
             rows: actionRows,
-            changes: decisionChanges(
-              actions.data?.meta.data?.accounts ?? [],
-              changes.data?.changes ?? [],
-            ),
+            changes: allChanges,
             now: new Date(control.data.generatedAt),
           })
         : null,
-    [actionRows, control.data, actions.data, changes.data],
+    [actionRows, control.data, allChanges],
   );
   const estimates = useMemo(
     () =>
@@ -71,10 +77,11 @@ export function useDecisions(input: {
             estimates,
             days: control.data.days,
             fx,
+            changes: allChanges,
             now: new Date(control.data.generatedAt),
           })
         : null,
-    [actionRows, estimates, control.data, report, fx],
+    [actionRows, estimates, control.data, report, fx, allChanges],
   );
   const loading = actions.loading || control.loading || changes.loading;
   const creativesStatus: "ready" | "loading" | "unavailable" = creatives
