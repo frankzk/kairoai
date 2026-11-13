@@ -732,3 +732,21 @@ describe("tabla de acciones con datos", () => {
     expect(result.meta[0].action.code).toBe("asignar_producto");
   });
 });
+
+describe("decidedInAcciones", () => {
+  it("hides the old budget advice in Detalle but keeps stock and test results", async () => {
+    const { decidedInAcciones } = await import("../lib/marketing-actions");
+    const a = (code: string, label = "x") =>
+      ({ code, label, tone: "info", detail: "" }) as Parameters<
+        typeof decidedInAcciones
+      >[0];
+    expect(decidedInAcciones(a("escalar", "Escalar +20 %"))).toBe(true);
+    expect(decidedInAcciones(a("en_espera"))).toBe(true);
+    expect(decidedInAcciones(a("mantener"))).toBe(true);
+    expect(decidedInAcciones(a("cpa_alto", "CPA alto"))).toBe(true);
+    expect(decidedInAcciones(a("cpa_alto", "No pasó la prueba"))).toBe(false);
+    expect(decidedInAcciones(a("pausar_stock"))).toBe(false);
+    expect(decidedInAcciones(a("reactivar"))).toBe(false);
+    expect(decidedInAcciones(a("en_prueba"))).toBe(false);
+  });
+});

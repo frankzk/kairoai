@@ -302,9 +302,9 @@ describe("Analysis tab loading (modules 4–12)", () => {
       productsInsights: true,
     });
   });
-  it("keeps the report light: account status only (deferred), no heavy insights", () => {
+  it("keeps the report light: no account status (Resumen has it), no heavy insights", () => {
     expect(marketingLoadPlan("report")).toMatchObject({
-      accounts: true,
+      accounts: false,
       ordersInsights: false,
       productsInsights: false,
     });

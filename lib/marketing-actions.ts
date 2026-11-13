@@ -68,6 +68,22 @@ export interface SuggestedAction {
   /** ISO time when the action is due. */
   due?: string;
 }
+/**
+ * Budget advice from this older rule set (hold, scale, high CPA, keep). Since
+ * the redesign the budget is decided in Acciones (CPA real of 3 complete
+ * days, ≥ 5 orders to scale, −20 % between USD 8,50 and 11), so Detalle shows
+ * a pointer instead of these suggestions to avoid two different answers.
+ * The test results ("No pasó la prueba") stay: they are not budget advice.
+ */
+export function decidedInAcciones(action: SuggestedAction): boolean {
+  return (
+    action.code === "escalar" ||
+    action.code === "en_espera" ||
+    action.code === "mantener" ||
+    (action.code === "cpa_alto" && action.label === "CPA alto")
+  );
+}
+
 export interface Window {
   spendNative: number | null;
   spendUsd: number | null;

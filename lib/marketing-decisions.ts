@@ -40,6 +40,8 @@ export const DECISION_RULES = {
   /** Pedidos reales mínimos en la ventana para escalar. */
   scaleMinRealOrders: 5,
   scaleStep: MARKETING_TARGETS.scaleStep,
+  /** Bajar: −20 % del presupuesto diario (confirmado por el dueño). */
+  reduceStep: 0.2,
   /** Sobre la meta y hasta aquí: bajar. Por encima: apagar. */
   lowerMaxCpaUsd: 11,
   /** Gasto sin ningún pedido real que apaga (2 × CPA objetivo). */
@@ -67,7 +69,7 @@ export type DecisionAction =
 
 export const DECISION_LABEL: Record<DecisionAction, string> = {
   escalar: `Escalar +${Math.round(DECISION_RULES.scaleStep * 100)} %`,
-  bajar: "Bajar presupuesto",
+  bajar: `Bajar −${Math.round(DECISION_RULES.reduceStep * 100)} %`,
   apagar: "Apagar",
   aprendizaje: "En aprendizaje",
   mantener: "Mantener",
@@ -87,13 +89,39 @@ export interface DecisionWindow {
   partial: boolean;
 }
 
+/**
+ * "Hecho" de la vista Acciones: una línea del registro manual de cambios
+ * (marketing_campaign_changes) cuyo detalle empieza con DONE_PREFIX y la
+ * acción entre paréntesis. Así la marca alimenta la guarda de aprendizaje
+ * como cualquier otro cambio a mano (presupuesto, estado, creativo).
+ */
+export type DoneAction = "escalar" | "bajar" | "apagar" | "costcap";
+export interface DoneMark {
+  action: DoneAction;
+  at: string;
+  by: string | null;
+  /** id del registro (para deshacer); null si vino sin id. */
+  id: string | null;
+  /** Anuncio marcado (solo COST CAP). */
+  adId: string | null;
+}
+
 export interface CampaignDecision {
   key: string;
   platform: "meta" | "tiktok";
+  accountId: string;
+  campaignId: string;
   accountLabel: string;
   name: string;
   type: CampaignActionRow["type"];
   product: string | null;
+  productKey: string | null;
+  /** Moneda de la cuenta (la del presupuesto). */
+  currency: string;
+  /** Presupuesto diario actual en la moneda de la cuenta (null = sin dato, p. ej. TikTok). */
+  dailyBudget: number | null;
+  /** Presupuesto sugerido al escalar o bajar (null sin presupuesto actual u otra acción). */
+  suggestedBudget: number | null;
   action: DecisionAction;
   label: string;
   detail: string;
@@ -107,6 +135,117 @@ export interface CampaignDecision {
   todayAlert: string | null;
   /** Cambio que puso la campaña en aprendizaje (solo con acción "aprendizaje"). */
   learning: { at: string; kind: CampaignChange["kind"] | "nueva" } | null;
+  /**
+   * Ya se marcó "Hecho" para esta acción en las últimas `learningHours`
+   * (un escalado hecho deja la campaña "En aprendizaje": sigue siendo esa marca).
+   */
+  done: DoneMark | null;
+}
+
+/** Paso de redondeo del presupuesto por moneda (USD y soles a la unidad, colones de 500 en 500). */
+export const BUDGET_UNIT: Record<string, number> = {
+  USD: 1,
+  PEN: 1,
+  CRC: 500,
+  COP: 1000,
+  MXN: 10,
+};
+
+/**
+ * Presupuesto diario tras subir (`step` > 0) o bajar (`step` < 0) un
+ * porcentaje, redondeado al paso de la moneda (USD 50 → USD 60; USD 37 →
+ * USD 44). Si el redondeo deja el mismo monto o va en contra del cambio
+ * (presupuestos muy chicos), se redondea a 2 decimales. Nunca negativo.
+ */
+export function suggestedBudget(
+  current: number,
+  step: number,
+  currency: string,
+): number {
+  const raw = current * (1 + step);
+  const unit = BUDGET_UNIT[currency.toUpperCase()] ?? 1;
+  const rounded = Math.round(raw / unit) * unit;
+  const ok = step > 0 ? rounded > current : step < 0 ? rounded < current && rounded > 0 : true;
+  return Math.max(0, ok ? rounded : Math.round(raw * 100) / 100);
+}
+
+/** "USD 50" para montos enteros, "USD 44,40" con decimales. */
+export function budgetText(value: number | null, currency: string): string {
+  if (value == null || !Number.isFinite(value)) return "Sin datos";
+  return Number.isInteger(value)
+    ? new Intl.NumberFormat("es-CR", {
+        style: "currency",
+        currency,
+        currencyDisplay: "code",
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      }).format(value)
+    : moneyText(value, currency);
+}
+
+export const DONE_PREFIX = "Hecho en Acciones";
+const DONE_PATTERN =
+  /^Hecho en Acciones \((escalar|bajar|apagar|costcap)(?::([0-9A-Za-z_-]{1,40}))?\)/;
+
+/** Detalle guardado en el registro de cambios para un "Hecho" (máximo 200 caracteres). */
+export function doneDetail(
+  action: DoneAction,
+  text: string,
+  adId: string | null = null,
+): string {
+  const tag = `${DONE_PREFIX} (${action}${action === "costcap" && adId ? `:${adId}` : ""})`;
+  return `${tag}: ${text}`.slice(0, 200).trim();
+}
+
+/** La marca "Hecho" de un cambio del registro manual, o null. */
+export function parseDoneMark(change: CampaignChange): DoneMark | null {
+  if (change.source !== "manual") return null;
+  const match = DONE_PATTERN.exec(change.detail ?? "");
+  if (!match || !Number.isFinite(Date.parse(change.at))) return null;
+  return {
+    action: match[1] as DoneAction,
+    at: change.at,
+    by: change.by ?? null,
+    id: change.id ?? null,
+    adId: match[2] ?? null,
+  };
+}
+
+/**
+ * Última marca "Hecho" de la campaña (y del anuncio para COST CAP) desde
+ * hace `learningHours`. Una marca posterior al corte de los datos también
+ * cuenta: se acaba de marcar y los datos se actualizan después.
+ */
+export function findDoneMark(
+  changes: CampaignChange[],
+  target: {
+    platform: "meta" | "tiktok";
+    accountId: string;
+    campaignId: string;
+    action: DoneAction;
+    adId?: string | null;
+  },
+  now: Date,
+  rules: DecisionRules = DECISION_RULES,
+): DoneMark | null {
+  const since = now.getTime() - rules.learningHours * 3_600_000;
+  let best: DoneMark | null = null;
+  for (const change of changes) {
+    if (
+      change.platform !== target.platform ||
+      change.accountId !== target.accountId ||
+      change.campaignId !== target.campaignId
+    )
+      continue;
+    const mark = parseDoneMark(change);
+    if (!mark || mark.action !== target.action) continue;
+    if (target.action === "costcap" && mark.adId !== (target.adId ?? null))
+      continue;
+    const at = Date.parse(mark.at);
+    if (at < since) continue;
+    if (!best || at > Date.parse(best.at)) best = mark;
+  }
+  return best;
 }
 
 const usd = (value: number | null) => moneyText(value, "USD");
@@ -176,7 +315,7 @@ export function learningChange(
   return null;
 }
 
-const LEARNING_TEXT: Record<NonNullable<CampaignDecision["learning"]>["kind"], string> = {
+export const LEARNING_TEXT: Record<NonNullable<CampaignDecision["learning"]>["kind"], string> = {
   presupuesto: "se cambió el presupuesto",
   puja: "se cambió la puja",
   lanzamiento: "se lanzó",
@@ -211,19 +350,36 @@ export function decideCampaign(
   const rules = ctx.rules ?? DECISION_RULES;
   if (row.status === "pausada" || !campaignActive(row)) return null;
   const w = window3(row);
+  const budget =
+    row.dailyBudget != null && row.dailyBudget > 0 ? row.dailyBudget : null;
   const base = {
     key: row.key,
     platform: row.platform,
+    accountId: row.accountId,
+    campaignId: row.campaignId,
     accountLabel: row.accountLabel,
     name: row.name,
     type: row.type,
     product: row.product?.name ?? null,
+    productKey: row.product?.key ?? null,
+    currency: row.currency,
+    dailyBudget: budget,
+    suggestedBudget: null,
     window: w,
     approximate: w.real != null && w.real > w.utm,
     level: "campaign" as const,
     levelNote: levelNote(row),
     todayAlert: todayAlert(row, rules),
     learning: null,
+    done: null,
+  };
+  const budgetMove = (step: number) => {
+    if (budget == null) return { text: "", suggested: null };
+    const suggested = suggestedBudget(budget, step, row.currency);
+    return {
+      text: ` Presupuesto ${budgetText(budget, row.currency)} → ${budgetText(suggested, row.currency)}.`,
+      suggested,
+    };
   };
   const out = (
     action: DecisionAction,
@@ -263,11 +419,14 @@ export function decideCampaign(
       "apagar",
       `CPA real 3 días ${usd(cpa)}: más de ${usd(rules.lowerMaxCpaUsd)}.`,
     );
-  if (cpa != null && cpa > target)
+  if (cpa != null && cpa > target) {
+    const move = budgetMove(-rules.reduceStep);
     return out(
       "bajar",
-      `CPA real 3 días ${usd(cpa)}: sobre la meta de ${usd(target)} y hasta ${usd(rules.lowerMaxCpaUsd)}.`,
+      `CPA real 3 días ${usd(cpa)}: sobre la meta de ${usd(target)} y hasta ${usd(rules.lowerMaxCpaUsd)}.${move.text}`,
+      { suggestedBudget: move.suggested },
     );
+  }
   if (cpa != null && cpa <= target) {
     if (real < rules.scaleMinRealOrders)
       return out(
@@ -293,13 +452,11 @@ export function decideCampaign(
         `CPA real 3 días ${usd(cpa)} con ${ordersText(real)} pedidos reales, pero ${LEARNING_TEXT[learning.kind]}${learning.kind === "nueva" ? "" : ` hace ${Math.floor(hoursSince(learning.at, ctx.now))} h`}. No se escala hasta pasar ${countText(rules.learningHours)} h.`,
         { learning },
       );
-    const budget =
-      row.dailyBudget != null && row.dailyBudget > 0
-        ? ` Presupuesto ${moneyText(row.dailyBudget, row.currency)} → ${moneyText(Math.round(row.dailyBudget * (1 + rules.scaleStep) * 100) / 100, row.currency)}.`
-        : "";
+    const move = budgetMove(rules.scaleStep);
     return out(
       "escalar",
-      `CPA real 3 días ${usd(cpa)} con ${ordersText(real)} pedidos reales.${budget}`,
+      `CPA real 3 días ${usd(cpa)} con ${ordersText(real)} pedidos reales.${move.text}`,
+      { suggestedBudget: move.suggested },
     );
   }
   return out(
@@ -332,11 +489,36 @@ export function buildCampaignDecisions(input: {
   rules?: DecisionRules;
 }): CampaignDecision[] {
   const now = input.now ?? new Date();
+  const rules = input.rules ?? DECISION_RULES;
   return input.rows
     .map((row) =>
-      decideCampaign(row, { now, changes: input.changes, rules: input.rules }),
+      decideCampaign(row, { now, changes: input.changes, rules }),
     )
     .filter((d): d is CampaignDecision => d != null)
+    .map((d) => {
+      // A scale marked "Hecho" puts the campaign in learning: same mark.
+      const action: DoneAction | null =
+        d.action === "escalar" ||
+        d.action === "bajar" ||
+        d.action === "apagar"
+          ? d.action
+          : d.action === "aprendizaje"
+            ? "escalar"
+            : null;
+      if (!action) return d;
+      const done = findDoneMark(
+        input.changes,
+        {
+          platform: d.platform,
+          accountId: d.accountId,
+          campaignId: d.campaignId,
+          action,
+        },
+        now,
+        rules,
+      );
+      return done ? { ...d, done } : d;
+    })
     .sort(
       (a, b) =>
         ACTION_ORDER[a.action] - ACTION_ORDER[b.action] ||
@@ -348,16 +530,21 @@ export function buildCampaignDecisions(input: {
 export interface CreativeDecision {
   key: string;
   platform: "meta" | "tiktok";
+  accountId: string;
+  campaignId: string;
   accountLabel: string;
   campaignName: string;
   adId: string;
   adName: string;
   product: string | null;
+  productKey: string | null;
   spendUsd: number;
   /** Pedidos reales del anuncio: UTM del anuncio + su parte del reparto (≈). */
   real: number;
   cpaReal: number;
   basis: "utm" | "estimado";
+  /** Ya se marcó "Hecho" (pasado a COST CAP) en las últimas `learningHours`. */
+  done: DoneMark | null;
 }
 
 /**
@@ -374,12 +561,15 @@ export function buildCreativeDecisions(input: {
   estimates: CampaignEstimates;
   days: RealOrderDay[];
   fx: UsdRate | null;
+  /** Registro de cambios (Meta + a mano), para las marcas "Hecho". */
+  changes?: CampaignChange[];
   now?: Date;
   rules?: DecisionRules;
 }): CreativeDecision[] {
   const rules = input.rules ?? DECISION_RULES;
   if (input.report?.status !== "ready" || !input.report.data) return [];
-  const today = marketingDate(input.now ?? new Date());
+  const now = input.now ?? new Date();
+  const today = marketingDate(now);
   const from = shiftDate(today, -rules.windowDays),
     to = shiftDate(today, -1);
   const dates: string[] = [];
@@ -436,21 +626,37 @@ export function buildCreativeDecisions(input: {
       out.push({
         key: `${platform}:${account.id}:${ad.id}`,
         platform,
+        accountId: account.id,
+        campaignId: ad.campaignId,
         accountLabel: row.accountLabel,
         campaignName: row.name,
         adId: ad.id,
         adName: ad.name,
         product: row.product?.name ?? null,
+        productKey: row.product?.key ?? null,
         spendUsd: Math.round(spend * 100) / 100,
         real: Math.round(real * 10) / 10,
         cpaReal: cpa,
         basis: estimated ? "estimado" : "utm",
+        done: findDoneMark(
+          input.changes ?? [],
+          {
+            platform,
+            accountId: account.id,
+            campaignId: ad.campaignId,
+            action: "costcap",
+            adId: ad.id,
+          },
+          now,
+          rules,
+        ),
       });
     }
   }
   return out.sort((a, b) => a.cpaReal - b.cpaReal || b.real - a.real);
 }
 
+/** Decisiones pendientes: lo marcado "Hecho" ya no cuenta (salvo como aprendizaje). */
 export interface DecisionCounts {
   escalar: number;
   bajar: number;
@@ -466,13 +672,15 @@ export function decisionCounts(
   creatives: CreativeDecision[] | null,
 ): DecisionCounts {
   const n = (action: DecisionAction) =>
-    campaigns.filter((c) => c.action === action).length;
+    campaigns.filter(
+      (c) => c.action === action && (action === "aprendizaje" || !c.done),
+    ).length;
   return {
     escalar: n("escalar"),
     bajar: n("bajar"),
     apagar: n("apagar"),
     aprendizaje: n("aprendizaje"),
-    costCap: creatives?.length ?? 0,
+    costCap: creatives?.filter((c) => !c.done).length ?? 0,
     todayAlerts: campaigns.filter((c) => c.todayAlert).length,
   };
 }

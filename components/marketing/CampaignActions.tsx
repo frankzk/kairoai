@@ -2,6 +2,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import {
   launchText,
+  decidedInAcciones,
   ordersText,
   type CampaignActionRow,
   type SuggestedAction,
@@ -103,12 +104,14 @@ export function CampaignActions({
     <section className={r.section} aria-labelledby="actions-title">
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>02 / Acciones</p>
-          <h2 id="actions-title">Qué hacer hoy con cada campaña</h2>
+          <p className={r.kicker}>02 / Seguimiento</p>
+          <h2 id="actions-title">Campañas: hoy, ayer y 7 días</h2>
           <p>
             Gasto, pedidos reales y CPA real de hoy, ayer y los 7 días
-            anteriores. Pedidos con ≈: UTM + reparto por producto asignado y
-            gasto. Kairo no cambia nada en Meta ni en TikTok.
+            anteriores, con stock, pruebas y el historial de cambios. Escalar,
+            bajar y apagar se deciden en Acciones. Pedidos con ≈: UTM + reparto
+            por producto asignado y gasto. Kairo no cambia nada en Meta ni en
+            TikTok.
             {filterLabel &&
               ` No depende del filtro de período (${filterLabel}): «Hoy» es siempre el día de hoy.`}
           </p>
@@ -226,7 +229,8 @@ function ActionTable({
   const filtered = rows.filter(
     (row) =>
       (!account || row.accountLabel === account) &&
-      (!onlyAction || !["mantener", "pausada"].includes(row.action.code)) &&
+      (!onlyAction ||
+        (row.action.code !== "pausada" && !decidedInAcciones(row.action))) &&
       `${row.name} ${row.product?.name ?? ""}`
         .toLocaleLowerCase("es")
         .includes(query.toLocaleLowerCase("es")),
@@ -282,7 +286,7 @@ function ActionTable({
               setPage(0);
             }}
           />
-          Solo con acción
+          Solo con algo que revisar
         </label>
       </div>
       <div
@@ -299,7 +303,7 @@ function ActionTable({
               <th>Hoy</th>
               <th>Ayer</th>
               <th>7 días</th>
-              <th>Acción</th>
+              <th>Stock, pruebas y cambios</th>
             </tr>
           </thead>
           <tbody>
@@ -421,12 +425,22 @@ function ActionRow({
         <WindowCell row={row} w={row.yesterday} />
         <WindowCell row={row} w={row.days7} />
         <td className={r.actionCell}>
-          <span className={`${r.chip} ${toneChip(row.action.tone)}`}>
-            {row.action.label}
-          </span>
-          <p>{row.action.detail}</p>
-          {row.action.due && (
-            <small>Se puede tocar desde el {dateTimeCr(row.action.due)}</small>
+          {decidedInAcciones(row.action) ? (
+            <span className={`${r.chip} ${r.chipMuted}`}>
+              Presupuesto: se decide en Acciones
+            </span>
+          ) : (
+            <>
+              <span className={`${r.chip} ${toneChip(row.action.tone)}`}>
+                {row.action.label}
+              </span>
+              <p>{row.action.detail}</p>
+              {row.action.due && (
+                <small>
+                  Se puede tocar desde el {dateTimeCr(row.action.due)}
+                </small>
+              )}
+            </>
           )}
           {row.notes.map((note) => (
             <small key={`${note.code}:${note.detail}`}>
@@ -684,7 +698,7 @@ function Rules() {
           <thead>
             <tr>
               <th>Regla</th>
-              <th>Acción</th>
+              <th>Stock, pruebas y cambios</th>
             </tr>
           </thead>
           <tbody>

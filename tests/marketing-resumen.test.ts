@@ -380,8 +380,8 @@ describe("qué está roto", () => {
       [
         "risk",
         "Gomitas agotado con anuncios activos",
-        "acciones",
-        "Pausar en Acciones",
+        "report",
+        "Ver la campaña en Detalle",
       ],
       ["wait", "ShipHero pide reconectar", "sources", "Ver conexión"],
       [

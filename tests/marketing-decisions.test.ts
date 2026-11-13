@@ -8,6 +8,11 @@ import {
   DECISION_RULES,
   learningChange,
   todayAlert,
+  budgetText,
+  doneDetail,
+  findDoneMark,
+  parseDoneMark,
+  suggestedBudget,
   type CampaignDecision,
 } from "../lib/marketing-decisions";
 import type { CampaignActionRow, Window } from "../lib/marketing-actions";
@@ -119,7 +124,26 @@ describe("reglas de decisión (ventana de 3 días completos, CPA real)", () => {
       costCapMoreThanOrders: 5,
       costCapMaxCpaUsd: 6,
       learningHours: 72,
+      scaleStep: 0.2,
+      reduceStep: 0.2,
     });
+  });
+
+  it("redondea el presupuesto sugerido a la moneda de la cuenta", () => {
+    expect(suggestedBudget(50, 0.2, "USD")).toBe(60);
+    expect(suggestedBudget(50, -0.2, "USD")).toBe(40);
+    // USD 37 × 1,2 = 44,4 → USD 44; × 0,8 = 29,6 → USD 30.
+    expect(suggestedBudget(37, 0.2, "USD")).toBe(44);
+    expect(suggestedBudget(37, -0.2, "USD")).toBe(30);
+    // Colones de 500 en 500: ₡25 000 → ₡30 000; ₡12 300 → ₡14 760 → ₡15 000.
+    expect(suggestedBudget(25_000, 0.2, "CRC")).toBe(30_000);
+    expect(suggestedBudget(12_300, 0.2, "crc")).toBe(15_000);
+    // Tiny budgets keep the cents rather than not moving.
+    expect(suggestedBudget(2, 0.2, "USD")).toBe(2.4);
+    expect(suggestedBudget(2, -0.2, "USD")).toBe(1.6);
+    expect(suggestedBudget(1, -0.2, "USD")).toBe(0.8);
+    expect(plain(budgetText(60, "USD"))).toBe("USD 60");
+    expect(plain(budgetText(2.4, "USD"))).toBe("USD 2,40");
   });
 
   it("escala con CPA real ≤ 8,50 y al menos 5 pedidos reales", () => {
@@ -127,7 +151,9 @@ describe("reglas de decisión (ventana de 3 días completos, CPA real)", () => {
       action: "escalar",
       label: "Escalar +20 %",
       detail:
-        "CPA real 3 días USD 8,00 con 10 pedidos reales. Presupuesto USD 50,00 → USD 60,00.",
+        "CPA real 3 días USD 8,00 con 10 pedidos reales. Presupuesto USD 50 → USD 60.",
+      suggestedBudget: 60,
+      dailyBudget: 50,
       level: "campaign",
       levelNote: null,
     });
@@ -162,9 +188,18 @@ describe("reglas de decisión (ventana de 3 días completos, CPA real)", () => {
   it("baja entre 8,50 y 11 (inclusive) y apaga por encima de 11", () => {
     expect(decide(row({ days3: days3(90, 10) }))).toMatchObject({
       action: "bajar",
-      label: "Bajar presupuesto",
+      label: "Bajar −20 %",
+      detail:
+        "CPA real 3 días USD 9,00: sobre la meta de USD 8,50 y hasta USD 11,00. Presupuesto USD 50 → USD 40.",
+      suggestedBudget: 40,
+    });
+    // Without a known budget (TikTok via Make) there is no amount.
+    expect(
+      decide(row({ dailyBudget: null, days3: days3(90, 10) })),
+    ).toMatchObject({
       detail:
         "CPA real 3 días USD 9,00: sobre la meta de USD 8,50 y hasta USD 11,00.",
+      suggestedBudget: null,
     });
     expect(action(row({ days3: days3(8.51 * 10, 10) }))).toBe("bajar");
     expect(action(row({ days3: days3(110, 10) }))).toBe("bajar");
@@ -352,6 +387,73 @@ describe("reglas de decisión (ventana de 3 días completos, CPA real)", () => {
     expect(decisionCounts([], null).costCap).toBe(0);
   });
 
+  it("lee la marca «Hecho» del registro manual (72 h) y la descuenta de lo pendiente", () => {
+    const mark = (
+      h: number,
+      detail: string,
+      campaignId = "9",
+      kind: CampaignChange["kind"] = "presupuesto",
+    ): CampaignChange => ({
+      ...change(h, kind, campaignId),
+      source: "manual",
+      id: `m${h}`,
+      by: "Ana",
+      detail,
+    });
+    expect(doneDetail("escalar", "Escalar +20 % · USD 50 → USD 60")).toBe(
+      "Hecho en Acciones (escalar): Escalar +20 % · USD 50 → USD 60",
+    );
+    expect(doneDetail("costcap", "x".repeat(300), "123")).toHaveLength(200);
+    expect(
+      parseDoneMark(mark(1, doneDetail("costcap", "Pasar", "123"))),
+    ).toMatchObject({ action: "costcap", adId: "123", by: "Ana", id: "m1" });
+    // Only manual entries with the tag are marks.
+    expect(
+      parseDoneMark({ ...mark(1, doneDetail("bajar", "")), source: "meta" }),
+    ).toBeNull();
+    expect(parseDoneMark(mark(1, "presupuesto 50 → 40"))).toBeNull();
+    const target = {
+      platform: "meta" as const,
+      accountId: "1",
+      campaignId: "9",
+      action: "bajar" as const,
+    };
+    expect(findDoneMark([mark(80, doneDetail("bajar", ""))], target, now)).toBeNull();
+    expect(
+      findDoneMark(
+        [mark(30, doneDetail("bajar", "")), mark(2, doneDetail("bajar", ""))],
+        target,
+        now,
+      )?.id,
+    ).toBe("m2");
+    // A mark saved after the data cut (just clicked) still counts.
+    expect(findDoneMark([mark(-0.1, doneDetail("bajar", ""))], target, now)).not.toBeNull();
+    expect(findDoneMark([mark(2, doneDetail("apagar", ""))], target, now)).toBeNull();
+
+    const list = buildCampaignDecisions({
+      now,
+      changes: [
+        mark(1, doneDetail("bajar", ""), "b"),
+        // The scale mark is also a budget change: the campaign is in learning.
+        mark(2, doneDetail("escalar", ""), "a"),
+      ],
+      rows: [
+        row({ key: "a", campaignId: "a", days3: days3(80, 10) }),
+        row({ key: "b", campaignId: "b", days3: days3(95, 10) }),
+        row({ key: "c", campaignId: "c", days3: days3(95, 10) }),
+      ],
+    });
+    const byKey = Object.fromEntries(list.map((d) => [d.key, d]));
+    expect(byKey.a).toMatchObject({ action: "aprendizaje", done: { action: "escalar" } });
+    expect(byKey.b).toMatchObject({ action: "bajar", done: { action: "bajar" } });
+    expect(byKey.c.done).toBeNull();
+    expect(decisionCounts(list, [])).toMatchObject({
+      escalar: 0,
+      bajar: 1,
+      aprendizaje: 1,
+    });
+  });
+
   it("merges Meta activity and the manual log for the learning guard", () => {
     const manual = { ...change(3), source: "manual" as const };
     expect(
@@ -524,7 +626,28 @@ describe("creativos listos para COST CAP", () => {
         days: utm(orders),
       });
     };
-    expect(run([10, 10, 10], [2, 2, 2])).toHaveLength(1);
+    expect(run([10, 10, 10], [2, 2, 2])).toMatchObject([
+      { accountId: "1", campaignId: "c1", adId: "a1", done: null },
+    ]);
+    // "Hecho" of this ad (not of another ad of the campaign) marks it done.
+    const doneMark = (adId: string): CampaignChange => ({
+      ...change(1, "creativo", "c1"),
+      source: "manual",
+      id: "m1",
+      detail: doneDetail("costcap", "Pasar a COST CAP", adId),
+    });
+    const withChanges = (changes: CampaignChange[]) =>
+      buildCreativeDecisions({
+        ...base,
+        report: report([adsAccount([{ id: "a1", campaignId: "c1", spend: [10, 10, 10] }])]),
+        rows: rowsFor({ campaignId: "c1" }),
+        estimates: estimates({ c1: [{ total: 2 }, { total: 2 }, { total: 2 }] }),
+        days: utm([2, 2, 2]),
+        changes,
+      });
+    expect(withChanges([doneMark("a1")])[0].done).toMatchObject({ adId: "a1" });
+    expect(withChanges([doneMark("a2")])[0].done).toBeNull();
+    expect(decisionCounts([], withChanges([doneMark("a1")])).costCap).toBe(0);
     expect(run([10, 10, 10], [2, 2, 2], { type: "COST CAP" })).toHaveLength(0);
     expect(
       run([10, 10, 10], [2, 2, 2], {}, "COST CAP GOMITAS | CR"),
