@@ -19,9 +19,11 @@
 //      y cada una recibe la misma mezcla de carritos, enganchados, etc.
 //   4. Rebalanceo: si entre las activas la diferencia pasa de
 //      ASSIGNMENT_REBALANCE_MIN_GAP (p. ej. se conecto una asesora nueva), se
-//      pasan leads de la mas cargada a la menos cargada hasta que difieran en
-//      1 como mucho. Solo se mueven leads que su dueña NO trabajo desde que se
-//      los asignaron y que nadie trabajo en los ultimos 30 minutos.
+//      pasan leads de la mas cargada a la menos cargada DE A POCO: como mucho
+//      ASSIGNMENT_REBALANCE_MAX_PER_RUN por corrida, y nunca los primeros
+//      ASSIGNMENT_KEEP_TOP de su cola (lo que tiene a la vista). Solo se mueven
+//      leads que su dueña NO trabajo desde que se los asignaron y que nadie
+//      trabajo en los ultimos 30 minutos.
 //   5. Liberacion: los leads de una dueña Desconectada hace mas de
 //      ASSIGNMENT_RELEASE_OFFLINE_MS vuelven al reparto en la misma corrida,
 //      salvo los que ella trabajo, que siguen siendo suyos.
@@ -45,6 +47,14 @@ export const ASSIGNMENT_RECENT_WORK_MINUTES = 30;
  * la diferencia en 1 como mucho.
  */
 export const ASSIGNMENT_REBALANCE_MIN_GAP = 10;
+/**
+ * Rebalanceo GRADUAL: como mucho estos leads cambian de dueña por corrida (cada
+ * 5 min). Antes se emparejaba de una vez y una asesora perdia la mitad de su
+ * cola en un instante (11/11/2026: 1.474 leads de golpe).
+ */
+export const ASSIGNMENT_REBALANCE_MAX_PER_RUN = 40;
+/** Los primeros leads de la cola de cada asesora (lo que tiene a la vista) nunca se le quitan al rebalancear. */
+export const ASSIGNMENT_KEEP_TOP = 30;
 
 /** La misma ventana que el tablero muestra por defecto (sin "Incluir antiguos"). */
 export const ASSIGNMENT_WINDOW_DAYS = 30;
@@ -256,13 +266,17 @@ export function planLeadAssignment(input: AssignmentPlanInput): AssignmentPlan {
     // De cada cargada se toman leads repartidos a lo largo de SU cola (no los
     // primeros), para que la que recibe se lleve la misma mezcla.
     const aMover: Array<{ id: number; desde: number }> = [];
+    let cupo = ASSIGNMENT_REBALANCE_MAX_PER_RUN;
     for (const id of ordenActivas) {
       const sobra = (carga.get(id) ?? 0) - (meta.get(id) ?? 0);
-      if (sobra <= 0) continue;
-      const movibles = input.leads.filter(
-        (l) => duena.get(l.id) === id && !input.protectedIds.has(l.id) && !fijos.has(l.id)
-      );
-      const k = Math.min(sobra, movibles.length);
+      if (sobra <= 0 || cupo <= 0) continue;
+      // Su cola en orden; lo que tiene arriba (lo que esta mirando) se queda.
+      const suyos = input.leads.filter((l) => duena.get(l.id) === id);
+      const movibles = suyos
+        .slice(ASSIGNMENT_KEEP_TOP)
+        .filter((l) => !input.protectedIds.has(l.id) && !fijos.has(l.id));
+      const k = Math.min(sobra, movibles.length, cupo);
+      cupo -= k;
       for (let i = 0; i < k; i++) {
         aMover.push({ id: movibles[Math.floor(((i + 0.5) * movibles.length) / k)].id, desde: id });
       }
