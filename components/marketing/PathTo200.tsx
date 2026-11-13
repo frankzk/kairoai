@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingSources } from "@/lib/marketing-source-types";
 import type { MarketingSettings } from "@/lib/marketing-settings-types";
@@ -16,6 +16,7 @@ import { decimalText } from "@/lib/marketing-copy";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import { count, money, percentage, shortDate } from "./format";
 import r from "./team-report.module.css";
+import { ChartTooltip } from "./charts";
 
 type Resource<T> = { data: T | null; loading: boolean; error: string };
 const t = MARKETING_TARGETS;
@@ -211,29 +212,13 @@ export function PathTo200({
                 )}{" "}
                 = <strong>{orders(result.total)}</strong>.
               </p>
-              <div
-                className={r.simBar}
-                role="img"
-                aria-label={`${orders(result.total)} de ${count(result.goal)} pedidos: ${result.breakdown
-                  .filter((b) => b.orders > 0)
-                  .map((b) => `${b.label} ${orders(b.orders)}`)
-                  .join(", ")}`}
-              >
-                {result.breakdown
-                  .filter((b) => b.orders > 0)
-                  .map((b, i, shown) => (
-                    <span
-                      key={b.code}
-                      className={`${SEGMENT_CLASS[b.code]} ${i === shown.length - 1 ? r.simEnd : ""}`}
-                      style={{ width: `${(b.orders / scale) * 100}%` }}
-                    />
-                  ))}
-                <span
-                  className={r.simGoal}
-                  style={{ left: `${(result.goal / scale) * 100}%` }}
-                  aria-hidden="true"
-                />
-              </div>
+              <SimBar
+                total={result.total}
+                goal={result.goal}
+                scale={scale}
+                parts={result.breakdown.filter((b) => b.orders > 0)}
+                fmt={orders}
+              />
               <ul className={r.originLegend}>
                 {result.breakdown
                   .filter((b) => b.orders > 0)
@@ -336,3 +321,83 @@ export function PathTo200({
     </section>
   );
 }
+
+type SimPart = { code: string; label: string; orders: number };
+
+/**
+ * Barra del simulador con tooltip por segmento: al pasar el mouse o con el
+ * foco del teclado dice cuántos pedidos aporta, qué parte del total y qué
+ * parte de la meta. La zona activa es más alta que la barra de 8px.
+ */
+export function SimBar({
+  total,
+  goal,
+  scale,
+  parts,
+  fmt,
+}: {
+  total: number;
+  goal: number;
+  scale: number;
+  parts: SimPart[];
+  fmt: (n: number) => string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [active, setActive] = useState<{ i: number; x: number } | null>(null);
+  const show = (i: number, el: HTMLElement) => {
+    const box = ref.current?.getBoundingClientRect();
+    const seg = el.getBoundingClientRect();
+    setActive({ i, x: box ? seg.left - box.left + seg.width / 2 : 0 });
+  };
+  const part = active ? parts[active.i] : null;
+  const pct = (n: number, d: number) => (d > 0 ? `${Math.round((n / d) * 100)} %` : "—");
+  return (
+    <div
+      ref={ref}
+      className={r.simWrap}
+      role="group"
+      aria-label={`${fmt(total)} de ${count(goal)} pedidos: ${parts
+        .map((b) => `${b.label} ${fmt(b.orders)}`)
+        .join(", ")}`}
+      onPointerLeave={() => setActive(null)}
+    >
+      <div className={r.simBar}>
+        {parts.map((b, i) => (
+          <span
+            key={b.code}
+            tabIndex={0}
+            role="img"
+            aria-label={`${b.label}: ${fmt(b.orders)} pedidos, ${pct(b.orders, total)} del total`}
+            className={`${SEGMENT_CLASS[b.code]} ${i === parts.length - 1 ? r.simEnd : ""} ${active?.i === i ? r.simActive : ""}`}
+            style={{ width: `${(b.orders / scale) * 100}%` }}
+            onPointerEnter={(e) => show(i, e.currentTarget)}
+            onFocus={(e) => show(i, e.currentTarget)}
+            onBlur={() => setActive(null)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setActive(null);
+            }}
+          />
+        ))}
+        <span
+          className={r.simGoal}
+          style={{ left: `${(goal / scale) * 100}%` }}
+          aria-hidden="true"
+        />
+      </div>
+      {part && active && (
+        <ChartTooltip
+          x={active.x}
+          y={22}
+          width={ref.current?.clientWidth ?? 0}
+          title={part.label}
+          rows={[
+            { key: "n", value: fmt(part.orders), label: "pedidos reales" },
+            { key: "t", value: pct(part.orders, total), label: `del total (${fmt(total)})` },
+            { key: "g", value: pct(part.orders, goal), label: `de la meta (${count(goal)})` },
+          ]}
+        />
+      )}
+    </div>
+  );
+}
+

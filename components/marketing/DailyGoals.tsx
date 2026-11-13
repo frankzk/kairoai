@@ -1,4 +1,5 @@
 "use client";
+import { AlertTriangle } from "lucide-react";
 import type { DailyPace } from "@/lib/marketing-pace";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import { relativeChangeCopy } from "@/lib/kpi-comparison-copy";
@@ -182,7 +183,15 @@ function Goal({
   const width = progress == null ? 0 : Math.min(1, Math.max(0, progress));
   return (
     <div className={r.goal}>
-      <p>{label}</p>
+      <p>
+        {label}
+        {risk && (
+          <span className={r.riskBadge}>
+            <AlertTriangle aria-hidden="true" />
+            Sobre la meta
+          </span>
+        )}
+      </p>
       <strong>{value}</strong>
       <div
         className={`${r.meter} ${risk ? r.meterRisk : ""}`}
