@@ -260,7 +260,7 @@ export default function UpsellAdminPage() {
                           onClick={() => setForm({ ...form, tier: t })}
                           className={`px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors ${
                             form.tier === t
-                              ? "bg-primary text-primary-foreground border-primary"
+                              ? "border-primary/40 bg-primary/10 text-primary"
                               : "border-border text-muted-foreground hover:border-primary/50"
                           }`}
                         >

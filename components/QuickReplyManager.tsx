@@ -226,7 +226,7 @@ export default function QuickReplyManager({
                     <p className="text-sm font-medium">
                       {reply.title}
                       {reply.usage_count > 0 && (
-                        <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                        <span className="ml-2 text-[11px] font-normal text-muted-foreground">
                           usada {reply.usage_count}×
                         </span>
                       )}

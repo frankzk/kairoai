@@ -79,7 +79,7 @@ export function SelectorPeriodo({
             }}
             aria-pressed={!custom && range === r}
             className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
-              !custom && range === r ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-accent"
+              !custom && range === r ? "border-primary/40 bg-primary/10 text-primary" : "border-border bg-card hover:bg-muted"
             }`}
           >
             {RANGE_LABELS[r]}

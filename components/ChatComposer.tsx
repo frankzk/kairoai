@@ -248,7 +248,7 @@ export default function ChatComposer({
               </span>
             </button>
           ))}
-          <p className="border-t border-border px-3 py-1 text-[10px] text-muted-foreground">
+          <p className="border-t border-border px-3 py-1 text-[11px] text-muted-foreground">
             ↑↓ para elegir · Enter inserta · Esc cierra
           </p>
         </div>

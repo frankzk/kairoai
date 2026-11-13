@@ -63,7 +63,7 @@ export function OperationalKpiCard({
         <p
           className={`mt-1 flex items-baseline gap-1 text-xl font-semibold leading-tight tabular-nums ${valueColor}`}
         >
-          {star && <span className="text-[9px] text-primary">★</span>}
+          {star && <span className="text-[10px] text-primary">★</span>}
           {loading ? (
             <span
               className="my-1 inline-block h-4 w-14 animate-pulse rounded bg-muted motion-reduce:animate-none"
@@ -74,12 +74,12 @@ export function OperationalKpiCard({
           )}
         </p>
         {sub && !(hideSubWhenComparing && comparison) && (
-          <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+          <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
             {sub}
           </p>
         )}
         {comparison && !loading && (
-          <div className="mt-1 space-y-0.5 text-[10px] leading-4">
+          <div className="mt-1 space-y-0.5 text-[11px] leading-4">
             <p className="flex flex-wrap items-baseline gap-x-1">
               <span
                 className={`font-medium ${trendColor}`}

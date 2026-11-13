@@ -254,7 +254,7 @@ export function CampaignWorkspace({
                             {campaign.platform === "meta" ? "Meta" : "TikTok"} ·{" "}
                             {campaign.accountName}
                           </span>
-                          <span className="mt-1 block text-[10px] text-muted-foreground">
+                          <span className="mt-1 block text-[11px] text-muted-foreground">
                             {campaign.effectiveStatus === "ACTIVE"
                               ? "Activa"
                               : campaign.effectiveStatus === "PAUSED"
@@ -279,7 +279,7 @@ export function CampaignWorkspace({
                         </td>
                         <td className={s.numeric}>
                           {money(campaign.dailyBudget, campaign.currency)}
-                          <span className="mt-1 block whitespace-normal text-[10px] text-muted-foreground">
+                          <span className="mt-1 block whitespace-normal text-[11px] text-muted-foreground">
                             {budgetNote}
                           </span>
                         </td>

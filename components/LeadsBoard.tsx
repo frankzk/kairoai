@@ -1100,7 +1100,7 @@ export default function LeadsBoard() {
                   {uncalledTotal !== chartContextLeads.length && (
                     // `/70` no: a 3,4:1 no pasa AA, y esta linea es justamente
                     // la que aclara que el numero de al lado es un subconjunto.
-                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
                       de {chartContextLeads.length} {searching ? "en la búsqueda" : `en ${activeTabLabel}`}
                     </p>
                   )}
@@ -1159,7 +1159,7 @@ export default function LeadsBoard() {
                           style={{ height: `${barHeight}px` }}
                         />
                       </span>
-                      <span className={`mt-1 text-[10px] capitalize ${selected ? "text-foreground" : "text-muted-foreground"}`}>
+                      <span className={`mt-1 text-[11px] capitalize ${selected ? "text-foreground" : "text-muted-foreground"}`}>
                         {bucketLabel}
                       </span>
                     </button>
@@ -1783,7 +1783,7 @@ const LeadCard = forwardRef(function LeadCard(
           {lead.board_stage === "carrito" && lead.cart_summary && (
             <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
               {lead.shopify_cart_open && (
-                <Badge variant="outline" className="shrink-0 text-[10px]">
+                <Badge variant="outline" className="shrink-0 text-[11px]">
                   Shopify {lead.shopify_draft_cart_count || 1}
                 </Badge>
               )}

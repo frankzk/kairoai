@@ -2618,7 +2618,7 @@ function OrdersTab({
                 {importingLogistics ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
                 {importingLogistics ? "Importando..." : "Importar Boxful"}
                 {boxfulSinMatch > 0 && (
-                  <span className="rounded-sm bg-amber-400/25 px-1 font-mono text-[10px] tabular-nums text-amber-100">
+                  <span className="rounded-sm bg-amber-400/25 px-1 font-mono text-[11px] tabular-nums text-amber-100">
                     {boxfulSinMatch}
                     <span className="sr-only"> filas del ultimo Boxful sin match</span>
                   </span>
@@ -3039,7 +3039,7 @@ function DispatchWho({
   if (!who) return null;
   const label = row.dispatch_requested_by ? "Solicito" : "Confirmo";
   return (
-    <span className="max-w-[130px] truncate text-[10px] text-muted-foreground" title={`${label}: ${who}`}>
+    <span className="max-w-[130px] truncate text-[11px] text-muted-foreground" title={`${label}: ${who}`}>
       {label}: {who}
     </span>
   );
@@ -3052,7 +3052,7 @@ function LineaDespacho({ row, status }: { row: OrderRowWithTraces; status: strin
 }
 
 function AdvisorWorkLine({ work, tz }: { work: AdvisorWork; tz: string }) {
-  return <div className="text-[10px] leading-4 text-muted-foreground">
+  return <div className="text-[11px] leading-4 text-muted-foreground">
     <span className="block text-foreground/85">{work.staffName}</span>
     {work.evidence.map(e => <span key={`${e.source}:${e.kind}`} className="block" title={e.at ? new Date(e.at).toLocaleString("es", { timeZone: tz }) : "La fuente no informa la fecha de esta gestión"}>{workEvidenceLabel(e)}</span>)}
   </div>;
@@ -3199,7 +3199,7 @@ function OrdersTable({
                   <DispatchWho row={row} status={trackingStatus} />
                   <LineaDespacho row={row} status={trackingStatus} />
                   {row.advisor_work && <AdvisorWorkLine work={row.advisor_work} tz={tz} />}
-                  {row.confirmation_kairo && <span className="text-[10px] text-muted-foreground" title={new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: tz })}>Confirmó en Kairo: {row.confirmation_kairo.staffName}</span>}
+                  {row.confirmation_kairo && <span className="text-[11px] text-muted-foreground" title={new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: tz })}>Confirmó en Kairo: {row.confirmation_kairo.staffName}</span>}
                   {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
                 </div>
               </div>
@@ -3345,20 +3345,20 @@ function OrdersTable({
                     {row.customer_name || "Sin nombre"}
                   </span>
                   {row.last_name && (
-                    <span className="mt-0.5 block max-w-[150px] truncate text-[10px] text-muted-foreground">
+                    <span className="mt-0.5 block max-w-[150px] truncate text-[11px] text-muted-foreground">
                       Apellido: {row.last_name}
                     </span>
                   )}
                   {row.phone ? (
                     <a
                       href={`tel:${row.phone}`}
-                      className="mt-0.5 block max-w-[150px] truncate font-mono text-[10px] text-foreground/80 hover:underline"
+                      className="mt-0.5 block max-w-[150px] truncate font-mono text-[11px] text-foreground/80 hover:underline"
                       title={`Llamar ${row.phone}`}
                     >
                       Cel: {row.phone}
                     </a>
                   ) : (
-                    <span className="mt-0.5 block text-[9px] italic text-muted-foreground/50">Sin telefono</span>
+                    <span className="mt-0.5 block text-[10px] italic text-muted-foreground/50">Sin telefono</span>
                   )}
                 </td>
                 <td className="px-2 py-1.5">
@@ -3370,7 +3370,7 @@ function OrdersTable({
                     <DispatchWho row={row} status={trackingStatus} />
                     <LineaDespacho row={row} status={trackingStatus} />
                     {row.advisor_work && <AdvisorWorkLine work={row.advisor_work} tz={tz} />}
-                    {row.confirmation_kairo && <span className="text-[10px] text-muted-foreground" title={new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: tz })}>Confirmó en Kairo: {row.confirmation_kairo.staffName}</span>}
+                    {row.confirmation_kairo && <span className="text-[11px] text-muted-foreground" title={new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: tz })}>Confirmó en Kairo: {row.confirmation_kairo.staffName}</span>}
                     {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
                   </div>
                 </td>
@@ -3566,19 +3566,19 @@ function MoovinTrackingButton({
           title="Ver ruta completa"
           className="flex flex-col items-start text-left"
         >
-          <span className={`text-[10px] font-medium ${groupClass}`}>
+          <span className={`text-[11px] font-medium ${groupClass}`}>
             {cached.has_incident ? <AlertTriangle className="mr-0.5 inline h-3 w-3 align-[-2px]" aria-label="Con novedad" /> : null}
             {cached.latest_status}
           </span>
           {cached.latest_at && (
-            <span className="text-[9px] text-muted-foreground">{formatMoovinDate(cached.latest_at)}</span>
+            <span className="text-[10px] text-muted-foreground">{formatMoovinDate(cached.latest_at)}</span>
           )}
         </button>
       ) : (
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:border-primary/50"
+          className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[11px] text-primary transition-colors hover:border-primary/50"
         >
           <Search className="h-3 w-3" /> estado
         </button>
@@ -3719,7 +3719,7 @@ function MoovinTrackingModal({
                     <div className="flex flex-wrap items-baseline gap-2">
                       <span className="text-xs font-medium">{event.title}</span>
                       {event.date && (
-                        <span className="text-[10px] text-muted-foreground">{formatMoovinDate(event.date)}</span>
+                        <span className="text-[11px] text-muted-foreground">{formatMoovinDate(event.date)}</span>
                       )}
                     </div>
                     {event.description && (
@@ -3781,11 +3781,11 @@ function WynTrackingButton({
         className={
           cachedGroup
             ? "flex flex-col items-start text-left"
-            : "inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:border-primary/50"
+            : "inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[11px] text-primary transition-colors hover:border-primary/50"
         }
       >
         {cachedGroup ? (
-          <span className={`text-[10px] font-medium ${groupClass}`}>{label}</span>
+          <span className={`text-[11px] font-medium ${groupClass}`}>{label}</span>
         ) : (
           <><Search className="h-3 w-3" /> estado</>
         )}
@@ -3917,7 +3917,7 @@ function WynTrackingModal({
                     <div className="flex flex-wrap items-baseline gap-2">
                       <span className="text-xs font-medium">{event.title}</span>
                       {event.date && (
-                        <span className="text-[10px] text-muted-foreground">{formatCourierDate(event.date, "es-CR")}</span>
+                        <span className="text-[11px] text-muted-foreground">{formatCourierDate(event.date, "es-CR")}</span>
                       )}
                     </div>
                     {event.description && <p className="text-[11px] text-muted-foreground">{event.description}</p>}
@@ -3980,15 +3980,15 @@ function ForzaTrackingButton({
     >
       {cached?.latest_status ? (
         <>
-          <span className={`text-[10px] font-medium ${groupClass}`}>
+          <span className={`text-[11px] font-medium ${groupClass}`}>
             {cached.has_incident ? "!" : ""} {cached.latest_status}
           </span>
           {cached.latest_at && (
-            <span className="text-[9px] text-muted-foreground">{formatCourierDate(cached.latest_at, "es-HN")}</span>
+            <span className="text-[10px] text-muted-foreground">{formatCourierDate(cached.latest_at, "es-HN")}</span>
           )}
         </>
       ) : (
-        <span className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:border-primary/50">
+        <span className="inline-flex items-center gap-1 border border-border bg-background px-1.5 py-0.5 text-[11px] text-primary transition-colors hover:border-primary/50">
           <Search className="h-3 w-3" /> rastreo
         </span>
       )}
@@ -5482,7 +5482,7 @@ function ManualMatchCell({
           {saving ? "…" : "Vincular"}
         </Button>
       </div>
-      {error && <span className="text-[10px] text-red-300">{error}</span>}
+      {error && <span className="text-[11px] text-red-300">{error}</span>}
     </div>
   );
 }
@@ -6571,7 +6571,7 @@ function ExpensesTab({
                   />
                 )}
                 {activeType === "payroll" && staff.length === 0 && (
-                  <p className="mt-1 text-[10px] text-muted-foreground">
+                  <p className="mt-1 text-[11px] text-muted-foreground">
                     Registra tu personal con el boton &quot;Personal&quot; para elegirlo de una lista.
                   </p>
                 )}
@@ -6658,7 +6658,7 @@ function ExpensesTab({
                         required
                       />
                       {fxHint && (
-                        <p className="mt-1 text-[10px] text-muted-foreground">
+                        <p className="mt-1 text-[11px] text-muted-foreground">
                           {fxHint} · autocompletado, editable
                         </p>
                       )}
@@ -6717,7 +6717,7 @@ function ExpensesTab({
                         required
                       />
                       {fxHint && (
-                        <p className="mt-1 text-[10px] text-muted-foreground">
+                        <p className="mt-1 text-[11px] text-muted-foreground">
                           {fxHint} · autocompletado, editable
                         </p>
                       )}
@@ -6969,7 +6969,7 @@ function ExtensionStatus({ online, assigned }: { online: boolean | null; assigne
           ? "La centralita puede timbrar esta extension"
           : "El navegador no registro la extension: no va a timbrar. Que abra Leads y acepte el microfono."
       }
-      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium ${
         online ? "bg-emerald-500/15 text-emerald-400" : "bg-destructive/15 text-destructive"
       }`}
     >
@@ -7536,7 +7536,7 @@ function MonthlyCloseTab({
             <span className="hidden text-right font-mono text-xs font-semibold lg:block">
               {totals.delivered}
               {totals.orders > 0 && (
-                <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                <span className="ml-1 text-[11px] font-normal text-muted-foreground">
                   {Math.round((totals.delivered / totals.orders) * 100)}%
                 </span>
               )}
@@ -7545,7 +7545,7 @@ function MonthlyCloseTab({
             <span className="hidden text-right font-mono text-xs font-semibold lg:block">
               {totals.settled}
               {totals.orders > 0 && (
-                <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                <span className="ml-1 text-[11px] font-normal text-muted-foreground">
                   {Math.round((totals.settled / totals.orders) * 100)}%
                 </span>
               )}
@@ -7556,7 +7556,7 @@ function MonthlyCloseTab({
             <span className={`text-right font-mono text-xs font-semibold ${totals.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
               {currency(totals.net_profit)}
               {totals.gross > 0 && (
-                <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                <span className="ml-1 text-[11px] font-normal text-muted-foreground">
                   {Math.round((totals.net_profit / totals.gross) * 100)}%
                 </span>
               )}
@@ -7626,7 +7626,7 @@ function MonthlyCloseMonthRow({
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="truncate font-mono text-xs font-semibold">{formatMonthLabel(row.month)}</span>
           {maturity && (
-            <span className={`hidden shrink-0 border px-1.5 py-px text-[9px] sm:inline-flex ${maturity.className}`}>
+            <span className={`hidden shrink-0 border px-1.5 py-px text-[10px] sm:inline-flex ${maturity.className}`}>
               {maturity.label}
             </span>
           )}
@@ -7641,25 +7641,25 @@ function MonthlyCloseMonthRow({
         <span className="hidden text-right font-mono text-xs lg:block">
           {row.delivered}
           {completedOutcomes > 0 && (
-            <span className="ml-1 text-[10px] text-muted-foreground">{deliveredPct}%</span>
+            <span className="ml-1 text-[11px] text-muted-foreground">{deliveredPct}%</span>
           )}
         </span>
         <span className="hidden text-right font-mono text-xs lg:block">{row.pending}</span>
         <span className="hidden text-right font-mono text-xs lg:block">
           {row.settled}
           {row.orders > 0 && (
-            <span className="ml-1 text-[10px] text-muted-foreground">{settledPct}%</span>
+            <span className="ml-1 text-[11px] text-muted-foreground">{settledPct}%</span>
           )}
         </span>
         <span className="hidden text-right font-mono text-xs lg:block">{row.unsettled_expected}</span>
         <span className="hidden text-right font-mono text-xs lg:block">{row.to_claim}</span>
         <span className="hidden text-right font-mono text-xs lg:block">{currency(registeredCosts)}</span>
         <span className={`flex items-baseline justify-end gap-1 font-mono text-xs ${row.net_profit < 0 ? "text-red-300" : "text-emerald-300"}`}>
-          {trend === "up" && <span className="text-[9px] text-emerald-300">▲</span>}
-          {trend === "down" && <span className="text-[9px] text-red-300">▼</span>}
+          {trend === "up" && <span className="text-[10px] text-emerald-300">▲</span>}
+          {trend === "down" && <span className="text-[10px] text-red-300">▼</span>}
           {currency(row.net_profit)}
           {marginPct != null && (
-            <span className="text-[10px] text-muted-foreground">{marginPct}%</span>
+            <span className="text-[11px] text-muted-foreground">{marginPct}%</span>
           )}
         </span>
       </button>
@@ -7848,7 +7848,7 @@ function MonthCloseDetail({
             <div className="border border-border bg-card p-3">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-semibold">Estado financiero del mes</p>
-                <span className="flex items-baseline gap-2 text-[10px] text-muted-foreground">
+                <span className="flex items-baseline gap-2 text-[11px] text-muted-foreground">
                   <span className="w-10 text-right">% ing.</span>
                   {previous && <span className="w-12 text-right">Δ mes ant.</span>}
                 </span>
@@ -8011,7 +8011,7 @@ function MonthCloseDetail({
                   <span className={`font-mono text-xl font-semibold ${close.net_profit < 0 ? "text-red-300" : "text-primary"}`}>
                     {currency(close.net_profit)}
                   </span>
-                  <span className="w-10 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+                  <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
                     {pctOf(close.net_profit, grossCodIncome) == null
                       ? ""
                       : `${(pctOf(close.net_profit, grossCodIncome) as number).toFixed(1)}%`}
@@ -8037,7 +8037,7 @@ function MonthCloseDetail({
                       <span className="font-mono">
                         {stage.value}
                         {stage.base ? (
-                          <span className="ml-1 text-[10px] text-muted-foreground">
+                          <span className="ml-1 text-[11px] text-muted-foreground">
                             {Math.round((stage.value / stage.base) * 100)}%
                           </span>
                         ) : null}
@@ -8191,21 +8191,21 @@ function MonthCloseDetail({
             <div className="border border-border bg-background px-2.5 py-1.5">
               <p className="text-[11px] text-muted-foreground">0-7 dias</p>
               <p className="mt-0.5 font-mono text-sm font-semibold">
-                {toClaimAging.fresh.count} <span className="text-[10px] font-normal text-muted-foreground">pedidos</span>
+                {toClaimAging.fresh.count} <span className="text-[11px] font-normal text-muted-foreground">pedidos</span>
               </p>
               <p className="font-mono text-xs text-muted-foreground">{currency(toClaimAging.fresh.amount)}</p>
             </div>
             <div className="border border-amber-500/40 bg-amber-500/5 px-2.5 py-1.5">
               <p className="text-[11px] text-amber-200">8-15 dias</p>
               <p className="mt-0.5 font-mono text-sm font-semibold">
-                {toClaimAging.warn.count} <span className="text-[10px] font-normal text-muted-foreground">pedidos</span>
+                {toClaimAging.warn.count} <span className="text-[11px] font-normal text-muted-foreground">pedidos</span>
               </p>
               <p className="font-mono text-xs text-amber-200">{currency(toClaimAging.warn.amount)}</p>
             </div>
             <div className="border border-red-500/40 bg-red-500/5 px-2.5 py-1.5">
               <p className="text-[11px] text-red-200">+15 dias</p>
               <p className="mt-0.5 font-mono text-sm font-semibold">
-                {toClaimAging.late.count} <span className="text-[10px] font-normal text-muted-foreground">pedidos</span>
+                {toClaimAging.late.count} <span className="text-[11px] font-normal text-muted-foreground">pedidos</span>
               </p>
               <p className="font-mono text-xs text-red-200">{currency(toClaimAging.late.amount)}</p>
             </div>
@@ -8335,7 +8335,7 @@ function CloseSignalRow({
     <>
       <div className="min-w-0">
         <p className="truncate text-xs font-medium">{label}</p>
-        <p className="truncate text-[10px] text-muted-foreground">{hint}</p>
+        <p className="truncate text-[11px] text-muted-foreground">{hint}</p>
       </div>
       <span className={`inline-flex min-w-10 shrink-0 justify-center border px-2 py-0.5 font-mono text-xs font-semibold ${toneClass}`}>
         {value}
@@ -8448,7 +8448,7 @@ function StatementRow({
           {sign === "minus" ? `(${value})` : value}
         </span>
         {pct !== undefined && (
-          <span className="w-10 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+          <span className="w-10 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
             {pct == null ? "" : `${pct.toFixed(1)}%`}
           </span>
         )}
@@ -8466,7 +8466,7 @@ function DeltaCell({ delta, inverted }: { delta: number | null; inverted?: boole
   const colorClass = delta === 0 ? "text-muted-foreground" : improving ? "text-emerald-300" : "text-red-300";
   const magnitude = Math.abs(delta) > 999 ? ">999" : Math.abs(delta).toFixed(0);
   return (
-    <span className={`w-12 shrink-0 text-right font-mono text-[10px] ${colorClass}`}>
+    <span className={`w-12 shrink-0 text-right font-mono text-[11px] ${colorClass}`}>
       {delta > 0 ? "+" : delta < 0 ? "-" : ""}
       {magnitude}%
     </span>
@@ -9297,7 +9297,7 @@ function CourierPerformanceKpiCard({
             ? `${primary.label} ${primary.deliveryRate.toFixed(1)}%`
             : "Sin despachos"}
       </p>
-      <p className="mt-1 truncate text-[10px] leading-tight text-muted-foreground">
+      <p className="mt-1 truncate text-[11px] leading-tight text-muted-foreground">
         {loading
           ? "Calculando comparativo"
           : secondary

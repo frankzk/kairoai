@@ -299,7 +299,7 @@ export function ProductWorkspace({
                       <>
                         <td>
                           {product.plan?.supplier || "Sin definir"}
-                          <span className="mt-1 block text-[10px] text-muted-foreground">
+                          <span className="mt-1 block text-[11px] text-muted-foreground">
                             {product.plan?.lead_days != null
                               ? `${product.plan.lead_days} días de entrega`
                               : "Plazo sin definir"}
@@ -324,7 +324,7 @@ export function ProductWorkspace({
                         </td>
                         <td className={s.numeric}>
                           {count(product.plan?.incoming_units ?? 0)}
-                          <span className="block text-[10px] text-muted-foreground">
+                          <span className="block text-[11px] text-muted-foreground">
                             Registro manual
                           </span>
                         </td>

@@ -278,7 +278,7 @@ export default function GestionBar({
         )}
       </label>
       {followupAt && (
-        <p className="text-[10px] text-muted-foreground">
+        <p className="text-[11px] text-muted-foreground">
           Se agenda con la próxima gestión que registres y saldrá en la pestaña Agenda.
         </p>
       )}

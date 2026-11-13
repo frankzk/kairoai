@@ -189,7 +189,7 @@ function EstadoCausasPanel({ exec, onVerTodas }: { exec: IncidentExecutiveStats 
             style={{ background: `conic-gradient(rgb(var(--tw-red-400)) 0% ${over48Pct}%, hsl(var(--muted)) ${over48Pct}% 100%)` }}>
             <div className="absolute inset-[11px] flex flex-col items-center justify-center rounded-full bg-card">
               <span className="font-mono text-2xl font-bold leading-none text-red-400">{over48}</span>
-              <span className="mt-0.5 text-[10px] text-muted-foreground">&gt; 48 h</span>
+              <span className="mt-0.5 text-[11px] text-muted-foreground">&gt; 48 h</span>
             </div>
           </div>
           <div className="min-w-0 flex-1 space-y-2">
@@ -201,12 +201,12 @@ function EstadoCausasPanel({ exec, onVerTodas }: { exec: IncidentExecutiveStats 
               <div className="rounded-md border border-border px-2.5 py-1.5">
                 <div className="text-xs text-muted-foreground">Edad promedio</div>
                 <div className="font-mono text-xl font-bold leading-tight">{(est?.edad_promedio_dias ?? 0).toFixed(1)}<span className="text-xs font-normal text-muted-foreground">d</span></div>
-                {est?.mas_antigua && <div className="text-[10px] text-muted-foreground">más antigua: {est.mas_antigua.dias}d</div>}
+                {est?.mas_antigua && <div className="text-[11px] text-muted-foreground">más antigua: {est.mas_antigua.dias}d</div>}
               </div>
               <div className="rounded-md border border-border px-2.5 py-1.5">
                 <div className="text-xs text-muted-foreground">1ª gestión</div>
                 <div className="font-mono text-xl font-bold leading-tight">{est?.primera_gestion_horas != null ? est.primera_gestion_horas.toFixed(1) : "—"}<span className="text-xs font-normal text-muted-foreground">h</span></div>
-                <div className="text-[10px] text-muted-foreground">creación → 1er llamado</div>
+                <div className="text-[11px] text-muted-foreground">creación → 1er llamado</div>
               </div>
             </div>
           </div>
@@ -584,7 +584,7 @@ function FilterPill({ active, onClick, count, dot, activeClass, disabled, childr
       {dot && <span className={`h-1.5 w-1.5 rounded-full ${dot} ${disabled ? "opacity-40" : ""}`} />}
       {children}
       {count != null && (
-        <span className={`inline-block min-w-[2.25ch] text-right tabular-nums text-[10px] ${
+        <span className={`inline-block min-w-[2.25ch] text-right tabular-nums text-[11px] ${
           active ? "opacity-80" : disabled ? "opacity-40" : "opacity-60"
         }`}>{count}</span>
       )}
@@ -936,12 +936,12 @@ export default function IncidenciasPage() {
                 <span className="hidden sm:inline">{busy ? "Actualizando…" : "Detectar novedades"}</span>
               </Button>
               {lastRun && (
-                <span className="text-[10px] leading-tight text-muted-foreground mt-0.5">
+                <span className="text-[11px] leading-tight text-muted-foreground mt-0.5">
                   Actualizado {fmtDate(lastRun)}
                 </span>
               )}
               {trackingSync && (
-                <span className={`text-[10px] leading-tight ${trackingTone}`}
+                <span className={`text-[11px] leading-tight ${trackingTone}`}
                   title="Última sincronización del tracking del courier. Si está vieja, la detección puede no traer novedades nuevas.">
                   {courierName} {fmtDate(trackingSync)}
                 </span>

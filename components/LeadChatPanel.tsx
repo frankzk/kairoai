@@ -68,7 +68,7 @@ function MediaAttachment({
           href={src}
           target="_blank"
           rel="noreferrer"
-          className="text-[10px] underline underline-offset-2 opacity-70 hover:opacity-100"
+          className="text-[11px] underline underline-offset-2 opacity-70 hover:opacity-100"
         >
           abrir audio
         </a>
@@ -160,7 +160,7 @@ export default function LeadChatPanel({
             <MessageSquare className="h-4 w-4 shrink-0 text-primary" />
             <div className="min-w-0">
               <h3 className="truncate text-xs font-semibold">{title}</h3>
-              <p className="truncate text-[10px] text-muted-foreground">
+              <p className="truncate text-[11px] text-muted-foreground">
                 {lead.name || "Cliente"} · WhatsApp
               </p>
             </div>
@@ -181,7 +181,7 @@ export default function LeadChatPanel({
       {lead.labels.length > 0 && (
         <div className="flex flex-wrap gap-1 border-b border-border px-3 py-2">
           {lead.labels.map((label) => (
-            <Badge key={label} variant="muted" className="text-[10px]">
+            <Badge key={label} variant="muted" className="text-[11px]">
               {label}
             </Badge>
           ))}
@@ -237,11 +237,11 @@ export default function LeadChatPanel({
                     <MediaAttachment message={message} store={store} compact={compact} />
                   )}
                   {message.caption && (
-                    <p className="mt-0.5 text-[10px] opacity-80">{message.caption}</p>
+                    <p className="mt-0.5 text-[11px] opacity-80">{message.caption}</p>
                   )}
                   {time && (
                     <p
-                      className={`mt-0.5 text-[10px] leading-none opacity-60 ${
+                      className={`mt-0.5 text-[11px] leading-none opacity-60 ${
                         message.direction === "inbound" ? "" : "text-right"
                       }`}
                     >
