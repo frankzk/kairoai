@@ -1451,11 +1451,11 @@ function DetailModal({
           <>
           {/* Estado y causa */}
           <div className="flex flex-wrap gap-2">
-            <select className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            <select className="h-8 rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
               value={incident.status} onChange={(e) => onPatch({ status: e.target.value })}>
               {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
             </select>
-            <div className="flex h-9 items-center gap-2 rounded-md border border-border bg-muted/40 px-3 text-sm"
+            <div className="flex h-8 items-center gap-2 rounded-md border border-border bg-muted/40 px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
               title="La causa la determina el detalle del courier; no es editable.">
               <span className="text-xs text-muted-foreground">Causa:</span>
               <span className="font-medium">{CATEGORY_LABELS[incident.category]}</span>
@@ -1718,7 +1718,7 @@ function NewModal({ storeCode, onClose, onCreated }: { storeCode: FinanceStoreCo
           <Input placeholder="Numero de guia" value={form.guide_number} onChange={(e) => set("guide_number", e.target.value)} />
           <Input placeholder="Nombre del cliente" value={form.customer_name} onChange={(e) => set("customer_name", e.target.value)} />
           <Input placeholder="Telefono" value={form.customer_phone} onChange={(e) => set("customer_phone", e.target.value)} />
-          <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+          <select className="h-8 w-full rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
             value={form.category} onChange={(e) => set("category", e.target.value)}>
             {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>

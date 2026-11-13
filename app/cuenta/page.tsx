@@ -60,7 +60,7 @@ export default function CuentaPage() {
   const tiendas = FINANCE_STORES.filter((s) => yo?.tiendas.includes(s.code)).map((s) => s.label);
 
   return (
-    <main className="mx-auto max-w-xl px-4 py-8">
+    <main className="mx-auto max-w-2xl px-4 py-6 sm:px-6 lg:mx-0">
       <h1 className="text-xl font-semibold tracking-tight text-foreground">Mi cuenta</h1>
       {yo && (
         <p className="mt-1 text-sm text-muted-foreground">

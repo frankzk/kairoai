@@ -93,7 +93,7 @@ function OrdersWorkspace() {
     <header className="border-b border-border/50 bg-card/70">
       <div className="container mx-auto flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-4">
         <div className="flex min-w-0 flex-1 items-center gap-3"><div className="min-w-0"><h1 className="text-xl font-semibold tracking-tight text-foreground">Pedidos</h1><p className="mt-0.5 text-[13px] text-muted-foreground">{config.label} · Shopify{config.woo?" y WooCommerce":""} · {config.currency}</p></div></div>
-        <div className="flex items-center gap-2"><button className={`${control} h-9`} onClick={()=>void load(true)} disabled={busy||!rangeReady}><RefreshCw size={14} className={busy?"motion-safe:animate-spin":""}/>{busy?"Actualizando…":"Actualizar"}</button></div>
+        <div className="flex items-center gap-2"><button className={`${control}`} onClick={()=>void load(true)} disabled={busy||!rangeReady}><RefreshCw size={14} className={busy?"motion-safe:animate-spin":""}/>{busy?"Actualizando…":"Actualizar"}</button></div>
       </div>
     </header>
     <main className="container mx-auto space-y-5 px-4 py-5 sm:py-6">

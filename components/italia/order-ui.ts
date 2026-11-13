@@ -1,6 +1,8 @@
 import type { ItaliaStatus } from "@/lib/italia-orders";
 
-export const control = "inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-40";
+// Mismo control que el botón secundario del sistema (estilo Stripe): 32 px,
+// borde fino, sombra de 1 px y foco índigo suave.
+export const control = "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-input bg-card px-2.5 text-[13px] font-medium text-foreground shadow-[0_1px_1px_rgb(20_20_31/0.04)] transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-40";
 export const statusTone: Record<ItaliaStatus,string> = {
   pending:"bg-slate-500/15 text-slate-300", confirmed:"bg-amber-500/15 text-amber-300",
   dispatched:"bg-cyan-500/15 text-cyan-300", partial:"bg-blue-500/15 text-blue-300",

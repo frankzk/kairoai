@@ -674,7 +674,7 @@ export default function OrderDrawer({
 
               <ActionRow label="Vendedora">
                 <select
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  className="h-8 rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
                   value={vendedoraId ?? ""}
                   // Una asesora fija (lib/vendedora.ts) no elige: queda a su nombre.
                   disabled={vendedoraBloqueada() !== null}
@@ -747,7 +747,7 @@ export default function OrderDrawer({
                       value={fechaPactada}
                       onChange={(e) => setFechaPactada(e.target.value)}
                       aria-label="Fecha pactada con el cliente"
-                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      className="h-8 rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
                     />
                     <Button
                       size="sm"

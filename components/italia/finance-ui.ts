@@ -12,7 +12,7 @@ export interface WorkspaceData {
  summary?:{deliveredSales:number;collected:number;expectedBank:number;receivedBank:number;expenses:number;knownContribution:number;incomplete:number;complete:boolean;netProfit:number|null;estimated:number};
 }
 export const eur=(value:number|null|undefined)=>value===null||value===undefined?"Pendiente":new Intl.NumberFormat("it-IT",{style:"currency",currency:"EUR"}).format(value/100);
-export const field="h-9 w-full rounded-md border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+export const field="h-8 w-full rounded-md border border-input bg-card px-2.5 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)] focus-visible:border-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/25 disabled:opacity-50";
 export function romeToday(){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Rome",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());}
 export function csvValue(value:unknown):string {let s=value==null?"":String(value);if(typeof value!=="number"&&/^[=+@\-\t\r]/.test(s))s="'"+s;return `"${s.replace(/"/g,'""')}"`;}
 export function downloadCsv(name:string,rows:unknown[][]){const blob=new Blob(["\uFEFF"+rows.map(r=>r.map(csvValue).join(";")).join("\r\n")],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}

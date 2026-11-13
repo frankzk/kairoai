@@ -161,7 +161,7 @@ export default function QuickReplyManager({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar respuesta…"
-            className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
+            className="h-8 flex-1 rounded-md border border-input bg-card px-3 text-[13.5px] outline-none focus:ring-1 focus:ring-ring shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
           />
           <button
             type="button"

@@ -178,7 +178,7 @@ export default function SettingsPage() {
                             type="number" min={1} max={1440}
                             value={settings.retry_delays?.[i] ?? 30}
                             onChange={(e) => setRetryDelay(i, Number(e.target.value))}
-                            className="w-24 h-9 px-3 rounded-md border border-input bg-background text-sm text-center font-mono focus:outline-none focus:ring-2 focus:ring-ring/30"
+                            className="w-24 h-8 px-3 rounded-md border border-input bg-card text-[13.5px] text-center font-mono focus:outline-none focus:ring-2 focus:ring-ring/30 shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
                           />
                           <span className="text-xs text-muted-foreground">min</span>
                           <span className="text-xs text-primary font-medium">
@@ -254,7 +254,7 @@ export default function SettingsPage() {
                           type="number" min={1} max={1440}
                           value={delay}
                           onChange={(e) => setCartRetryDelay(i, Number(e.target.value))}
-                          className="w-24 h-9 px-3 rounded-md border border-input bg-background text-sm text-center font-mono focus:outline-none focus:ring-2 focus:ring-ring/30"
+                          className="w-24 h-8 px-3 rounded-md border border-input bg-card text-[13.5px] text-center font-mono focus:outline-none focus:ring-2 focus:ring-ring/30 shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
                         />
                         <span className="text-xs text-muted-foreground">min</span>
                         <span className="text-xs text-primary font-medium">({fmtMin(delay)})</span>

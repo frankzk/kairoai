@@ -1199,7 +1199,7 @@ export default function LeadsBoard() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-md border border-input bg-background px-2 py-1 lg:flex-nowrap">
+            <div className="flex min-h-8 flex-wrap items-center gap-2 rounded-md border border-input bg-card px-2 py-1 lg:flex-nowrap shadow-[0_1px_1px_rgb(20_20_31/0.04)]">
               <CalendarRange className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span>Desde</span>

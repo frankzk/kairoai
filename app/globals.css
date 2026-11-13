@@ -92,6 +92,10 @@
   textarea {
     caret-color: hsl(var(--primary));
   }
+  /* Encabezados de tabla en peso medio (no negrita), como en Stripe. */
+  thead th {
+    font-weight: 500;
+  }
   /* Selects nativos: mismo alto, borde y foco que los campos. */
   select {
     accent-color: hsl(var(--primary));
