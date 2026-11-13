@@ -29,7 +29,7 @@ export const PERMISOS = [
 export type Permiso = (typeof PERMISOS)[number];
 
 export const PERMISO_INFO: Record<Permiso, { label: string; detalle: string }> = {
-  panel: { label: "Panel principal", detalle: "Inicio: llamadas del agente de voz, pedidos y carritos de Shopify" },
+  panel: { label: "Panel principal", detalle: "Inicio: resumen de la tienda elegida (pedidos, embudo, ventas y lo que hay que atender)" },
   leads: { label: "Leads", detalle: "Tablero de leads, chat y gestiones, siempre a su propio nombre" },
   leads_equipo: {
     label: "Leads: supervisión",
@@ -256,6 +256,8 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/finance/order-detail", exige: P(...OPERACION) },
   { ruta: "/api/finance/order-upsell", exige: P("pedidos") },
   { ruta: "/api/finance/kpis", exige: P(...OPERACION) },
+  // Serie diaria del Panel (inicio): solo lectura, mismo dataset que los KPIs.
+  { ruta: "/api/finance/kpis/daily", exige: P(...OPERACION) },
   { ruta: "/api/finance/dispatch-audit", exige: P(...OPERACION) },
   { ruta: "/api/finance/productividad", exige: P(...OPERACION) },
   { ruta: "/api/finance/notes", exige: P(...OPERACION) },
