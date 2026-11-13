@@ -13,34 +13,28 @@ import {
 } from "@/lib/marketing-origin-mix";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import { count, percentage, shortDate } from "./format";
+import { ChartLegend, ColumnChart } from "./charts";
 import r from "./team-report.module.css";
 
 type Resource<T> = { data: T | null; loading: boolean; error: string };
 const t = MARKETING_TARGETS;
 const PRODUCTS = 15;
 
-const SEGMENT: Record<OrderOrigin, string> = {
-  shopify: r.originShopify,
-  carrito: r.originCarrito,
-  bot: r.originBot,
-  asesora: r.originAsesora,
-  formulario: r.originFormulario,
+/**
+ * Fixed color per origin (stacked bottom → top in ORDER_ORIGINS order). Shopify
+ * takes the background gray; the four others follow the categorical order,
+ * validated as neighbors in this stack. "Carrito recuperado" shares slot 2 with
+ * the simulator's recovered carts.
+ */
+const ORIGIN_COLOR: Record<OrderOrigin, string> = {
+  shopify: "var(--mk-other)",
+  carrito: "var(--mk-series-2)",
+  bot: "var(--mk-series-1)",
+  asesora: "var(--mk-series-3)",
+  formulario: "var(--mk-series-4)",
 };
 
-function OriginLegend({ origins }: { origins: OrderOrigin[] }) {
-  return (
-    <ul className={r.originLegend} aria-label="Colores de cada origen">
-      {origins.map((origin) => (
-        <li key={origin}>
-          <span className={SEGMENT[origin]} aria-hidden="true" />
-          {ORDER_ORIGIN_LABEL[origin]}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** One stacked bar per day (real orders by origin), with the numbers in text. */
+/** One stacked column per day (real orders by origin) and its table. */
 function DailyOrigins({
   days,
   origins,
@@ -48,50 +42,66 @@ function DailyOrigins({
   days: OriginDay[];
   origins: OrderOrigin[];
 }) {
-  const max = Math.max(1, ...days.map((d) => d.total));
   return (
-    <div
-      className={r.cancelBarsWrap}
-      tabIndex={0}
-      role="region"
-      aria-label="Pedidos reales por día y origen"
-    >
-      <ol className={r.cancelBars}>
-        {days.map((day) => {
-          const text = origins
-            .filter((o) => day.byOrigin[o] > 0)
-            .map((o) => `${ORDER_ORIGIN_LABEL[o]} ${count(day.byOrigin[o])}`)
-            .join(", ");
-          return (
-            <li
-              key={day.date}
-              title={`${shortDate(day.date)}: ${text || "sin pedidos"}`}
-            >
-              <span className={r.cancelBarValue}>{count(day.total)}</span>
-              <span className={r.originTrack} aria-hidden="true">
-                {origins.map((origin) =>
-                  day.byOrigin[origin] > 0 ? (
-                    <span
-                      key={origin}
-                      className={SEGMENT[origin]}
-                      style={{
-                        height: `${(day.byOrigin[origin] / max) * 100}%`,
-                      }}
-                    />
-                  ) : null,
-                )}
-              </span>
-              <span className={r.cancelBarDate}>
-                {shortDate(day.date)}
-                <span className="sr-only">
-                  : {text || "sin pedidos reales"}
-                </span>
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-    </div>
+    <>
+      <ChartLegend
+        label="Colores de cada origen"
+        items={origins.map((origin) => ({
+          key: origin,
+          name: ORDER_ORIGIN_LABEL[origin],
+          color: ORIGIN_COLOR[origin],
+        }))}
+      />
+      <ColumnChart
+        ariaLabel="Pedidos reales por día y origen; cifras en la tabla inferior"
+        bins={days.map((day) => ({
+          key: day.date,
+          label: shortDate(day.date),
+          title: shortDate(day.date),
+          stacks: [
+            origins.map((origin) => ({
+              key: origin,
+              label: ORDER_ORIGIN_LABEL[origin],
+              value: day.byOrigin[origin],
+              color: ORIGIN_COLOR[origin],
+            })),
+          ],
+          notes: day.total ? undefined : ["Sin pedidos reales"],
+        }))}
+      />
+      <details className={r.chartData}>
+        <summary>Ver datos del gráfico</summary>
+        <div
+          className={r.tableWrap}
+          tabIndex={0}
+          role="region"
+          aria-label="Pedidos reales por día y origen"
+        >
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                {origins.map((origin) => (
+                  <th key={origin}>{ORDER_ORIGIN_LABEL[origin]}</th>
+                ))}
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map((day) => (
+                <tr key={day.date}>
+                  <th scope="row">{shortDate(day.date)}</th>
+                  {origins.map((origin) => (
+                    <td key={origin}>{count(day.byOrigin[origin])}</td>
+                  ))}
+                  <td>{count(day.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </>
   );
 }
 
@@ -253,7 +263,6 @@ export function OrderOriginPanel({
           </div>
 
           <h3 className="mt-6">Pedidos reales por día</h3>
-          <OriginLegend origins={origins} />
           <DailyOrigins days={mix.daily} origins={origins} />
 
           <h3 className="mt-6">Cómo se vende cada producto</h3>

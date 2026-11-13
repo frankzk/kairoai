@@ -1,0 +1,178 @@
+/* Gráficos de Marketing: marcas finas, ejes recesivos, tooltip al pasar.
+   Colores por rol (theme.module.css); el texto siempre en tokens de texto. */
+.frame {
+  position: relative;
+  width: 100%;
+  margin-top: 8px;
+}
+.frame:focus-visible {
+  outline: 2px solid var(--mk-accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.svg {
+  display: block;
+  overflow: visible;
+  touch-action: pan-y;
+}
+.grid {
+  stroke: var(--mk-grid);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.axis {
+  stroke: var(--mk-axis);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.tick {
+  fill: var(--mk-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.label {
+  fill: var(--mk-text);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.labelName {
+  fill: var(--mk-muted);
+  font-size: 11px;
+}
+.reference {
+  stroke: var(--mk-muted);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.wash {
+  fill: var(--mk-hover);
+}
+.activeMark {
+  filter: brightness(0.86);
+}
+.crosshair {
+  stroke: var(--mk-axis);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.tooltip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  min-width: 160px;
+  max-width: 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--mk-border);
+  border-radius: 6px;
+  background: var(--mk-surface);
+  box-shadow: 0 6px 18px oklch(29% 0.035 154 / 0.12);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--mk-muted);
+}
+.tooltipTitle {
+  margin: 0 0 6px;
+  color: var(--mk-muted);
+}
+.tooltipRows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.tooltipRows li {
+  display: grid;
+  grid-template-columns: 12px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+.tooltipRows strong {
+  color: var(--mk-text);
+  font-weight: 600;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.tooltipRows span:last-child {
+  overflow-wrap: anywhere;
+}
+.lineKey {
+  display: block;
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+}
+.tooltipNote {
+  margin: 6px 0 0;
+  color: var(--mk-text);
+}
+.legend {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 11px;
+  color: var(--mk-muted);
+}
+.legend li {
+  display: inline-flex;
+}
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+/* Más específico que los estilos de botón de cada vista (.report button). */
+.legend li > button.legendItem {
+  min-height: 24px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  color: var(--mk-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.legend li > button.legendItem:hover {
+  border: 0;
+  background: none;
+  color: var(--mk-text);
+}
+.legend li > button.legendItem:focus-visible {
+  outline: 2px solid var(--mk-accent);
+  outline-offset: 2px;
+}
+.legendItem[aria-pressed="false"] {
+  text-decoration: line-through;
+}
+.legendItem[aria-pressed="false"] .swatchRect,
+.legendItem[aria-pressed="false"] .swatchLine {
+  opacity: 0.3;
+}
+.swatchRect {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.swatchLine {
+  flex: none;
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+}
+.swatchRule {
+  flex: none;
+  width: 14px;
+  height: 0;
+  border-top: 1px solid var(--mk-muted);
+}
