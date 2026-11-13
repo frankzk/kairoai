@@ -100,7 +100,7 @@ async function json(
     cache: "no-store",
     redirect: "error",
   });
-  if (!response.ok) throw new Error("Provider HTTP error");
+  if (!response.ok) throw new Error(`Provider HTTP error ${response.status}`);
   return obj(await response.json());
 }
 
@@ -133,6 +133,39 @@ async function source<T>(
       data: null,
     };
   }
+}
+
+/** Why an account could not be read, without echoing provider text (it can carry credentials). */
+export function metaAccountFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  const http = /^Provider HTTP error (\d{3})$/.exec(message)?.[1];
+  if (http === "400" || http === "403" || message === "Invalid Meta account")
+    return "Meta no permite leer la cuenta (desactivada, restringida o sin acceso del token).";
+  if (http === "401") return "El token de Meta venció o no es válido.";
+  if (http === "429" || http === "613") return "Meta limitó las consultas; reintenta en unos minutos.";
+  if (http) return `Meta respondió con error ${http}.`;
+  if (error instanceof Error && /abort|timeout/i.test(error.name + message))
+    return "La consulta a Meta tardó demasiado.";
+  return "Respuesta incompleta o inesperada de Meta.";
+}
+
+/**
+ * Reads every account; the ones that fail go to `unavailable`. If none can be
+ * read, it throws (the whole source is an error, as before).
+ */
+export async function metaAccountsSettled(
+  ids: string[],
+  read: (id: string) => Promise<MarketingAdsData>,
+): Promise<{ accounts: MarketingAdsData[]; unavailable?: Array<{ accountId: string; reason: string }> }> {
+  const results = await Promise.allSettled(ids.map((id) => read(id)));
+  const accounts: MarketingAdsData[] = [];
+  const unavailable: Array<{ accountId: string; reason: string }> = [];
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") accounts.push(r.value);
+    else unavailable.push({ accountId: ids[i], reason: metaAccountFailure(r.reason) });
+  });
+  if (!accounts.length) throw new Error("No Meta account could be read");
+  return unavailable.length ? { accounts, unavailable } : { accounts };
 }
 
 export function metaAccountIds(env: Env): string[] {
@@ -740,9 +773,12 @@ export async function getMarketingSources(
       has("META_CR_GRAPH_VERSION", "META_CR_ACCESS_TOKEN") &&
         Boolean(env.META_CR_AD_ACCOUNT_IDS || env.META_CR_AD_ACCOUNT_ID),
       async (signal) => ({
-        // A missing account must not masquerade as complete Meta spend.
-        accounts: await Promise.all(
-          metaAccountIds(env).map((id) =>
+        // One account that cannot be read (disabled, restricted, lost access)
+        // must not blank the others; it is listed in `unavailable` so the
+        // spend is shown as partial and never as complete.
+        ...(await metaAccountsSettled(
+          metaAccountIds(env),
+          (id) =>
             metaAds(
               id,
               period,
@@ -761,8 +797,7 @@ export async function getMarketingSources(
                 now: options.now,
               },
             ),
-          ),
-        ),
+        )),
       }),
     ),
     has("TIKTOK_CR_ADVERTISER_ID", "TIKTOK_CR_ACCESS_TOKEN") ||
