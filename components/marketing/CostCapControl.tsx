@@ -25,7 +25,6 @@ export function CostCapControl({
     <section className={r.section} aria-labelledby="cost-cap-title">
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>04 / COST CAP</p>
           <h2 id="cost-cap-title">Control de las COST CAP</h2>
           <p>
             Alerta roja: más de {usd(t.costCapDailyAlertUsd)} en un día o CPA

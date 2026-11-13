@@ -312,7 +312,6 @@ export default function MarketingDashboard() {
       <main className={s.workspace}>
         <header className={s.header}>
           <div>
-            <p className={s.eyebrow}>Mireva Costa Rica / Operación comercial</p>
             <h1 className={s.title}>Marketing</h1>
             <p className={`${s.muted} mt-1`}>
               {period
@@ -441,7 +440,6 @@ export default function MarketingDashboard() {
               aria-pressed={tab === key}
               onClick={() => navigate(target)}
             >
-              <span className={s.tabIndex}>0{index + 1}</span>
               {label}
             </button>
           ))}

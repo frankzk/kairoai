@@ -159,7 +159,7 @@ export default function LeadChatPanel({
           <div className="flex min-w-0 items-center gap-2">
             <MessageSquare className="h-4 w-4 shrink-0 text-primary" />
             <div className="min-w-0">
-              <h3 className="truncate text-xs font-semibold uppercase tracking-wide">{title}</h3>
+              <h3 className="truncate text-xs font-semibold">{title}</h3>
               <p className="truncate text-[10px] text-muted-foreground">
                 {lead.name || "Cliente"} · WhatsApp
               </p>
@@ -217,7 +217,7 @@ export default function LeadChatPanel({
             return (
               <Fragment key={message.id}>
                 {separator && (
-                  <p className="py-1 text-center text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <p className="py-1 text-center text-xs text-muted-foreground">
                     {separator}
                   </p>
                 )}

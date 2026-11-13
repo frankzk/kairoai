@@ -127,7 +127,6 @@ export function PathTo200({
     >
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>05 / Camino a {t.dailyOrders}</p>
           <h2 id="path-title">Simulador del camino a {t.dailyOrders}</h2>
           <p>
             Cambia el gasto, el CPA, la anulación o las palancas y mira cuántos

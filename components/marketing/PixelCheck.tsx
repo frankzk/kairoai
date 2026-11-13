@@ -133,7 +133,6 @@ export function PixelCheck({
     <section className={r.section} aria-labelledby="pixel-title">
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>04 / Píxel</p>
           <h2 id="pixel-title">Píxel contra pedidos reales</h2>
           <p>
             Factor = compras del píxel ÷ pedidos reales de iComfly (sin

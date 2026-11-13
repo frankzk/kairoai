@@ -278,7 +278,7 @@ export default function UsuariosPage() {
     <main className="mx-auto max-w-6xl px-4 py-6">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold">Usuarios y accesos</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Usuarios y accesos</h1>
           <p className="text-sm text-muted-foreground">
             Cada persona entra con su usuario y ve solo sus pantallas y tiendas.
           </p>

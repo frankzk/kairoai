@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, Pencil, X, Check, ArrowLeft, ToggleLeft, ToggleRight } from "lucide-react";
-import Link from "next/link";
+import { Plus, Trash2, Pencil, X, Check, ToggleLeft, ToggleRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -171,16 +170,11 @@ export default function UpsellAdminPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border/50 bg-card/50 sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-4 flex items-center gap-4">
-          <Link href="/">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-4 w-4 mr-2" /> Dashboard
-            </Button>
-          </Link>
+      <header className="sticky top-0 z-10 border-b border-border bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+        <div className="container mx-auto px-4 py-4 flex items-center gap-4 sm:px-6">
           <div>
-            <h1 className="text-lg font-bold">Reglas de Upsell</h1>
-            <p className="text-xs text-muted-foreground">
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Reglas de Upsell</h1>
+            <p className="text-[13px] text-muted-foreground">
               {active.length} activas · {inactive.length} inactivas
             </p>
           </div>
@@ -194,7 +188,7 @@ export default function UpsellAdminPage() {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6 space-y-6">
+      <main className="container mx-auto px-4 py-6 space-y-6 sm:px-6">
         {/* Form */}
         {showForm && (
           <Card className="border-primary/30">

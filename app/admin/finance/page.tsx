@@ -15,11 +15,9 @@ import { KENKU_MANAGEMENT_STORES } from "@/lib/kenku-management";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import Link from "next/link";
 import {
   AlertTriangle,
   ArrowDown,
-  ArrowLeft,
   ArrowUp,
   BarChart3,
   Bell,
@@ -105,7 +103,7 @@ import {
 } from "@/lib/store-config";
 import OrderDrawer, { type OrderDrawerTarget } from "@/components/OrderDrawer";
 import TelefonoWeb from "@/components/TelefonoWeb";
-import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
+import { useSelectedStore } from "@/lib/use-selected-store";
 import { leerYo, tienePermiso } from "@/lib/sesion-cliente";
 import { sanitizeExternalError } from "@/lib/api-errors";
 import { Badge } from "@/components/ui/badge";
@@ -555,24 +553,18 @@ const FINANCE_BACKGROUND_FETCH_TIMEOUT_MS = 18000;
 
 export default function FinancePage() {
   const [italiaOnly, setItaliaOnly] = useState<boolean | null>(null);
-  const [verItalia, setVerItalia] = useState(false);
-  const [verMexico, setVerMexico] = useState(false);
-  const [verArgentina, setVerArgentina] = useState(false);
   useEffect(() => {
     const yo = leerYo();
-    setVerItalia(Boolean(yo && (yo.id === 0 || yo.tiendas.includes("kenku-it"))));
-    setVerMexico(Boolean(yo && (yo.id === 0 || yo.tiendas.includes("kenku-mx"))));
-    setVerArgentina(Boolean(yo && (yo.id === 0 || yo.tiendas.includes("kenku-ar"))));
     const firstKenku = KENKU_MANAGEMENT_STORES.find(s => yo?.tiendas.includes(s.code));
     const only = Boolean(yo && yo.id !== 0 && firstKenku && !yo.tiendas.some(t => t === "mireva-cr" || t === "mireva-hn"));
     setItaliaOnly(only);
     if (only && firstKenku) window.location.replace(firstKenku.path);
   }, []);
   if (italiaOnly !== false) return <p className="p-6 text-sm">Cargando Gestión…</p>;
-  return <LegacyFinancePage verItalia={verItalia} verMexico={verMexico} verArgentina={verArgentina} />;
+  return <LegacyFinancePage />;
 }
 
-function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: boolean; verMexico: boolean; verArgentina: boolean }) {
+function LegacyFinancePage() {
   const [tab, setTab] = useState<Tab>("orders");
   // Las pestañas de plata (Productos, Liquidaciones, Gastos, Cierre) son del
   // permiso "finanzas". Logistica ve el resto. El servidor lo impone igual; aca
@@ -616,8 +608,8 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
   const [noteShopifyOrderCount, setNoteShopifyOrderCount] = useState(0);
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState("");
-  const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
-  const tiendasPermitidas = useTiendasPermitidas();
+  // La tienda se elige en el menú lateral (selector único; Kenku abre su pantalla).
+  const [selectedStoreCode] = useSelectedStore();
   const [imports, setImports] = useState<SettlementImport[]>([]);
   const [logisticsImports, setLogisticsImports] = useState<LogisticsImport[]>([]);
   // shopifyOrders se mantiene SOLO como contador base para el tab Pedidos
@@ -1445,42 +1437,17 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
 
   return (
     <div className="min-h-screen bg-background" style={{ ["--finance-header-h" as string]: `${headerAlto}px` } as React.CSSProperties}>
-      <header ref={headerRef} className="sticky top-0 z-10 border-b border-border/50 bg-card/70 backdrop-blur">
-        <div className="container mx-auto flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:gap-4 sm:px-4 sm:py-4">
+      <header ref={headerRef} className="sticky top-0 z-10 border-b border-border bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+        <div className="container mx-auto flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:gap-4 sm:px-6 sm:py-4">
           <div className="flex min-w-0 items-center gap-1.5 sm:flex-1">
-            <Link href="/">
-              <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs sm:h-9 sm:text-sm">
-                <ArrowLeft className="h-4 w-4" /> Dashboard
-              </Button>
-            </Link>
             <div className="min-w-0 flex-1">
-              <h1 className="truncate text-sm font-bold sm:text-lg">Gestion de pedidos y rentabilidad</h1>
-              <p className="hidden truncate text-xs text-muted-foreground sm:block">
+              <h1 className="truncate text-xl font-semibold tracking-tight text-foreground">Gestión de pedidos</h1>
+              <p className="hidden truncate text-[13px] text-muted-foreground sm:block">
                 Liquidaciones, costos por SKU, gastos y utilidad neta
               </p>
             </div>
           </div>
           <div className="flex items-center gap-1.5 sm:ml-auto sm:gap-2">
-            <select
-              value={selectedStore.code}
-              onChange={(event) => {
-                if (event.target.value === "kenku-it") window.location.assign("/admin/finance/italia");
-                else if (event.target.value === "kenku-mx") window.location.assign("/admin/finance/mexico");
-                else if (event.target.value === "kenku-ar") window.location.assign("/admin/finance/argentina");
-                else setSelectedStoreCode(event.target.value as FinanceStoreCode);
-              }}
-              aria-label="Tienda"
-              className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs font-semibold text-foreground outline-none focus:border-primary sm:h-9 sm:min-w-[190px] sm:flex-none sm:px-3 sm:text-sm"
-            >
-              {tiendasPermitidas.map((store) => (
-                <option key={store.code} value={store.code}>
-                  {store.label}
-                </option>
-              ))}
-              {verItalia && <option value="kenku-it">Kenku Italia</option>}
-              {verMexico && <option value="kenku-mx">Kenku México</option>}
-              {verArgentina && <option value="kenku-ar">Kenku Argentina</option>}
-            </select>
             <Button
               variant="outline"
               size="sm"
@@ -1625,7 +1592,7 @@ function LegacyFinancePage({ verItalia, verMexico, verArgentina }: { verItalia: 
 
         </section>
 
-        <div className="flex gap-2 overflow-x-auto border-b border-border">
+        <div className="flex gap-1 overflow-x-auto border-b border-border">
           <TabButton active={tab === "orders"} onClick={() => setTab("orders")} icon={<FileSpreadsheet />}>
             Pedidos
           </TabButton>
@@ -1910,7 +1877,7 @@ function TarjetaEstado({
 function GrupoChips({ nombre, crece, children }: { nombre?: string; crece?: number; children: React.ReactNode }) {
   // `crece`: el grupo se estira para llenar la fila, en proporcion a sus chips.
   return (
-    <div role="group" aria-label={nombre} className="flex shrink-0 [&>*+*]:-ml-px" style={crece ? { flexGrow: crece } : undefined}>
+    <div role="group" aria-label={nombre} className="flex shrink-0 [&>*+*]:-ml-px [&>*:first-child]:rounded-l-md [&>*:last-child]:rounded-r-md" style={crece ? { flexGrow: crece } : undefined}>
       {children}
     </div>
   );
@@ -1922,7 +1889,7 @@ function FilaFiltros({ etiqueta, sub = false, children }: { etiqueta: string; su
   return (
     <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-start sm:gap-2">
       <span
-        className={`text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:shrink-0 sm:pt-[6px] ${
+        className={`text-xs font-medium text-muted-foreground sm:shrink-0 sm:pt-[6px] ${
           sub ? "sm:w-[4.5rem]" : "sm:w-[5.25rem]"
         }`}
       >
@@ -3600,7 +3567,7 @@ function MoovinTrackingButton({
           className="flex flex-col items-start text-left"
         >
           <span className={`text-[10px] font-medium ${groupClass}`}>
-            {cached.has_incident ? "⚠ " : ""}
+            {cached.has_incident ? <AlertTriangle className="mr-0.5 inline h-3 w-3 align-[-2px]" aria-label="Con novedad" /> : null}
             {cached.latest_status}
           </span>
           {cached.latest_at && (
@@ -9780,7 +9747,7 @@ function TabButton({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
+      className={`-mb-px flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13.5px] font-medium transition-colors ${
         active
           ? "border-primary text-primary"
           : "border-transparent text-muted-foreground hover:text-foreground"

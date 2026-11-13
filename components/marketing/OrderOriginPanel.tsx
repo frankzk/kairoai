@@ -143,7 +143,6 @@ export function OrderOriginPanel({
     >
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>04 / Origen y complementos</p>
           <h2 id="origin-title">Origen de los pedidos y complementos</h2>
           <p>
             De dónde entran los pedidos reales y qué productos se venden solos o

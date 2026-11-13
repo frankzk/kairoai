@@ -193,7 +193,7 @@ export default function CustomerPanel({
     <div className="h-full space-y-4 overflow-y-auto p-4">
       {/* Resumen del cliente */}
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
           Resumen del cliente
         </h3>
         {loading ? (
@@ -241,7 +241,7 @@ export default function CustomerPanel({
       {/* Direccion del ultimo pedido, lista para reusar */}
       {lastAddress && (
         <section>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
             Última dirección
           </h3>
           <div className="flex items-start gap-1.5 rounded-md border border-border bg-background px-2.5 py-2">
@@ -254,7 +254,7 @@ export default function CustomerPanel({
 
       {/* Pedidos agrupados por lo que REALMENTE paso */}
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
           Pedidos {orders.length > 0 && `(${orders.length})`}
         </h3>
         {loading ? (
@@ -337,7 +337,7 @@ export default function CustomerPanel({
 
       {/* Carritos abandonados */}
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
           Carritos abandonados {carts.length > 0 && `(${carts.length})`}
         </h3>
         {cartsUnavailable && (
@@ -437,7 +437,7 @@ export default function CustomerPanel({
 
       {/* Gestiones (llamadas, cambios de estado, mensajes enviados) */}
       <section>
-        <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h3 className="mb-1 text-xs font-semibold text-muted-foreground">
           Gestiones
         </h3>
         {/* Tope con scroll propio: el historial no debe empujar fuera de vista

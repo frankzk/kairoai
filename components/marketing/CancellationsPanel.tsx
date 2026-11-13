@@ -160,7 +160,6 @@ export function CancellationsPanel({
     >
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>03 / Cancelaciones</p>
           <h2 id="cancellations-title">Cancelaciones</h2>
           <p>
             Cuántos pedidos se anulan, por qué, de qué productos y de dónde

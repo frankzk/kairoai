@@ -17,6 +17,7 @@
   --nav-avatar-text: #5530e0;
   --nav-overlay: rgb(20 20 31 / 0.35);
   --nav-track: #d9d9e6;
+  --nav-menu-bg: #ffffff;
 }
 /* Tono oscuro: el interruptor del menú pone la clase "dark" en <html>. */
 :global(.dark) .menu {
@@ -34,6 +35,7 @@
   --nav-avatar-text: #d6ceff;
   --nav-overlay: rgb(3 4 12 / 0.6);
   --nav-track: hsl(234 22% 26%);
+  --nav-menu-bg: hsl(230 40% 9%);
 }
 
 /* ── Panel (escritorio fijo / cajón en teléfono) ─────────────────────────── */
@@ -53,8 +55,8 @@
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 18px 18px 14px;
+  gap: 6px;
+  padding: 12px 10px 10px;
 }
 .mark {
   display: grid;
@@ -68,19 +70,145 @@
   font-size: 14px;
   font-weight: 700;
 }
-.brandText {
+
+/* ── Selector de tienda ──────────────────────────────────────────────────── */
+.storeWrap {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+.store {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  padding: 6px 8px;
+  color: var(--nav-text);
+  font: inherit;
+  text-align: left;
+}
+.storeButton {
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.storeButton:hover,
+.storeButton[aria-expanded="true"] {
+  border-color: var(--nav-border);
+  background: var(--nav-hover);
+}
+.storeButton:focus-visible,
+.storeOption:focus-visible {
+  outline: 2px solid var(--nav-ring);
+  outline-offset: 1px;
+}
+.storeMark {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #6d4aff 0%, #8b5cf6 100%);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.storeMark[data-marca="Kenku"] {
+  background: linear-gradient(135deg, #0d9488 0%, #0e7490 100%);
+}
+.storeText {
   display: flex;
   min-width: 0;
+  flex: 1;
   flex-direction: column;
 }
-.brandText strong {
-  font-size: 15px;
+.storeText strong {
+  overflow: hidden;
+  font-size: 13.5px;
   font-weight: 650;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.brandText span {
+.storeText span {
+  overflow: hidden;
   color: var(--nav-muted);
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.storeChevron {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--nav-muted);
+}
+.storeMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  width: max(100%, 232px);
+  border: 1px solid var(--nav-border);
+  border-radius: 10px;
+  background: var(--nav-menu-bg);
+  padding: 6px;
+  box-shadow:
+    0 12px 32px -8px rgb(20 20 31 / 0.18),
+    0 2px 6px rgb(20 20 31 / 0.06);
+}
+.storeGroup + .storeGroup {
+  margin-top: 4px;
+  border-top: 1px solid var(--nav-border);
+  padding-top: 4px;
+}
+.storeGroupLabel {
+  margin: 4px 8px 2px;
+  color: var(--nav-label);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.storeOption {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 6px 8px;
+  color: var(--nav-text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.storeOption .storeMark {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 9.5px;
+}
+.storeOption:hover,
+.storeOption:focus-visible {
+  background: var(--nav-hover);
+}
+.storeOption[aria-checked="true"] {
+  font-weight: 600;
+}
+.storeOptionText {
+  flex: 1;
+}
+.storeCheck {
+  width: 15px;
+  height: 15px;
+  color: var(--nav-accent);
 }
 .scroll {
   flex: 1;

@@ -111,7 +111,6 @@ export function MarketingAnalysis(props: MarketingAnalysisProps) {
     <div className={r.report}>
       <div className={r.reportHeading}>
         <div>
-          <p className={r.kicker}>Análisis</p>
           <h2>Análisis para decidir</h2>
         </div>
         <span className={r.period}>

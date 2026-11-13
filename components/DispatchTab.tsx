@@ -287,7 +287,7 @@ export default function DispatchTab({ storeCode }: { storeCode: FinanceStoreCode
               </CardHeader>
               <CardContent className="overflow-x-auto p-0">
                 <table className="w-full text-sm">
-                  <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+                  <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
                     <tr>
                       <th className="px-3 py-2">Pedido</th>
                       <th className="px-3 py-2">Solicitó</th>
@@ -317,7 +317,7 @@ export default function DispatchTab({ storeCode }: { storeCode: FinanceStoreCode
             </CardHeader>
             <CardContent className="overflow-x-auto p-0">
               <table className="w-full text-sm">
-                <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+                <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2">Día</th>
                     <th className="px-3 py-2">Solicitados</th>
@@ -348,7 +348,7 @@ export default function DispatchTab({ storeCode }: { storeCode: FinanceStoreCode
             </CardHeader>
             <CardContent className="overflow-x-auto p-0">
               <table className="w-full text-sm">
-                <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+                <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2">Persona</th>
                     <th className="px-3 py-2">Confirmados</th>
@@ -416,7 +416,7 @@ export default function DispatchTab({ storeCode }: { storeCode: FinanceStoreCode
                 </div>
               ) : (
                 <table className="w-full text-sm">
-                  <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+                  <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
                     <tr>
                       <th className="px-3 py-2">Pedido</th>
                       {searchActive && <th className="px-3 py-2">Guía</th>}
@@ -509,7 +509,7 @@ function SummaryCard({
           : "text-foreground";
   return (
     <div className="rounded-lg border border-border bg-card p-3">
-      <div className="flex items-center justify-between text-xs uppercase text-muted-foreground">
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>{label}</span>
         {icon}
       </div>

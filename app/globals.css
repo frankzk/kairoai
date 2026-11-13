@@ -78,6 +78,24 @@
   /* Cifras del mismo ancho donde se comparan números: tablas y los textos
      que antes iban en letra monoespaciada (montos, teléfonos, ids). El cero
      con barra evita confundir 0 y O en ids y guías. */
+  /* Íconos (lucide) con trazo fino y parejo, como en Stripe. */
+  .lucide {
+    stroke-width: 1.75;
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.18);
+  }
+  :focus-visible {
+    outline-color: hsl(var(--ring));
+  }
+  input,
+  textarea {
+    caret-color: hsl(var(--primary));
+  }
+  /* Selects nativos: mismo alto, borde y foco que los campos. */
+  select {
+    accent-color: hsl(var(--primary));
+  }
   table,
   .font-mono {
     font-variant-numeric: tabular-nums;

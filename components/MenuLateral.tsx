@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
@@ -14,14 +14,25 @@ import {
   Package,
   Settings,
   Sparkles,
-  Store,
   UserRound,
   Users,
   X,
   type LucideIcon,
 } from "lucide-react";
 import { leerYo, type Yo } from "@/lib/sesion-cliente";
-import { itemActivo, menuDe, type IconoNav } from "@/lib/navegacion";
+import {
+  itemActivo,
+  menuDe,
+  tiendaActual,
+  tiendasDe,
+  TIENDA_MARKETING,
+  type IconoNav,
+  type TiendaNav,
+} from "@/lib/navegacion";
+import { inicioDe } from "@/lib/permisos";
+import { elegirTienda, useSelectedStore } from "@/lib/use-selected-store";
+import type { FinanceStoreCode } from "@/lib/store-config";
+import { SelectorTienda } from "./SelectorTienda";
 import { aplicarTema, leerTema, type Tema } from "@/lib/tema";
 import m from "./menu-lateral.module.css";
 
@@ -34,7 +45,6 @@ const ICONOS: Record<IconoNav, LucideIcon> = {
   upsell: Sparkles,
   config: Settings,
   usuarios: Users,
-  tienda: Store,
 };
 
 const iniciales = (nombre: string) =>
@@ -52,6 +62,8 @@ const iniciales = (nombre: string) =>
  */
 export default function MenuLateral({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [elegida] = useSelectedStore();
   const [yo, setYo] = useState<Yo | null>(null);
   const [abierto, setAbierto] = useState(false);
   const [tema, setTema] = useState<Tema>("claro");
@@ -89,11 +101,32 @@ export default function MenuLateral({ children }: { children: ReactNode }) {
 
   if (pathname === "/login") return <>{children}</>;
 
-  const grupos = yo ? menuDe(yo) : [];
+  const tiendas = yo ? tiendasDe(yo) : [];
+  const tienda = tiendaActual(tiendas, pathname, elegida);
+  const grupos = yo ? menuDe(yo, tienda) : [];
   const activo = itemActivo(grupos, pathname);
   const seccion = grupos
     .flatMap((g) => g.items)
     .find((i) => i.ruta === activo)?.label;
+
+  // Una sola tienda para toda la app. Kenku abre su pantalla; Mireva cambia
+  // la tienda y la pantalla abierta se recarga sola (useSelectedStore). Si la
+  // pantalla no existe para la tienda nueva (Kenku, Marketing fuera de Costa
+  // Rica), va a la primera sección de esa tienda.
+  function cambiarTienda(t: TiendaNav) {
+    if (t.ruta) {
+      router.push(t.ruta);
+      return;
+    }
+    elegirTienda(t.code as FinanceStoreCode);
+    const enKenku = tienda?.marca === "Kenku";
+    const enMarketing =
+      pathname.startsWith("/admin/marketing") && t.code !== TIENDA_MARKETING;
+    if ((enKenku || enMarketing) && yo) {
+      const destino = menuDe(yo, t)[0]?.items[0]?.ruta ?? inicioDe(yo.permisos);
+      router.push(destino);
+    }
+  }
 
   async function salir() {
     try {
@@ -121,7 +154,7 @@ export default function MenuLateral({ children }: { children: ReactNode }) {
           <span className={m.mark} aria-hidden="true">
             K
           </span>
-          Kairo
+          {tienda?.label ?? "Kairo"}
           {seccion && (
             <span className={m.topSection}>
               <span aria-hidden="true">· </span>
@@ -147,13 +180,11 @@ export default function MenuLateral({ children }: { children: ReactNode }) {
         aria-label="Menú principal"
       >
         <div className={m.brand}>
-          <span className={m.mark} aria-hidden="true">
-            K
-          </span>
-          <span className={m.brandText}>
-            <strong>Kairo</strong>
-            <span>Operación COD</span>
-          </span>
+          <SelectorTienda
+            tiendas={tiendas}
+            actual={tienda}
+            onElegir={cambiarTienda}
+          />
           <button
             type="button"
             className={m.close}

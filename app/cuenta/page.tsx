@@ -61,7 +61,7 @@ export default function CuentaPage() {
 
   return (
     <main className="mx-auto max-w-xl px-4 py-8">
-      <h1 className="text-xl font-semibold">Mi cuenta</h1>
+      <h1 className="text-xl font-semibold tracking-tight text-foreground">Mi cuenta</h1>
       {yo && (
         <p className="mt-1 text-sm text-muted-foreground">
           {yo.nombre}

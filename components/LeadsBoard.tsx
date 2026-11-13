@@ -2,9 +2,15 @@
 
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeft,
+  Ban,
+  Banknote,
   BarChart3,
   CalendarClock,
+  CircleCheck,
+  Flame,
+  Hand,
+  MessageCircle,
+  Target,
   ChevronDown,
   CalendarRange,
   Check,
@@ -15,6 +21,7 @@ import {
   RefreshCw,
   ShoppingCart,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import CreateOrderPanel from "@/components/CreateOrderPanel";
 import ProductivityPanel from "@/components/ProductivityPanel";
@@ -25,13 +32,12 @@ import CallButton from "@/components/CallButton";
 import { hideWebphone } from "@/lib/webphone";
 import { creaEnIcomfly } from "@/lib/icomfly-pedido-lead";
 import TelefonoWeb from "@/components/TelefonoWeb";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { FINANCE_STORES, getFinanceStoreById, type FinanceStoreCode } from "@/lib/store-config";
-import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
+import { useSelectedStore } from "@/lib/use-selected-store";
 import {
   BOARD_STAGE_PRIORITY,
   getStatusDef,
@@ -168,6 +174,24 @@ type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "succe
 // viven DENTRO de Sin llamar + En seguimiento, asi que ninguno de los numeros
 // en pantalla contestaba "esto es lo que llamo hoy". Agenda y Por cerrar
 // pasaron a ser los dos primeros grupos dentro de Hoy, que es donde se actuan.
+// Íconos en lugar de emoji (los metadatos de lib/ siguen trayendo el emoji
+// como clave estable): mismo trazo y tamaño que el resto del sistema.
+const ICONO_DE: Record<string, LucideIcon> = {
+  "🎯": Target,
+  "💬": MessageCircle,
+  "✅": CircleCheck,
+  "🚫": Ban,
+  "💰": Banknote,
+  "📅": CalendarClock,
+  "🔥": Flame,
+  "🛒": ShoppingCart,
+  "👋": Hand,
+};
+function IconoMeta({ emoji, className = "h-3.5 w-3.5" }: { emoji: string; className?: string }) {
+  const Icono = ICONO_DE[emoji];
+  return Icono ? <Icono className={`${className} shrink-0`} aria-hidden="true" /> : null;
+}
+
 type BoardTab = "hoy" | "seguimiento" | "cerrado" | "descartado";
 
 const TAB_META: Record<BoardTab, { label: string; emoji: string; hint: string }> = {
@@ -329,8 +353,8 @@ interface AssignmentInfo {
 type OwnerFilter = "mine" | "all" | "unassigned" | number;
 
 export default function LeadsBoard() {
-  const [store, setStore] = useSelectedStore();
-  const tiendasPermitidas = useTiendasPermitidas();
+  // La tienda se elige en el menú lateral (selector único).
+  const [store] = useSelectedStore();
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [counts, setCounts] = useState<BoardCounts | null>(null);
   const [activeStage, setActiveStage] = useState<BoardTab>("hoy");
@@ -996,23 +1020,12 @@ export default function LeadsBoard() {
           telefono aparte. */}
       <TelefonoWeb />
       <header className="border-b border-border">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-4">
-          <Link href="/" className="text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="h-5 w-5" />
-          </Link>
-          <h1 className="text-xl font-semibold">Leads de WhatsApp</h1>
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-4 sm:px-6">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Leads de WhatsApp</h1>
+            <p className="text-[13px] text-muted-foreground">Conversaciones por llamar y en seguimiento</p>
+          </div>
           <div className="ml-auto flex items-center gap-2">
-            <select
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              value={store}
-              onChange={(e) => setStore(e.target.value as FinanceStoreCode)}
-            >
-              {tiendasPermitidas.map((s) => (
-                <option key={s.code} value={s.code}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
             {/* De cuando son los datos. Sin esto, "Hoy" y "vencido" eran
                 juicios sin fecha: la pantalla se deja abierta todo el turno y
                 nada decia si lo que se ve es de hace un minuto o de las 8am. */}
@@ -1030,9 +1043,10 @@ export default function LeadsBoard() {
               onClick={load}
               disabled={loading}
               size="sm"
+              variant="outline"
               title="Los leads se sincronizan y afinan solos cada pocos minutos; esto refresca la vista"
             >
-              <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
               {loading ? "Actualizando..." : "Actualizar"}
             </Button>
             <Button
@@ -1079,7 +1093,7 @@ export default function LeadsBoard() {
               </div>
               <div className="flex items-center gap-3 text-right">
                 <div>
-                  <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     sin llamar
                   </p>
                   <p className="text-base font-semibold tabular-nums text-foreground">{uncalledTotal}</p>
@@ -1296,7 +1310,7 @@ export default function LeadsBoard() {
                 }`}
                 className={`${TAB_BASE} ${active ? TAB_ACTIVO : TAB_INACTIVO}`}
               >
-                <span aria-hidden="true">{meta.emoji}</span>
+                <IconoMeta emoji={meta.emoji} className="h-4 w-4" />
                 <span>{meta.label}</span>
                 {vencidosEnHoy > 0 && (
                   // Velo, no solido: era `bg-destructive` pleno mientras el
@@ -1331,7 +1345,7 @@ export default function LeadsBoard() {
             Seguimiento) de cada una. La busqueda no se filtra por dueña. */}
         {repartoActivo && asignados && !searching && (
           <div className="mb-4 flex flex-wrap items-center gap-2">
-            <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               Asignación
             </span>
             {(
@@ -1388,7 +1402,7 @@ export default function LeadsBoard() {
             "Carrito" a la vez, que era justo lo que el tablero viejo no podia
             representar. */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             Intención
           </span>
           <button
@@ -1418,7 +1432,7 @@ export default function LeadsBoard() {
                 aria-label={`${meta.label}: ${count} leads`}
                 className={`${CHIP_BASE} ${active ? CHIP_ACTIVO : CHIP_INACTIVO}`}
               >
-                <span aria-hidden="true">{meta.emoji}</span>
+                <IconoMeta emoji={meta.emoji} className="h-4 w-4" />
                 <span>{meta.label}</span>
                 <span className={CONTADOR_EN_CHIP}>{count}</span>
               </button>
@@ -1541,8 +1555,9 @@ export default function LeadsBoard() {
                             difuminado. La profundidad la da el tono mas el
                             borde de 1px, como el resto del sistema. */}
                         <div className="sticky top-0 z-10 -mx-1 mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-border bg-background px-1 py-1.5">
-                          <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground">
-                            {meta.emoji} {meta.label}
+                          <h3 className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                            <IconoMeta emoji={meta.emoji} />
+                            {meta.label}
                           </h3>
                           <span className="text-xs tabular-nums text-muted-foreground">
                             {deLaBanda.length}
@@ -1725,7 +1740,8 @@ const LeadCard = forwardRef(function LeadCard(
           <div className="flex items-center gap-2">
             <span className="truncate font-medium">{lead.name || "Sin nombre"}</span>
             <Badge variant={SEGMENT_VARIANT[lead.segment]} className="shrink-0" title={meta.hint}>
-              {meta.emoji} {meta.label}
+              <IconoMeta emoji={meta.emoji} className="h-3 w-3" />
+              {meta.label}
             </Badge>
             {lead.status_source === "manual" && (
               // Que marco la asesora, no solo que la hubo. En Seguimiento la

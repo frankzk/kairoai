@@ -475,7 +475,6 @@ export function TeamReport({
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>05 / Productos</p>
             <h2>Comparar para decidir</h2>
             <button className={r.assignLink} onClick={onAssign}>
               Asignar campañas para calcular el CPA
@@ -692,7 +691,6 @@ export function TeamReport({
           {!products.length && <p>Sin productos identificados en pedidos.</p>}
         </div>
         <div className={r.stockPanel}>
-          <p className={r.kicker}>Inventario disponible</p>
           <h3>Stock para vender</h3>
           <label className={r.field}>
             Producto
@@ -826,7 +824,6 @@ export function TeamReport({
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>06 / Pauta</p>
             <h2>Campañas, presupuesto y producto</h2>
             <p>
               Las cinco cuentas de Meta y TikTok. Presupuesto diario vigente,
@@ -888,7 +885,6 @@ export function TeamReport({
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>07 / Tendencias</p>
             <h2>Cómo se mueve la demanda</h2>
             <p>
               Pedidos creados en el período seleccionado · hora de Costa Rica.
@@ -903,7 +899,6 @@ export function TeamReport({
       <section className={r.section}>
         <div className={r.sectionHead}>
           <div>
-            <p className={r.kicker}>08 / Atención</p>
             <h2>Reposición y anuncios a revisar</h2>
             <p>
               Stock: rojo con menos de {t.stockRedDays} días, amarillo con menos
