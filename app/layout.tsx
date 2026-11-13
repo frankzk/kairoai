@@ -4,6 +4,7 @@ import "./globals.css";
 import SessionGuard from "@/components/SessionGuard";
 import CronHealthBanner from "@/components/CronHealthBanner";
 import MenuLateral from "@/components/MenuLateral";
+import { SCRIPT_TEMA } from "@/lib/tema";
 
 export const metadata: Metadata = {
   title: "Kairo AI — Voice Agents para E-commerce COD",
@@ -17,7 +18,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="es" className="dark">
+    // Claro por defecto; el script pone "dark" antes de pintar si la persona
+    // eligió el tono oscuro (por eso la clase del <html> puede no coincidir).
+    <html lang="es" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: SCRIPT_TEMA }} />
+      </head>
       <body>
         <SessionGuard />
         <MenuLateral>

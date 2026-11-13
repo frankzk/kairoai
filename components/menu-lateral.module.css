@@ -3,22 +3,6 @@
    la pantalla (Marketing es claro, el resto de Kairo es oscuro). */
 .menu {
   --nav-w: 240px;
-  --nav-bg: hsl(224 64% 5%);
-  --nav-border: hsl(225 30% 14%);
-  --nav-text: hsl(226 24% 84%);
-  --nav-muted: hsl(226 14% 60%);
-  --nav-label: hsl(226 12% 52%);
-  --nav-hover: hsl(240 30% 12%);
-  --nav-active-bg: rgb(109 74 255 / 0.18);
-  --nav-active-text: #c4b8ff;
-  --nav-accent: #8b73ff;
-  --nav-ring: #8b73ff;
-  --nav-avatar-bg: rgb(109 74 255 / 0.22);
-  --nav-avatar-text: #d6ceff;
-  --nav-overlay: rgb(3 4 12 / 0.6);
-  color-scheme: dark;
-}
-.menu[data-tone="light"] {
   --nav-bg: #fbfbfe;
   --nav-border: #e6e6ef;
   --nav-text: #2b2b3d;
@@ -32,7 +16,24 @@
   --nav-avatar-bg: #efebff;
   --nav-avatar-text: #5530e0;
   --nav-overlay: rgb(20 20 31 / 0.35);
-  color-scheme: light;
+  --nav-track: #d9d9e6;
+}
+/* Tono oscuro: el interruptor del menú pone la clase "dark" en <html>. */
+:global(.dark) .menu {
+  --nav-bg: hsl(230 42% 6%);
+  --nav-border: hsl(234 26% 15%);
+  --nav-text: hsl(228 26% 86%);
+  --nav-muted: hsl(228 14% 64%);
+  --nav-label: hsl(228 12% 54%);
+  --nav-hover: hsl(236 30% 12%);
+  --nav-active-bg: rgb(109 74 255 / 0.18);
+  --nav-active-text: #c4b8ff;
+  --nav-accent: #8b73ff;
+  --nav-ring: #8b73ff;
+  --nav-avatar-bg: rgb(109 74 255 / 0.22);
+  --nav-avatar-text: #d6ceff;
+  --nav-overlay: rgb(3 4 12 / 0.6);
+  --nav-track: hsl(234 22% 26%);
 }
 
 /* ── Panel (escritorio fijo / cajón en teléfono) ─────────────────────────── */
@@ -201,6 +202,60 @@
 .footerButton[aria-current="page"] {
   color: var(--nav-active-text);
 }
+.themeSwitch {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 7px 10px;
+  color: var(--nav-muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.themeSwitch:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+.themeSwitch:focus-visible {
+  outline: 2px solid var(--nav-ring);
+  outline-offset: 1px;
+}
+.themeSwitch > svg {
+  width: 14px;
+  height: 14px;
+}
+.track {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  margin-left: auto;
+  border-radius: 999px;
+  background: var(--nav-track);
+  transition: background-color 150ms ease;
+}
+.thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  transition: transform 150ms ease;
+}
+.themeSwitch[aria-checked="true"] .track {
+  background: var(--nav-accent);
+}
+.themeSwitch[aria-checked="true"] .thumb {
+  transform: translateX(12px);
+}
 
 /* ── Barra superior y cajón (teléfono y tablet) ──────────────────────────── */
 /* No es sticky: varias pantallas tienen su propio encabezado fijo arriba. */
@@ -290,7 +345,9 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .panel,
-  .item {
+  .item,
+  .track,
+  .thumb {
     transition: none;
   }
 }

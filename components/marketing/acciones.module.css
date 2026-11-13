@@ -425,7 +425,6 @@
   background: var(--mk-surface);
   color: var(--mk-text);
   font-size: 12px;
-  color-scheme: light;
 }
 .search {
   flex: 1 1 200px;
