@@ -21,7 +21,7 @@
   --mk-warn-soft: #fdf3e3;
   --mk-bad: #b4233c;
   --mk-bad-soft: #fdecef;
-  /* Paleta de datos. Solo modo claro: la sección fuerza color-scheme: light.
+  /* Paleta de datos del tono claro (el oscuro está más abajo).
      Validada con el script de chequeos contra --mk-surface (#ffffff): banda
      de luminosidad, croma, separación CVD (peor par vecino ΔE 12,5) y visión
      normal (ΔE 20,3), contraste ≥ 3:1 en los cuatro.
@@ -58,6 +58,52 @@
   --ring: 252 100% 65%;
   color: var(--mk-text);
   color-scheme: light;
+}
+:global(.dark) .theme {
+  /* Tono oscuro (interruptor del menú). Misma estructura, neutros de noche. */
+  --mk-canvas: #070912;
+  --mk-surface: #0c0f1d;
+  --mk-soft: #141829;
+  --mk-hover: #121627;
+  --mk-border: #232842;
+  --mk-text: #e6e8f2;
+  --mk-muted: #a3a7bd;
+  --mk-subtle: #8d91a8;
+  --mk-accent: #8b73ff;
+  --mk-accent-strong: #a08cff;
+  --mk-accent-soft: #1c1840;
+  --mk-good: #5fcf8f;
+  --mk-good-soft: #10261b;
+  --mk-warn: #e9a23b;
+  --mk-warn-soft: #2a1f0b;
+  --mk-bad: #f0647a;
+  --mk-bad-soft: #2b1219;
+  /* Series validadas contra --mk-surface oscuro (#0c0f1d): banda L 0,48–0,67,
+     croma, CVD (peor vecino ΔE 13,2), visión normal (ΔE 20,9), contraste. */
+  --mk-series-1: #8b73ff;
+  --mk-series-2: #12a594;
+  --mk-series-3: #cc7d0a;
+  --mk-series-4: #e5418c;
+  --mk-meta: #4a7fe0;
+  --mk-tiktok: #c9c9de;
+  --mk-other: #6b6f88;
+  --mk-track: #231d4d;
+  --mk-grid: #1b1f33;
+  --mk-axis: #3a3f5c;
+  --background: 230 44% 5%;
+  --foreground: 230 30% 93%;
+  --card: 230 42% 8%;
+  --card-foreground: 230 30% 93%;
+  --muted: 230 33% 12%;
+  --muted-foreground: 230 14% 70%;
+  --border: 230 31% 20%;
+  --input: 230 31% 20%;
+  --accent: 248 44% 17%;
+  --accent-foreground: 230 30% 93%;
+  --primary: 252 100% 73%;
+  --primary-foreground: 230 44% 5%;
+  --ring: 252 100% 73%;
+  color-scheme: dark;
 }
 .canvas {
   min-height: 100vh;

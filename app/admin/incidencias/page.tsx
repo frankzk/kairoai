@@ -183,7 +183,7 @@ function EstadoCausasPanel({ exec, onVerTodas }: { exec: IncidentExecutiveStats 
         </div>
         <div className="mt-4 flex items-center gap-4">
           <div className="relative h-[104px] w-[104px] shrink-0 rounded-full"
-            style={{ background: `conic-gradient(#f87171 0% ${over48Pct}%, #334155 ${over48Pct}% 100%)` }}>
+            style={{ background: `conic-gradient(rgb(var(--tw-red-400)) 0% ${over48Pct}%, hsl(var(--muted)) ${over48Pct}% 100%)` }}>
             <div className="absolute inset-[11px] flex flex-col items-center justify-center rounded-full bg-card">
               <span className="font-mono text-2xl font-bold leading-none text-red-400">{over48}</span>
               <span className="mt-0.5 text-[10px] text-muted-foreground">&gt; 48 h</span>

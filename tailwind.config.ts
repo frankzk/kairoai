@@ -1,4 +1,49 @@
 import type { Config } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
+import twColors from "tailwindcss/colors";
+
+// ─── Paleta de estados que funciona en claro y oscuro ──────────────────────
+// Las pantallas usan clases como text-emerald-300 o bg-amber-500/10, pensadas
+// para fondo oscuro. Cada tono pasa a una variable CSS: en oscuro vale lo de
+// siempre; en claro la escala se invierte (50↔950, 100↔900 … 400↔600, 500
+// igual), así un texto claro sobre fondo oscuro pasa a texto oscuro sobre
+// fondo claro sin tocar cada pantalla.
+const FAMILIAS = [
+  "slate", "gray", "zinc", "neutral", "stone", "red", "orange", "amber",
+  "yellow", "lime", "green", "emerald", "teal", "cyan", "sky", "blue",
+  "indigo", "violet", "purple", "fuchsia", "pink", "rose",
+] as const;
+const TONOS = ["50", "100", "200", "300", "400", "500", "600", "700", "800", "900", "950"] as const;
+const INVERSO: Record<string, string> = Object.fromEntries(
+  TONOS.map((t, i) => [t, TONOS[TONOS.length - 1 - i]]),
+);
+const rgb = (hex: string) => {
+  const h = hex.replace("#", "");
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)).join(" ");
+};
+type Escala = Record<(typeof TONOS)[number], string>;
+const escala = (f: (typeof FAMILIAS)[number]) =>
+  (twColors as unknown as Record<string, Escala>)[f];
+const paletaVariable = Object.fromEntries(
+  FAMILIAS.map((f) => [
+    f,
+    Object.fromEntries(
+      TONOS.map((t) => [t, `rgb(var(--tw-${f}-${t}) / <alpha-value>)`]),
+    ),
+  ]),
+);
+const variables = (invertir: boolean) =>
+  Object.fromEntries(
+    FAMILIAS.flatMap((f) =>
+      TONOS.map((t) => [
+        `--tw-${f}-${t}`,
+        rgb(escala(f)[(invertir ? INVERSO[t] : t) as (typeof TONOS)[number]]),
+      ]),
+    ),
+  );
+const paletaEstados = plugin(({ addBase }) => {
+  addBase({ ":root": variables(true), ".dark": variables(false) });
+});
 
 const config: Config = {
   darkMode: ["class"],
@@ -19,6 +64,16 @@ const config: Config = {
     },
     extend: {
       fontFamily: {
+        // Toda la app en Inter. "mono" (montos, teléfonos, ids) también es
+        // Inter: con cifras tabulares (globals.css) las columnas siguen
+        // alineadas sin cambiar de letra, como en los paneles tipo Stripe.
+        mono: [
+          '"Inter Variable"',
+          "Inter",
+          "ui-sans-serif",
+          "system-ui",
+          "sans-serif",
+        ],
         sans: [
           '"Inter Variable"',
           "Inter",
@@ -30,6 +85,7 @@ const config: Config = {
         ],
       },
       colors: {
+        ...paletaVariable,
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -87,7 +143,7 @@ const config: Config = {
       },
     },
   },
-  plugins: [],
+  plugins: [paletaEstados],
 };
 
 export default config;

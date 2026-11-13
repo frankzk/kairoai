@@ -10,6 +10,7 @@ import {
   LogOut,
   Megaphone,
   Menu,
+  Moon,
   Package,
   Settings,
   Sparkles,
@@ -21,6 +22,7 @@ import {
 } from "lucide-react";
 import { leerYo, type Yo } from "@/lib/sesion-cliente";
 import { itemActivo, menuDe, type IconoNav } from "@/lib/navegacion";
+import { aplicarTema, leerTema, type Tema } from "@/lib/tema";
 import m from "./menu-lateral.module.css";
 
 const ICONOS: Record<IconoNav, LucideIcon> = {
@@ -52,11 +54,19 @@ export default function MenuLateral({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [yo, setYo] = useState<Yo | null>(null);
   const [abierto, setAbierto] = useState(false);
+  const [tema, setTema] = useState<Tema>("claro");
   const toggleRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLElement>(null);
 
   // La cookie la renueva el middleware en cada página: se relee al navegar.
   useEffect(() => setYo(leerYo()), [pathname]);
+  // El tono de esta persona (el script de <head> ya lo aplicó al cargar).
+  useEffect(() => {
+    if (!yo) return;
+    const t = leerTema(yo.id);
+    setTema(t);
+    document.documentElement.classList.toggle("dark", t === "oscuro");
+  }, [yo]);
   // Navegar cierra el cajón.
   useEffect(() => setAbierto(false), [pathname]);
   useEffect(() => {
@@ -84,7 +94,6 @@ export default function MenuLateral({ children }: { children: ReactNode }) {
   const seccion = grupos
     .flatMap((g) => g.items)
     .find((i) => i.ruta === activo)?.label;
-  const tono = pathname.startsWith("/admin/marketing") ? "light" : "dark";
 
   async function salir() {
     try {
@@ -95,7 +104,7 @@ export default function MenuLateral({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className={m.menu} data-tone={tono}>
+    <div className={m.menu}>
       <header className={m.top}>
         <button
           ref={toggleRef}
@@ -195,6 +204,23 @@ export default function MenuLateral({ children }: { children: ReactNode }) {
               </span>
               <span className={m.userName}>{yo.nombre}</span>
             </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={tema === "oscuro"}
+              className={m.themeSwitch}
+              onClick={() => {
+                const nuevo: Tema = tema === "oscuro" ? "claro" : "oscuro";
+                setTema(nuevo);
+                aplicarTema(nuevo, yo.id);
+              }}
+            >
+              <Moon aria-hidden="true" />
+              <span>Tono oscuro</span>
+              <span className={m.track} aria-hidden="true">
+                <span className={m.thumb} />
+              </span>
+            </button>
             <div className={m.footerActions}>
               <Link
                 href="/cuenta"
