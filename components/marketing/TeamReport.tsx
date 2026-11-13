@@ -14,14 +14,11 @@ import { marketingDate, periodQuery, shiftDate } from "@/lib/marketing-dates";
 import { productComparison, reportChannel } from "@/lib/marketing-team-report";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import {
-  assignedCampaigns,
   buildRealEstimate,
   channelOrders,
   realCpa,
 } from "@/lib/marketing-real-cpa";
 import { buildDailyPace } from "@/lib/marketing-pace";
-import { accountLabel, buildCampaignActionRows } from "@/lib/marketing-actions";
-import { buildCostCapControl } from "@/lib/marketing-cost-cap";
 import { buildKeywordIndex } from "@/lib/marketing-campaign-keywords";
 import { highCpaAlerts, stockDaysRows } from "@/lib/marketing-report-alerts";
 import {
@@ -52,6 +49,7 @@ import { LaunchTracker } from "./LaunchTracker";
 import { InventoryAlerts } from "./InventoryAlerts";
 import { useInventoryDecision } from "./InventoryDecision";
 import { AccountStatusBanner } from "./AccountStatusBanner";
+import { useCampaignActions } from "./useCampaignActions";
 
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
 type Resource<T> = { data: T | null; loading: boolean; error: string };
@@ -214,32 +212,8 @@ export function TeamReport({
     [control.data, recent.data, fx],
   );
   // Módulos 2 y 3: one row per campaign with the suggested action.
-  const actionResult = useMemo(
-    () =>
-      actions.data && !control.loading
-        ? buildCampaignActionRows({
-            summary: data,
-            sources: actions.data,
-            control: control.data,
-            settings,
-            manualChanges: changes.data?.changes ?? [],
-            fx,
-          })
-        : null,
-    [
-      actions.data,
-      control.loading,
-      control.data,
-      data,
-      settings,
-      changes.data,
-      fx,
-    ],
-  );
-  const actionRows = useMemo(
-    () => (actionResult ? [...actionResult.meta, ...actionResult.tiktok] : []),
-    [actionResult],
-  );
+  const { actionResult, actionRows, costCap, metaAccounts, campaignMembers } =
+    useCampaignActions({ data, actions, control, changes, settings, fx });
   // Módulo 9: product names for launches registered by hand (no campaign row yet).
   const productName = useCallback(
     (key: string) =>
@@ -247,18 +221,6 @@ export function TeamReport({
       data.products.find((p) => p.key === key)?.name ??
       null,
     [data],
-  );
-  const campaignMembers = useMemo(
-    () =>
-      actions.data
-        ? new Map(
-            assignedCampaigns(data, actions.data, settings).map((c) => [
-              c.key,
-              c.members,
-            ]),
-          )
-        : null,
-    [actions.data, data, settings],
   );
   // Módulo 5 in the report: alerts and Esperando / En camino columns (no extra request).
   const inventoryDecision = useInventoryDecision({
@@ -284,17 +246,6 @@ export function TeamReport({
       (row) => row.incomingSource === "plan",
     ) ??
       false);
-  const costCap = useMemo(
-    () =>
-      actionResult
-        ? buildCostCapControl(
-            [...actionResult.meta, ...actionResult.tiktok],
-            t,
-            { fx },
-          )
-        : null,
-    [actionResult, fx],
-  );
   // A6: real orders by channel for the period (UTM + assignment).
   const channel = useMemo(() => {
     if (!periodControl.data || !sources) return null;
@@ -312,15 +263,6 @@ export function TeamReport({
       data.period.to,
     );
   }, [periodControl.data, data, sources, settings, fx]);
-  const metaAccounts = useMemo(
-    () =>
-      (actions.data?.meta.data?.accounts ?? []).map((a) => ({
-        accountId: a.accountId,
-        accountName: a.accountName || a.accountId,
-        auto: accountLabel("meta", a.accountId, a.accountName || "", []),
-      })),
-    [actions.data],
-  );
   const meta = reportChannel(sources, "meta", fx),
     tiktok = reportChannel(sources, "tiktok", fx);
   const tiktokThrough = sources?.tiktok.data?.accounts

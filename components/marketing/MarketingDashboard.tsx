@@ -37,9 +37,18 @@ import AttributionWorkspace from "./AttributionWorkspace";
 import { ProductWorkspace } from "./ProductWorkspace";
 import CampaignsTable from "./CampaignsTable";
 import { money } from "./format";
-import { periodLabelText } from "@/lib/marketing-copy";
+import { periodIsToday, periodLabelText } from "@/lib/marketing-copy";
 import s from "./dashboard.module.css";
-import { marketingLoadPlan, type MarketingView } from "@/lib/marketing-loading";
+import {
+  DETAIL_VIEWS,
+  marketingLoadPlan,
+  marketingTab,
+  viewFromParam,
+  type MarketingTab,
+  type MarketingView,
+} from "@/lib/marketing-loading";
+import { ResumenView } from "./ResumenView";
+import { ActionsView } from "./ActionsView";
 
 type View = MarketingView;
 const presets: Array<[MarketingPreset, string]> = [
@@ -57,7 +66,9 @@ const presets: Array<[MarketingPreset, string]> = [
 export default function MarketingDashboard() {
   const [period, setPeriod] = useState<MarketingPeriod | null>(null);
   const [preset, setPreset] = useState<MarketingPreset>("month");
-  const [view, setView] = useState<View>("report");
+  const [view, setView] = useState<View>("resumen");
+  // Detalle remembers its last sub-tab (the full report the first time).
+  const [lastDetail, setLastDetail] = useState<View>("report");
   const [detailView, setDetailView] = useState<"campaigns" | "products">(
     "campaigns",
   );
@@ -90,21 +101,9 @@ export default function MarketingDashboard() {
           ? "custom"
           : "month",
     );
-    const requested = params.get("view");
-    if (
-      [
-        "report",
-        "summary",
-        "details",
-        "trends",
-        "sources",
-        "matrix",
-        "structure",
-        "subtraction",
-        "analysis",
-      ].includes(requested || "")
-    )
-      setView(requested as View);
+    // Every old ?view= keeps opening the same content (view=report is
+    // Detalle › Reporte completo); no view (or an unknown one) opens Resumen.
+    setView(viewFromParam(params.get("view")));
     const yo = leerYo();
     setCanViewManagement(
       Boolean(
@@ -176,16 +175,29 @@ export default function MarketingDashboard() {
     }
     return null;
   }
-  // Report banner → Análisis, section "Estado de las cuentas".
+  useEffect(() => {
+    if (marketingTab(view) === "detalle") setLastDetail(view);
+  }, [view]);
+  // Links from Resumen and the report banner open a view at a section; the
+  // section may appear only once its data loads, so every render retries
+  // until it is there (or another navigation replaces it).
   const [scrollTo, setScrollTo] = useState("");
   useEffect(() => {
-    if (view !== "analysis" || !scrollTo) return;
+    if (!scrollTo) return;
     const frame = window.requestAnimationFrame(() => {
-      document.getElementById(scrollTo)?.scrollIntoView({ block: "start" });
+      const target = document.getElementById(scrollTo);
+      if (!target) return;
+      target.scrollIntoView({ block: "start" });
       setScrollTo("");
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [view, scrollTo]);
+  });
+  function navigate(next: View, anchor?: string) {
+    setView(next);
+    setScrollTo(anchor ?? "");
+    if (!anchor) window.scrollTo({ top: 0 });
+  }
+  const tab: MarketingTab = marketingTab(view);
   // Sustracción: real orders per ad (UTM + share by product) once the
   // period's orders, the catalogue and the assignments are loaded.
   const realOrders = useMemo(
@@ -334,7 +346,7 @@ export default function MarketingDashboard() {
             </button>
             <button
               className={s.button}
-              onClick={() => setView(view === "sources" ? "report" : "sources")}
+              onClick={() => setView(view === "sources" ? "resumen" : "sources")}
               aria-pressed={view === "sources"}
             >
               Conexiones
@@ -406,70 +418,76 @@ export default function MarketingDashboard() {
           </form>
         )}
         <nav className={s.tabs} aria-label="Vistas de marketing">
-          {[
-            ["report", "Reporte general"],
-            ["summary", "Decisión financiera"],
-            ["matrix", "Matriz 4Pi"],
-            ["structure", "Control y Testing"],
-            ["subtraction", "Sustracción"],
-            ["analysis", "Análisis"],
-          ].map(([key, label], index) => (
+          {(
+            [
+              ["resumen", "Resumen", "resumen"],
+              ["acciones", "Acciones", "acciones"],
+              ["detalle", "Detalle", lastDetail],
+            ] as Array<[MarketingTab, string, View]>
+          ).map(([key, label, target], index) => (
             <button
               key={key}
               type="button"
               className={s.tab}
-              aria-pressed={view === key}
-              onClick={() => setView(key as View)}
+              aria-pressed={tab === key}
+              onClick={() => navigate(target)}
             >
               <span className={s.tabIndex}>0{index + 1}</span>
               {label}
             </button>
           ))}
         </nav>
-        <div className={`${s.toolbar} mb-5`}>
-          <button
-            className={s.button}
-            aria-pressed={view === "details"}
-            onClick={() => {
-              setDetailView("campaigns");
-              setView("details");
-            }}
-          >
-            Asignar productos
-          </button>
-          <button
-            className={s.button}
-            aria-pressed={view === "trends"}
-            onClick={() => setView("trends")}
-          >
-            Tendencias y reposición
-          </button>
-          <span className={s.muted}>
-            {charlie.settings.loading
-              ? "USD · consultando referencia de conversión"
-              : charlie.settings.data?.fx
-                ? appliedRatesShortText(appliedRates(charlie.settings.data.fx))
-                : "USD · referencia de conversión pendiente"}
-          </span>
-        </div>
-        <div className={s.notice} role="status">
-          <span>
-            {api.sources.loading
-              ? "Consultando inversión y disponibilidad de las conexiones…"
-              : api.sources.error
-                ? "No se pudieron consultar las conexiones. La inversión queda sin datos."
-                : missing.length
-                  ? `${missing.join(", ")}: conexión pendiente o consulta no disponible.${missing.some((name) => name !== "ShipHero") ? " La inversión puede ser parcial." : " Inventario sin datos."}`
-                  : metaFaltantes.length
-                    ? `Meta Ads: no se pudo leer ${metaFaltantes.length === 1 ? "la cuenta" : "las cuentas"} ${metaFaltantes.join(", ")}. La inversión de Meta es parcial (sin ${metaFaltantes.length === 1 ? "esa cuenta" : "esas cuentas"}).`
-                  : "Fuentes consultadas. Los pedidos por campaña usan el UTM y, sin UTM, la asignación de producto (≈)."}
-          </span>
-          {view !== "sources" && (
-            <button className={s.link} onClick={() => setView("sources")}>
-              Ver fuentes
-            </button>
-          )}
-        </div>
+        {tab === "detalle" && (
+          <nav className={s.subtabs} aria-label="Detalle">
+            {DETAIL_VIEWS.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={s.subtab}
+                aria-pressed={view === key}
+                onClick={() => {
+                  if (key === "details") setDetailView("campaigns");
+                  setView(key);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        )}
+        {tab !== "resumen" && (
+          <>
+            <div className={`${s.toolbar} mb-5`}>
+              <span className={s.muted}>
+                {charlie.settings.loading
+                  ? "USD · consultando referencia de conversión"
+                  : charlie.settings.data?.fx
+                    ? appliedRatesShortText(
+                        appliedRates(charlie.settings.data.fx),
+                      )
+                    : "USD · referencia de conversión pendiente"}
+              </span>
+            </div>
+            <div className={s.notice} role="status">
+              <span>
+                {api.sources.loading
+                  ? "Consultando inversión y disponibilidad de las conexiones…"
+                  : api.sources.error
+                    ? "No se pudieron consultar las conexiones. La inversión queda sin datos."
+                    : missing.length
+                      ? `${missing.join(", ")}: conexión pendiente o consulta no disponible.${missing.some((name) => name !== "ShipHero") ? " La inversión puede ser parcial." : " Inventario sin datos."}`
+                      : metaFaltantes.length
+                        ? `Meta Ads: no se pudo leer ${metaFaltantes.length === 1 ? "la cuenta" : "las cuentas"} ${metaFaltantes.join(", ")}. La inversión de Meta es parcial (sin ${metaFaltantes.length === 1 ? "esa cuenta" : "esas cuentas"}).`
+                        : "Fuentes consultadas. Los pedidos por campaña usan el UTM y, sin UTM, la asignación de producto (≈)."}
+              </span>
+              {view !== "sources" && (
+                <button className={s.link} onClick={() => setView("sources")}>
+                  Ver fuentes
+                </button>
+              )}
+            </div>
+          </>
+        )}
         {(api.settings.error || api.saveError) && (
           <div role="alert" className={`${s.notice} ${s.warn}`}>
             {api.saveError ||
@@ -563,7 +581,48 @@ export default function MarketingDashboard() {
                 se conserva; el costo por pedido requiere pedidos.
               </p>
             )}
-            {view === "report" ? (
+            {view === "resumen" ? (
+              <ResumenView
+                data={data}
+                model={model}
+                sources={api.sources.data}
+                sourcesLoading={api.sources.loading}
+                settings={api.settings.data}
+                fx={charlie.settings.data?.fx ?? null}
+                control={api.control}
+                actions={api.actions}
+                changes={api.changes}
+                recent={api.recent}
+                accounts={api.accounts}
+                cancellations={api.cancellations}
+                costCapAds={api.costCapAds}
+                periodName={
+                  preset === "custom"
+                    ? null
+                    : (presets.find(([key]) => key === preset)?.[1] ?? null)
+                }
+                onNavigate={navigate}
+              />
+            ) : view === "acciones" ? (
+              <ActionsView
+                data={data}
+                settings={api.settings.data}
+                fx={charlie.settings.data?.fx ?? null}
+                actions={api.actions}
+                control={api.control}
+                changes={api.changes}
+                costCapAds={api.costCapAds}
+                canEdit={canEdit}
+                saving={api.saving}
+                save={api.save}
+                logChange={api.logChange}
+                filterLabel={
+                  period && !periodIsToday(period, marketingDate())
+                    ? periodLabelText(period, marketingDate())
+                    : null
+                }
+              />
+            ) : view === "report" ? (
               <TeamReport
                 data={data}
                 onAssign={() => {
@@ -596,10 +655,9 @@ export default function MarketingDashboard() {
                 saved={api.saved}
                 save={api.save}
                 accounts={api.accounts}
-                onOpenAccounts={() => {
-                  setScrollTo("analisis-cuentas");
-                  setView("analysis");
-                }}
+                onOpenAccounts={() =>
+                  navigate("analysis", "analisis-cuentas")
+                }
               />
             ) : view === "analysis" ? (
               <MarketingAnalysis

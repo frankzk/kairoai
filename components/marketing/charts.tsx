@@ -703,3 +703,168 @@ export function ChartLegend({
     </ul>
   );
 }
+
+export type SparkPoint = {
+  key: string;
+  value: number;
+  /** Encabezado del tooltip (la fecha). */
+  title: string;
+  /** Día en curso: punto hueco y nota en el tooltip. */
+  open?: boolean;
+  rows?: TooltipRow[];
+  notes?: string[];
+};
+
+/**
+ * Tendencia mínima detrás de una cifra grande: línea de 2 px con lavado
+ * suave, la meta como regla fina, el último punto marcado (hueco si el día
+ * sigue en curso), cruz y tooltip al pasar o con las flechas. Sin ejes: la
+ * cifra del mosaico ya da el valor; la tabla oculta da cada día.
+ */
+export function Sparkline({
+  points,
+  ariaLabel,
+  format = count,
+  reference,
+  height = 64,
+  color = SERIES_COLORS[0],
+}: {
+  points: SparkPoint[];
+  ariaLabel: string;
+  format?: (value: number) => string;
+  reference?: { value: number; label: string };
+  height?: number;
+  color?: string;
+}) {
+  const [ref, width] = useWidth(320);
+  const n = points.length;
+  const { active, setActive, frameProps } = useCursor(n);
+  const values = points.map((p) => p.value);
+  const top = Math.max(1, reference?.value ?? 0, ...values) * 1.08;
+  const mt = 6,
+    mb = 6,
+    ml = 4,
+    mr = 4;
+  const plotW = Math.max(10, width - ml - mr);
+  const bottom = height - mb;
+  const x = (index: number) =>
+    n <= 1 ? ml + plotW / 2 : ml + (index / (n - 1)) * plotW;
+  const y = (value: number) => bottom - (value / top) * (bottom - mt);
+  const line = values.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+  const area =
+    n > 1 ? `${x(0)},${bottom} ${line} ${x(n - 1)},${bottom}` : "";
+  const last = points[n - 1];
+  const rowsOf = (p: SparkPoint): TooltipRow[] =>
+    p.rows ?? [{ key: "value", color, value: format(p.value), label: ariaLabel }];
+  const current = active != null ? points[active] : null;
+  return (
+    <div
+      ref={ref}
+      className={c.frame}
+      role="group"
+      aria-label={`${ariaLabel}. Usa las flechas para recorrer los días.`}
+      {...frameProps}
+    >
+      <svg
+        className={c.svg}
+        width={width}
+        height={height}
+        data-plot
+        aria-hidden="true"
+        onPointerMove={(event) =>
+          setActive(nearestIndex(pointerX(event), n, ml, plotW))
+        }
+        onPointerDown={(event) =>
+          setActive(nearestIndex(pointerX(event), n, ml, plotW))
+        }
+        onPointerLeave={() => setActive(null)}
+      >
+        {reference && (
+          <g>
+            <line
+              className={c.reference}
+              x1={ml}
+              x2={ml + plotW}
+              y1={Math.round(y(reference.value)) + 0.5}
+              y2={Math.round(y(reference.value)) + 0.5}
+            />
+            <text
+              className={c.tick}
+              x={ml + plotW}
+              y={y(reference.value) - 4}
+              textAnchor="end"
+            >
+              {reference.label}
+            </text>
+          </g>
+        )}
+        {active != null && (
+          <line
+            className={c.crosshair}
+            x1={Math.round(x(active)) + 0.5}
+            x2={Math.round(x(active)) + 0.5}
+            y1={mt}
+            y2={bottom}
+          />
+        )}
+        {n > 1 && <polygon points={area} fill={color} opacity={0.1} />}
+        {n > 1 && (
+          <polyline
+            points={line}
+            fill="none"
+            stroke={color}
+            strokeWidth={2}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        )}
+        {last && (active == null || active === n - 1) && (
+          <circle
+            cx={x(n - 1)}
+            cy={y(last.value)}
+            r={last.open ? 3.5 : 4}
+            fill={last.open ? "var(--mk-surface)" : color}
+            stroke={last.open ? color : "var(--mk-surface)"}
+            strokeWidth={last.open ? 2 : 4}
+            paintOrder="stroke"
+          />
+        )}
+        {current && active != null && active !== n - 1 && (
+          <circle
+            cx={x(active)}
+            cy={y(current.value)}
+            r={4}
+            fill={color}
+            stroke="var(--mk-surface)"
+            strokeWidth={4}
+            paintOrder="stroke"
+          />
+        )}
+      </svg>
+      {current && active != null && (
+        <Tooltip
+          x={x(active)}
+          y={0}
+          width={width}
+          title={current.title}
+          rows={rowsOf(current)}
+          notes={[...(current.notes ?? []), current.open ? "Día en curso" : ""]}
+        />
+      )}
+      <p className="sr-only" aria-live="polite">
+        {current ? describe(current.title, rowsOf(current), current.notes) : ""}
+      </p>
+      <table className="sr-only">
+        <caption>{ariaLabel}</caption>
+        <tbody>
+          {points.map((p) => (
+            <tr key={p.key}>
+              <th scope="row">{p.title}</th>
+              <td>{format(p.value)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

@@ -113,6 +113,37 @@
   color: var(--mk-accent);
   border-color: var(--mk-accent);
 }
+/* Detalle: segunda fila de pestañas, más discreta que la principal. */
+.subtabs {
+  display: flex;
+  gap: 6px;
+  margin: -8px 0 20px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.subtab {
+  white-space: nowrap;
+  min-height: 32px;
+  padding: 5px 11px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: var(--mk-surface);
+  color: var(--mk-muted);
+  font-size: 12px;
+}
+.subtab:hover {
+  background: var(--mk-hover);
+}
+.subtab[aria-pressed="true"] {
+  border-color: var(--mk-accent);
+  background: var(--mk-accent-soft);
+  color: var(--mk-accent);
+  font-weight: 600;
+}
+.subtab:focus-visible {
+  outline: 2px solid var(--mk-accent);
+  outline-offset: 2px;
+}
 .tabIndex {
   margin-right: 8px;
   font:
