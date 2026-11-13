@@ -15,10 +15,25 @@
   --mk-warn-soft: oklch(96% 0.026 88);
   --mk-bad: oklch(46% 0.13 33);
   --mk-bad-soft: oklch(96.5% 0.02 45);
-  --mk-chart-1: oklch(47% 0.105 155);
-  --mk-chart-2: oklch(57% 0.115 78);
-  --mk-chart-3: oklch(51% 0.105 295);
-  --mk-bar: oklch(82% 0.095 93);
+  /* Paleta de datos. Solo modo claro: la sección fuerza color-scheme: light.
+     Validada con el script de seis chequeos contra --mk-surface (#fcfefb):
+     banda de luminosidad, croma, separación CVD y visión normal, contraste.
+     Orden categórico fijo, nunca se cicla: 1 verde, 2 ámbar, 3 violeta, 4 cian.
+     Ámbar queda bajo 3:1: todo gráfico que lo usa lleva tabla de datos. */
+  --mk-series-1: #22864a;
+  --mk-series-2: #eba22b;
+  --mk-series-3: #7858bb;
+  --mk-series-4: #279fb6;
+  /* El color sigue a la entidad: Meta y TikTok iguales en todo el módulo;
+     "Otros / sin campaña" en el gris de segundo plano. */
+  --mk-meta: #295ab9;
+  --mk-tiktok: #cf5291;
+  --mk-other: #a0a7a0;
+  /* Pista de los medidores: un paso claro de la misma rampa verde. */
+  --mk-track: #dbf2e0;
+  /* Ejes y cuadrícula: líneas finas, un paso fuera de la superficie. */
+  --mk-grid: #e3e8e2;
+  --mk-axis: #bfc7bd;
   --background: 72 35% 98%;
   --foreground: 149 28% 16%;
   --card: 120 25% 99%;

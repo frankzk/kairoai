@@ -10,6 +10,7 @@ import {
 } from "@/lib/marketing-cancellations";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import { count, percentage, shortDate } from "./format";
+import { ChartLegend, ColumnChart } from "./charts";
 import r from "./team-report.module.css";
 
 type Resource<T> = { data: T | null; loading: boolean; error: string };
@@ -25,43 +26,108 @@ const BUCKET_HINT: Record<CancelBucket, string> = {
 const high = (rate: number | null) => rate != null && rate > t.cancelRateAlert;
 const pct = (rate: number | null) => percentage(rate);
 
+/** Status colors: the series means good/bad here (over the limit or not). */
+const dayColor = (day: CancelDay) =>
+  high(day.rate)
+    ? "var(--mk-bad)"
+    : day.open
+      ? "var(--mk-axis)"
+      : "var(--mk-other)";
+
+/** Emphasis: days over the limit in the status color, the rest in gray. */
 function DailyBars({ days }: { days: CancelDay[] }) {
-  const max = Math.max(t.cancelRateAlert, ...days.map((d) => d.rate ?? 0));
   return (
-    <div
-      className={r.cancelBarsWrap}
-      tabIndex={0}
-      role="region"
-      aria-label="Anulación por día"
-    >
-      <ol className={r.cancelBars}>
-        {days.map((day) => (
-          <li
-            key={day.date}
-            title={`${shortDate(day.date)}: ${count(day.annulled)} de ${count(day.base)}`}
-          >
-            <span className={r.cancelBarValue}>
-              {day.rate == null ? "—" : `${Math.round(day.rate * 100)} %`}
-            </span>
-            <span className={r.cancelBarTrack} aria-hidden="true">
-              <span
-                className={[
-                  high(day.rate) ? r.cancelBarHigh : "",
-                  day.open ? r.cancelBarOpen : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                style={{ height: `${((day.rate ?? 0) / max) * 100}%` }}
-              />
-            </span>
-            <span className={r.cancelBarDate}>
-              {shortDate(day.date)}
-              {day.open && <span className="sr-only"> (abierto)</span>}
-            </span>
-          </li>
-        ))}
-      </ol>
-    </div>
+    <>
+      <ChartLegend
+        items={[
+          {
+            key: "ok",
+            name: `Hasta ${pct(t.cancelRateAlert)}`,
+            color: "var(--mk-other)",
+          },
+          {
+            key: "high",
+            name: `▲ Más de ${pct(t.cancelRateAlert)}`,
+            color: "var(--mk-bad)",
+          },
+          ...(days.some((d) => d.open)
+            ? [
+                {
+                  key: "open",
+                  name: "Día reciente (todavía se puede anular)",
+                  color: "var(--mk-axis)",
+                },
+              ]
+            : []),
+        ]}
+      />
+      <ColumnChart
+        ariaLabel="Anulación por día; cifras en la tabla inferior"
+        integer={false}
+        format={(value) => pct(value)}
+        tickFormat={(value) => `${Math.round(value * 100)} %`}
+        reference={{
+          value: t.cancelRateAlert,
+          label: `Límite ${pct(t.cancelRateAlert)}`,
+        }}
+        bins={days.map((day) => ({
+          key: day.date,
+          label: shortDate(day.date),
+          title: shortDate(day.date),
+          stacks: [
+            [
+              {
+                key: "rate",
+                label: "anulado",
+                value: day.rate,
+                color: dayColor(day),
+              },
+            ],
+          ],
+          notes: [
+            `${count(day.annulled)} de ${count(day.base)} pedidos`,
+            high(day.rate) ? `▲ Más de ${pct(t.cancelRateAlert)}` : "",
+            day.open ? "Día reciente: todavía se puede anular" : "",
+          ],
+        }))}
+      />
+      <details className={r.chartData}>
+        <summary>Ver datos del gráfico</summary>
+        <div
+          className={r.tableWrap}
+          tabIndex={0}
+          role="region"
+          aria-label="Anulación por día"
+        >
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Anulados</th>
+                <th>Pedidos</th>
+                <th>Tasa</th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map((day) => (
+                <tr key={day.date}>
+                  <th scope="row">
+                    {shortDate(day.date)}
+                    {day.open && " (abierto)"}
+                  </th>
+                  <td>{count(day.annulled)}</td>
+                  <td>{count(day.base)}</td>
+                  <td>
+                    {high(day.rate) && "▲ "}
+                    {pct(day.rate)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </>
   );
 }
 
@@ -177,7 +243,7 @@ export function CancellationsPanel({
           <p className={r.caption}>
             Barra roja: más de {pct(t.cancelRateAlert)}.
             {report.hasOpenDays &&
-              " Barras rayadas: días recientes, todavía se pueden anular."}
+              " Barras claras: días recientes, todavía se pueden anular."}
           </p>
 
           <div className={`${r.alertGrid} mt-6`}>

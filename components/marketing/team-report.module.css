@@ -76,8 +76,15 @@
   font-weight: 600;
   line-height: 1.2;
   margin: 10px 0 8px;
-  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+}
+.entitySwatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 2px;
+  vertical-align: 0;
 }
 .metric small {
   display: block;
@@ -396,65 +403,6 @@
 .assignment .saveAssignment:hover {
   background: var(--mk-good);
 }
-.weekdays {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 14px;
-  padding: 20px 10px 0;
-}
-.weekdays > div {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-}
-.weekdays strong {
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.barTrack {
-  height: 150px;
-  width: 100%;
-  max-width: 45px;
-  display: flex;
-  align-items: flex-end;
-  border-bottom: 1px solid var(--mk-border);
-}
-.barTrack > div {
-  width: 100%;
-  background: var(--mk-bar);
-  border-radius: 4px 4px 0 0;
-}
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 12px 0 0;
-}
-.legend button {
-  border: 0;
-  padding: 2px 0;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  color: var(--mk-muted);
-  background: none;
-  text-align: left;
-}
-.legend span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.legend button[aria-pressed="false"] {
-  text-decoration: line-through;
-}
-.trend {
-  width: 100%;
-  max-height: 240px;
-}
 .chartData {
   margin-top: 14px;
   font-size: 11px;
@@ -561,9 +509,6 @@
   .pagination p {
     max-width: none;
     flex-basis: 100%;
-  }
-  .weekdays {
-    gap: 10px;
   }
 }
 
@@ -685,7 +630,6 @@
   letter-spacing: -0.03em;
   line-height: 1.25;
   margin: 6px 0 10px;
-  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 .goal > small {
@@ -705,17 +649,21 @@
 .goal > .goalComparison[data-trend="down"] {
   color: var(--mk-bad);
 }
+/* Medidor: la pista es un paso claro de la misma rampa que el relleno; en
+   riesgo, relleno y pista pasan al rojo de estado (siempre con su texto). */
 .meter {
   height: 10px;
   border-radius: 999px;
-  background: var(--mk-soft);
-  border: 1px solid var(--mk-border);
+  background: var(--mk-track);
   overflow: hidden;
 }
 .meterFill {
   height: 100%;
   background: var(--mk-accent);
   border-radius: 999px;
+}
+.meterRisk {
+  background: var(--mk-bad-soft);
 }
 .meterRisk .meterFill {
   background: var(--mk-bad);
@@ -1103,10 +1051,12 @@
   width: 72px;
   vertical-align: middle;
 }
+/* Tendencia de tabla: semanas anteriores en gris de segundo plano; la última
+   en el color de estado porque es la caída que la fila señala ("Ahora"). */
 .spark > span {
   flex: 1 1 0;
   min-height: 1px;
-  background: var(--mk-bar);
+  background: var(--mk-other);
   border-radius: 2px 2px 0 0;
 }
 .spark > .sparkLast {
@@ -1114,63 +1064,6 @@
 }
 
 /* Módulo 7: cancelaciones */
-.cancelBarsWrap {
-  overflow-x: auto;
-  max-width: 100%;
-  padding-bottom: 4px;
-}
-.cancelBarsWrap:focus-visible {
-  outline: 2px solid var(--mk-accent);
-  outline-offset: 3px;
-}
-.cancelBars {
-  list-style: none;
-  margin: 0;
-  padding: 8px 0 0;
-  display: flex;
-  gap: 6px;
-  min-width: min-content;
-}
-.cancelBars > li {
-  flex: 1 0 34px;
-  max-width: 56px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-.cancelBarValue {
-  color: var(--mk-text);
-  white-space: nowrap;
-}
-.cancelBarTrack {
-  height: 110px;
-  width: 100%;
-  display: flex;
-  align-items: flex-end;
-  border-bottom: 1px solid var(--mk-border);
-}
-.cancelBarTrack > span {
-  width: 100%;
-  background: var(--mk-bar);
-  border-radius: 3px 3px 0 0;
-}
-.cancelBarTrack > .cancelBarHigh {
-  background: var(--mk-bad);
-}
-.cancelBarTrack > .cancelBarOpen {
-  background-image: repeating-linear-gradient(
-    45deg,
-    transparent 0 3px,
-    var(--mk-surface) 3px 6px
-  );
-}
-.cancelBarDate {
-  color: var(--mk-muted);
-  white-space: nowrap;
-}
 .cancelTable {
   min-width: 480px;
 }
@@ -1186,35 +1079,6 @@
 }
 
 /* Módulo 8: origen de los pedidos y complementos */
-.originShopify {
-  background: var(--mk-subtle);
-}
-.originCarrito {
-  background: var(--mk-chart-2);
-}
-.originBot {
-  background: var(--mk-chart-1);
-}
-.originAsesora {
-  background: var(--mk-bar);
-}
-.originFormulario {
-  background: oklch(72% 0.045 230);
-}
-.originTrack {
-  height: 110px;
-  width: 100%;
-  display: flex;
-  flex-direction: column-reverse;
-  border-bottom: 1px solid var(--mk-border);
-}
-.originTrack > span {
-  width: 100%;
-  flex: 0 0 auto;
-}
-.originTrack > span:last-child {
-  border-radius: 3px 3px 0 0;
-}
 .originLegend {
   list-style: none;
   margin: 8px 0 0;
@@ -1330,38 +1194,52 @@
 .simHeadline strong {
   font-variant-numeric: tabular-nums;
 }
+/* Barra segmentada fina: el total contra la meta. Las cifras van en la
+   lista de abajo; 2 px de superficie entre partes, puntas redondeadas. */
 .simBar {
   position: relative;
   display: flex;
-  height: 18px;
-  margin: 14px 0 4px;
-  border-radius: 4px;
-  background: var(--mk-soft);
-  border: 1px solid var(--mk-border);
-  overflow: hidden;
+  height: 8px;
+  margin: 18px 0 10px;
+  border-radius: 999px;
+  background: var(--mk-track);
 }
 .simBar > span {
   height: 100%;
   flex: 0 0 auto;
+  box-sizing: border-box;
+}
+.simBar > span:first-child {
+  border-top-left-radius: 999px;
+  border-bottom-left-radius: 999px;
+}
+.simBar > span + span:not(.simGoal) {
+  border-left: 2px solid var(--mk-surface);
+}
+.simBar > .simEnd {
+  border-top-right-radius: 999px;
+  border-bottom-right-radius: 999px;
 }
 .simAds {
-  background: var(--mk-chart-1);
+  background: var(--mk-series-1);
 }
 .simOther {
-  background: var(--mk-bar);
+  background: var(--mk-other);
 }
 .simCarts {
-  background: var(--mk-chart-2);
+  background: var(--mk-series-2);
 }
 .simRepeat {
-  background: var(--mk-chart-3);
+  background: var(--mk-series-3);
 }
 .simBar > .simGoal {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: -5px;
+  bottom: -5px;
+  height: auto;
   width: 2px;
-  margin-left: -2px;
+  margin-left: -1px;
+  border-radius: 1px;
   background: var(--mk-text);
 }
 .originLegend li > .simGoalKey {
@@ -1471,17 +1349,17 @@
   color: var(--mk-text);
   overflow-wrap: anywhere;
 }
+/* Barras ordenadas: finas, sin pista (no hay un límite que mostrar), base
+   recta y punta redondeada; la cifra va al lado en texto. */
 .segTrack {
-  height: 12px;
-  border-radius: 3px;
-  background: var(--mk-soft);
-  overflow: hidden;
+  height: 8px;
 }
 .segTrack > span {
   display: block;
   height: 100%;
-  background: var(--mk-chart-1);
-  border-radius: 3px;
+  min-width: 1px;
+  background: var(--mk-series-1);
+  border-radius: 0 4px 4px 0;
 }
 .segValue {
   font-variant-numeric: tabular-nums;

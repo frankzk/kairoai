@@ -3,24 +3,31 @@ import { useState } from "react";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { CharlieReport } from "@/lib/marketing-charlie-types";
 import { count, shortDate } from "./format";
+import { ChartLegend, ColumnChart, LineChart, SERIES_COLORS } from "./charts";
 import r from "./team-report.module.css";
 export function WeekdayChart({ data }: { data: MarketingSummary }) {
-  const max = Math.max(1, ...data.weekdays.map((d) => d.orders));
   return (
     <div>
       <h3>Pedidos por día de la semana</h3>
       <p className={r.caption}>Suma de cada día dentro del período.</p>
-      <div className={r.weekdays}>
-        {data.weekdays.map((d) => (
-          <div key={d.name}>
-            <strong>{count(d.orders)}</strong>
-            <div className={r.barTrack}>
-              <div style={{ height: `${(d.orders / max) * 100}%` }} />
-            </div>
-            <span>{d.name}</span>
-          </div>
-        ))}
-      </div>
+      <ColumnChart
+        ariaLabel="Pedidos por día de la semana; valores en la tabla inferior"
+        bins={data.weekdays.map((d) => ({
+          key: d.name,
+          label: d.name,
+          title: d.name,
+          stacks: [
+            [
+              {
+                key: "orders",
+                label: "pedidos",
+                value: d.orders,
+                color: "var(--mk-series-1)",
+              },
+            ],
+          ],
+        }))}
+      />
       <details className={r.chartData}>
         <summary>Ver datos del gráfico</summary>
         <table>
@@ -37,7 +44,6 @@ export function WeekdayChart({ data }: { data: MarketingSummary }) {
     </div>
   );
 }
-const colors = ["var(--mk-chart-1)", "var(--mk-chart-2)", "var(--mk-chart-3)"];
 export function TrendChart({ data }: { data: MarketingSummary }) {
   const [hidden, setHidden] = useState<string[]>([]);
   const products = [
@@ -47,101 +53,44 @@ export function TrendChart({ data }: { data: MarketingSummary }) {
     .sort((a, b) => b.orders - a.orders)
     .filter((p) => p.orders > 0)
     .slice(0, 3);
-  const visible = products.filter((p) => !hidden.includes(p.key)),
-    max = Math.max(1, ...visible.flatMap((p) => p.daily.map((d) => d.orders)));
-  const x = (i: number) => 34 + (i / Math.max(1, data.daily.length - 1)) * 540,
-    y = (v: number) => 170 - (v / max) * 140;
+  // Color by rank among the three, so hiding one never repaints the rest.
+  const color = (p: (typeof products)[number]) =>
+    SERIES_COLORS[products.indexOf(p)];
+  const visible = products.filter((p) => !hidden.includes(p.key));
   return (
     <div>
       <h3>Tendencia de pedidos por producto</h3>
       <p className={r.caption}>
         Los tres productos con más pedidos del período.
       </p>
-      <div className={r.legend}>
-        {products.map((p, i) => (
-          <button
-            key={p.key}
-            aria-pressed={!hidden.includes(p.key)}
-            onClick={() =>
-              setHidden((old) =>
-                old.includes(p.key)
-                  ? old.filter((k) => k !== p.key)
-                  : [...old, p.key],
-              )
-            }
-          >
-            <span
-              style={{
-                background: colors[i],
-                opacity: hidden.includes(p.key) ? 0.25 : 1,
-              }}
-            />
-            {p.name}
-          </button>
-        ))}
-      </div>
+      <ChartLegend
+        label="Productos del gráfico"
+        items={products.map((p) => ({
+          key: p.key,
+          name: p.name,
+          color: color(p),
+          mark: "line",
+          hidden: hidden.includes(p.key),
+        }))}
+        onToggle={(key) =>
+          setHidden((old) =>
+            old.includes(key) ? old.filter((k) => k !== key) : [...old, key],
+          )
+        }
+      />
       {products.length ? (
         <>
-          <svg
-            viewBox="0 0 600 200"
-            className={r.trend}
-            role="img"
-            aria-label="Tendencia diaria por producto; valores en la tabla inferior"
-          >
-            {[0, 0.5, 1].map((t) => (
-              <g key={t}>
-                <line
-                  x1={34}
-                  x2={574}
-                  y1={y(max * t)}
-                  y2={y(max * t)}
-                  stroke="var(--mk-border)"
-                />
-                <text
-                  x={25}
-                  y={y(max * t) + 4}
-                  textAnchor="end"
-                  fontSize={11}
-                  fill="var(--mk-muted)"
-                >
-                  {Math.round(max * t)}
-                </text>
-              </g>
-            ))}
-            {visible.map((p) => (
-              <g key={p.key}>
-                <polyline
-                  points={p.daily
-                    .map((d, i) => `${x(i)},${y(d.orders)}`)
-                    .join(" ")}
-                  fill="none"
-                  stroke={colors[products.indexOf(p)]}
-                  strokeWidth={2.5}
-                  strokeLinejoin="round"
-                />
-                {data.daily.length === 1 && (
-                  <circle
-                    cx={x(0)}
-                    cy={y(p.orders)}
-                    r={4}
-                    fill={colors[products.indexOf(p)]}
-                  />
-                )}
-              </g>
-            ))}
-            <text x={34} y={194} fontSize={11} fill="var(--mk-muted)">
-              {shortDate(data.period.from)}
-            </text>
-            <text
-              x={574}
-              y={194}
-              textAnchor="end"
-              fontSize={11}
-              fill="var(--mk-muted)"
-            >
-              {shortDate(data.period.to)}
-            </text>
-          </svg>
+          <LineChart
+            dates={data.daily.map((d) => d.date)}
+            dateLabel={shortDate}
+            ariaLabel="Tendencia diaria por producto; valores en la tabla inferior"
+            series={visible.map((p) => ({
+              key: p.key,
+              name: p.name,
+              color: color(p),
+              values: data.daily.map((_, i) => p.daily[i]?.orders ?? 0),
+            }))}
+          />
           <details className={r.chartData}>
             <summary>Ver datos del gráfico</summary>
             <div

@@ -40,6 +40,7 @@ import { count, money, percentage, shortDate } from "./format";
 import r from "./team-report.module.css";
 import { CampaignGroups } from "./TeamReportCampaigns";
 import { WeekdayChart, TrendChart, AdDiagnostics } from "./TeamReportCharts";
+import { ENTITY_COLORS } from "./charts";
 import { DailyGoals } from "./DailyGoals";
 import { CampaignActions } from "./CampaignActions";
 import { CostCapControl } from "./CostCapControl";
@@ -499,6 +500,7 @@ export function TeamReport({
       <section className={r.channelMetrics} aria-label="Desglose por canal">
         <Metric
           label="Pedidos Meta"
+          swatch={ENTITY_COLORS.meta}
           value={channelValue(channel?.meta.total)}
           note={
             channel
@@ -508,6 +510,7 @@ export function TeamReport({
         />
         <Metric
           label="Pedidos TikTok"
+          swatch={ENTITY_COLORS.tiktok}
           value={channelValue(channel?.tiktok.total)}
           note={
             channel
@@ -517,16 +520,19 @@ export function TeamReport({
         />
         <Metric
           label="Otros / sin campaña"
+          swatch={ENTITY_COLORS.other}
           value={channelValue(channel?.other)}
           note="Productos sin campaña con gasto, otros orígenes u orgánicos. Sin UTM no implica orgánico."
         />
         <Metric
           label="Gasto · Meta Ads"
+          swatch={ENTITY_COLORS.meta}
           value={loading ? "…" : usd(meta.spend)}
           note="Las cinco cuentas publicitarias"
         />
         <Metric
           label="Gasto · TikTok Ads"
+          swatch={ENTITY_COLORS.tiktok}
           value={loading ? "…" : usd(tiktok.spend)}
           note={
             tiktokThrough
@@ -1198,11 +1204,14 @@ function Metric({
   max,
   valueNow,
   risk = false,
+  swatch,
 }: {
   label: string;
   value: string;
   note?: string;
   notes?: string[];
+  /** Entity color (Meta, TikTok, Otros): the same one every chart uses. */
+  swatch?: string;
   /** With a goal: share of the goal reached (meter). */
   progress?: number | null;
   max?: number;
@@ -1213,7 +1222,16 @@ function Metric({
   const width = progress == null ? 0 : Math.min(1, Math.max(0, progress));
   return (
     <div className={r.metric}>
-      <p>{label}</p>
+      <p>
+        {swatch && (
+          <span
+            className={r.entitySwatch}
+            style={{ background: swatch }}
+            aria-hidden="true"
+          />
+        )}
+        {label}
+      </p>
       <strong>{value}</strong>
       {meter && (
         <div

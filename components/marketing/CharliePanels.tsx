@@ -7,6 +7,7 @@ import { marketingDate } from "@/lib/marketing-dates";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import { ordersText } from "@/lib/marketing-actions";
 import { count, money, percentage, shortDate } from "./format";
+import { ChartLegend, ColumnChart, ENTITY_COLORS } from "./charts";
 import s from "./dashboard.module.css";
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
 
@@ -133,101 +134,54 @@ export function CharlieCurrency({
   );
 }
 function RevenueChart({ model }: { model: CharlieModel }) {
-  const max = Math.max(
-    1,
-    ...model.trailing.flatMap((day) => [
-      day.revenueUsd ?? 0,
-      day.metaSpendUsd ?? 0,
-    ]),
-  );
-  const y = (value: number) => 166 - (value / max) * 140,
-    x = (index: number) => 70 + index * 85;
   const hasRevenue = model.trailing.some((day) => day.revenueUsd != null);
   return (
     <div>
       <h2 className={s.heading}>Últimos 7 días: Meta e ingreso potencial</h2>
-      <div className={s.legend}>
-        <span>
-          <span className={s.dot} style={{ background: "var(--mk-chart-1)" }} />
-          Ingreso potencial USD
-        </span>
-        <span>
-          <span className={s.dot} style={{ background: "var(--mk-chart-2)" }} />
-          Gasto Meta USD
-        </span>
-      </div>
+      <ChartLegend
+        items={[
+          {
+            key: "revenue",
+            name: "Ingreso potencial USD",
+            color: "var(--mk-series-1)",
+          },
+          { key: "meta", name: "Gasto Meta USD", color: ENTITY_COLORS.meta },
+        ]}
+      />
       {!hasRevenue ? (
-        <div className={s.empty}>
+        <div className={`${s.empty} mt-3`}>
           Se necesita una referencia USD y el valor de los pedidos para comparar
           las series.
         </div>
       ) : (
-        <svg
-          role="img"
-          aria-label="Ingreso potencial y gasto Meta en USD, detalle en la tabla inferior"
-          className="w-full"
-          viewBox="0 0 650 200"
-        >
-          {[0, 0.5, 1].map((tick) => (
-            <g key={tick}>
-              <line
-                x1="50"
-                x2="600"
-                y1={y(max * tick)}
-                y2={y(max * tick)}
-                stroke="hsl(var(--border))"
-              />
-              <text
-                x="42"
-                y={y(max * tick) + 4}
-                textAnchor="end"
-                fontSize="10"
-                fill="currentColor"
-              >
-                {count(Math.round(max * tick))}
-              </text>
-            </g>
-          ))}
-          {model.trailing.map((day, index) => (
-            <g key={day.date}>
-              {day.revenueUsd != null && (
-                <rect
-                  x={x(index) - 14}
-                  y={y(day.revenueUsd)}
-                  height={166 - y(day.revenueUsd)}
-                  width="12"
-                  fill="var(--mk-chart-1)"
-                >
-                  <title>
-                    {day.date}: {money(day.revenueUsd)} potencial
-                  </title>
-                </rect>
-              )}
-              {day.metaSpendUsd != null && (
-                <rect
-                  x={x(index)}
-                  y={y(day.metaSpendUsd)}
-                  height={166 - y(day.metaSpendUsd)}
-                  width="12"
-                  fill="var(--mk-chart-2)"
-                >
-                  <title>
-                    {day.date}: {money(day.metaSpendUsd)} Meta
-                  </title>
-                </rect>
-              )}
-              <text
-                x={x(index)}
-                y="190"
-                textAnchor="middle"
-                fontSize="9"
-                fill="currentColor"
-              >
-                {shortDate(day.date)}
-              </text>
-            </g>
-          ))}
-        </svg>
+        <ColumnChart
+          ariaLabel="Ingreso potencial y gasto Meta en USD, detalle en la tabla inferior"
+          format={(value) => money(value)}
+          tickFormat={(value) => count(Math.round(value))}
+          bins={model.trailing.map((day) => ({
+            key: day.date,
+            label: shortDate(day.date),
+            title: shortDate(day.date),
+            stacks: [
+              [
+                {
+                  key: "revenue",
+                  label: "Ingreso potencial",
+                  value: day.revenueUsd,
+                  color: "var(--mk-series-1)",
+                },
+              ],
+              [
+                {
+                  key: "meta",
+                  label: "Gasto Meta",
+                  value: day.metaSpendUsd,
+                  color: ENTITY_COLORS.meta,
+                },
+              ],
+            ],
+          }))}
+        />
       )}
       <details>
         <summary className={s.link}>Ver cifras por día</summary>

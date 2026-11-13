@@ -219,15 +219,15 @@ export function PathTo200({
                   .map((b) => `${b.label} ${orders(b.orders)}`)
                   .join(", ")}`}
               >
-                {result.breakdown.map((b) =>
-                  b.orders > 0 ? (
+                {result.breakdown
+                  .filter((b) => b.orders > 0)
+                  .map((b, i, shown) => (
                     <span
                       key={b.code}
-                      className={SEGMENT_CLASS[b.code]}
+                      className={`${SEGMENT_CLASS[b.code]} ${i === shown.length - 1 ? r.simEnd : ""}`}
                       style={{ width: `${(b.orders / scale) * 100}%` }}
                     />
-                  ) : null,
-                )}
+                  ))}
                 <span
                   className={r.simGoal}
                   style={{ left: `${(result.goal / scale) * 100}%` }}

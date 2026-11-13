@@ -3,17 +3,23 @@ import { useState } from "react";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingProductMetric } from "@/lib/marketing-intelligence";
 import { count, shortDate } from "./format";
+import { ChartLegend, ColumnChart, LineChart, SERIES_COLORS } from "./charts";
 import s from "./dashboard.module.css";
 
 export function OrdersChart({ data }: { data: MarketingSummary }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const bins =
-    data.daily.length > 31
-      ? data.weeks.map((week) => ({
-          date: week.from,
-          generated: week.generated,
-        }))
-      : data.daily;
+  const weekly = data.daily.length > 31;
+  const bins: Array<{
+    date: string;
+    generated: number;
+    delivered?: number;
+    open?: number;
+  }> = weekly
+    ? data.weeks.map((week) => ({
+        date: week.from,
+        generated: week.generated,
+      }))
+    : data.daily;
   const max = Math.max(1, ...bins.map((day) => day.generated));
   const active = bins.find((day) => day.date === selected);
   return (
@@ -26,43 +32,34 @@ export function OrdersChart({ data }: { data: MarketingSummary }) {
             : `Máximo: ${count(max === 1 && !data.totals.generated ? 0 : max)}`}
         </span>
       </div>
-      <div
-        className={s.chart}
-        style={{
-          gridTemplateColumns: `repeat(${bins.length}, minmax(0, 1fr))`,
-        }}
-        aria-label={
-          data.daily.length > 31
-            ? "Pedidos por bloques de siete días"
-            : "Pedidos por día"
-        }
-      >
-        {bins.map((day) => (
-          <button
-            key={day.date}
-            type="button"
-            className={s.chartButton}
-            aria-label={`${shortDate(day.date)}, ${day.generated} pedidos`}
-            onMouseEnter={() => setSelected(day.date)}
-            onFocus={() => setSelected(day.date)}
-            onClick={() => setSelected(day.date)}
-          >
-            <span
-              className={s.chartColumn}
-              style={{ height: `${(day.generated / max) * 100}%` }}
-            />
-          </button>
-        ))}
-      </div>
-      <div className={s.chartAxis}>
-        <span>{shortDate(data.period.from)}</span>
-        <span>
-          {data.daily.length > 31
-            ? "Bloques de 7 días"
-            : "Pedidos creados por día"}
-        </span>
-        <span>{shortDate(data.period.to)}</span>
-      </div>
+      <ColumnChart
+        bins={bins.map((day) => ({
+          key: day.date,
+          label: shortDate(day.date),
+          title: weekly ? `Semana del ${shortDate(day.date)}` : shortDate(day.date),
+          stacks: [
+            [
+              {
+                key: "generated",
+                label: "pedidos",
+                value: day.generated,
+                color: "var(--mk-series-1)",
+              },
+            ],
+          ],
+          notes:
+            day.delivered != null
+              ? [
+                  `${count(day.delivered)} entregados · ${count(day.open ?? 0)} sin cierre`,
+                ]
+              : undefined,
+        }))}
+        ariaLabel={weekly ? "Pedidos por bloques de siete días" : "Pedidos por día"}
+        onActive={(index) => setSelected(index == null ? null : bins[index].date)}
+      />
+      <p className={s.chartAxis}>
+        {weekly ? "Bloques de 7 días" : "Pedidos creados por día"}
+      </p>
       <details className="mt-3">
         <summary className={s.link}>Ver datos del gráfico</summary>
         <div className={`${s.tableWrap} mt-2 max-h-52`}>
@@ -91,7 +88,6 @@ export function OrdersChart({ data }: { data: MarketingSummary }) {
     </div>
   );
 }
-const colors = ["var(--mk-chart-1)", "var(--mk-chart-2)", "var(--mk-chart-3)"];
 export function ProductTrend({
   products,
   dates,
@@ -104,14 +100,11 @@ export function ProductTrend({
     .filter((product) => product.orders > 0)
     .sort((a, b) => b.orders - a.orders)
     .slice(0, 3);
+  // The color follows the product (its rank among the three), not the visible
+  // count: hiding one never repaints the others.
+  const color = (key: string) =>
+    SERIES_COLORS[selected.findIndex((item) => item.key === key)];
   const visible = selected.filter((product) => !hidden.includes(product.key));
-  const max = Math.max(
-    1,
-    ...visible.flatMap((product) => product.daily.map((day) => day.orders)),
-  );
-  const x = (index: number) =>
-    32 + (index / Math.max(1, dates.length - 1)) * 600;
-  const y = (value: number) => 166 - (value / max) * 138;
   return (
     <div>
       <h2 className={s.heading}>Tendencia de productos</h2>
@@ -125,93 +118,37 @@ export function ProductTrend({
         </div>
       ) : (
         <>
-          <div className={s.legend}>
-            {selected.map((product, index) => (
-              <button
-                key={product.key}
-                className="text-left focus-visible:outline focus-visible:outline-2"
-                aria-pressed={!hidden.includes(product.key)}
-                onClick={() =>
-                  setHidden((old) =>
-                    old.includes(product.key)
-                      ? old.filter((key) => key !== product.key)
-                      : [...old, product.key],
-                  )
-                }
-                style={{ opacity: hidden.includes(product.key) ? 0.4 : 1 }}
-              >
-                <span className={s.dot} style={{ background: colors[index] }} />
-                {product.name}
-              </button>
-            ))}
-          </div>
-          <svg
-            viewBox="0 0 660 200"
-            role="img"
-            aria-label="Pedidos diarios por producto, valores disponibles en la tabla inferior"
-            className="w-full"
-          >
-            {[0, 0.5, 1].map((tick) => (
-              <g key={tick}>
-                <line
-                  x1="32"
-                  x2="632"
-                  y1={y(max * tick)}
-                  y2={y(max * tick)}
-                  stroke="hsl(var(--border))"
-                />
-                <text
-                  x="20"
-                  y={y(max * tick) + 3}
-                  fill="currentColor"
-                  textAnchor="end"
-                  fontSize="10"
-                >
-                  {Math.round(max * tick)}
-                </text>
-              </g>
-            ))}
-            {visible.map((product) => (
-              <polyline
-                key={product.key}
-                points={product.daily
-                  .map((day, index) => `${x(index)},${y(day.orders)}`)
-                  .join(" ")}
-                fill="none"
-                stroke={
-                  colors[selected.findIndex((item) => item.key === product.key)]
-                }
-                strokeWidth="2"
-                strokeLinejoin="round"
-              />
-            ))}
-            {dates.length === 1 &&
-              visible.map((product) => (
-                <circle
-                  key={product.key}
-                  cx={x(0)}
-                  cy={y(product.orders)}
-                  r="4"
-                  fill={
-                    colors[
-                      selected.findIndex((item) => item.key === product.key)
-                    ]
-                  }
-                />
-              ))}
-            <text x="32" y="192" fill="currentColor" fontSize="10">
-              {shortDate(dates[0])}
-            </text>
-            <text
-              x="632"
-              y="192"
-              fill="currentColor"
-              textAnchor="end"
-              fontSize="10"
-            >
-              {shortDate(dates[dates.length - 1])}
-            </text>
-          </svg>
+          <ChartLegend
+            label="Productos del gráfico"
+            items={selected.map((product) => ({
+              key: product.key,
+              name: product.name,
+              color: color(product.key),
+              mark: "line",
+              hidden: hidden.includes(product.key),
+            }))}
+            onToggle={(key) =>
+              setHidden((old) =>
+                old.includes(key)
+                  ? old.filter((item) => item !== key)
+                  : [...old, key],
+              )
+            }
+          />
+          <LineChart
+            dates={dates}
+            dateLabel={shortDate}
+            ariaLabel="Pedidos diarios por producto, valores disponibles en la tabla inferior"
+            series={visible.map((product) => ({
+              key: product.key,
+              name: product.name,
+              color: color(product.key),
+              values: dates.map(
+                (date) =>
+                  product.daily.find((day) => day.date === date)?.orders ?? 0,
+              ),
+            }))}
+          />
           <details>
             <summary className={s.link}>Ver valores por producto</summary>
             <div className={`${s.tableWrap} max-h-60`}>

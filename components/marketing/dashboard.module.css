@@ -166,7 +166,6 @@
   font-weight: 600;
   letter-spacing: -0.035em;
   line-height: 1.2;
-  font-variant-numeric: tabular-nums;
 }
 .metric small {
   color: var(--mk-muted);
@@ -274,68 +273,21 @@
   font-weight: 500;
   line-height: 1.5;
 }
+/* Lista de barras ordenadas (nombre · barra · cifra): barra fina sin pista,
+   base recta a la izquierda y punta redondeada. */
 .bar {
-  background: var(--mk-soft);
-  height: 5px;
-  overflow: hidden;
+  height: 8px;
 }
 .barFill {
   height: 100%;
-  background: var(--mk-accent);
-}
-.chart {
-  display: grid;
-  align-items: end;
-  gap: 3px;
-  height: 164px;
-  padding-top: 15px;
-  border-bottom: 1px solid hsl(var(--border));
-}
-.chartButton {
-  display: flex;
-  position: relative;
-  flex-direction: column;
-  justify-content: end;
-  height: 100%;
-  min-width: 3px;
-  background: transparent;
-}
-.chartColumn {
-  display: block;
-  width: 100%;
-  background: var(--mk-chart-1);
-  min-height: 1px;
-}
-.chartButton:hover .chartColumn,
-.chartButton:focus-visible .chartColumn {
-  background: var(--mk-good);
-}
-.chartButton:focus-visible {
-  outline: 2px solid var(--mk-good);
-  outline-offset: 2px;
+  min-width: 1px;
+  background: var(--mk-series-1);
+  border-radius: 0 4px 4px 0;
 }
 .chartAxis {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding-top: 9px;
-  font-size: 10px;
-  color: var(--mk-muted);
-}
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin: 12px 0;
+  margin-top: 4px;
   font-size: 11px;
   color: var(--mk-muted);
-}
-.dot {
-  display: inline-block;
-  height: 6px;
-  width: 6px;
-  margin-right: 6px;
-  border-radius: 2px;
 }
 .empty {
   padding: 30px 18px;
