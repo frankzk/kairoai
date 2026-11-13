@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useMemo, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import type { MarketingSummary } from "@/lib/marketing";
 import type { MarketingSources } from "@/lib/marketing-source-types";
 import type { MarketingSettings } from "@/lib/marketing-settings-types";
@@ -1231,6 +1232,12 @@ function Metric({
           />
         )}
         {label}
+        {risk && (
+          <span className={r.riskBadge}>
+            <AlertTriangle aria-hidden="true" />
+            Sobre la meta
+          </span>
+        )}
       </p>
       <strong>{value}</strong>
       {meter && (

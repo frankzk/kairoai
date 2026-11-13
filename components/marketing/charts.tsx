@@ -115,6 +115,10 @@ export type TooltipRow = {
 };
 
 /** Tooltip: el valor manda, el nombre acompaña; clave de línea, no caja. */
+export function ChartTooltip(props: Parameters<typeof Tooltip>[0]) {
+  return <Tooltip {...props} />;
+}
+
 function Tooltip({
   x,
   y,

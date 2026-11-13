@@ -1434,3 +1434,46 @@
 .todayPart .goalLines {
   margin-top: 12px;
 }
+
+/* Estado "sobre la meta": icono + texto, nunca solo color. */
+.riskBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 1px 7px 1px 5px;
+  border-radius: 999px;
+  background: var(--mk-bad-soft);
+  color: var(--mk-bad);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+.riskBadge > svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+/* Simulador: zona activa más alta que la barra (8px) y el segmento activo marcado. */
+.simWrap {
+  position: relative;
+}
+.simBar > span[tabindex] {
+  position: relative;
+  cursor: default;
+  outline: none;
+}
+.simBar > span[tabindex]::after {
+  content: "";
+  position: absolute;
+  inset: -10px 0;
+}
+.simBar > span[tabindex]:focus-visible {
+  box-shadow: 0 0 0 2px var(--mk-surface), 0 0 0 4px var(--mk-accent);
+}
+.simBar > .simActive {
+  filter: brightness(0.88);
+}
