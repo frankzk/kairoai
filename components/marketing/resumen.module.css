@@ -156,7 +156,7 @@
 }
 .status[data-tone="good"] {
   color: var(--mk-good);
-  background: var(--mk-accent-soft);
+  background: var(--mk-good-soft);
 }
 .status[data-tone="warn"] {
   color: var(--mk-warn);
@@ -257,7 +257,7 @@
 }
 .counterIcon[data-tone="good"] {
   color: var(--mk-good);
-  background: var(--mk-accent-soft);
+  background: var(--mk-good-soft);
 }
 .counterIcon[data-tone="bad"] {
   color: var(--mk-bad);

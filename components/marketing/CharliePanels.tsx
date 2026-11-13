@@ -143,7 +143,7 @@ function RevenueChart({ model }: { model: CharlieModel }) {
           {
             key: "revenue",
             name: "Ingreso potencial USD",
-            color: "var(--mk-series-1)",
+            color: "var(--mk-series-2)",
           },
           { key: "meta", name: "Gasto Meta USD", color: ENTITY_COLORS.meta },
         ]}
@@ -168,7 +168,7 @@ function RevenueChart({ model }: { model: CharlieModel }) {
                   key: "revenue",
                   label: "Ingreso potencial",
                   value: day.revenueUsd,
-                  color: "var(--mk-series-1)",
+                  color: "var(--mk-series-2)",
                 },
               ],
               [

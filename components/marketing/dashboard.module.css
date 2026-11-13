@@ -93,7 +93,7 @@
   font-weight: 600;
 }
 .primary:hover {
-  background: var(--mk-good);
+  background: var(--mk-accent-strong);
 }
 .tabs {
   display: flex;
