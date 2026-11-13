@@ -229,6 +229,64 @@
   font-size: 11px;
   line-height: 1.4;
 }
+.adIds {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 5px;
+}
+.adId {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.adIdLabel {
+  flex: none;
+  color: var(--mk-muted);
+  font-weight: 600;
+}
+.adId code {
+  min-width: 0;
+  border-radius: 4px;
+  background: var(--mk-soft);
+  padding: 1px 5px;
+  color: var(--mk-text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  /* Completo siempre: se copia o se dicta tal cual. */
+  overflow-wrap: anywhere;
+}
+.copy {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mk-muted);
+  cursor: pointer;
+}
+.copy:hover {
+  background: var(--mk-hover);
+  color: var(--mk-accent);
+}
+.copy:focus-visible {
+  outline: 2px solid var(--mk-accent);
+  outline-offset: 1px;
+}
+.copy svg {
+  width: 13px;
+  height: 13px;
+}
+.copied {
+  color: var(--mk-good);
+  font-weight: 600;
+}
 .platform {
   display: inline-flex;
   align-items: center;

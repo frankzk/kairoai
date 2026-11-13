@@ -32,6 +32,30 @@ const reportRow = {
   ],
 };
 describe("Charlie Meta reader", () => {
+  it("marks spent ads missing from the active list as not active, and survives a failed post read", async () => {
+    const run = async (ads: () => Response) => {
+      const fetcher = vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("act_123"))
+          return json({
+            id: "act_123",
+            currency: "USD",
+            timezone_name: "America/Costa_Rica",
+          });
+        if (url.pathname.endsWith("/ads")) return ads();
+        return json({ data: [{ ...reportRow, adset_name: "T", campaign_name: "P" }] });
+      });
+      const result = await getCharlieReport(period, env, fetcher, now, undefined, false, false);
+      return result.data!.accounts[0].ads[0];
+    };
+    expect(await run(() => json({ data: [] }))).toMatchObject({
+      effectiveStatus: "NO_ACTIVO",
+      postId: null,
+    });
+    expect(
+      await run(() => new Response("{}", { status: 500 })),
+    ).toMatchObject({ effectiveStatus: "", postId: null });
+  });
   it("loads 4Pi and subtraction without scanning every creative and retains the TikTok callback", async () => {
     const fetcher = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
@@ -41,6 +65,20 @@ describe("Charlie Meta reader", () => {
           currency: "USD",
           timezone_name: "America/Costa_Rica",
         });
+      if (url.pathname.endsWith("/ads")) {
+        // Solo los anuncios ACTIVOS y sin asset_feed_spec: no recorre cada creativo.
+        expect(url.searchParams.get("effective_status")).toBe('["ACTIVE"]');
+        expect(url.searchParams.get("fields")).not.toContain("asset_feed_spec");
+        return json({
+          data: [
+            {
+              id: "1",
+              effective_status: "ACTIVE",
+              creative: { id: "c1", effective_object_story_id: "100_200" },
+            },
+          ],
+        });
+      }
       expect(url.pathname.endsWith("/insights")).toBe(true);
       expect(url.searchParams.get("fields")).toContain("adset_name");
       return json({
@@ -68,13 +106,14 @@ describe("Charlie Meta reader", () => {
       false,
       false,
     );
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
     expect(tiktok).toHaveBeenCalledWith("2026-10-29", "2026-10-29");
     expect(result.data!.accounts).toHaveLength(2);
     expect(result.data!.accounts[0].ads[0]).toMatchObject({
       adsetName: "Testing",
       campaignName: "Producto",
-      postId: null,
+      postId: "100_200",
+      effectiveStatus: "ACTIVE",
       daily: [{ spend: 12.5, frequency: 1.13 }],
     });
     expect(result.data!.accounts[0].metadataMessage).toBeTruthy();

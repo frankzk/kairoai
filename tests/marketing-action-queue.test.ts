@@ -82,6 +82,7 @@ const creative = (
   campaignName: "CBO GOMITAS | CR",
   adId,
   adName: `Video ${adId}`,
+  postId: `100200_${adId}`,
   product: "Gomitas",
   productKey: "family:gomitas",
   spendUsd: spend,
@@ -265,7 +266,7 @@ describe("Hecho (registro manual de cambios)", () => {
       campaign_id: "55",
       campaign_name: "CBO GOMITAS | CR",
       kind: "creativo",
-      detail: "Hecho en Acciones (costcap:987): Pasar a COST CAP · anuncio Video 987",
+      detail: "Hecho en Acciones (costcap:987): Pasar a COST CAP · post 100200_987 · anuncio Video 987",
     });
   });
 

@@ -13,6 +13,7 @@ import {
   Check,
   CircleAlert,
   CircleCheck,
+  Copy,
   Eye,
   Hourglass,
   Power,
@@ -600,6 +601,55 @@ function BudgetCell({ item }: { item: QueueItem }) {
   );
 }
 
+/** Post ID (para duplicar el anuncio en la COST CAP) y Ad ID, con copiar. */
+function AdIds({ postId, adId }: { postId: string | null; adId: string | null }) {
+  const [copied, setCopied] = useState("");
+  const copy = (value: string) => {
+    void navigator.clipboard
+      ?.writeText(value)
+      .then(() => {
+        setCopied(value);
+        window.setTimeout(() => setCopied(""), 1500);
+      })
+      .catch(() => undefined);
+  };
+  const Id = ({ label, value }: { label: string; value: string }) => (
+    <span className={a.adId}>
+      <span className={a.adIdLabel}>{label}</span>
+      <code>{value}</code>
+      <button
+        type="button"
+        className={a.copy}
+        onClick={() => copy(value)}
+        aria-label={`Copiar ${label} ${value}`}
+        title={`Copiar ${label}`}
+      >
+        {copied === value ? (
+          <Check aria-hidden="true" />
+        ) : (
+          <Copy aria-hidden="true" />
+        )}
+      </button>
+      <span className={a.copied} role="status">
+        {copied === value ? "Copiado" : ""}
+      </span>
+    </span>
+  );
+  return (
+    <span className={a.adIds}>
+      {postId ? (
+        <Id label="Post ID" value={postId} />
+      ) : (
+        <span className={a.adId}>
+          <span className={a.adIdLabel}>Post ID</span>
+          <span className={a.dim}>sin dato de Meta</span>
+        </span>
+      )}
+      {adId && <Id label="Ad ID" value={adId} />}
+    </span>
+  );
+}
+
 function QueueRow({
   item,
   now,
@@ -636,6 +686,9 @@ function QueueRow({
           <small className={a.level} title={item.campaignName}>
             en {item.campaignName}
           </small>
+        )}
+        {item.kind === "costcap" && (
+          <AdIds postId={item.postId} adId={item.adId} />
         )}
         {item.levelNote && <small className={a.level}>{item.levelNote}</small>}
       </th>

@@ -67,6 +67,8 @@ export interface QueueItem {
   /** Campaña del anuncio (solo COST CAP). */
   campaignName: string | null;
   adId: string | null;
+  /** Post ID del anuncio (solo COST CAP): con él se duplica en la COST CAP. */
+  postId: string | null;
   type: CampaignDecision["type"] | null;
   product: string | null;
   productKey: string | null;
@@ -224,6 +226,7 @@ export function campaignQueueItem(
     name: d.name,
     campaignName: null,
     adId: null,
+    postId: null,
     type: d.type,
     product: d.product,
     productKey: d.productKey,
@@ -268,6 +271,7 @@ export function creativeQueueItem(
     name: c.adName,
     campaignName: c.campaignName,
     adId: c.adId,
+    postId: c.postId,
     type: null,
     product: c.product,
     productKey: c.productKey,
@@ -385,7 +389,7 @@ const DONE_KIND: Record<DoneAction, CampaignChange["kind"]> = {
 /** Texto del cambio que se registra. */
 export function doneText(item: QueueItem): string {
   if (item.kind === "costcap")
-    return `${item.label} · anuncio ${item.name}`;
+    return `${item.label} · post ${item.postId ?? "sin dato"} · anuncio ${item.name}`;
   const budget =
     item.budget != null && item.suggestedBudget != null
       ? ` · ${budgetText(item.budget, item.currency)} → ${budgetText(item.suggestedBudget, item.currency)}`
