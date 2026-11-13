@@ -142,7 +142,6 @@ export function AccountStatus({
     >
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>06 / Estado de las cuentas</p>
           <h2 id="accounts-title">Estado de las cuentas</h2>
           <p>
             Si alguna cuenta está restringida, sin pago o sin datos, y con qué

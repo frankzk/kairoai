@@ -129,7 +129,7 @@ export default function QuickReplyManager({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgb(15_15_30/0.36)] dark:bg-black/60 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="quick-replies-title"
@@ -161,7 +161,7 @@ export default function QuickReplyManager({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar respuesta…"
-            className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
+            className="h-8 flex-1 rounded-md border border-input bg-card px-3 text-[13.5px] outline-none focus:ring-1 focus:ring-ring shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
           />
           <button
             type="button"
@@ -226,7 +226,7 @@ export default function QuickReplyManager({
                     <p className="text-sm font-medium">
                       {reply.title}
                       {reply.usage_count > 0 && (
-                        <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                        <span className="ml-2 text-[11px] font-normal text-muted-foreground">
                           usada {reply.usage_count}×
                         </span>
                       )}

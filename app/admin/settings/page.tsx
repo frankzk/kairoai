@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, KeyRound, Save, RotateCcw, RefreshCw, Phone, ToggleLeft, ToggleRight, ShoppingCart } from "lucide-react";
+import { KeyRound, Save, RotateCcw, RefreshCw, Phone, ToggleLeft, ToggleRight, ShoppingCart } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -101,21 +101,16 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border/50 bg-card/50 sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-4 flex items-center gap-4">
-          <Link href="/">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-4 w-4 mr-2" /> Dashboard
-            </Button>
-          </Link>
+      <header className="sticky top-0 z-10 border-b border-border bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+        <div className="container mx-auto px-4 py-4 flex items-center gap-4 sm:px-6">
           <div>
-            <h1 className="text-lg font-bold">Configuración</h1>
-            <p className="text-xs text-muted-foreground">Agentes y comportamiento de reintentos</p>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Configuración</h1>
+            <p className="text-[13px] text-muted-foreground">Agentes y comportamiento de reintentos</p>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6 max-w-lg space-y-6">
+      <main className="container mx-auto px-4 py-6 sm:px-6"><div className="max-w-2xl space-y-6">
         {/* Accesos del equipo: desde aca el dueño cambia la contraseña de
             cualquier trabajador cuando le falla. Solo con permiso "usuarios". */}
         {puedeUsuarios && (
@@ -183,7 +178,7 @@ export default function SettingsPage() {
                             type="number" min={1} max={1440}
                             value={settings.retry_delays?.[i] ?? 30}
                             onChange={(e) => setRetryDelay(i, Number(e.target.value))}
-                            className="w-24 h-9 px-3 rounded-md border border-input bg-background text-sm text-center font-mono focus:outline-none focus:ring-2 focus:ring-ring/30"
+                            className="w-24 h-8 px-3 rounded-md border border-input bg-card text-[13.5px] text-center font-mono focus:outline-none focus:ring-2 focus:ring-ring/30 shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
                           />
                           <span className="text-xs text-muted-foreground">min</span>
                           <span className="text-xs text-primary font-medium">
@@ -259,7 +254,7 @@ export default function SettingsPage() {
                           type="number" min={1} max={1440}
                           value={delay}
                           onChange={(e) => setCartRetryDelay(i, Number(e.target.value))}
-                          className="w-24 h-9 px-3 rounded-md border border-input bg-background text-sm text-center font-mono focus:outline-none focus:ring-2 focus:ring-ring/30"
+                          className="w-24 h-8 px-3 rounded-md border border-input bg-card text-[13.5px] text-center font-mono focus:outline-none focus:ring-2 focus:ring-ring/30 shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
                         />
                         <span className="text-xs text-muted-foreground">min</span>
                         <span className="text-xs text-primary font-medium">({fmtMin(delay)})</span>
@@ -288,7 +283,7 @@ export default function SettingsPage() {
             </Button>
           </>
         )}
-      </main>
+      </div></main>
     </div>
   );
 }

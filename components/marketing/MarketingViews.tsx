@@ -492,7 +492,7 @@ export function SourceConnections({
                           </p>
                         ))}
                       {source?.checkedAt && (
-                        <p className="mt-2 text-[10px]">
+                        <p className="mt-2 text-[11px]">
                           Última consulta:{" "}
                           {new Intl.DateTimeFormat("es-CR", {
                             timeZone: "America/Costa_Rica",

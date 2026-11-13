@@ -337,7 +337,7 @@ export default function ZadarmaWebphone() {
   if (error) {
     // Aviso discreto: nunca debe tapar el tablero ni bloquear el trabajo.
     return (
-      <p className="pointer-events-none fixed bottom-2 left-2 z-40 max-w-xs rounded-md bg-muted/90 px-2 py-1 text-[10px] text-muted-foreground">
+      <p className="pointer-events-none fixed bottom-2 left-2 z-40 max-w-xs rounded-md bg-muted/90 px-2 py-1 text-[11px] text-muted-foreground">
         Teléfono web: {error}
       </p>
     );

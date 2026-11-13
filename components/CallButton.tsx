@@ -205,7 +205,7 @@ export default function CallButton({
         // resto de la letra chica de la ficha.
         <p
           className={`max-w-[16rem] text-right ${
-            feedback.kind === "ok" ? "text-xs text-emerald-400" : "text-[10px] text-destructive"
+            feedback.kind === "ok" ? "text-xs text-emerald-400" : "text-[11px] text-destructive"
           }`}
         >
           {feedback.text}

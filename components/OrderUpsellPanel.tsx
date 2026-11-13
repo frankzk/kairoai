@@ -12,7 +12,7 @@ interface Props {
   disabled: boolean; onBusy: (busy: boolean) => void; onComplete: () => void;
   onPending: (pending: boolean) => void;
 }
-const inputClass = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const inputClass = "h-8 w-full rounded-md border border-input bg-card px-3 text-[13.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring shadow-[0_1px_1px_rgb(20_20_31/0.04)]";
 const orderReference = (name: string) => /^IC-W\d+$/.test(name) ? `#${name.slice(4)}` : /^IC-\d+$/.test(name) ? `#${name.slice(3)}` : name;
 
 export default function OrderUpsellPanel({ store, orderName, symbol, advisorId, canal, disabled, onBusy, onComplete, onPending }: Props) {

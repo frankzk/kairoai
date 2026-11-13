@@ -141,7 +141,6 @@ export function LaunchTracker({
     >
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>03 / Lanzamientos</p>
           <h2 id="launches-title">Seguimiento de lanzamientos</h2>
           <p>
             Campañas lanzadas en los últimos {t.testMaxAgeDays} días, por

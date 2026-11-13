@@ -111,7 +111,6 @@ export function SegmentationPanel({
     >
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>07 / Segmentación</p>
           <h2 id="segmentation-title">Segmentación</h2>
           <p>
             Dónde están los clientes (pedidos reales de iComfly) y a qué edad y

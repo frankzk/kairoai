@@ -1,9 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import Link from "next/link";
 import {
-  Activity, AlertTriangle, ArrowLeft, Ban, CalendarClock, Check, ChevronDown, ChevronsUpDown, ChevronUp, Copy,
+  Activity, AlertTriangle, Ban, CalendarClock, Check, ChevronDown, ChevronsUpDown, ChevronUp, Copy,
   Download, HelpCircle, History, MapPin, MessageSquare, PackageX, Pencil, Phone, PhoneOff, Plus, RefreshCw, Search, Timer, Undo2, UserCheck, X,
   type LucideIcon,
 } from "lucide-react";
@@ -22,7 +21,7 @@ import { pctResueltas } from "@/lib/incidents-trend";
 import { incidentCourier, matchesIncidentCourier } from "@/lib/incidents-courier";
 import { type Incident, type IncidentEvent, type IncidentStatus, type IncidentCategory, type IncidentExecutiveStats, type IncidentCausaStat, type IncidentPeriodTotal, type TrackingEvent } from "@/lib/incidents-types";
 import { FINANCE_STORES, getCurrencySymbol, getFinanceStore, type FinanceStoreCode } from "@/lib/store-config";
-import { useSelectedStore, useTiendasPermitidas } from "@/lib/use-selected-store";
+import { useSelectedStore } from "@/lib/use-selected-store";
 import { exportXlsx } from "@/lib/export-xlsx";
 import type { ChatLeadSummary } from "@/lib/leads-types";
 import { courierYaNoReintenta, diasSinEntregaDe, esDiaSinEntrega, reglaReprogramar, reintentaSolo } from "@/lib/incidents-reprog";
@@ -75,15 +74,19 @@ const STATUS_ORDER: IncidentStatus[] = [
 
 // Color por estado, unificado: dot (pill inactivo) + active (pill activo) + badge
 // (chip suave para la tabla / detalle). Mismos tonos en todos lados.
+// Opción activa de un control segmentado (estilo Stripe): superficie blanca
+// con sombra corta dentro del carril hundido; el color queda en el punto.
+const SEGMENTO_ACTIVO = "bg-card text-foreground shadow-sm ring-1 ring-border";
+
 const STATUS_COLOR: Record<IncidentStatus, { dot: string; active: string; badge: string }> = {
-  pendiente:     { dot: "bg-sky-500",     active: "bg-sky-500 text-white shadow-sm",     badge: "bg-sky-500/15 text-sky-400" },
-  reprogramada:  { dot: "bg-cyan-500",    active: "bg-cyan-500 text-white shadow-sm",    badge: "bg-cyan-500/15 text-cyan-400" },
-  reprog_fallida:{ dot: "bg-orange-500",  active: "bg-orange-500 text-white shadow-sm",  badge: "bg-orange-500/15 text-orange-400" },
-  sin_contestar: { dot: "bg-amber-500",   active: "bg-amber-500 text-white shadow-sm",   badge: "bg-amber-500/15 text-amber-400" },
-  no_llamar:     { dot: "bg-rose-500",    active: "bg-rose-500 text-white shadow-sm",    badge: "bg-rose-500/15 text-rose-400" },
-  resuelta:      { dot: "bg-emerald-500", active: "bg-emerald-500 text-white shadow-sm", badge: "bg-emerald-500/15 text-emerald-400" },
-  perdida:       { dot: "bg-slate-500",   active: "bg-slate-500 text-white shadow-sm",   badge: "bg-slate-500/15 text-slate-300" },
-  descartada:    { dot: "bg-zinc-500",    active: "bg-zinc-500 text-white shadow-sm",    badge: "bg-zinc-500/15 text-zinc-300" },
+  pendiente:     { dot: "bg-sky-500",     active: SEGMENTO_ACTIVO,     badge: "bg-sky-500/15 text-sky-400" },
+  reprogramada:  { dot: "bg-cyan-500",    active: SEGMENTO_ACTIVO,    badge: "bg-cyan-500/15 text-cyan-400" },
+  reprog_fallida:{ dot: "bg-orange-500",  active: SEGMENTO_ACTIVO,  badge: "bg-orange-500/15 text-orange-400" },
+  sin_contestar: { dot: "bg-amber-500",   active: SEGMENTO_ACTIVO,   badge: "bg-amber-500/15 text-amber-400" },
+  no_llamar:     { dot: "bg-rose-500",    active: SEGMENTO_ACTIVO,    badge: "bg-rose-500/15 text-rose-400" },
+  resuelta:      { dot: "bg-emerald-500", active: SEGMENTO_ACTIVO, badge: "bg-emerald-500/15 text-emerald-400" },
+  perdida:       { dot: "bg-slate-500",   active: SEGMENTO_ACTIVO,   badge: "bg-slate-500/15 text-slate-300" },
+  descartada:    { dot: "bg-zinc-500",    active: SEGMENTO_ACTIVO,    badge: "bg-zinc-500/15 text-zinc-300" },
 };
 
 // Cuenta para cobrar el nuevo envio por adelantado cuando el courier ya no
@@ -186,7 +189,7 @@ function EstadoCausasPanel({ exec, onVerTodas }: { exec: IncidentExecutiveStats 
             style={{ background: `conic-gradient(rgb(var(--tw-red-400)) 0% ${over48Pct}%, hsl(var(--muted)) ${over48Pct}% 100%)` }}>
             <div className="absolute inset-[11px] flex flex-col items-center justify-center rounded-full bg-card">
               <span className="font-mono text-2xl font-bold leading-none text-red-400">{over48}</span>
-              <span className="mt-0.5 text-[10px] text-muted-foreground">&gt; 48 h</span>
+              <span className="mt-0.5 text-[11px] text-muted-foreground">&gt; 48 h</span>
             </div>
           </div>
           <div className="min-w-0 flex-1 space-y-2">
@@ -196,14 +199,14 @@ function EstadoCausasPanel({ exec, onVerTodas }: { exec: IncidentExecutiveStats 
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-md border border-border px-2.5 py-1.5">
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Edad promedio</div>
+                <div className="text-xs text-muted-foreground">Edad promedio</div>
                 <div className="font-mono text-xl font-bold leading-tight">{(est?.edad_promedio_dias ?? 0).toFixed(1)}<span className="text-xs font-normal text-muted-foreground">d</span></div>
-                {est?.mas_antigua && <div className="text-[10px] text-muted-foreground">más antigua: {est.mas_antigua.dias}d</div>}
+                {est?.mas_antigua && <div className="text-[11px] text-muted-foreground">más antigua: {est.mas_antigua.dias}d</div>}
               </div>
               <div className="rounded-md border border-border px-2.5 py-1.5">
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">1ª gestión</div>
+                <div className="text-xs text-muted-foreground">1ª gestión</div>
                 <div className="font-mono text-xl font-bold leading-tight">{est?.primera_gestion_horas != null ? est.primera_gestion_horas.toFixed(1) : "—"}<span className="text-xs font-normal text-muted-foreground">h</span></div>
-                <div className="text-[10px] text-muted-foreground">creación → 1er llamado</div>
+                <div className="text-[11px] text-muted-foreground">creación → 1er llamado</div>
               </div>
             </div>
           </div>
@@ -221,7 +224,7 @@ function EstadoCausasPanel({ exec, onVerTodas }: { exec: IncidentExecutiveStats 
         </div>
         {causas.length > 0 ? (
           <>
-            <div className="mt-3 flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+            <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
               <span className="flex-1">Motivo</span>
               <span className="w-10 text-right">Cant</span>
               <span className="w-10 text-right">Share</span>
@@ -263,7 +266,7 @@ function EstadoCausasPanel({ exec, onVerTodas }: { exec: IncidentExecutiveStats 
 // Encabezado de columnas de la tabla de causas.
 function CausasHeader() {
   return (
-    <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <span className="w-28 shrink-0 sm:w-32">Motivo</span>
       <span className="flex-1">Distribución</span>
       <span className="w-7 text-right">Cant</span>
@@ -330,7 +333,7 @@ function Tendencia({ exec }: { exec: IncidentExecutiveStats | null }) {
 
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
-            <thead className="text-[10px] uppercase tracking-[0.05em] text-muted-foreground">
+            <thead className="text-xs text-muted-foreground">
               <tr>
                 <th className="w-10" />
                 <th className="hidden sm:table-cell" />
@@ -457,9 +460,9 @@ function CausasModal({ causas, onClose }: { causas: IncidentCausaStat[]; onClose
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4"
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[rgb(15_15_30/0.36)] dark:bg-black/60 p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <Card className="my-8 w-full max-w-lg">
+      <Card className="my-8 w-full max-w-lg rounded-xl shadow-xl">
         <div className="flex items-center justify-between border-b border-border p-4">
           <span className="font-semibold">Causas · últimos 30 días</span>
           <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
@@ -572,16 +575,16 @@ function FilterPill({ active, onClick, count, dot, activeClass, disabled, childr
       aria-pressed={active}
       className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
         active
-          ? (activeClass ?? "bg-primary text-primary-foreground shadow-sm")
+          ? (activeClass ?? SEGMENTO_ACTIVO)
           : disabled
             ? "text-muted-foreground/40 cursor-not-allowed"
             : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
       }`}
     >
-      {dot && !active && <span className={`h-1.5 w-1.5 rounded-full ${dot} ${disabled ? "opacity-40" : ""}`} />}
+      {dot && <span className={`h-1.5 w-1.5 rounded-full ${dot} ${disabled ? "opacity-40" : ""}`} />}
       {children}
       {count != null && (
-        <span className={`inline-block min-w-[2.25ch] text-right tabular-nums text-[10px] ${
+        <span className={`inline-block min-w-[2.25ch] text-right tabular-nums text-[11px] ${
           active ? "opacity-80" : disabled ? "opacity-40" : "opacity-60"
         }`}>{count}</span>
       )}
@@ -609,8 +612,8 @@ export default function IncidenciasPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [courierFilter, setCourierFilter] = useState("");
-  const [selectedStoreCode, setSelectedStoreCode] = useSelectedStore();
-  const tiendasPermitidas = useTiendasPermitidas();
+  // La tienda se elige en el menú lateral (selector único).
+  const [selectedStoreCode] = useSelectedStore();
   const [search, setSearch] = useState("");
   const [intentosFilter, setIntentosFilter] = useState<IntentosFilter>("todos");
   const [edadFilter, setEdadFilter] = useState<EdadFilter>("todos");
@@ -912,27 +915,15 @@ export default function IncidenciasPage() {
           cada novedad. */}
       <TelefonoWeb />
       {/* Header */}
-      <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/">
-              <Button variant="ghost" size="sm" className="gap-2">
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-            </Link>
-            <div className="h-8 w-8 rounded-lg bg-primary/20 flex items-center justify-center">
-              <AlertTriangle className="h-4 w-4 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold text-foreground tracking-tight">Novedades</h1>
-              <p className="text-xs text-muted-foreground">Entregas no realizadas · Gestion de incidencias</p>
+      <header className="sticky top-0 z-10 border-b border-border bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="min-w-0">
+              <h1 className="text-xl font-semibold tracking-tight text-foreground">Novedades</h1>
+              <p className="text-[13px] text-muted-foreground">Entregas no realizadas · Gestión de incidencias</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <select className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-              value={selectedStoreCode} onChange={(e) => setSelectedStoreCode(e.target.value as FinanceStoreCode)} title="Tienda">
-              {tiendasPermitidas.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
-            </select>
             <Button variant="outline" size="sm" onClick={() => fetchData()} className="gap-2">
               <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Actualizar</span>
             </Button>
@@ -945,12 +936,12 @@ export default function IncidenciasPage() {
                 <span className="hidden sm:inline">{busy ? "Actualizando…" : "Detectar novedades"}</span>
               </Button>
               {lastRun && (
-                <span className="text-[10px] leading-tight text-muted-foreground mt-0.5">
+                <span className="text-[11px] leading-tight text-muted-foreground mt-0.5">
                   Actualizado {fmtDate(lastRun)}
                 </span>
               )}
               {trackingSync && (
-                <span className={`text-[10px] leading-tight ${trackingTone}`}
+                <span className={`text-[11px] leading-tight ${trackingTone}`}
                   title="Última sincronización del tracking del courier. Si está vieja, la detección puede no traer novedades nuevas.">
                   {courierName} {fmtDate(trackingSync)}
                 </span>
@@ -996,7 +987,7 @@ export default function IncidenciasPage() {
         <Card>
           <CardContent className="p-3 space-y-2">
             <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filtrar por transportadora">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Transportadora</span>
+              <span className="text-xs font-medium text-muted-foreground">Transportadora</span>
               <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
                 <FilterPill active={courierFilter === ""} count={facetCounts.transportadora.all}
                   onClick={() => setCourierFilter("")}>Todas</FilterPill>
@@ -1013,7 +1004,7 @@ export default function IncidenciasPage() {
             {/* Fila 1: Estado (color por estado) + Intentos */}
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Estado</span>
+                <span className="text-xs font-medium text-muted-foreground">Estado</span>
                 <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
                   <FilterPill active={statusFilter === ""} count={facetCounts.estado.all}
                     onClick={() => setStatusFilter("")}>Todas</FilterPill>
@@ -1031,7 +1022,7 @@ export default function IncidenciasPage() {
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Llamadas</span>
+                <span className="text-xs font-medium text-muted-foreground">Llamadas</span>
                 <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
                   <FilterPill active={intentosFilter === "todos"} count={facetCounts.intentos.todos}
                     onClick={() => setIntentosFilter("todos")}>Todas</FilterPill>
@@ -1051,7 +1042,7 @@ export default function IncidenciasPage() {
             {/* Fila 2: Causa + Edad */}
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Causa</span>
+                <span className="text-xs font-medium text-muted-foreground">Causa</span>
                 <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
                   <FilterPill active={categoryFilter === ""} count={facetCounts.causa.all}
                     onClick={() => setCategoryFilter("")}>Todas</FilterPill>
@@ -1066,7 +1057,7 @@ export default function IncidenciasPage() {
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Edad</span>
+                <span className="text-xs font-medium text-muted-foreground">Edad</span>
                 <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
                   <FilterPill active={edadFilter === "todos"} count={facetCounts.edad.todos}
                     onClick={() => setEdadFilter("todos")}>Todos</FilterPill>
@@ -1335,10 +1326,10 @@ function DetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-2 sm:p-4"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-[rgb(15_15_30/0.36)] dark:bg-black/60 p-2 sm:p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <Card className="my-1 flex h-[calc(100vh-1rem)] w-full max-w-[96rem] flex-col overflow-hidden sm:my-0 sm:h-[calc(100vh-2rem)]">
+      <Card className="my-1 flex h-[calc(100vh-1rem)] w-full max-w-[96rem] flex-col overflow-hidden rounded-xl shadow-xl sm:my-0 sm:h-[calc(100vh-2rem)]">
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2">
             <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[incident.status].badge}`}>{STATUS_META[incident.status].label}</span>
@@ -1460,11 +1451,11 @@ function DetailModal({
           <>
           {/* Estado y causa */}
           <div className="flex flex-wrap gap-2">
-            <select className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            <select className="h-8 rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
               value={incident.status} onChange={(e) => onPatch({ status: e.target.value })}>
               {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
             </select>
-            <div className="flex h-9 items-center gap-2 rounded-md border border-border bg-muted/40 px-3 text-sm"
+            <div className="flex h-8 items-center gap-2 rounded-md border border-border bg-muted/40 px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
               title="La causa la determina el detalle del courier; no es editable.">
               <span className="text-xs text-muted-foreground">Causa:</span>
               <span className="font-medium">{CATEGORY_LABELS[incident.category]}</span>
@@ -1716,8 +1707,8 @@ function NewModal({ storeCode, onClose, onCreated }: { storeCode: FinanceStoreCo
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center overflow-y-auto p-4">
-      <Card className="w-full max-w-md my-8">
+    <div className="fixed inset-0 z-50 bg-[rgb(15_15_30/0.36)] dark:bg-black/60 flex items-start justify-center overflow-y-auto p-4">
+      <Card className="my-8 w-full max-w-md rounded-xl shadow-xl">
         <div className="flex items-center justify-between p-4 border-b border-border">
           <span className="font-semibold">Nueva novedad</span>
           <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
@@ -1727,7 +1718,7 @@ function NewModal({ storeCode, onClose, onCreated }: { storeCode: FinanceStoreCo
           <Input placeholder="Numero de guia" value={form.guide_number} onChange={(e) => set("guide_number", e.target.value)} />
           <Input placeholder="Nombre del cliente" value={form.customer_name} onChange={(e) => set("customer_name", e.target.value)} />
           <Input placeholder="Telefono" value={form.customer_phone} onChange={(e) => set("customer_phone", e.target.value)} />
-          <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+          <select className="h-8 w-full rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
             value={form.category} onChange={(e) => set("category", e.target.value)}>
             {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>

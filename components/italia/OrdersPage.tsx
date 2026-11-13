@@ -1,20 +1,16 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, RefreshCw, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Search } from "lucide-react";
 import { ITALIA_STATUS, type ItaliaOrder, type ItaliaStatus } from "@/lib/italia-orders";
 import { ITALIA_PERIODS, ITALIA_STATES, ITALIA_RECONCILED_STATES, type ItaliaCounts, type ItaliaPeriod } from "@/lib/italia-filters";
-import { FINANCE_STORES } from "@/lib/store-config";
-import { leerYo } from "@/lib/sesion-cliente";
-import { useSelectedStore } from "@/lib/use-selected-store";
 import ManageShopifyDialog from "./ManageShopifyDialog";
 import OrdersTable from "./OrdersTable";
 import ItaliaNav from "./ItaliaNav";
 import MexicoNav from "../MexicoNav";
 import { control, countLabel, statusTone } from "./order-ui";
 
-import { KENKU_MANAGEMENT_STORES, kenkuManagementStore, type KenkuManagementCode } from "@/lib/kenku-management";
+import { kenkuManagementStore, type KenkuManagementCode } from "@/lib/kenku-management";
 import { OrderDisplayContext, useOrderDisplay } from "./OrderDisplayContext";
 
 type Sync = {updatedAt:string;complete:boolean;error:boolean}|null;
@@ -36,8 +32,6 @@ function OrdersWorkspace() {
   const [error,setError]=useState(""),[busy,setBusy]=useState(false),[expanded,setExpanded]=useState<string|null>(null);
   const [managing,setManaging]=useState<ItaliaOrder|null>(null);
   const [change,setChange]=useState<{order:ItaliaOrder;status:ItaliaStatus;requestId:string}|null>(null),[saving,setSaving]=useState(false);
-  const [stores,setStores]=useState<Array<{code:string;label:string}>>([]);
-  const [,selectStore]=useSelectedStore();
   const dialog=useRef<HTMLDialogElement>(null),request=useRef<AbortController|null>(null),countScope=useRef("");
   const scope=JSON.stringify([source,query,period,period==="range"?from:"",period==="range"?to:"",reconciliation]);
   const viewKey=JSON.stringify([scope,status,page]);
@@ -47,7 +41,6 @@ function OrdersWorkspace() {
   const visibleCounts=counts?.scope===scope?counts.values:null;
   const total=visibleCounts?Object.values(visibleCounts).reduce((a,b)=>a+b,0):null;
   const sync=result?.shopifySync;
-  useEffect(()=>{const yo=leerYo();setStores(yo?[...FINANCE_STORES,...KENKU_MANAGEMENT_STORES].filter(s=>yo.id===0||yo.tiendas.includes(s.code)):[]);},[]);
   useEffect(()=>{if(change)dialog.current?.showModal();else dialog.current?.close();},[change]);
 
   const load=useCallback(async(forceCounts=false)=>{
@@ -99,15 +92,15 @@ function OrdersWorkspace() {
   return <div className="min-h-screen bg-background">
     <header className="border-b border-border/50 bg-card/70">
       <div className="container mx-auto flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-4">
-        <div className="flex min-w-0 flex-1 items-center gap-3"><Link href="/" className={`${control} shrink-0 border-transparent`}><ArrowLeft size={14}/><span>Dashboard</span></Link><div className="min-w-0"><h1 className="text-sm font-bold sm:text-lg">Gestión de pedidos</h1><p className="mt-0.5 text-xs text-muted-foreground">{config.label} · Shopify{config.woo?" y WooCommerce":""} · {config.currency}</p></div></div>
-        <div className="flex items-center gap-2"><select aria-label="Tienda" value={config.code} className={`${control} h-9 min-w-0 flex-1 font-semibold sm:min-w-[190px]`} onChange={e=>{const kenku=KENKU_MANAGEMENT_STORES.find(s=>s.code===e.target.value);if(kenku){window.location.assign(kenku.path);return;}const store=FINANCE_STORES.find(s=>s.code===e.target.value);if(store){selectStore(store.code);window.location.assign("/admin/finance");}}}>{stores.map(s=><option value={s.code} key={s.code}>{s.label}</option>)}</select><button className={`${control} h-9`} onClick={()=>void load(true)} disabled={busy||!rangeReady}><RefreshCw size={14} className={busy?"motion-safe:animate-spin":""}/>{busy?"Actualizando…":"Actualizar"}</button></div>
+        <div className="flex min-w-0 flex-1 items-center gap-3"><div className="min-w-0"><h1 className="text-xl font-semibold tracking-tight text-foreground">Pedidos</h1><p className="mt-0.5 text-[13px] text-muted-foreground">{config.label} · Shopify{config.woo?" y WooCommerce":""} · {config.currency}</p></div></div>
+        <div className="flex items-center gap-2"><button className={`${control}`} onClick={()=>void load(true)} disabled={busy||!rangeReady}><RefreshCw size={14} className={busy?"motion-safe:animate-spin":""}/>{busy?"Actualizando…":"Actualizar"}</button></div>
       </div>
     </header>
     <main className="container mx-auto space-y-5 px-4 py-5 sm:py-6">
       <section aria-label="Resumen de pedidos" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap gap-1" role="group" aria-label="Periodo de creación">{ITALIA_PERIODS.map(([value,label])=><button key={value} aria-pressed={period===value} className={`${control} py-1 ${period===value?"border-primary/60 bg-primary/15 text-primary":"text-muted-foreground"}`} onClick={()=>{setPeriod(value);setPage(1);setExpanded(null);}}>{label}</button>)}</div><p className="text-[11px] text-muted-foreground">Por fecha de creación · Horario de {config.region}</p></div>
         {period==="range"&&<div className="flex flex-wrap items-center gap-3 text-xs"><label className="flex items-center gap-2">Desde<input type="date" className={control} value={from} max={to||undefined} onChange={e=>{setFrom(e.target.value);setPage(1);}}/></label><label className="flex items-center gap-2">Hasta<input type="date" className={control} value={to} min={from||undefined} onChange={e=>{setTo(e.target.value);setPage(1);}}/></label>{!rangeReady&&<p role="status" className="text-muted-foreground">Elige ambas fechas para consultar.</p>}</div>}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">{stats.map(([label,value,tone])=><div key={label} className="rounded-lg border border-border bg-card px-3 py-3"><div className="flex items-center justify-between gap-2"><p className="text-[11px] text-muted-foreground">{label}</p><p className={`text-lg font-semibold tabular-nums ${tone}`}>{value===null?"—":number(value)}</p></div><p className="mt-1 text-[10px] text-muted-foreground">{period==="all"?"Pedidos disponibles en Kairo":"Periodo seleccionado"}</p></div>)}</div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">{stats.map(([label,value,tone])=><div key={label} className="rounded-lg border border-border bg-card px-3 py-3"><div className="flex items-center justify-between gap-2"><p className="text-[11px] text-muted-foreground">{label}</p><p className={`text-lg font-semibold tabular-nums ${tone}`}>{value===null?"—":number(value)}</p></div><p className="mt-1 text-[11px] text-muted-foreground">{period==="all"?"Pedidos disponibles en Kairo":"Periodo seleccionado"}</p></div>)}</div>
       </section>
       {config.woo?<ItaliaNav/>:<MexicoNav region={config.code==="kenku-ar"?"argentina":"mexico"}/>}
       <p className={`text-[11px] ${sync?.error||stale?"text-amber-300":"text-muted-foreground"}`}>{sync?`Shopify: última lectura ${date(sync.updatedAt)}${sync.error?" · con error":stale?" · revisión atrasada":""}`:"Shopify: sin información de sincronización"}</p>
@@ -120,8 +113,8 @@ function OrdersWorkspace() {
           {italy&&<select aria-label="Conciliación Elogy" className={`${control} max-w-full`} value={reconciliation} onChange={e=>{setReconciliation(e.target.value);setPage(1);setExpanded(null);}}>{[["all","Toda la conciliación"],["matched","Con seguimiento conciliado"],["review","Diferencias por revisar"],["unmatched","Sin seguimiento Elogy"],["ambiguous","Coincidencia ambigua"],["unknown","Seguimiento sin verificar"]].map(([v,label])=><option key={v} value={v}>{label}</option>)}</select>}
         </div>
         <div className="mb-3 overflow-x-auto" role="group" aria-label="Estado operativo"><div className="flex min-w-max gap-1">
-          <button aria-pressed={status===""} onClick={()=>filterStatus("")} className={`min-w-[84px] border px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${status===""?"border-foreground/40 bg-muted/30":"border-border hover:bg-muted/30"}`}><span className="block text-[10px] text-muted-foreground">Todos</span><span className="block text-sm font-semibold tabular-nums">{total===null?"—":number(total)}</span></button>
-          {states.map(key=><button key={key} aria-pressed={status===key} onClick={()=>filterStatus(key)} className={`min-w-[105px] flex-1 border px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${status===key?"border-primary bg-seleccion":"border-border hover:bg-muted/30"}`}><span className="flex items-center gap-1 text-[10px] text-muted-foreground"><span className={statusTone[key].split(" ").at(-1)} aria-hidden="true">●</span>{countLabel[key]}</span><span className="block text-sm font-semibold tabular-nums">{visibleCounts?number(visibleCounts[key]):"—"}</span></button>)}
+          <button aria-pressed={status===""} onClick={()=>filterStatus("")} className={`min-w-[84px] border px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${status===""?"border-foreground/40 bg-muted/30":"border-border hover:bg-muted/30"}`}><span className="block text-[11px] text-muted-foreground">Todos</span><span className="block text-sm font-semibold tabular-nums">{total===null?"—":number(total)}</span></button>
+          {states.map(key=><button key={key} aria-pressed={status===key} onClick={()=>filterStatus(key)} className={`min-w-[105px] flex-1 border px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${status===key?"border-primary bg-seleccion":"border-border hover:bg-muted/30"}`}><span className="flex items-center gap-1 text-[11px] text-muted-foreground"><span className={statusTone[key].split(" ").at(-1)} aria-hidden="true">●</span>{countLabel[key]}</span><span className="block text-sm font-semibold tabular-nums">{visibleCounts?number(visibleCounts[key]):"—"}</span></button>)}
         </div></div>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px]"><p className="text-muted-foreground">{status?`Estado: ${ITALIA_STATUS[status as ItaliaStatus]}`:"Todos los estados operativos"}</p><div className="flex items-center gap-2"><p aria-live="polite">{loaded?`${number(result.count)} pedidos`:!rangeReady?"Rango pendiente":busy?"Cargando pedidos…":"Sin datos"}</p><button className={`${control} p-1`} aria-label="Página anterior" disabled={page===1||busy||!loaded} onClick={()=>{setPage(p=>p-1);setExpanded(null);}}><ChevronLeft size={14}/></button><span className="tabular-nums">{loaded?`${page} / ${Math.max(1,Math.ceil(result.count/50))}`:"—"}</span><button className={`${control} p-1`} aria-label="Página siguiente" disabled={!loaded||page*50>=result.count||busy} onClick={()=>{setPage(p=>p+1);setExpanded(null);}}><ChevronRight size={14}/></button></div></div>
         {error&&<p role="alert" className="mb-3 rounded border border-red-500/40 bg-red-500/10 p-3 text-sm">{error} <button className="ml-2 underline" onClick={()=>void load(true)}>Reintentar</button></p>}

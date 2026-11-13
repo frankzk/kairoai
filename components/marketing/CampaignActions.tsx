@@ -104,7 +104,6 @@ export function CampaignActions({
     <section className={r.section} aria-labelledby="actions-title">
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>02 / Seguimiento</p>
           <h2 id="actions-title">Campañas: hoy, ayer y 7 días</h2>
           <p>
             Gasto, pedidos reales y CPA real de hoy, ayer y los 7 días

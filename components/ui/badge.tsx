@@ -2,26 +2,20 @@ import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
+// Estilo Stripe: etiqueta suave, esquina de 4 px, sin borde, 12 px medio.
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  "inline-flex items-center gap-1 rounded-[5px] border border-transparent px-1.5 py-0.5 text-xs font-medium leading-4 transition-colors focus:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30",
   {
     variants: {
       variant: {
-        default:
-          "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
-        secondary:
-          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        destructive:
-          "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
-        outline: "text-foreground",
-        success:
-          "border-transparent bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-        warning:
-          "border-transparent bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-        info:
-          "border-transparent bg-cyan-500/20 text-cyan-300 border-cyan-500/30",
-        muted:
-          "border-transparent bg-muted text-muted-foreground",
+        default: "bg-primary/10 text-primary",
+        secondary: "bg-secondary text-secondary-foreground",
+        destructive: "bg-red-500/10 text-red-400",
+        outline: "border-border text-foreground",
+        success: "bg-emerald-500/10 text-emerald-400",
+        warning: "bg-amber-500/15 text-amber-400",
+        info: "bg-sky-500/10 text-sky-400",
+        muted: "bg-muted text-muted-foreground",
       },
     },
     defaultVariants: {

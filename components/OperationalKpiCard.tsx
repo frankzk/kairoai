@@ -24,14 +24,9 @@ export function OperationalKpiCard({
   loading?: boolean;
   title?: string;
 }) {
-  const border =
-    tone === "good"
-      ? "border-emerald-500/40"
-      : tone === "warn"
-        ? "border-amber-500/40"
-        : tone === "bad"
-          ? "border-red-500/40"
-          : "border-border";
+  // Tarjetas neutras (estilo Stripe): el estado lo cuentan el color del valor
+  // y la comparación, no un borde de color.
+  const border = "border-border";
   const valueColor =
     tone === "good"
       ? "text-emerald-300"
@@ -64,20 +59,27 @@ export function OperationalKpiCard({
       aria-label={label}
     >
       <CardContent className="min-h-[112px] p-2.5 sm:p-3">
-        <p className="text-[11px] leading-4 text-muted-foreground">{label}</p>
+        <p className="text-xs font-medium leading-4 text-muted-foreground">{label}</p>
         <p
           className={`mt-1 flex items-baseline gap-1 text-xl font-semibold leading-tight tabular-nums ${valueColor}`}
         >
-          {star && <span className="text-[9px] text-primary">★</span>}
-          {loading ? "..." : value}
+          {star && <span className="text-[10px] text-primary">★</span>}
+          {loading ? (
+            <span
+              className="my-1 inline-block h-4 w-14 animate-pulse rounded bg-muted motion-reduce:animate-none"
+              aria-label="Cargando"
+            />
+          ) : (
+            value
+          )}
         </p>
         {sub && !(hideSubWhenComparing && comparison) && (
-          <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+          <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
             {sub}
           </p>
         )}
         {comparison && !loading && (
-          <div className="mt-1 space-y-0.5 text-[10px] leading-4">
+          <div className="mt-1 space-y-0.5 text-[11px] leading-4">
             <p className="flex flex-wrap items-baseline gap-x-1">
               <span
                 className={`font-medium ${trendColor}`}

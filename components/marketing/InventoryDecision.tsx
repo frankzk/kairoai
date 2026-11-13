@@ -223,7 +223,6 @@ export function InventoryDecision({
     >
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>01 / Inventario</p>
           <h2 id="inventory-decision-title">Inventario para decidir</h2>
           <p>
             Cada presentación por separado: disponible, pedidos esperando,

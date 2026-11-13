@@ -91,7 +91,7 @@ export function AgentStatus({ agentName, isActive }: AgentStatusProps) {
 
           {/* Manual Trigger Form */}
           <div className="flex-1">
-            <p className="text-xs text-muted-foreground mb-3 font-medium uppercase tracking-wider">
+            <p className="text-xs text-muted-foreground mb-3 font-medium">
               Disparar llamada manual
             </p>
             <form onSubmit={handleTriggerCall} className="flex flex-wrap gap-2">

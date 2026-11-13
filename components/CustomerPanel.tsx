@@ -193,7 +193,7 @@ export default function CustomerPanel({
     <div className="h-full space-y-4 overflow-y-auto p-4">
       {/* Resumen del cliente */}
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
           Resumen del cliente
         </h3>
         {loading ? (
@@ -204,17 +204,17 @@ export default function CustomerPanel({
           <>
             <div className="grid grid-cols-4 gap-2">
               <div className="rounded-md border border-border bg-background px-2 py-1.5">
-                <p className="text-[10px] text-muted-foreground">Gastado</p>
+                <p className="text-[11px] text-muted-foreground">Gastado</p>
                 <p className="font-mono text-sm font-semibold">
                   {fmtMoney(summary.total_spent, summary.currency)}
                 </p>
               </div>
               <div className="rounded-md border border-border bg-background px-2 py-1.5">
-                <p className="text-[10px] text-muted-foreground">Pedidos</p>
+                <p className="text-[11px] text-muted-foreground">Pedidos</p>
                 <p className="font-mono text-sm font-semibold">{summary.orders}</p>
               </div>
               <div className="rounded-md border border-border bg-background px-2 py-1.5">
-                <p className="text-[10px] text-muted-foreground">Entregados</p>
+                <p className="text-[11px] text-muted-foreground">Entregados</p>
                 <p className="font-mono text-sm font-semibold text-emerald-400">{summary.delivered}</p>
               </div>
               <div
@@ -222,7 +222,7 @@ export default function CustomerPanel({
                   isRepeatReturner ? "border-red-500/50 bg-red-500/10" : "border-border bg-background"
                 }`}
               >
-                <p className="text-[10px] text-muted-foreground">Devueltos</p>
+                <p className="text-[11px] text-muted-foreground">Devueltos</p>
                 <p className={`font-mono text-sm font-semibold ${summary.returned ? "text-red-300" : ""}`}>
                   {summary.returned}
                 </p>
@@ -241,7 +241,7 @@ export default function CustomerPanel({
       {/* Direccion del ultimo pedido, lista para reusar */}
       {lastAddress && (
         <section>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
             Última dirección
           </h3>
           <div className="flex items-start gap-1.5 rounded-md border border-border bg-background px-2.5 py-2">
@@ -254,7 +254,7 @@ export default function CustomerPanel({
 
       {/* Pedidos agrupados por lo que REALMENTE paso */}
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
           Pedidos {orders.length > 0 && `(${orders.length})`}
         </h3>
         {loading ? (
@@ -277,7 +277,7 @@ export default function CustomerPanel({
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-mono font-semibold">{order.name}</span>
-                        <Badge variant={STATE_BADGE[order.state]} className="shrink-0 text-[10px]">
+                        <Badge variant={STATE_BADGE[order.state]} className="shrink-0 text-[11px]">
                           {order.state_label}
                         </Badge>
                       </div>
@@ -337,7 +337,7 @@ export default function CustomerPanel({
 
       {/* Carritos abandonados */}
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
           Carritos abandonados {carts.length > 0 && `(${carts.length})`}
         </h3>
         {cartsUnavailable && (
@@ -364,7 +364,7 @@ export default function CustomerPanel({
                   </span>
                   <Badge
                     variant={cart.source === "draft_order" ? "info" : "muted"}
-                    className="shrink-0 text-[10px]"
+                    className="shrink-0 text-[11px]"
                   >
                     {cart.source === "draft_order" ? "Borrador" : "Abandonado"}
                   </Badge>
@@ -437,7 +437,7 @@ export default function CustomerPanel({
 
       {/* Gestiones (llamadas, cambios de estado, mensajes enviados) */}
       <section>
-        <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h3 className="mb-1 text-xs font-semibold text-muted-foreground">
           Gestiones
         </h3>
         {/* Tope con scroll propio: el historial no debe empujar fuera de vista

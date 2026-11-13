@@ -278,7 +278,7 @@ export default function UsuariosPage() {
     <main className="mx-auto max-w-6xl px-4 py-6">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold">Usuarios y accesos</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Usuarios y accesos</h1>
           <p className="text-sm text-muted-foreground">
             Cada persona entra con su usuario y ve solo sus pantallas y tiendas.
           </p>
@@ -408,7 +408,7 @@ export default function UsuariosPage() {
 
       {cambioClave && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4"
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[rgb(15_15_30/0.36)] dark:bg-black/60 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="titulo-clave"
@@ -472,7 +472,7 @@ export default function UsuariosPage() {
 
       {borrador && catalogo && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4"
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[rgb(15_15_30/0.36)] dark:bg-black/60 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="titulo-usuario"

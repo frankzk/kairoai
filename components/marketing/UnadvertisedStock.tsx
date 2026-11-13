@@ -130,7 +130,6 @@ export function UnadvertisedStock({
     >
       <div className={r.sectionHead}>
         <div>
-          <p className={r.kicker}>02 / Stock sin publicidad</p>
           <h2 id="unadvertised-title">Stock disponible sin publicidad</h2>
           <p>
             Dónde poner el gasto que falta para llegar a{" "}

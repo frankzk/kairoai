@@ -117,6 +117,14 @@ const config: Config = {
         },
         seleccion: "hsl(var(--seleccion))",
       },
+      // Sombras cortas y suaves, con desplazamiento (no halos).
+      boxShadow: {
+        sm: "0 1px 2px 0 rgb(20 20 31 / 0.05)",
+        DEFAULT: "0 1px 3px 0 rgb(20 20 31 / 0.08), 0 1px 2px -1px rgb(20 20 31 / 0.06)",
+        md: "0 4px 10px -2px rgb(20 20 31 / 0.08), 0 2px 4px -2px rgb(20 20 31 / 0.05)",
+        lg: "0 12px 28px -6px rgb(20 20 31 / 0.14), 0 4px 8px -4px rgb(20 20 31 / 0.06)",
+        xl: "0 20px 40px -8px rgb(20 20 31 / 0.18), 0 8px 16px -8px rgb(20 20 31 / 0.08)",
+      },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",

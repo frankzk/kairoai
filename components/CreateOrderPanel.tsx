@@ -309,7 +309,7 @@ export default function CreateOrderPanel({
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">¿Quién eres? (asesora)</label>
           <select
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            className="h-8 w-full rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
             value={vendedoraId ?? ""}
             // Una asesora fija (lib/vendedora.ts) no elige: queda a su nombre.
             disabled={vendedoraBloqueada() !== null}
@@ -397,7 +397,7 @@ export default function CreateOrderPanel({
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Tipo descuento</label>
             <select
-              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              className="h-8 w-full rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
               value={discountType}
               onChange={(e) => setDiscountType(e.target.value as "percentage" | "fixed_amount")}
             >
@@ -416,7 +416,7 @@ export default function CreateOrderPanel({
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">{regions.label}</label>
             <select
-              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              className="h-8 w-full rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
               value={province}
               onChange={(e) => setProvince(e.target.value)}
             >
@@ -444,7 +444,7 @@ export default function CreateOrderPanel({
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Método de pago</label>
           <select
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            className="h-8 w-full rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
             value={paymentMethod}
             onChange={(e) => setPaymentMethod(e.target.value as "cod" | "sinpe")}
           >

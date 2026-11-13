@@ -62,7 +62,7 @@ function Tabla({ titulo, grupos }: { titulo: string; grupos: Grupo[] }) {
                 <td className="py-1 text-right tabular-nums">
                   {monto(g.total)}
                   {g.conCosto < g.llamadas && (
-                    <span className="block text-[10px] text-muted-foreground">{g.llamadas - g.conCosto} sin costo</span>
+                    <span className="block text-[11px] text-muted-foreground">{g.llamadas - g.conCosto} sin costo</span>
                   )}
                 </td>
               </tr>
