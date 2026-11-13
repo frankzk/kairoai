@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import "@fontsource-variable/inter";
 import "./globals.css";
 import SessionGuard from "@/components/SessionGuard";
 import CronHealthBanner from "@/components/CronHealthBanner";
-import BarraUsuario from "@/components/BarraUsuario";
+import MenuLateral from "@/components/MenuLateral";
 
 export const metadata: Metadata = {
   title: "Kairo AI — Voice Agents para E-commerce COD",
@@ -17,11 +18,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es" className="dark">
-      <body style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
+      <body>
         <SessionGuard />
-        <BarraUsuario />
-        <CronHealthBanner />
-        {children}
+        <MenuLateral>
+          <CronHealthBanner />
+          {children}
+        </MenuLateral>
       </body>
     </html>
   );

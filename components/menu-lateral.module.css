@@ -1,0 +1,303 @@
+/* Menú lateral de Kairo: navegación fija a la izquierda en escritorio y
+   cajón desplegable en teléfono. Índigo eléctrico como acento; el tono sigue a
+   la pantalla (Marketing es claro, el resto de Kairo es oscuro). */
+.menu {
+  --nav-w: 240px;
+  --nav-bg: hsl(224 64% 5%);
+  --nav-border: hsl(225 30% 14%);
+  --nav-text: hsl(226 24% 84%);
+  --nav-muted: hsl(226 14% 60%);
+  --nav-label: hsl(226 12% 52%);
+  --nav-hover: hsl(240 30% 12%);
+  --nav-active-bg: rgb(109 74 255 / 0.18);
+  --nav-active-text: #c4b8ff;
+  --nav-accent: #8b73ff;
+  --nav-ring: #8b73ff;
+  --nav-avatar-bg: rgb(109 74 255 / 0.22);
+  --nav-avatar-text: #d6ceff;
+  --nav-overlay: rgb(3 4 12 / 0.6);
+  color-scheme: dark;
+}
+.menu[data-tone="light"] {
+  --nav-bg: #fbfbfe;
+  --nav-border: #e6e6ef;
+  --nav-text: #2b2b3d;
+  --nav-muted: #5d5d72;
+  --nav-label: #6b6b80;
+  --nav-hover: #f1f0fb;
+  --nav-active-bg: #efebff;
+  --nav-active-text: #5530e0;
+  --nav-accent: #6d4aff;
+  --nav-ring: #6d4aff;
+  --nav-avatar-bg: #efebff;
+  --nav-avatar-text: #5530e0;
+  --nav-overlay: rgb(20 20 31 / 0.35);
+  color-scheme: light;
+}
+
+/* ── Panel (escritorio fijo / cajón en teléfono) ─────────────────────────── */
+.panel {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 40;
+  display: flex;
+  width: var(--nav-w);
+  flex-direction: column;
+  border-right: 1px solid var(--nav-border);
+  background: var(--nav-bg);
+  color: var(--nav-text);
+  font-size: 13.5px;
+  line-height: 1.35;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 18px 14px;
+}
+.mark {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6d4aff 0%, #db2777 100%);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+.brandText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.brandText strong {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.brandText span {
+  color: var(--nav-muted);
+  font-size: 12px;
+}
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 10px 12px;
+}
+.group + .group {
+  margin-top: 18px;
+}
+.groupLabel {
+  margin: 0 0 4px;
+  padding: 0 10px;
+  color: var(--nav-label);
+  font-size: 12px;
+  font-weight: 600;
+}
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.item {
+  position: relative;
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 10px;
+  border-radius: 7px;
+  padding: 6px 10px;
+  color: var(--nav-muted);
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+.item svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.item:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+.item[aria-current="page"] {
+  background: var(--nav-active-bg);
+  color: var(--nav-active-text);
+  font-weight: 600;
+}
+.item[aria-current="page"] svg {
+  color: var(--nav-accent);
+}
+.item:focus-visible,
+.footerButton:focus-visible,
+.toggle:focus-visible,
+.close:focus-visible {
+  outline: 2px solid var(--nav-ring);
+  outline-offset: 1px;
+}
+.footer {
+  border-top: 1px solid var(--nav-border);
+  padding: 10px;
+}
+.user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 8px;
+}
+.avatar {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--nav-avatar-bg);
+  color: var(--nav-avatar-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+.userName {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.footerActions {
+  display: flex;
+  gap: 4px;
+}
+.footerButton {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 7px 8px;
+  color: var(--nav-muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+}
+.footerButton svg {
+  width: 14px;
+  height: 14px;
+}
+.footerButton:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+.footerButton[aria-current="page"] {
+  color: var(--nav-active-text);
+}
+
+/* ── Barra superior y cajón (teléfono y tablet) ──────────────────────────── */
+/* No es sticky: varias pantallas tienen su propio encabezado fijo arriba. */
+.top {
+  position: relative;
+  z-index: 30;
+  display: none;
+  height: 52px;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--nav-border);
+  background: var(--nav-bg);
+  padding: 0 12px;
+  color: var(--nav-text);
+}
+.toggle,
+.close {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--nav-text);
+  cursor: pointer;
+}
+.toggle:hover,
+.close:hover {
+  background: var(--nav-hover);
+}
+.toggle svg,
+.close svg {
+  width: 20px;
+  height: 20px;
+}
+.topTitle {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.topTitle .mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+.topSection {
+  overflow: hidden;
+  color: var(--nav-muted);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.close {
+  display: none;
+  margin-left: auto;
+}
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+  background: var(--nav-overlay);
+}
+
+@media (max-width: 1023px) {
+  .top {
+    display: flex;
+  }
+  .panel {
+    width: min(300px, 86vw);
+    box-shadow: 0 10px 40px rgb(0 0 0 / 0.25);
+    transform: translateX(-102%);
+    transition: transform 180ms ease;
+    visibility: hidden;
+  }
+  .panel[data-open="true"] {
+    transform: none;
+    visibility: visible;
+  }
+  .close {
+    display: grid;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .item {
+    transition: none;
+  }
+}
+
+/* ── Contenido a la derecha del menú ─────────────────────────────────────── */
+@media (min-width: 1024px) {
+  .content {
+    padding-left: 240px;
+  }
+}

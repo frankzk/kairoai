@@ -60,9 +60,6 @@
   color-scheme: light;
 }
 .canvas {
-  min-height: calc(100vh - 40px);
+  min-height: 100vh;
   background: var(--mk-canvas);
-}
-.theme.navigation {
-  background: var(--mk-surface);
 }
