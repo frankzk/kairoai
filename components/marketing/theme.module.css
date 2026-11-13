@@ -1,52 +1,61 @@
 .theme {
-  /* Mireva's team works through daytime orders, budgets and stock on office laptops. */
-  --mk-canvas: oklch(98.6% 0.006 105);
-  --mk-surface: oklch(99.4% 0.003 135);
-  --mk-soft: oklch(95.6% 0.016 125);
-  --mk-hover: oklch(96.8% 0.012 135);
-  --mk-border: oklch(87% 0.019 140);
-  --mk-text: oklch(29% 0.035 154);
-  --mk-muted: oklch(46% 0.025 147);
-  --mk-subtle: oklch(53% 0.023 147);
-  --mk-accent: oklch(49% 0.105 155);
-  --mk-accent-soft: oklch(93% 0.028 145);
-  --mk-good: oklch(43% 0.095 155);
-  --mk-warn: oklch(46% 0.095 76);
-  --mk-warn-soft: oklch(96% 0.026 88);
-  --mk-bad: oklch(46% 0.13 33);
-  --mk-bad-soft: oklch(96.5% 0.02 45);
+  /* Índigo eléctrico. Mireva's team works through daytime orders, budgets
+     and stock on office laptops: neutrals are a cool, quiet lavender-gray so
+     the indigo accent and the data carry the color. */
+  --mk-canvas: #f7f7fb;
+  --mk-surface: #ffffff;
+  --mk-soft: #f1f0fb;
+  --mk-hover: #f4f3fc;
+  --mk-border: #e6e6ef;
+  --mk-text: #14141f;
+  --mk-muted: #5d5d72;
+  --mk-subtle: #6b6b80;
+  /* Acento: 4,8:1 sobre el lienzo y 5,2:1 sobre blanco (texto y botones). */
+  --mk-accent: #6d4aff;
+  --mk-accent-strong: #5530e0;
+  --mk-accent-soft: #efebff;
+  /* Estados: nunca reutilizan un color de serie; siempre van con ícono y texto. */
+  --mk-good: #2a7348;
+  --mk-good-soft: #e8f4ec;
+  --mk-warn: #8a4b00;
+  --mk-warn-soft: #fdf3e3;
+  --mk-bad: #b4233c;
+  --mk-bad-soft: #fdecef;
   /* Paleta de datos. Solo modo claro: la sección fuerza color-scheme: light.
-     Validada con el script de seis chequeos contra --mk-surface (#fcfefb):
-     banda de luminosidad, croma, separación CVD y visión normal, contraste.
-     Orden categórico fijo, nunca se cicla: 1 verde, 2 ámbar, 3 violeta, 4 cian.
-     Ámbar queda bajo 3:1: todo gráfico que lo usa lleva tabla de datos. */
-  --mk-series-1: #22864a;
-  --mk-series-2: #eba22b;
-  --mk-series-3: #7858bb;
-  --mk-series-4: #279fb6;
-  /* El color sigue a la entidad: Meta y TikTok iguales en todo el módulo;
+     Validada con el script de chequeos contra --mk-surface (#ffffff): banda
+     de luminosidad, croma, separación CVD (peor par vecino ΔE 12,5) y visión
+     normal (ΔE 20,3), contraste ≥ 3:1 en los cuatro.
+     Orden categórico fijo, nunca se cicla: 1 índigo, 2 verde azulado,
+     3 ámbar, 4 magenta. */
+  --mk-series-1: #6d4aff;
+  --mk-series-2: #0d9488;
+  --mk-series-3: #d97706;
+  --mk-series-4: #db2777;
+  /* El color sigue a la entidad: Meta y TikTok iguales en todo el módulo.
+     Meta queda en su azul; nunca comparte gráfico con la serie 1 (ΔE 13,9).
+     TikTok en tinta, para no confundirse con el magenta de la serie 4.
      "Otros / sin campaña" en el gris de segundo plano. */
   --mk-meta: #295ab9;
-  --mk-tiktok: #cf5291;
-  --mk-other: #a0a7a0;
-  /* Pista de los medidores: un paso claro de la misma rampa verde. */
-  --mk-track: #dbf2e0;
+  --mk-tiktok: #2e2e45;
+  --mk-other: #a3a3b5;
+  /* Pista de los medidores: un paso claro del índigo. */
+  --mk-track: #e9e4ff;
   /* Ejes y cuadrícula: líneas finas, un paso fuera de la superficie. */
-  --mk-grid: #e3e8e2;
-  --mk-axis: #bfc7bd;
-  --background: 72 35% 98%;
-  --foreground: 149 28% 16%;
-  --card: 120 25% 99%;
-  --card-foreground: 149 28% 16%;
-  --muted: 100 24% 94%;
-  --muted-foreground: 140 12% 36%;
-  --border: 130 17% 83%;
-  --input: 130 17% 83%;
-  --accent: 113 23% 93%;
-  --accent-foreground: 149 28% 16%;
-  --primary: 150 66% 27%;
-  --primary-foreground: 90 25% 98%;
-  --ring: 150 66% 27%;
+  --mk-grid: #ececf3;
+  --mk-axis: #c9c9d6;
+  --background: 240 33% 98%;
+  --foreground: 240 21% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 21% 10%;
+  --muted: 245 57% 96%;
+  --muted-foreground: 240 10% 41%;
+  --border: 240 22% 92%;
+  --input: 240 22% 92%;
+  --accent: 253 100% 96%;
+  --accent-foreground: 240 21% 10%;
+  --primary: 252 100% 65%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 252 100% 65%;
   color: var(--mk-text);
   color-scheme: light;
 }

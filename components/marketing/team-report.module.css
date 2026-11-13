@@ -401,7 +401,7 @@
   color: var(--mk-surface);
 }
 .assignment .saveAssignment:hover {
-  background: var(--mk-good);
+  background: var(--mk-accent-strong);
 }
 .chartData {
   margin-top: 14px;
@@ -703,7 +703,7 @@
   border-color: var(--mk-warn);
 }
 .chipOk {
-  background: var(--mk-accent-soft);
+  background: var(--mk-good-soft);
   color: var(--mk-good);
   border-color: var(--mk-good);
 }
