@@ -125,6 +125,11 @@ export interface MarketingAdsData {
 
 export interface MarketingAdsAccounts {
   accounts: MarketingAdsData[];
+  /**
+   * Accounts that could not be read in this query (Meta only). The others still
+   * count, but the spend is PARTIAL: the UI must say which account is missing.
+   */
+  unavailable?: Array<{ accountId: string; reason: string }>;
 }
 
 export interface MarketingSources {

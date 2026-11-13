@@ -331,8 +331,10 @@ export function TeamReport({
     meta.spend != null && tiktok.spend != null
       ? meta.spend + tiktok.spend
       : null;
+  // Meta partial (an account could not be read): the CPA is orientative only.
   const aligned = Boolean(
     sources &&
+    !sources.meta.data?.unavailable?.length &&
     (["meta", "tiktok"] as const).every(
       (p) =>
         sources[p].status === "ready" &&
@@ -470,7 +472,7 @@ export function TeamReport({
                   : "Dentro de la meta",
               cpa.cpaReal == null
                 ? ""
-                : `${aligned ? "Gasto / pedidos reales (sin anulados)" : "Orientativo: calendarios de cuenta distintos"} · con creados: ${usd(cpa.cpaCreated)}`,
+                : `${aligned ? "Gasto / pedidos reales (sin anulados)" : sources?.meta.data?.unavailable?.length ? "Orientativo: falta gasto de una cuenta de Meta" : "Orientativo: calendarios de cuenta distintos"} · con creados: ${usd(cpa.cpaCreated)}`,
             ]}
           />
           <Metric

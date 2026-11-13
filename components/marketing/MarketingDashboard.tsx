@@ -256,6 +256,13 @@ export default function MarketingDashboard() {
   )
     .filter(([key]) => api.sources.data?.[key].status !== "ready")
     .map(([, name]) => name);
+  // Meta read, but some account could not be: the spend is partial.
+  const metaFaltantes = (api.sources.data?.meta.data?.unavailable ?? []).map((u) => {
+    const label = api.settings.data?.accountLabels?.find(
+      (l) => l.platform === "meta" && l.account_id === u.accountId,
+    )?.label;
+    return label || u.accountId;
+  });
   const busy =
     api.summary.loading ||
     api.sources.loading ||
@@ -453,6 +460,8 @@ export default function MarketingDashboard() {
                 ? "No se pudieron consultar las conexiones. La inversión queda sin datos."
                 : missing.length
                   ? `${missing.join(", ")}: conexión pendiente o consulta no disponible.${missing.some((name) => name !== "ShipHero") ? " La inversión puede ser parcial." : " Inventario sin datos."}`
+                  : metaFaltantes.length
+                    ? `Meta Ads: no se pudo leer ${metaFaltantes.length === 1 ? "la cuenta" : "las cuentas"} ${metaFaltantes.join(", ")}. La inversión de Meta es parcial (sin ${metaFaltantes.length === 1 ? "esa cuenta" : "esas cuentas"}).`
                   : "Fuentes consultadas. Los pedidos por campaña usan el UTM y, sin UTM, la asignación de producto (≈)."}
           </span>
           {view !== "sources" && (

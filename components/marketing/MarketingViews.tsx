@@ -466,6 +466,10 @@ export function SourceConnections({
                               source?.status === "ready" &&
                               source.connection === "reconnect"
                             ? "Volver a conectar"
+                          : source?.status === "ready" &&
+                              row.key === "meta" &&
+                              sources?.meta.data?.unavailable?.length
+                            ? "Parcial"
                           : source?.status === "ready"
                           ? "Conectado"
                           : source?.status === "error"
@@ -480,6 +484,13 @@ export function SourceConnections({
                           {source?.connection ? source.message : row.needs}
                         </p>
                       )}
+                      {!loading &&
+                        row.key === "meta" &&
+                        sources?.meta.data?.unavailable?.map((u) => (
+                          <p key={u.accountId} className={`mt-2 ${s.warn}`}>
+                            Cuenta {u.accountId}: {u.reason} Su gasto no se suma.
+                          </p>
+                        ))}
                       {source?.checkedAt && (
                         <p className="mt-2 text-[10px]">
                           Última consulta:{" "}

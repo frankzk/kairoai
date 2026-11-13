@@ -108,7 +108,7 @@ describe("marketing source readers", () => {
     expect(fetcher).toHaveBeenCalledTimes(4);
   });
 
-  it("withholds incomplete Meta results if one configured account cannot be read", async () => {
+  it("keeps the readable Meta accounts and lists the one that cannot be read (partial, never complete)", async () => {
     const fetcher = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
       if (url.pathname.includes("act_456")) return response({ error: { message: "private-meta-token" } }, 403);
@@ -116,7 +116,9 @@ describe("marketing source readers", () => {
         : response({ id: "act_123", currency: "CRC", timezone_name: "America/Costa_Rica" });
     });
     const result = await getMarketingSources("2026-10", { ...metaEnv, META_CR_AD_ACCOUNT_IDS: "123,456" }, fetcher);
-    expect(result.meta).toMatchObject({ status: "error", data: null });
+    expect(result.meta.status).toBe("ready");
+    expect(result.meta.data?.accounts.map((a) => a.accountId)).toEqual(["123"]);
+    expect(result.meta.data?.unavailable).toEqual([{ accountId: "456", reason: expect.any(String) }]);
     expect(JSON.stringify(result)).not.toContain("private-meta-token");
   });
 
