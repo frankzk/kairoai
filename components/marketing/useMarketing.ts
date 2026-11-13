@@ -12,6 +12,9 @@ import {
 } from "@/lib/marketing-dates";
 import type { MarketingAttribution } from "@/lib/marketing-attribution";
 import type { CharlieRevenue } from "@/lib/marketing-charlie-revenue";
+import type { CharlieReport } from "@/lib/marketing-charlie-types";
+import { MARKETING_TARGETS } from "@/lib/marketing-targets";
+import { DECISION_RULES } from "@/lib/marketing-decisions";
 import { marketingLoadPlan, type MarketingView } from "@/lib/marketing-loading";
 import type { MarketingControl } from "@/lib/marketing-real-orders";
 import type { ManualCampaignChange } from "@/lib/marketing-source-types";
@@ -155,8 +158,13 @@ export function useMarketing(
   );
   const today = marketingDate();
   const recentPeriod = marketingPeriod(shiftDate(today, -7), today)!;
+  // Today's pace needs today and the 7 previous days with hourly spend.
+  const needsRecent =
+    plan.recent === "always" ||
+    (plan.recent === "includesToday" &&
+      Boolean(period && period.from <= today && period.to >= today));
   const recent = useResource<MarketingSources>(
-    period && view === "report"
+    period && needsRecent
       ? `/api/marketing/sources?${periodQuery(recentPeriod)}&scope=report`
       : null,
     revision,
@@ -211,7 +219,8 @@ export function useMarketing(
   // never competes with the hero; the route caches it 10 minutes. Only a saved
   // rate asks for a fresh one (saveRate), never the regular loads.
   const mainSettled =
-    view !== "report" || (!summary.loading && !actions.loading);
+    !["report", "resumen", "acciones"].includes(view) ||
+    (!summary.loading && !actions.loading && !control.loading);
   const accountsUrl = "/api/marketing/insights?store=mireva-cr&section=cuentas";
   const accounts = useResource<AccountsPayload>(
     period && plan.accounts && mainSettled ? accountsUrl : null,
@@ -220,6 +229,28 @@ export function useMarketing(
   const ordersInsights = useResource<OrderFactsPayload>(
     period && plan.ordersInsights && period.to <= today
       ? `/api/marketing/insights?${periodQuery(period)}&section=pedidos`
+      : null,
+    revision,
+  );
+  // Resumen: the last 7 closed days (the last cancelOpenDays can still be
+  // annulled), deferred like the account status; the route caches it.
+  const cancellations = useResource<OrderFactsPayload>(
+    period && plan.cancellations && mainSettled
+      ? `/api/marketing/insights?${periodQuery({
+          from: shiftDate(today, -(MARKETING_TARGETS.cancelOpenDays + 6)),
+          to: today,
+        })}&section=pedidos`
+      : null,
+    revision,
+  );
+  // Resumen: ads of the last 3 complete days for "creativos listos para
+  // COST CAP" (scope=ads: no creative catalogue), deferred.
+  const costCapAds = useResource<CharlieReport>(
+    period && plan.costCapAds && mainSettled
+      ? `/api/marketing/charlie?${periodQuery({
+          from: shiftDate(today, -DECISION_RULES.windowDays),
+          to: shiftDate(today, -1),
+        })}&scope=ads`
       : null,
     revision,
   );
@@ -389,6 +420,8 @@ export function useMarketing(
     inventory,
     accounts,
     ordersInsights,
+    cancellations,
+    costCapAds,
     productsInsights,
     segmentation,
     loadSegmentation,
