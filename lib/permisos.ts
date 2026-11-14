@@ -258,6 +258,8 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/finance/kpis", exige: P(...OPERACION) },
   // Serie diaria del Panel (inicio): solo lectura, mismo dataset que los KPIs.
   { ruta: "/api/finance/kpis/daily", exige: P(...OPERACION) },
+  // Productos del Panel: top del periodo y alertas de stock (solo lectura).
+  { ruta: "/api/finance/kpis/products", exige: P(...OPERACION) },
   { ruta: "/api/finance/dispatch-audit", exige: P(...OPERACION) },
   { ruta: "/api/finance/productividad", exige: P(...OPERACION) },
   { ruta: "/api/finance/notes", exige: P(...OPERACION) },
