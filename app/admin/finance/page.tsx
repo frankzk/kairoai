@@ -1472,39 +1472,36 @@ function LegacyFinancePage() {
 
         <section className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-1">
-              {KPI_RANGE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setKpiRange(option.value)}
-                  className={`rounded-md border px-2.5 py-1 text-xs transition ${
-                    kpiRange === option.value
-                      ? "border-primary/60 bg-primary/15 text-primary"
-                      : "border-border bg-card text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setKpiRange("custom")}
-                className={`rounded-md border px-2.5 py-1 text-xs transition ${
-                  kpiRange === "custom"
-                    ? "border-primary/60 bg-primary/15 text-primary"
-                    : "border-border bg-card text-muted-foreground hover:text-foreground"
-                }`}
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div
+                role="group"
+                aria-label="Periodo de los indicadores"
+                className="inline-flex max-w-full shrink-0 overflow-x-auto rounded-md border border-border bg-card p-0.5 [scrollbar-width:none]"
               >
-                Rango
-              </button>
+                {[...KPI_RANGE_OPTIONS, { value: "custom" as const, label: "Rango" }].map((option) => {
+                  const active = kpiRange === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setKpiRange(option.value)}
+                      className={`h-7 shrink-0 whitespace-nowrap rounded-[5px] px-2.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none ${
+                        active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
               {kpiRange === "custom" && (
                 <div className="flex items-center gap-1.5">
                   <Input
                     type="date"
                     value={kpiCustomStart}
                     onChange={(event) => setKpiCustomStart(event.target.value)}
-                    className="h-7 w-[140px] text-xs"
+                    className="h-8 w-[140px] text-[13px]"
                     aria-label="KPIs desde"
                   />
                   <span className="text-xs text-muted-foreground">a</span>
@@ -1512,21 +1509,21 @@ function LegacyFinancePage() {
                     type="date"
                     value={kpiCustomEnd}
                     onChange={(event) => setKpiCustomEnd(event.target.value)}
-                    className="h-7 w-[140px] text-xs"
+                    className="h-8 w-[140px] text-[13px]"
                     aria-label="KPIs hasta"
                   />
                 </div>
               )}
             </div>
             <div className="flex items-center gap-3">
-              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground" aria-label="Comparación de KPIs" title={operationalKpis.win.comparisonDetail}>
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" aria-label="Comparación de KPIs" title={operationalKpis.win.comparisonDetail}>
                 <span>
                   {operationalKpis.win.rangeLabel} · {operationalKpis.win.compareLabel}
                 </span>
                 {operationalKpis.win.cutoffLabel && <span>{operationalKpis.win.cutoffLabel} · {selectedStore.shortLabel}</span>}
                 {operationalKpis.win.maturing && (
-                  <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-amber-200" title="Las tasas reflejan el estado actual de cada cohorte. Los pedidos del período anterior han tenido más tiempo para confirmar, despachar y entregar.">
-                    tasas en maduración
+                  <span className="rounded-[5px] bg-amber-500/15 px-1.5 py-0.5 font-medium leading-4 text-amber-400" title="Las tasas reflejan el estado actual de cada cohorte. Los pedidos del período anterior han tenido más tiempo para confirmar, despachar y entregar.">
+                    Tasas en maduración
                   </span>
                 )}
               </p>
@@ -1573,7 +1570,10 @@ function LegacyFinancePage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-4 xl:grid-cols-8">
+          {/* Una sola tira con divisores (como el Panel): las celdas ponen su
+              borde derecho e inferior y el -mb/-mr esconde los del borde. */}
+          <div className="overflow-hidden rounded-lg border border-border bg-card shadow-[0_1px_2px_rgb(16_16_32/0.04)]">
+          <div className="-mb-px -mr-px grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8" aria-busy={kpiLoading}>
             {operationalKpis.cards.map(({ id, ...card }) =>
               // El comparativo reemplaza al lead time en cualquier tienda que
               // tenga despachos: se arma con los couriers reales del periodo.
@@ -1589,10 +1589,11 @@ function LegacyFinancePage() {
               )
             )}
           </div>
+          </div>
 
         </section>
 
-        <div className="flex gap-1 overflow-x-auto border-b border-border">
+        <div className="flex gap-1 overflow-x-auto border-b border-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <TabButton active={tab === "orders"} onClick={() => setTab("orders")} icon={<FileSpreadsheet />}>
             Pedidos
           </TabButton>
@@ -1626,7 +1627,7 @@ function LegacyFinancePage() {
             </TabButton>
           )}
           <TabButton active={tab === "files"} onClick={() => setTab("files")} icon={<Database />}>
-            Logistica Boxful
+            Logística Boxful
           </TabButton>
         </div>
 
@@ -1851,7 +1852,7 @@ function TarjetaEstado({
       onClick={onClick}
       aria-pressed={active}
       aria-expanded={abre ? active : undefined}
-      className={`relative flex shrink-0 grow flex-col items-start gap-0.5 border px-2.5 py-1.5 text-left transition-colors focus-visible:z-[3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${estilo}`}
+      className={`relative flex shrink-0 grow flex-col items-start gap-0.5 border px-2 py-1.5 text-left transition-colors focus-visible:z-[3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${estilo}`}
     >
       <span
         className={`flex items-center gap-1 whitespace-nowrap text-xs ${
@@ -2679,7 +2680,7 @@ function OrdersTab({
               {/* Estado: una sola fila de tarjetas, en orden de fase. Sin
                   etiqueta de fila: cada tarjeta dice lo que es. Si no entra
                   (pantallas angostas) se desliza de lado, nunca envuelve. */}
-              <div role="group" aria-label="Estado" className="flex gap-1.5 overflow-x-auto">
+              <div role="group" aria-label="Estado" className="flex gap-1 overflow-x-auto [scrollbar-width:thin]">
                 <GrupoChips crece={1}>
                   <TarjetaEstado
                     label="Todos"
@@ -3270,23 +3271,19 @@ function OrdersTable({
           solo scroll. En pantallas grandes los titulos quedan pegados bajo la
           barra superior; en las angostas solo hay scroll horizontal (la tabla
           mide 1180 px) y los titulos se van con la tabla. */}
-      <div className="hidden border border-border md:block md:overflow-x-auto xl:overflow-visible">
-        <table className="w-full min-w-[1180px] text-sm">
+      <div className="hidden overflow-hidden rounded-lg border border-border md:block md:overflow-x-auto xl:overflow-visible">
+        <table className="w-full min-w-[1020px] text-[13px]">
         <thead className="sticky z-[5] bg-card" style={{ top: "var(--finance-header-h, 0px)" }}>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="px-2 py-1.5">Orden</th>
-            <th className="px-2 py-1.5">Origen</th>
-            <th className="px-2 py-1.5">Guia</th>
-            <th className="px-2 py-1.5">Transportadora</th>
-            <th className="px-2 py-1.5">Cliente</th>
-            <th className="px-2 py-1.5">Estado seguimiento</th>
-            <th className="px-2 py-1.5">Shopify</th>
-            <th className="px-2 py-1.5">Fecha</th>
-            <th className="px-2 py-1.5">Liquidacion</th>
-            <th className="px-2 py-1.5">Archivo</th>
-            <th className="px-2 py-1.5 text-right">A liquidar</th>
-            <th className="px-2 py-1.5">Items</th>
-            <th className="px-2 py-1.5 text-right">COD</th>
+          <tr className="border-b border-border text-left text-xs font-medium text-muted-foreground [&>th]:whitespace-nowrap [&>th]:px-3 [&>th]:py-2 [&>th]:font-medium">
+            <th>Orden</th>
+            <th>Origen</th>
+            <th>Envío</th>
+            <th>Cliente</th>
+            <th>Estado de seguimiento</th>
+            <th>Fecha</th>
+            <th>Liquidación</th>
+            <th>Productos</th>
+            <th className="text-right">COD</th>
           </tr>
         </thead>
         <tbody>
@@ -3296,27 +3293,32 @@ function OrdersTable({
             const forza = row.guide_number ? getForzaTrackingFromMap(forzaByGuide, row.guide_number) : undefined;
             const displayCourier = normalizeOperationalCourier(row.courier, selectedStore, row.guide_number);
             return (
-              <tr key={row.row_key} className="border-b border-border/50">
-                <td className="px-2 py-1.5 font-mono text-xs">
+              <tr key={row.row_key} className="border-b border-border/60 align-top transition-colors last:border-b-0 hover:bg-muted/40 [&>td]:px-3 [&>td]:py-2.5">
+                <td className="whitespace-nowrap">
                   <button
                     type="button"
                     onClick={() => openDrawer(row)}
-                    className="underline-offset-2 hover:underline"
+                    className="rounded-sm font-medium tabular-nums text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     title="Abrir gestión del pedido"
                   >
                     {row.order_name}
                   </button>
+                  {row.match_status !== "matched" ? (
+                    <Badge variant="warning" className="mt-1 flex w-fit">Sin match Shopify</Badge>
+                  ) : row.shopify_order_name && row.shopify_order_name !== row.order_name ? (
+                    <span className="mt-0.5 block text-xs text-muted-foreground tabular-nums">Shopify {row.shopify_order_name}</span>
+                  ) : null}
                 </td>
-                <td className="px-2 py-1.5">
+                <td>
                   <Badge variant={row.source === "boxful" ? "success" : row.source === "liquidacion" ? "warning" : "muted"}>
                     {row.source === "boxful" ? "Boxful" : row.source === "liquidacion" ? "Liquidacion" : row.origen === "icomfly" ? "iComfly" : "Shopify"}
                   </Badge>
                 </td>
-                <td className="px-2 py-1.5 font-mono text-xs">{row.guide_number || "-"}</td>
-                <td className="px-2 py-1.5 text-xs">
-                  {displayCourier ? (
+                <td className="text-xs">
+                  {displayCourier || row.guide_number ? (
                     <div className="flex flex-col items-start gap-0.5">
-                      <span>{displayCourier}</span>
+                      {displayCourier && <span className="text-[13px] text-foreground">{displayCourier}</span>}
+                      {row.guide_number && <span className="tabular-nums text-muted-foreground">{row.guide_number}</span>}
                       {!isWynCourier(displayCourier, row.guide_number) && isMoovinCourier(displayCourier, selectedStore) && row.guide_number && (
                         <MoovinTrackingButton
                           idPackage={row.guide_number}
@@ -3337,31 +3339,31 @@ function OrdersTable({
                       )}
                     </div>
                   ) : (
-                    "-"
+                    <span className="text-muted-foreground">Sin guía</span>
                   )}
                 </td>
-                <td className="px-2 py-1.5">
-                  <span className="block max-w-[150px] truncate" title={row.customer_name || "Sin nombre"}>
+                <td>
+                  <span className="block max-w-[180px] truncate text-foreground" title={row.customer_name || "Sin nombre"}>
                     {row.customer_name || "Sin nombre"}
                   </span>
                   {row.last_name && (
-                    <span className="mt-0.5 block max-w-[150px] truncate text-[11px] text-muted-foreground">
+                    <span className="mt-0.5 block max-w-[180px] truncate text-xs text-muted-foreground">
                       Apellido: {row.last_name}
                     </span>
                   )}
                   {row.phone ? (
                     <a
                       href={`tel:${row.phone}`}
-                      className="mt-0.5 block max-w-[150px] truncate font-mono text-[11px] text-foreground/80 hover:underline"
+                      className="mt-0.5 block max-w-[180px] truncate text-xs tabular-nums text-muted-foreground hover:text-foreground hover:underline"
                       title={`Llamar ${row.phone}`}
                     >
                       Cel: {row.phone}
                     </a>
                   ) : (
-                    <span className="mt-0.5 block text-[10px] italic text-muted-foreground/50">Sin telefono</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">Sin teléfono</span>
                   )}
                 </td>
-                <td className="px-2 py-1.5">
+                <td>
                   <div className="flex flex-col items-start gap-0.5">
                     <StatusBadge
                       status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus}
@@ -3374,32 +3376,33 @@ function OrdersTable({
                     {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
                   </div>
                 </td>
-                <td className="px-2 py-1.5">
-                  <Badge variant={row.match_status === "matched" ? "success" : "warning"}>
-                    {row.match_status === "matched" ? row.shopify_order_name : "sin match"}
-                  </Badge>
-                </td>
-                <td className="px-2 py-1.5 font-mono text-xs">
+                <td className="whitespace-nowrap tabular-nums text-muted-foreground">
                   {row.shopify_created_at ? formatDate(row.shopify_created_at) : "-"}
                 </td>
-                <td className="px-2 py-1.5">
-                  <SettlementStatusBadge traces={traces} />
+                <td>
+                  <div className="flex flex-col items-start gap-0.5">
+                    <span className="whitespace-nowrap">
+                      <SettlementStatusBadge traces={traces} />
+                    </span>
+                    {traces.length > 0 && (
+                      <>
+                        <SettlementFileBadge traces={traces} />
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          A liquidar {currency(sum(traces.map((trace) => trace.amount_to_liquidate)))}
+                        </span>
+                      </>
+                    )}
+                  </div>
                 </td>
-                <td className="px-2 py-1.5">
-                  <SettlementFileBadge traces={traces} />
-                </td>
-                <td className="px-2 py-1.5 text-right font-mono text-xs">
-                  {traces.length ? currency(sum(traces.map((trace) => trace.amount_to_liquidate))) : "-"}
-                </td>
-                <td className="px-2 py-1.5 text-xs text-muted-foreground">
+                <td className="text-xs text-muted-foreground">
                   <span
-                    className="block max-w-[140px] truncate"
+                    className="block max-w-[180px] truncate"
                     title={(row.package_items ?? []).map((item) => item.title).join(", ")}
                   >
                     {(row.package_items ?? []).map((item) => item.title).join(", ") || "-"}
                   </span>
                 </td>
-                <td className="px-2 py-1.5 text-right font-mono text-xs">
+                <td className="whitespace-nowrap text-right font-medium tabular-nums text-foreground">
                   {currency(row.cod_amount)}
                 </td>
               </tr>
@@ -3407,7 +3410,7 @@ function OrdersTable({
           })}
           {!rows.length && (
             <tr>
-              <td colSpan={14} className="px-3 py-8 text-center text-sm text-muted-foreground">
+              <td colSpan={9} className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {loading ? (
                   <span className="inline-flex items-center gap-2">
                     <RefreshCw className="h-4 w-4 animate-spin" /> Cargando pedidos...
@@ -5554,10 +5557,10 @@ function SettlementRowsTable({
 
 function SettlementStatusBadge({ traces }: { traces: SettlementTrace[] }) {
   if (!traces.length) {
-    return <Badge variant="muted">Sin liquidacion</Badge>;
+    return <Badge variant="muted">Sin liquidación</Badge>;
   }
   if (traces.length > 1) {
-    return <Badge variant="warning">Doble liquidacion</Badge>;
+    return <Badge variant="warning">Doble liquidación</Badge>;
   }
 
   return <Badge variant="success">Liquidada</Badge>;
@@ -8795,7 +8798,7 @@ function BoxfulFilesTab({
       <Card>
         <CardHeader className="gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <CardTitle className="text-base">Logistica Boxful</CardTitle>
+            <CardTitle className="text-base">Logística Boxful</CardTitle>
             <p className="text-xs text-muted-foreground">
               Solo lectura. La logistica se registra al importar Boxful desde Pedidos; las liquidaciones se registran en Liquidaciones.
             </p>
@@ -9143,7 +9146,7 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null, contex
     },
     {
       id: "dispatch",
-      label: "Tasa de despacho",
+      label: "Despacho",
       value: fmtPct1(cur.dispatchRate),
       tone: dispatchTone(cur.dispatchRate),
       deltaLabel: ppDelta(cur.dispatchRate, prev?.dispatchRate ?? null),
@@ -9169,7 +9172,7 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null, contex
     },
     {
       id: "confirm",
-      label: "Tasa de confirmación",
+      label: "Confirmación",
       value: cur.confirmRate == null ? "—" : fmtPct1(cur.confirmRate),
       tone: cur.confirmRate == null ? "neutral" : confirmTone(cur.confirmRate),
       deltaLabel: cur.confirmRate == null ? null : ppDelta(cur.confirmRate, prev?.confirmRate ?? null),
@@ -9189,7 +9192,7 @@ function buildOperationalKpiCards(cur: OpMetrics, prev: OpMetrics | null, contex
     },
     {
       id: "annul",
-      label: "Tasa de anulación",
+      label: "Anulación",
       value: fmtPct1(cur.annulRate),
       tone: annulTone(cur.annulRate),
       deltaLabel: ppDelta(cur.annulRate, prev?.annulRate ?? null),
@@ -9283,27 +9286,35 @@ function CourierPerformanceKpiCard({
     <button
       type="button"
       onClick={onClick}
-      className="min-w-0 rounded-md border border-border bg-card p-2.5 text-left transition-colors hover:border-primary/50 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-3"
-      aria-label={`Ver efectividad por paqueteria del periodo ${report.periodLabel}`}
+      className="group flex min-w-0 flex-col justify-start border-b border-r border-border px-4 py-3.5 text-left xl:px-3.5 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
+      aria-label={`Ver efectividad por paquetería del periodo ${report.periodLabel}`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-[11px] text-muted-foreground">Entrega por paqueteria</p>
-        <Truck className="h-3.5 w-3.5 shrink-0 text-primary" />
-      </div>
-      <p className="mt-1 truncate text-base font-bold leading-none text-foreground sm:text-xl">
-        {loading
-          ? "..."
-          : hasDispatches && primary
-            ? `${primary.label} ${primary.deliveryRate.toFixed(1)}%`
-            : "Sin despachos"}
+      <p className="flex items-center justify-between gap-2 text-[13px] text-muted-foreground">
+        <span className="truncate" title="Entrega efectiva por paquetería">Por paquetería</span>
+        <ChevronRight
+          className="h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none"
+          aria-hidden="true"
+        />
       </p>
-      <p className="mt-1 truncate text-[11px] leading-tight text-muted-foreground">
-        {loading
-          ? "Calculando comparativo"
-          : secondary
-            ? `${report.periodLabel} | ${secondary.label} ${secondary.deliveryRate.toFixed(1)}%`
-            : report.periodLabel}
+      <p className="mt-1 truncate text-xl font-semibold tracking-tight tabular-nums text-foreground">
+        {loading ? (
+          <span className="my-1 block h-5 w-16 animate-pulse rounded bg-muted motion-reduce:animate-none" aria-label="Cargando" />
+        ) : hasDispatches && primary ? (
+          `${primary.deliveryRate.toFixed(1)}%`
+        ) : (
+          <span className="text-base font-medium text-muted-foreground">Sin despachos</span>
+        )}
       </p>
+      {!loading && hasDispatches && primary && (
+        <p className="mt-1 truncate text-xs text-foreground" title={primary.label}>
+          {primary.label}
+        </p>
+      )}
+      {!loading && (
+        <p className="mt-0.5 truncate text-xs text-muted-foreground tabular-nums">
+          {secondary ? `${secondary.label} ${secondary.deliveryRate.toFixed(1)}% · ${report.periodLabel}` : report.periodLabel}
+        </p>
+      )}
     </button>
   );
 }
@@ -9323,7 +9334,7 @@ function CourierPerformanceModal({
         <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
           <div className="min-w-0">
             <h2 id={titleId} className="text-base font-semibold text-foreground">
-              Efectividad por paqueteria
+              Efectividad por paquetería
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
               Periodo seleccionado: {report.periodLabel}. Un pedido Shopify se cuenta una sola vez.
@@ -9747,7 +9758,9 @@ function TabButton({
   return (
     <button
       onClick={onClick}
-      className={`-mb-px flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13.5px] font-medium transition-colors ${
+      type="button"
+      aria-current={active ? "page" : undefined}
+      className={`-mb-px flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
         active
           ? "border-primary text-primary"
           : "border-transparent text-muted-foreground hover:text-foreground"

@@ -1,6 +1,12 @@
-import { Card, CardContent } from "@/components/ui/card";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Star } from "lucide-react";
 import type { KpiComparisonCopy } from "@/lib/kpi-comparison-copy";
+import { cn } from "@/lib/utils";
 
+/**
+ * Celda de la tira de indicadores de Gestión de pedidos (estilo Stripe, la
+ * misma tira que el Panel): sin tarjeta propia, la tira pone el borde y los
+ * divisores. El estado lo cuentan el color del valor y la comparación.
+ */
 export function OperationalKpiCard({
   label,
   value,
@@ -24,9 +30,6 @@ export function OperationalKpiCard({
   loading?: boolean;
   title?: string;
 }) {
-  // Tarjetas neutras (estilo Stripe): el estado lo cuentan el color del valor
-  // y la comparación, no un borde de color.
-  const border = "border-border";
   const valueColor =
     tone === "good"
       ? "text-emerald-300"
@@ -43,63 +46,55 @@ export function OperationalKpiCard({
         : deltaTone === "bad"
           ? "text-red-400"
           : "text-muted-foreground";
-  const arrow =
+  const Arrow =
     comparison?.direction === "up"
-      ? "↑"
+      ? ArrowUpRight
       : comparison?.direction === "down"
-        ? "↓"
+        ? ArrowDownRight
         : comparison?.direction === "flat"
-          ? "→"
-          : "";
+          ? ArrowRight
+          : null;
   return (
-    <Card
-      className={`${border} h-full`}
+    <div
+      className="min-w-0 border-b border-r border-border px-4 py-3.5 xl:px-3"
       title={title}
       role="group"
       aria-label={label}
     >
-      <CardContent className="min-h-[112px] p-2.5 sm:p-3">
-        <p className="text-xs font-medium leading-4 text-muted-foreground">{label}</p>
-        <p
-          className={`mt-1 flex items-baseline gap-1 text-xl font-semibold leading-tight tabular-nums ${valueColor}`}
-        >
-          {star && <span className="text-[10px] text-primary">★</span>}
-          {loading ? (
+      <p className="flex items-center gap-1 text-[13px] leading-5 text-muted-foreground">
+        <span>{label}</span>
+        {star && (
+          <Star className="h-3 w-3 shrink-0 fill-primary text-primary" aria-label="Indicador principal" />
+        )}
+      </p>
+      <p className={cn("mt-1 text-xl font-semibold tracking-tight tabular-nums", valueColor)}>
+        {loading ? (
+          <span className="my-1 block h-5 w-16 animate-pulse rounded bg-muted motion-reduce:animate-none" aria-label="Cargando" />
+        ) : (
+          value
+        )}
+      </p>
+      {sub && !(hideSubWhenComparing && comparison) && (
+        <p className="mt-1 text-xs leading-4 text-muted-foreground tabular-nums">{sub}</p>
+      )}
+      {comparison && !loading && (
+        <div className="mt-1 space-y-0.5 text-xs tabular-nums">
+          <p className="flex flex-wrap items-center gap-x-1">
             <span
-              className="my-1 inline-block h-4 w-14 animate-pulse rounded bg-muted motion-reduce:animate-none"
-              aria-label="Cargando"
-            />
-          ) : (
-            value
-          )}
-        </p>
-        {sub && !(hideSubWhenComparing && comparison) && (
-          <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-            {sub}
+              className={cn("inline-flex items-center gap-0.5 font-medium", trendColor)}
+              title={comparison.changeText.includes("pp") ? "Diferencia en puntos porcentuales entre las dos tasas" : undefined}
+            >
+              {Arrow && <Arrow className="h-3.5 w-3.5" aria-hidden="true" />}
+              {comparison.direction && comparison.direction !== "flat" && (
+                <span className="sr-only">{comparison.direction === "up" ? "Sube " : "Baja "}</span>
+              )}
+              {comparison.changeText}
+            </span>
+            <span className="text-muted-foreground">{comparison.versusText}</span>
           </p>
-        )}
-        {comparison && !loading && (
-          <div className="mt-1 space-y-0.5 text-[11px] leading-4">
-            <p className="flex flex-wrap items-baseline gap-x-1">
-              <span
-                className={`font-medium ${trendColor}`}
-                title={
-                  comparison.changeText.includes("pp")
-                    ? "Diferencia en puntos porcentuales entre las dos tasas"
-                    : undefined
-                }
-              >
-                {arrow && `${arrow} `}
-                {comparison.changeText}
-              </span>
-              <span className="text-muted-foreground">
-                {comparison.versusText}
-              </span>
-            </p>
-            <p className="text-muted-foreground">{comparison.baselineText}</p>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          <p className="text-muted-foreground">{comparison.baselineText}</p>
+        </div>
+      )}
+    </div>
   );
 }

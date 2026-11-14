@@ -38,7 +38,8 @@ describe("KPI comparison communication", () => {
         deltaTone: "good",
       }),
     );
-    expect(html).toContain("↑ 8%");
+    expect(html).toContain("lucide-arrow-up-right");
+    expect(html).toContain("Sube </span>8%");
     expect(html).toContain("vs. ayer");
     expect(html).toContain("Ayer a esta hora: 72");
     expect(html).not.toContain("pedidos creados");
@@ -66,7 +67,8 @@ describe("KPI comparison communication", () => {
         deltaTone: "bad",
       }),
     );
-    expect(html).toContain("↓ 29.7 pp");
+    expect(html).toContain("lucide-arrow-down-right");
+    expect(html).toContain("Baja </span>29.7 pp");
     expect(html).toContain("31/78 con guía");
     expect(html).toContain("Ayer a esta hora: 69.4%");
   });
