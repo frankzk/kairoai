@@ -82,8 +82,20 @@
   .lucide {
     stroke-width: 1.75;
   }
+  /* Selección de texto visible en los dos tonos. Sobre superficies índigo
+     (burbujas enviadas del chat, botones) un violeta translúcido no se ve:
+     ahí la selección es blanca. */
   ::selection {
-    background: hsl(var(--primary) / 0.18);
+    background: hsl(var(--primary) / 0.3);
+  }
+  .dark ::selection {
+    background: hsl(var(--primary) / 0.45);
+    color: hsl(var(--foreground));
+  }
+  .bg-primary::selection,
+  .bg-primary ::selection {
+    background: rgb(255 255 255 / 0.85);
+    color: hsl(var(--primary));
   }
   :focus-visible {
     outline-color: hsl(var(--ring));
