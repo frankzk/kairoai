@@ -3,6 +3,8 @@ import { getKpiWindows, type KpiRange, type KpiWindow } from "@/lib/kpi-windows"
 import { buildKpiComparisonCopy, type KpiComparisonCopy } from "@/lib/kpi-comparison-copy";
 import { OperationalKpiCard } from "@/components/OperationalKpiCard";
 import { PlanillaTab } from "@/components/PlanillaTab";
+import { ClienteHistorialChip } from "@/components/ClienteHistorialChip";
+import type { ClienteHistorial } from "@/lib/cliente-historial";
 import type { ConfirmationActor, KairoConfirmation } from "@/lib/order-confirmations";
 import { workEvidenceLabel, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
 import {
@@ -396,7 +398,7 @@ const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
 // Las filas que devuelve /api/finance/orders ya traen las trazas de liquidacion
 // resueltas server-side, asi la tabla no necesita el settlementTraceByKey en
 // memoria.
-type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork };
+type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork; cliente_historial?: ClienteHistorial };
 type ConfirmacionCounts = { subetapa: Record<Subetapa | "all", number>; plazo: Record<Plazo | "all", number> };
 
 // Cola de confirmacion de los pendientes (lib/confirmacion.ts): el color dice
@@ -438,6 +440,7 @@ interface OrdersOperationalMetadata {
   enRouteGuides: {
     moovin: Array<{ idPackage: string; lastName: string; fullName: string }>;
     forza: Array<{ guide: string }>;
+    wyn?: string[];
   };
 }
 
@@ -2009,7 +2012,8 @@ function OrdersTab({
   const [enRouteGuides, setEnRouteGuides] = useState<{
     moovin: Array<{ idPackage: string; lastName: string; fullName: string }>;
     forza: Array<{ guide: string }>;
-  }>({ moovin: [], forza: [] });
+    wyn?: string[];
+  }>({ moovin: [], forza: [], wyn: [] });
   const [tableLoading, setTableLoading] = useState(true);
   const [tableError, setTableError] = useState("");
   // Distingue "aun no cargo nada" de "ya hubo una carga valida". Cuando una
@@ -2136,7 +2140,7 @@ function OrdersTab({
         if (json.operationalMetadata) {
           const metadata = json.operationalMetadata as OrdersOperationalMetadata;
           metadataLoadedStoreRef.current = selectedStore.code;
-          setEnRouteGuides(metadata.enRouteGuides ?? { moovin: [], forza: [] });
+          setEnRouteGuides(metadata.enRouteGuides ?? { moovin: [], forza: [], wyn: [] });
           onOperationalMetadata(selectedStore.code, metadata);
         }
         onDatasetReady(selectedStore.code);
@@ -2153,6 +2157,8 @@ function OrdersTab({
   const [moovinSyncing, setMoovinSyncing] = useState(false);
   const [moovinMessage, setMoovinMessage] = useState("");
   const [forzaSyncing, setForzaSyncing] = useState(false);
+  const [wynSyncing, setWynSyncing] = useState(false);
+  const [wynMessage, setWynMessage] = useState("");
   const [forzaMessage, setForzaMessage] = useState("");
   const [icomflySyncing, setIcomflySyncing] = useState(false);
   const [icomflyMessage, setIcomflyMessage] = useState("");
@@ -2190,6 +2196,53 @@ function OrdersTab({
   // sobre el dataset completo server-side), no del snapshot en memoria.
   const enRouteMoovinGuides = enRouteGuides.moovin;
   const enRouteForzaGuides = enRouteGuides.forza;
+  const enRouteWynGuides = enRouteGuides.wyn ?? [];
+
+  // WYN se consulta despacio (bloquea si se le pregunta rapido): tramos de 8
+  // guias con 3 s entre cada una, del lado del servidor (/api/finance/wyn-sync).
+  async function updateWynStatuses() {
+    if (!enRouteWynGuides.length) return;
+    setWynSyncing(true);
+    const total = enRouteWynGuides.length;
+    setWynMessage(`Consultando WYN: 0/${total}... (unos 3 s por guía)`);
+    const chunkSize = 8;
+    let checked = 0;
+    let incidents = 0;
+    let delivered = 0;
+    let failed = 0;
+    try {
+      for (let i = 0; i < total; i += chunkSize) {
+        const chunk = enRouteWynGuides.slice(i, i + chunkSize);
+        const res = await fetch("/api/finance/wyn-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ store: selectedStore.code, guides: chunk, final: i + chunkSize >= total }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? "No se pudo actualizar WYN");
+        checked += Number(json.checked ?? 0);
+        incidents += Number(json.incidents ?? 0);
+        delivered += Number(json.delivered ?? 0);
+        failed += Number(json.failed ?? 0);
+        if (json.blocked) {
+          setWynMessage(`WYN pidió esperar: se actualizaron ${checked} guías. Vuelve a intentarlo en unos minutos.`);
+          break;
+        }
+        setWynMessage(`Consultando WYN: ${Math.min(i + chunkSize, total)}/${total}... (unos 3 s por guía)`);
+      }
+      metadataLoadedStoreRef.current = "";
+      setRefreshKey((key) => key + 1);
+      setWynMessage((m) =>
+        m.startsWith("WYN pidió esperar")
+          ? m
+          : `WYN actualizado: ${checked} consultadas, ${delivered} entregadas, ${incidents} con incidencia${failed ? `, ${failed} sin respuesta` : ""}.`
+      );
+    } catch (err) {
+      setWynMessage(err instanceof Error ? err.message : "No se pudo actualizar WYN");
+    } finally {
+      setWynSyncing(false);
+    }
+  }
 
   async function updateMoovinStatuses() {
     if (!enRouteMoovinGuides.length) return;
@@ -2560,6 +2613,20 @@ function OrdersTab({
                   {moovinSyncing ? "Actualizando..." : `Moovin (${enRouteMoovinGuides.length})`}
                 </Button>
               )}
+              {selectedStore.code === "mireva-cr" && enRouteWynGuides.length > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={wynSyncing}
+                  onClick={updateWynStatuses}
+                  className="h-8 gap-1.5 px-2.5 text-xs"
+                  title="Consultar a WYN (MailAmericas) el estado de las guías abiertas"
+                >
+                  {wynSyncing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                  {wynSyncing ? "Actualizando..." : `WYN (${enRouteWynGuides.length})`}
+                </Button>
+              )}
               {selectedStore.logisticsProvider === "forza" && enRouteForzaGuides.length > 0 && (
                 <Button
                   type="button"
@@ -2636,7 +2703,7 @@ function OrdersTab({
             </div>
           </div>
 
-          {(syncMessage || moovinMessage || forzaMessage || icomflyMessage) && (
+          {(syncMessage || moovinMessage || forzaMessage || wynMessage || icomflyMessage) && (
             <div className="space-y-1 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               {syncMessage && (
                 <p className="flex items-center gap-1.5">
@@ -2651,6 +2718,11 @@ function OrdersTab({
               {forzaMessage && (
                 <p className="flex items-center gap-1.5">
                   <Search className="h-3.5 w-3.5 shrink-0" /> {forzaMessage}
+                </p>
+              )}
+              {wynMessage && (
+                <p className="flex items-center gap-1.5">
+                  <Search className="h-3.5 w-3.5 shrink-0" /> {wynMessage}
                 </p>
               )}
               {icomflyMessage && (
@@ -3202,6 +3274,7 @@ function OrdersTable({
                     {row.customer_name || "Sin nombre"}
                     {row.shopify_created_at ? ` · ${formatDate(row.shopify_created_at)}` : ""}
                   </p>
+                  {row.cliente_historial && <ClienteHistorialChip historial={row.cliente_historial} />}
                 </div>
                 <div className="flex flex-col items-end gap-0.5">
                   <StatusBadge status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
@@ -3370,6 +3443,7 @@ function OrdersTable({
                   ) : (
                     <span className="mt-0.5 block text-xs text-muted-foreground">Sin teléfono</span>
                   )}
+                  {row.cliente_historial && <ClienteHistorialChip historial={row.cliente_historial} />}
                 </td>
                 <td>
                   <div className="flex flex-col items-start gap-0.5">

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
+import { listFuentesPedidosIcomfly } from "@/lib/finance";
+import { normalizeMatchKey } from "@/lib/order-matching";
+import type { Fuente } from "@/lib/pedido-fuente";
 import {
   computeOpMetricsFromTrackableRows,
   getKpiWindows,
@@ -65,9 +68,27 @@ export async function GET(req: NextRequest) {
     const cached = cache.get(cacheKey);
     if (cached && Date.now() - cached.at < TTL_MS) return NextResponse.json(cached.data);
 
-    const { rows, settlementTraceByKey } = await getOrdersDataset(store, ["rows", "settlementTraceByKey"]);
-    const series = buildPanelSeries(rows as TrackableOrderRow[], win, store.timezone, (row) =>
-      computeOpMetricsFromTrackableRows([row], settlementTraceByKey)
+    // Fuente de cada pedido: un dia antes del inicio, por la diferencia de
+    // hora entre Shopify e iComfly. Si la lectura falla, el grafico de estados
+    // sigue igual y la pestana "Por fuente" avisa que no hay dato.
+    const desde = new Date(win.curStart - 86_400_000).toISOString().slice(0, 10);
+    const [{ rows, settlementTraceByKey }, fuentes] = await Promise.all([
+      getOrdersDataset(store, ["rows", "settlementTraceByKey"]),
+      listFuentesPedidosIcomfly(store.id, desde).catch(() => null),
+    ]);
+    const sourceOf = fuentes
+      ? (row: TrackableOrderRow): Fuente => {
+          const icomflyId = /icomfly-(\d+)/.exec(row.row_key)?.[1];
+          if (icomflyId) return fuentes.porIcomflyId.get(icomflyId) ?? "manual";
+          return fuentes.porShopify.get(normalizeMatchKey(row.shopify_order_name || row.order_name)) ?? "web";
+        }
+      : undefined;
+    const series = buildPanelSeries(
+      rows as TrackableOrderRow[],
+      win,
+      store.timezone,
+      (row) => computeOpMetricsFromTrackableRows([row], settlementTraceByKey),
+      sourceOf
     );
     const data: Payload = {
       ...series,

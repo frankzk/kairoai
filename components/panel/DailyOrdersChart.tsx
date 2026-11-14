@@ -6,14 +6,16 @@ import { ChartLegend, ColumnChart, type ColumnBin } from "@/components/marketing
 import theme from "@/components/marketing/theme.module.css";
 import { averagePerDay, DAY_PARTS, dayLabel, formatInt, splitDay } from "@/lib/panel-resumen";
 import type { PanelDay } from "@/lib/panel-serie";
+import { FUENTES, fuentesVacias } from "@/lib/pedido-fuente";
 import { cn } from "@/lib/utils";
 import { BlockNotice, Skeleton } from "./BlockNotice";
 import type { BlockState } from "./useEndpoint";
 
 /**
  * Pedidos generados por dia, partidos segun su estado de HOY (entregados,
- * despachados sin entregar, confirmados sin guia, en gestion, anulados). Un
- * eje, columnas finas, tooltip por columna y una tabla equivalente.
+ * despachados sin entregar, confirmados sin guia, en gestion, anulados) o,
+ * en la pestana "Por fuente", segun de donde llegaron (web, WhatsApp, Leads,
+ * manual). Un eje, columnas finas, tooltip por columna y una tabla equivalente.
  */
 export function DailyOrdersChart({
   state,
@@ -27,18 +29,31 @@ export function DailyOrdersChart({
   money: (value: number) => string;
 }) {
   const [asTable, setAsTable] = useState(false);
+  const [view, setView] = useState<"estado" | "fuente">("estado");
   const days = state.status === "ready" ? state.data.days : [];
   const avg = averagePerDay(days);
+  const hasSources = days.some((d) => d.sources);
+  const bySource = view === "fuente";
   const bins: ColumnBin[] = days.map((day) => {
     const parts = splitDay(day);
+    const sources = day.sources ?? fuentesVacias();
     return {
       key: day.date,
       label: dayLabel(day.date),
       title: dayLabel(day.date, true),
-      stacks: [DAY_PARTS.map((p) => ({ key: p.key, label: p.label, value: parts[p.key], color: p.color }))],
+      stacks: [
+        bySource
+          ? FUENTES.map((f) => ({ key: f.key, label: f.label, value: sources[f.key], color: f.color }))
+          : DAY_PARTS.map((p) => ({ key: p.key, label: p.label, value: parts[p.key], color: p.color })),
+      ],
       notes: day.value > 0 ? [`Valor ${money(day.value)}`] : undefined,
     };
   });
+  const sourceTotals = days.reduce((acc, d) => {
+    if (d.sources) for (const f of FUENTES) acc[f.key] += d.sources[f.key];
+    return acc;
+  }, fuentesVacias());
+  const sourceSum = FUENTES.reduce((n, f) => n + sourceTotals[f.key], 0);
   const total = days.reduce(
     (acc, d) => {
       acc.generated += d.generated;
@@ -63,13 +78,30 @@ export function DailyOrdersChart({
             Pedidos por día
           </h2>
           <p className="mt-0.5 text-[13px] text-muted-foreground">
-            {subtitle}
+            {bySource ? subtitle.replace(/, según su estado de hoy$/i, "") + ", según de dónde llegaron" : subtitle}
             {state.status === "ready" && avg != null && days.length > 1 && (
               <span className="tabular-nums"> · promedio {formatInt(avg)} por día</span>
             )}
           </p>
         </div>
         {state.status === "ready" && days.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+          <div role="group" aria-label="Partir los pedidos por" className="inline-flex h-8 rounded-md border border-border bg-card p-0.5">
+            {([["estado", "Por estado"], ["fuente", "Por fuente"]] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={view === key}
+                onClick={() => setView(key)}
+                className={cn(
+                  "rounded-[5px] px-2.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                  view === key ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             onClick={() => setAsTable((v) => !v)}
@@ -79,6 +111,7 @@ export function DailyOrdersChart({
             <Table2 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
             {asTable ? "Ver gráfico" : "Ver tabla"}
           </button>
+          </div>
         )}
       </div>
 
@@ -101,7 +134,48 @@ export function DailyOrdersChart({
             state.refreshing && "opacity-60"
           )}
         >
-          {asTable ? (
+          {bySource && !hasSources ? (
+            <p className="mt-4 text-[13px] text-muted-foreground">
+              No se pudo leer la fuente de los pedidos en iComfly. Prueba con Actualizar.
+            </p>
+          ) : bySource && asTable ? (
+            <div className="mt-2 max-h-[320px] overflow-auto rounded-md border border-border">
+              <table className="w-full min-w-[520px] text-[13px]">
+                <caption className="sr-only">Pedidos por día según de dónde llegaron</caption>
+                <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+                  <tr className="border-b border-border">
+                    <th scope="col" className="px-3 py-2 font-medium">Día</th>
+                    <th scope="col" className="px-3 py-2 text-right font-medium">Generados</th>
+                    {FUENTES.map((f) => (
+                      <th key={f.key} scope="col" className="px-3 py-2 text-right font-medium">{f.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {days.map((d) => (
+                    <tr key={d.date} className="border-b border-border last:border-0">
+                      <th scope="row" className="px-3 py-1.5 text-left font-normal text-foreground">
+                        {dayLabel(d.date, true)}
+                      </th>
+                      <td className="px-3 py-1.5 text-right">{formatInt(d.generated)}</td>
+                      {FUENTES.map((f) => (
+                        <td key={f.key} className="px-3 py-1.5 text-right">{formatInt(d.sources?.[f.key] ?? 0)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="text-foreground">
+                  <tr className="border-t border-border font-medium">
+                    <th scope="row" className="px-3 py-2 text-left font-medium">Total</th>
+                    <td className="px-3 py-2 text-right">{formatInt(total.generated)}</td>
+                    {FUENTES.map((f) => (
+                      <td key={f.key} className="px-3 py-2 text-right">{formatInt(sourceTotals[f.key])}</td>
+                    ))}
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          ) : asTable ? (
             <div className="mt-2 max-h-[320px] overflow-auto rounded-md border border-border">
               <table className="w-full min-w-[560px] text-[13px]">
                 <caption className="sr-only">Pedidos por día según su estado de hoy</caption>
@@ -152,13 +226,37 @@ export function DailyOrdersChart({
                 format={formatInt}
                 ariaLabel={`Pedidos generados por día, ${subtitle.toLowerCase()}. Total ${formatInt(total.generated)}`}
               />
-              <ChartLegend
-                label="Estados de hoy"
-                items={DAY_PARTS.map((p) => ({ key: p.key, name: p.label, color: p.color, mark: "rect" as const }))}
-              />
+              {bySource ? (
+                <>
+                  <ChartLegend
+                    label="Fuentes"
+                    items={FUENTES.map((f) => ({ key: f.key, name: f.label, color: f.color, mark: "rect" as const }))}
+                  />
+                  <p className="mt-2 text-xs tabular-nums text-muted-foreground">
+                    {FUENTES.map((f, i) => (
+                      <span key={f.key}>
+                        {i > 0 && " · "}
+                        <span className="font-medium text-foreground">{f.label}</span>{" "}
+                        {formatInt(sourceTotals[f.key])}
+                        {sourceSum > 0 && ` (${Math.round((sourceTotals[f.key] / sourceSum) * 100)} %)`}
+                      </span>
+                    ))}
+                  </p>
+                </>
+              ) : (
+                <ChartLegend
+                  label="Estados de hoy"
+                  items={DAY_PARTS.map((p) => ({ key: p.key, name: p.label, color: p.color, mark: "rect" as const }))}
+                />
+              )}
             </div>
           )}
-          {note && <p className="mt-3 text-xs text-muted-foreground">{note}</p>}
+          {bySource && hasSources && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Llamadas (Leads): pedidos creados desde Leads en Kairo. Manual en iComfly: los que una asesora cargó a mano allá.
+            </p>
+          )}
+          {!bySource && note && <p className="mt-3 text-xs text-muted-foreground">{note}</p>}
         </div>
       )}
     </section>

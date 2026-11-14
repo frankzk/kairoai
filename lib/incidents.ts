@@ -1,4 +1,5 @@
 import { getDB } from "@/lib/db";
+import { COLUMNAS_PEDIDO_ICOMFLY, productosDePedidoIcomfly, type PedidoIcomflyCrudo } from "@/lib/icomfly-pedidos";
 import { identidadActual } from "@/lib/identidad";
 import type { AccionNovedad } from "@/lib/productividad-novedades";
 import { DEFAULT_FINANCE_STORE_ID } from "@/lib/store-config";
@@ -640,11 +641,16 @@ export async function getIncidentOrderProducts(
   guide: string
 ): Promise<string> {
   if (!shopifyOrderId && !guide) return "";
+  // Desde el 28/10/2026 los pedidos nuevos existen solo en iComfly: la
+  // novedad apunta a "icomfly-<id>" y el producto esta en su payload. Sin
+  // esto el detalle dejaba de mostrar "Producto" en todas las novedades nuevas.
+  const icomflyId = /^icomfly-(\d+)$/.exec(shopifyOrderId)?.[1] ?? "";
+  if (icomflyId) return productosIcomfly(storeId, icomflyId, guide);
   const base = getDB().from("shopify_orders").select("line_items, raw_order").eq("store_id", storeId);
   const { data, error } = shopifyOrderId
     ? await base.eq("shopify_order_id", shopifyOrderId).limit(1).maybeSingle()
     : await base.eq("tracking_number", guide).limit(1).maybeSingle();
-  if (error || !data) return "";
+  if (error || !data) return guide ? productosIcomfly(storeId, "", guide) : "";
   const row = data as { line_items?: unknown; raw_order?: { line_items?: unknown } | null };
   const rawItems = row.raw_order && Array.isArray(row.raw_order.line_items) ? row.raw_order.line_items : [];
   const items = (Array.isArray(row.line_items) && row.line_items.length ? row.line_items : rawItems) as Array<{
@@ -655,6 +661,16 @@ export async function getIncidentOrderProducts(
     .map((i) => `${Number(i.quantity ?? 0)}x ${String(i.title ?? "").trim()}`)
     .filter((s) => !s.startsWith("0x ") && s.length > 3)
     .join(", ");
+}
+
+/** Productos de un pedido de iComfly, por su id o, si no, por la guia. */
+async function productosIcomfly(storeId: number, icomflyId: string, guide: string): Promise<string> {
+  if (!icomflyId && !guide) return "";
+  let query = getDB().from("icomfly_order_payloads").select(COLUMNAS_PEDIDO_ICOMFLY).eq("store_id", storeId);
+  query = icomflyId ? query.eq("icomfly_order_id", icomflyId) : query.eq("payload->>tracking_number", guide);
+  const { data, error } = await query.limit(1);
+  if (error || !data?.length) return "";
+  return productosDePedidoIcomfly(data[0] as unknown as PedidoIcomflyCrudo);
 }
 
 export async function getIncident(id: number, storeId?: number): Promise<Incident | null> {

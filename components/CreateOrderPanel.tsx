@@ -1,5 +1,7 @@
 "use client";
 
+import { sanitizeExternalError } from "@/lib/api-errors";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Loader2, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -236,7 +238,7 @@ export default function CreateOrderPanel({
       setAviso(data.aviso ?? null);
       onCreated(data.order_name);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al crear el pedido");
+      setError(sanitizeExternalError(err instanceof Error ? err.message : "", "Error al crear el pedido"));
       setConfirming(false);
     } finally {
       setSubmitting(false);

@@ -361,7 +361,7 @@ function getForzaTrackingFromMap(
 export { getKpiWindows } from "./kpi-windows";
 export type { KpiRange, KpiCustomRange, KpiWindow } from "./kpi-windows";
 
-function isDispatchedStatus(status: string): boolean {
+export function isDispatchedStatus(status: string): boolean {
   return (
     status === "en_route" ||
     status === "en_route_retry" ||
@@ -1285,6 +1285,8 @@ export function matchesOrderSearch(row: TrackableOrderRow, query: string): boole
 export interface EnRouteGuides {
   moovin: Array<{ idPackage: string; lastName: string; fullName: string }>;
   forza: Array<{ guide: string }>;
+  /** Guias WYN (Mireva CR) todavia abiertas: el boton "WYN (n)" de Pedidos. */
+  wyn: string[];
 }
 
 // Guias no terminales (en ruta / incidencia / pendiente) que vale la pena
@@ -1302,7 +1304,16 @@ export function buildEnRouteGuides(
 
   if (store.logisticsProvider === "moovin") {
     const byGuide = new Map<string, { idPackage: string; lastName: string; fullName: string }>();
+    const wyn = new Set<string>();
     for (const row of rows) {
+      // WYN (MailAmericas) convive con Moovin en Costa Rica: sus guias abiertas
+      // van aparte, con su propio boton y su propio ritmo de consulta.
+      if (row.guide_number && isWynCourier(row.courier, row.guide_number)) {
+        if (row.wyn_group === "delivered" || row.wyn_group === "returned") continue;
+        const status = getEffectiveTrackingStatus(row, getSettlementTracesForLogisticsRow(row, settlementTraceByKey));
+        if (isOpenStatus(status)) wyn.add(row.guide_number.trim().toUpperCase());
+        continue;
+      }
       if (
         !isMoovinCourier(row.courier, store) ||
         !row.guide_number ||
@@ -1320,7 +1331,7 @@ export function buildEnRouteGuides(
         });
       }
     }
-    return { moovin: Array.from(byGuide.values()), forza: [] };
+    return { moovin: Array.from(byGuide.values()), forza: [], wyn: Array.from(wyn) };
   }
 
   const byGuide = new Map<string, { guide: string }>();
@@ -1332,7 +1343,7 @@ export function buildEnRouteGuides(
     if (row.forza_group === "delivered" || row.forza_group === "returned") continue;
     if (!byGuide.has(guide)) byGuide.set(guide, { guide });
   }
-  return { moovin: [], forza: Array.from(byGuide.values()) };
+  return { moovin: [], forza: Array.from(byGuide.values()), wyn: [] };
 }
 
 
