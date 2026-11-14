@@ -276,6 +276,8 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/finance/wyn-tracking", exige: P(...OPERACION) },
   // La lista de asesoras la necesitan el chat y el detalle de pedido;
   // modificarla es de quien administra personal.
+  // Planilla quincenal (Gestión › Planilla): salarios, abonos y bitácora.
+  { ruta: "/api/finance/planilla", exige: P("finanzas") },
   { ruta: "/api/finance/payroll-staff", metodo: "GET", exige: SES },
   { ruta: "/api/finance/payroll-staff", exige: P("finanzas", "usuarios") },
   { ruta: "/api/icomfly", exige: P(...OPERACION) },

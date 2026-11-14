@@ -2,6 +2,7 @@
 import { getKpiWindows, type KpiRange, type KpiWindow } from "@/lib/kpi-windows";
 import { buildKpiComparisonCopy, type KpiComparisonCopy } from "@/lib/kpi-comparison-copy";
 import { OperationalKpiCard } from "@/components/OperationalKpiCard";
+import { PlanillaTab } from "@/components/PlanillaTab";
 import type { ConfirmationActor, KairoConfirmation } from "@/lib/order-confirmations";
 import { workEvidenceLabel, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
 import {
@@ -39,6 +40,7 @@ import {
   Truck,
   Upload,
   UserCheck,
+  Wallet,
   X,
 } from "lucide-react";
 import { normalizeSearchText } from "@/lib/order-matching";
@@ -114,7 +116,7 @@ import DispatchTab from "@/components/DispatchTab";
 import DispatchAuditTab from "@/components/DispatchAuditTab";
 import ProductividadDespacho from "@/components/ProductividadDespacho";
 
-type Tab = "orders" | "dispatch" | "audit" | "products" | "notes" | "settlements" | "expenses" | "monthly" | "files";
+type Tab = "orders" | "dispatch" | "audit" | "products" | "notes" | "settlements" | "expenses" | "planilla" | "monthly" | "files";
 
 // Carril 2 (ultimo tab): TODOS los tabs cargan server-side. Pedidos/KPIs, Productos,
 // Notas, Cierre y ahora Liquidaciones traen sus datos ya calculados desde sus
@@ -1622,6 +1624,11 @@ function LegacyFinancePage() {
             </TabButton>
           )}
           {verFinanzas && (
+            <TabButton active={tab === "planilla"} onClick={() => setTab("planilla")} icon={<Wallet />}>
+              Planilla
+            </TabButton>
+          )}
+          {verFinanzas && (
             <TabButton active={tab === "monthly"} onClick={() => setTab("monthly")} icon={<FileSpreadsheet />}>
               Cierre mensual
             </TabButton>
@@ -1697,6 +1704,7 @@ function LegacyFinancePage() {
                 onDeleteImport={deleteSettlementImport}
               />
             )}
+            {tab === "planilla" && verFinanzas && <PlanillaTab key={selectedStore.code} storeCode={selectedStore.code} />}
             {tab === "expenses" && (
               <ExpensesTab
                 expenses={expenses}
