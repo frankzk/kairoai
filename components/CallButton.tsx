@@ -173,13 +173,13 @@ export default function CallButton({
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button size={size} variant="outline" onClick={call} disabled={calling || enCurso}>
+      <Button size={size} variant="outline" onClick={call} disabled={calling || enCurso} aria-label="Llamar">
         {calling ? (
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <Loader2 className="h-4 w-4 animate-spin sm:mr-2" aria-hidden="true" />
         ) : (
-          <PhoneCall className="mr-2 h-4 w-4" />
+          <PhoneCall className="h-4 w-4 sm:mr-2" aria-hidden="true" />
         )}
-        Llamar
+        <span className="hidden sm:inline">Llamar</span>
       </Button>
       {!vendedoraId && planilla && (
         <select

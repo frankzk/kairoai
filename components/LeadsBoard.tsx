@@ -1078,7 +1078,7 @@ export default function LeadsBoard() {
         <Card className="mb-4 overflow-hidden border-border/80 bg-card/80">
           <CardContent className="p-0">
             <div className="flex flex-wrap items-start gap-3 border-b border-border/70 px-4 py-3">
-              <div className="flex min-w-0 flex-1 items-start gap-3">
+              <div className="flex min-w-0 flex-1 basis-[18rem] items-start gap-3">
                 <div className="mt-0.5 rounded-md border border-primary/25 bg-primary/10 p-2 text-primary">
                   <PhoneOff className="h-4 w-4" />
                 </div>
@@ -1086,7 +1086,7 @@ export default function LeadsBoard() {
                   <h2 className="font-medium">Leads sin llamar</h2>
                   <p className="text-xs text-muted-foreground">
                     Por antigüedad: acumulado anterior y detalle de los últimos {UNCALLED_CHART_DAYS} días
-                    {searching ? " en esta busqueda" : ` en ${activeTabLabel}`}
+                    {searching ? " en esta búsqueda" : ` en ${activeTabLabel}`}
                     {activeSegment !== null && ` · ${SEGMENT_META[activeSegment].label}`}.
                   </p>
                 </div>
@@ -1109,7 +1109,7 @@ export default function LeadsBoard() {
                   type="button"
                   onClick={() => setShowBacklogChart((v) => !v)}
                   aria-expanded={showBacklogChart}
-                  className="inline-flex h-8 items-center gap-1 border border-border px-2 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-card px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {showBacklogChart ? "Ocultar" : "Por antigüedad"}
                   <ChevronDown
@@ -1728,7 +1728,7 @@ const LeadCard = forwardRef(function LeadCard(
           // de posicion no es un estado — mientras esto tambien fuera redondo,
           // la forma seguia sin querer decir nada.
           <span
-            className={`flex h-7 w-7 shrink-0 items-center justify-center text-xs font-semibold tabular-nums ${
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[5px] text-xs font-semibold tabular-nums ${
               isNext ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
             }`}
             title={isNext ? "Siguiente en la cola" : `Posición ${queuePosition} en la cola`}
@@ -1737,8 +1737,8 @@ const LeadCard = forwardRef(function LeadCard(
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate font-medium">{lead.name || "Sin nombre"}</span>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="min-w-0 max-w-full truncate font-medium">{lead.name || "Sin nombre"}</span>
             <Badge variant={SEGMENT_VARIANT[lead.segment]} className="shrink-0" title={meta.hint}>
               <IconoMeta emoji={meta.emoji} className="h-3 w-3" />
               {meta.label}
@@ -1792,12 +1792,12 @@ const LeadCard = forwardRef(function LeadCard(
           )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <span className="text-xs text-muted-foreground" title="Fecha del último mensaje">
+          <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground" title="Fecha del último mensaje">
             {fmtDateTime(lead.last_interaction_at)}
           </span>
-          <Button variant="outline" size="sm" onClick={onOpen}>
-            <MessageSquare className="mr-2 h-4 w-4" />
-            Ver chat
+          <Button variant="outline" size="sm" onClick={onOpen} aria-label={`Ver chat de ${lead.name || "este lead"}`}>
+            <MessageSquare className="h-4 w-4 sm:mr-1.5" aria-hidden="true" />
+            <span className="hidden sm:inline">Ver chat</span>
           </Button>
         </div>
       </CardContent>
@@ -1920,7 +1920,7 @@ function LeadDrawer({
       >
         <div className="flex items-center gap-2 border-b border-border p-4">
           <div className="min-w-0 flex-1">
-            <p className="truncate font-medium">{lead.name || "Sin nombre"}</p>
+            <p className="line-clamp-2 break-words font-medium leading-snug">{lead.name || "Sin nombre"}</p>
             <div className="text-xs text-muted-foreground">
               <PhoneWithCopy phone={lead.phone} />
             </div>
@@ -1937,8 +1937,15 @@ function LeadDrawer({
               variant={pedidoEn === "icomfly" ? "outline" : "default"}
               onClick={() => setPedidoEn((v) => (v === "icomfly" ? null : "icomfly"))}
             >
-              <ShoppingCart className="mr-2 h-4 w-4" />
-              {pedidoEn === "icomfly" ? "Ocultar pedido" : "Crear en iComfly"}
+              <ShoppingCart className="mr-1.5 h-4 w-4 sm:mr-2" aria-hidden="true" />
+              {pedidoEn === "icomfly" ? (
+                "Ocultar pedido"
+              ) : (
+                <>
+                  <span className="sm:hidden">Crear</span>
+                  <span className="hidden sm:inline">Crear en iComfly</span>
+                </>
+              )}
             </Button>
           )}
           {/* 24x24 reales y con anillo de foco: es la unica salida de un
