@@ -116,7 +116,8 @@ Inter variable servida desde el propio sitio, con `cv11`. Título de página 20 
 - **Tarjeta**: borde de 1 px, radio 8 px, padding 20 px, sombra casi nula. Nunca bordes de color para contar estado; nunca tarjetas dentro de tarjetas.
 - **Control segmentado** (filtros): carril hundido; la opción activa es blanca con sombra corta y anillo de 1 px; el color del estado vive en el punto.
 - **Pestañas**: 13,5 px/500, subrayado índigo de 2 px, en una sola línea (se desplazan dentro de su fila).
-- **Indicadores (KPI)**: tarjeta neutra; el valor puede tomar el color del estado y la comparación lleva flecha y texto. Cargando: barra gris, no "…".
+- **Indicadores (KPI)**: una sola tira con divisores (Panel y Gestión de pedidos), no tarjetas sueltas; el valor puede tomar el color del estado y la comparación lleva flecha de ícono y texto. Cargando: barra gris, no "…".
+- **Tablas**: encabezados de 12 px/500 en una línea, filas de 13 px con cifras tabulares, el pedido como enlace índigo; datos que van juntos (paquetería y guía, liquidación y archivo) comparten columna para que la tabla quepa en su tarjeta.
 - **Íconos**: lucide, 16 px, trazo 1,75.
 - **Menú desplegable / popover**: radio 10 px, borde, sombra con desplazamiento (no halos).
 
