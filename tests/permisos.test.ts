@@ -192,6 +192,11 @@ describe("inicio y pantallas", () => {
     expect(inicioDe(["finanzas"])).toBe("/admin/finance");
     expect(inicioDe([])).toBe("/cuenta");
   });
+  it("quien tiene el Panel entra al resumen de la tienda", () => {
+    expect(inicioDe(["panel", "leads", "pedidos"])).toBe("/");
+    expect(inicioDe(["panel", "marketing"])).toBe("/");
+    expect(inicioDe(["leads", "pedidos"])).toBe("/admin/leads");
+  });
 
   it("la navegacion solo muestra lo permitido", () => {
     expect(pantallasDe(["leads"]).map((p) => p.ruta)).toEqual(["/admin/leads"]);
