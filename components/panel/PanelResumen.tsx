@@ -30,6 +30,9 @@ import { DailyOrdersChart } from "./DailyOrdersChart";
 import { FunnelCard } from "./FunnelCard";
 import { AttentionList, type AttentionItem } from "./AttentionList";
 import { BlockNotice } from "./BlockNotice";
+import { TopProductsCard } from "./TopProductsCard";
+import { StockAlertsCard } from "./StockAlertsCard";
+import { parseProductsResponse } from "@/lib/panel-productos-vista";
 
 const RANGE_KEY = "kairo:panel-periodo";
 const OPERACION: Permiso[] = ["pedidos", "finanzas"];
@@ -106,6 +109,11 @@ export function PanelResumen() {
     parseDailyResponse,
     opts(canOps)
   );
+  const products = useEndpoint(
+    ready ? q("/api/finance/kpis/products", { period: range, store: store.code }) : null,
+    parseProductsResponse,
+    opts(canOps)
+  );
   const incidents = useEndpoint(
     // status=pendiente solo achica la lista; los conteos y metricas son de toda la tienda.
     ready ? q("/api/incidents", { store: store.code, status: "pendiente" }) : null,
@@ -146,10 +154,12 @@ export function PanelResumen() {
   const compareText = kpiData ? comparisonSentence(kpiData.window?.compareLabel) : null;
   const cutoff = kpiData?.window?.cutoffLabel ?? null;
   const refreshing =
-    [kpis, daily, chartDaily, incidents, leads, dispatch].some((s) => s.status === "ready" && s.refreshing) ||
+    [kpis, daily, chartDaily, products, incidents, leads, dispatch].some((s) => s.status === "ready" && s.refreshing) ||
     (ready && kpis.status === "loading");
 
   const chartState = chartRange === range ? daily : chartDaily;
+  const productsFailure =
+    products.status === "sin_acceso" || products.status === "no_disponible" ? products.status : null;
   const singleDay = chartRange !== range;
 
   const attention: AttentionItem[] = [
@@ -281,6 +291,21 @@ export function PanelResumen() {
             funnel={kpiData ? buildFunnel(kpiData.current) : null}
             failure={kpis.status === "sin_acceso" || kpis.status === "no_disponible" ? kpis.status : null}
             refreshing={kpis.status === "ready" && kpis.refreshing}
+          />
+        </div>
+
+        <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+          <TopProductsCard
+            top={products.status === "ready" ? products.data.top : null}
+            failure={productsFailure}
+            refreshing={products.status === "ready" && products.refreshing}
+            periodPhrase={panelRangePhrase(range)}
+            hasComparison={Boolean(versus)}
+          />
+          <StockAlertsCard
+            stock={products.status === "ready" ? products.data.stock : null}
+            failure={productsFailure}
+            refreshing={products.status === "ready" && products.refreshing}
           />
         </div>
       </section>
