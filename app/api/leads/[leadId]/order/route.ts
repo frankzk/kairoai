@@ -1,3 +1,4 @@
+import { toFriendlyErrorMessage } from "@/lib/api-errors";
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody } from "@/lib/stores";
 import { getLead, markLeadWonByAdvisor, type LeadRecord } from "@/lib/leads";
@@ -96,8 +97,8 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
     }
     return NextResponse.json({error:"Destino de creación no disponible."},{status:403});
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error al crear el pedido";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // Un corte de la base (Cloudflare 52x) llega como pagina HTML: nunca se muestra cruda.
+    return NextResponse.json({ error: toFriendlyErrorMessage(err, "Error al crear el pedido") }, { status: 500 });
   }
 }
 
@@ -175,7 +176,7 @@ async function crearEnIcomfly(ctx: {
       }));
       manual = buildManualOrder(pedidoLead, lines, externalStoreId, body.request_id!);
     } catch (error) {
-      return NextResponse.json({error: error instanceof Error ? error.message : "No se pudieron vincular los productos de iComfly."}, {status:422});
+      return NextResponse.json({error: toFriendlyErrorMessage(error, "No se pudieron vincular los productos de iComfly.")}, {status:422});
     }
   }
   const args = manual ? manual.body : argumentosCrearPedido(pedidoLead, productos);
