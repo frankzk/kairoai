@@ -355,12 +355,14 @@ export function cumple(exige: Exigencia, permisos: readonly Permiso[]): boolean 
 }
 
 /** Pantallas, en el orden en que se ofrecen como inicio. */
+// El orden decide el inicio (inicioDe): quien tiene el Panel (resumen de la
+// tienda) entra ahí; una asesora sin ese permiso entra a Leads.
 export const PANTALLAS: Array<{ ruta: string; label: string; exige: Permiso[] }> = [
+  { ruta: "/", label: "Panel", exige: ["panel"] },
   { ruta: "/admin/leads", label: "Leads", exige: LEADS },
   { ruta: "/admin/incidencias", label: "Novedades", exige: ["novedades"] },
   { ruta: "/admin/finance", label: "Gestión", exige: OPERACION },
   { ruta: "/admin/marketing", label: "Marketing", exige: ["marketing"] },
-  { ruta: "/", label: "Panel", exige: ["panel"] },
   { ruta: "/admin/upsell", label: "Upsells", exige: ["upsell"] },
   { ruta: "/admin/settings", label: "Configuración", exige: ["config"] },
   { ruta: "/admin/usuarios", label: "Usuarios", exige: ["usuarios"] },
