@@ -31,6 +31,7 @@ import { FunnelCard } from "./FunnelCard";
 import { AttentionList, type AttentionItem } from "./AttentionList";
 import { BlockNotice } from "./BlockNotice";
 import { TopProductsCard } from "./TopProductsCard";
+import { CourierComparison } from "./CourierComparison";
 import { StockAlertsCard } from "./StockAlertsCard";
 import { parseProductsResponse } from "@/lib/panel-productos-vista";
 
@@ -293,6 +294,14 @@ export function PanelResumen() {
             refreshing={kpis.status === "ready" && kpis.refreshing}
           />
         </div>
+
+        <CourierComparison
+          rows={kpiData ? kpiData.couriers : null}
+          failure={kpis.status === "sin_acceso" || kpis.status === "no_disponible" ? kpis.status : null}
+          refreshing={kpis.status === "ready" && kpis.refreshing}
+          periodPhrase={panelRangePhrase(range)}
+          maturing={Boolean(kpiData?.window?.maturing)}
+        />
 
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">
           <TopProductsCard

@@ -1,3 +1,4 @@
+import { buildCourierComparison, type CourierComparisonRow } from "./panel-couriers";
 // Panel (inicio): periodos, metricas comparadas y embudo de la tienda elegida.
 //
 // Modulo puro, sin red ni React: toma lo que YA devuelven /api/finance/kpis
@@ -383,6 +384,8 @@ export interface PanelKpisResponse {
   current: PanelOpMetrics;
   previous: PanelOpMetrics | null;
   window: Pick<KpiWindow, "prevStart" | "prevEnd" | "compareLabel" | "cutoffLabel" | "maturing"> | null;
+  /** Comparativo por transportadora (courierPerformance); [] si no vino. */
+  couriers: CourierComparisonRow[];
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -396,6 +399,7 @@ export function parseKpisResponse(json: unknown): PanelKpisResponse {
   return {
     current: json.current,
     previous: isMetrics(json.previous) ? json.previous : null,
+    couriers: buildCourierComparison(json.courierPerformance),
     window: w
       ? {
           prevStart: typeof w.prevStart === "number" ? w.prevStart : null,
