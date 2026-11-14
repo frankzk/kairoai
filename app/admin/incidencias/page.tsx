@@ -1433,6 +1433,17 @@ function DetailModal({
 
           {showResultView ? (
             <div className="space-y-3">
+              {/* El estado tambien se cambia aca: antes el selector quedaba
+                  escondido tras "Reabrir gestión" y parecia que habia que
+                  esperar a que venciera la fecha para marcar Resuelta o Perdida. */}
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="sr-only" htmlFor={`estado-${incident.id}`}>Estado</label>
+                <select id={`estado-${incident.id}`} className="h-8 rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
+                  value={incident.status} disabled={busy} onChange={(e) => onPatch({ status: e.target.value })}>
+                  {STATUS_ORDER.map((st) => <option key={st} value={st}>{STATUS_META[st].label}</option>)}
+                </select>
+                <span className="text-xs text-muted-foreground">Si se entregó o se perdió, cámbialo aquí sin esperar a que venza la fecha.</span>
+              </div>
               <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
                 <p className="text-sm font-medium flex items-center gap-2">
                   <CalendarClock className="h-4 w-4 text-muted-foreground" />
@@ -1447,9 +1458,14 @@ function DetailModal({
                 </div>
                 {fechaSinEntrega && <p className="text-[11px] text-rose-500">El courier no entrega los domingos: elige otro día.</p>}
               </div>
-              <Button variant="ghost" size="sm" disabled={busy} onClick={() => setReopened(true)}>
-                Reabrir gestion
-              </Button>
+              <div className="space-y-1">
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => setReopened(true)}>
+                  Reabrir gestión
+                </Button>
+                <p className="text-[11px] text-muted-foreground">
+                  Muestra llamadas, reprogramar y cierre. Si la fecha vence sin entrega, Kairo la pasa sola a “Reprog. fallida”.
+                </p>
+              </div>
             </div>
           ) : (
           <>
