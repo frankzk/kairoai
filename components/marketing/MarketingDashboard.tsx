@@ -313,7 +313,7 @@ export default function MarketingDashboard() {
         <header className={s.header}>
           <div>
             <h1 className={s.title}>Marketing</h1>
-            <p className={`${s.muted} mt-1`}>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">
               {period
                 ? periodLabelText(period, marketingDate(), { withDate: true })
                 : "Preparando período"}{" "}
@@ -322,7 +322,7 @@ export default function MarketingDashboard() {
           </div>
           <div className={s.toolbar}>
             <label className={s.field}>
-              Período
+              <span className="sr-only">Período</span>
               <select
                 className={`${s.control} min-w-[165px]`}
                 value={preset}
@@ -729,14 +729,14 @@ export default function MarketingDashboard() {
               <>
                 <div className={`${s.toolbar} mb-6`}>
                   <button
-                    className={`${s.button} ${detailView === "campaigns" ? s.primary : ""}`}
+                    className={s.button}
                     aria-pressed={detailView === "campaigns"}
                     onClick={() => setDetailView("campaigns")}
                   >
                     Campañas y presupuesto
                   </button>
                   <button
-                    className={`${s.button} ${detailView === "products" ? s.primary : ""}`}
+                    className={s.button}
                     aria-pressed={detailView === "products"}
                     onClick={() => setDetailView("products")}
                   >
