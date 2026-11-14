@@ -187,6 +187,13 @@ function lineas(p: PedidoIcomflyCrudo, skus?: Map<string, string>): ProductLineI
     : [];
 }
 
+/** "1x Producto - Variante, 2x Otro" de un pedido crudo de iComfly (detalle de una novedad). */
+export function productosDePedidoIcomfly(p: PedidoIcomflyCrudo): string {
+  return lineas(p)
+    .map((l) => `${l.quantity}x ${l.title}`)
+    .join(", ");
+}
+
 export function pedidosDeIcomfly(
   crudos: PedidoIcomflyCrudo[],
   shopifyOrders: Pick<ShopifyOrderSummary, "name" | "order_number" | "tracking_number">[],

@@ -249,3 +249,19 @@ describe("el SKU de Shopify para el costo del producto", () => {
     expect(p.line_items[0].sku).toBe("cam-1");
   });
 });
+
+describe("productosDePedidoIcomfly", () => {
+  it("arma el texto de productos de una novedad con pedido de iComfly", async () => {
+    const { productosDePedidoIcomfly } = await import("@/lib/icomfly-pedidos");
+    expect(
+      productosDePedidoIcomfly({
+        items: [
+          { product_name: "BATANA OIL – Aceite de Batana", quantity: 1, variant_label: "60 ml" },
+          { product_name: "Gomitas de colágeno", quantity: 2 },
+        ],
+      } as never)
+    ).toBe("1x BATANA OIL – Aceite de Batana - 60 ml, 2x Gomitas de colágeno");
+    expect(productosDePedidoIcomfly({ product_name: "Retinol Celimax", quantity: "1" } as never)).toBe("1x Retinol Celimax");
+    expect(productosDePedidoIcomfly({} as never)).toBe("");
+  });
+});
