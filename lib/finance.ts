@@ -9,6 +9,7 @@ import { normalizeForzaGuide } from "./forza";
 import { planForzaSync, type ForzaOrderGuide, type ForzaTrackedGuide } from "./forza-sync-plan";
 import { isDeliveryRecheckDue, planMoovinSync } from "./moovin-sync-plan";
 import { normalizeMatchKey } from "./order-matching";
+import { fuenteDePedido, type Fuente } from "./pedido-fuente";
 import {
   deriveWynGroup,
   extractWynGuides,
@@ -2232,4 +2233,36 @@ export async function getRecentlyCheckedForzaGuides(
     if (page.length < pageSize) break;
   }
   return fresh;
+}
+
+/**
+ * Fuente (web, WhatsApp, Leads, manual) de los pedidos de iComfly creados desde
+ * `desde`, por id de iComfly y por numero de Shopify (los pedidos de antes del
+ * 28/10 viven en Shopify). Solo las columnas que hacen falta, paginado.
+ */
+export async function listFuentesPedidosIcomfly(
+  storeId: number,
+  desde: string
+): Promise<{ porIcomflyId: Map<string, Fuente>; porShopify: Map<string, Fuente> }> {
+  const pageSize = 1000;
+  const porIcomflyId = new Map<string, Fuente>();
+  const porShopify = new Map<string, Fuente>();
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await getDB()
+      .from("icomfly_order_payloads")
+      .select("icomfly_order_id,numero:payload->>order_number,canal:payload->>sales_channel,creo:payload->atribucion->creo->>nombre,shopify:payload->>shopify_display_number")
+      .eq("store_id", storeId)
+      .gte("payload->>created_at", desde)
+      .order("icomfly_order_id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`listFuentesPedidosIcomfly: ${error.message}`);
+    const page = (data ?? []) as unknown as Array<{ icomfly_order_id: string | number; numero: string | null; canal: string | null; creo: string | null; shopify: string | null }>;
+    for (const r of page) {
+      const fuente = fuenteDePedido({ orderNumber: r.numero, salesChannel: r.canal, creo: r.creo });
+      porIcomflyId.set(String(r.icomfly_order_id), fuente);
+      if (r.shopify) porShopify.set(normalizeMatchKey(r.shopify), fuente);
+    }
+    if (page.length < pageSize) break;
+  }
+  return { porIcomflyId, porShopify };
 }

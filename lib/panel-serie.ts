@@ -9,8 +9,13 @@
 // cifra que "Pedidos generados" de los KPIs, y los pedidos que no cuentan
 // (duplicados, lista negra, testeos...) quedan fuera de los dos.
 //
+// Cada dia tambien reparte los generados por fuente (web, WhatsApp, Leads,
+// manual; lib/pedido-fuente.ts) cuando la ruta sabe de donde vino cada fila.
+//
 // Modulo puro (sin base ni red): lo usa la ruta /api/finance/kpis/daily y se
 // prueba en tests/panel-serie.test.ts con una funcion de metricas falsa.
+
+import { fuentesVacias, type Fuente } from "./pedido-fuente";
 
 /** Lo unico que la serie necesita de OpMetrics (lib/finance-orders.ts). */
 export interface RowMetrics {
@@ -33,6 +38,8 @@ export interface PanelDay {
   annulled: number;
   /** Valor de los pedidos generados ese dia (moneda de la tienda). */
   value: number;
+  /** Generados de ese dia por fuente (suman `generated`). */
+  sources?: Record<Fuente, number>;
 }
 
 export interface PanelTotals {
@@ -128,13 +135,14 @@ export function buildPanelSeries<Row extends { shopify_created_at: string | null
   rows: Row[],
   window: PanelSeriesWindow,
   timeZone: string,
-  metricsOf: (row: Row) => RowMetrics
+  metricsOf: (row: Row) => RowMetrics,
+  sourceOf?: (row: Row) => Fuente
 ): PanelSeries {
   const key = dayKeyIn(timeZone);
   const days = new Map<string, PanelDay>(
     dayKeysBetween(window.curStart, window.curEnd, timeZone).map((date) => [
       date,
-      { date, generated: 0, confirmed: 0, dispatched: 0, delivered: 0, annulled: 0, value: 0 },
+      { date, generated: 0, confirmed: 0, dispatched: 0, delivered: 0, annulled: 0, value: 0, ...(sourceOf ? { sources: fuentesVacias() } : {}) },
     ])
   );
   const current = emptyTotals();
@@ -163,6 +171,7 @@ export function buildPanelSeries<Row extends { shopify_created_at: string | null
     day.delivered += m.delivered;
     day.annulled += m.annulled;
     if (m.ticket > 0) day.value += m.ticket;
+    if (sourceOf && day.sources) day.sources[sourceOf(row)] += m.generated;
   }
 
   return {
