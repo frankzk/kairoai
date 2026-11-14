@@ -41,7 +41,7 @@ const STATUS_META: Record<IncidentStatus, { label: string; variant: BadgeVariant
 
 const CATEGORY_LABELS: Record<IncidentCategory, string> = {
   fallo_entrega: "Fallo de entrega",
-  direccion_incorrecta: "Direccion incorrecta",
+  direccion_incorrecta: "Dirección incorrecta",
   cliente_no_responde: "Cliente no responde",
   cliente_rechaza: "Cliente rechaza",
   devuelto_origen: "Devuelto al origen",
@@ -65,7 +65,7 @@ const CATEGORY_ICONS: Record<IncidentCategory, LucideIcon> = {
 const EVENT_LABELS: Record<string, string> = {
   detectada: "Detectada", estado_cambiado: "Cambio de estado", categoria_cambiada: "Cambio de causa",
   nota: "Nota", llamada: "Llamada", reprogramada: "Reprogramada", no_llamar: "No volver a llamar",
-  accion_rts: "Devolucion (RTS)", accion_cancelar_shopify: "Cancelacion Shopify", descartada: "Descartada",
+  accion_rts: "Devolución (RTS)", accion_cancelar_shopify: "Cancelación Shopify", descartada: "Descartada",
 };
 
 const STATUS_ORDER: IncidentStatus[] = [
@@ -110,12 +110,20 @@ const currency = (n: number, store: FinanceStoreCode) =>
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString("es-CR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDay = (s: string | null) => (s ? s.slice(0, 10).split("-").reverse().join("/") : "—");
+// "2026-11-15" -> "15 nov" (fecha de calendario, sin zona horaria).
+const fmtDayShort = (s: string) => {
+  const [y, m, d] = s.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return s;
+  return new Intl.DateTimeFormat("es-CR", { day: "numeric", month: "short", timeZone: "UTC" })
+    .format(new Date(Date.UTC(y, m - 1, d)))
+    .replace(".", "");
+};
 
 // Edad de la novedad en horas + color: <3h normal, >=3h ambar, >=5h rojo.
 function incidentAge(createdAt: string): { label: string; tone: string } {
   const h = (Date.now() - Date.parse(createdAt)) / 3_600_000;
   const tone = h >= 5 ? "text-red-400" : h >= 3 ? "text-amber-400" : "text-muted-foreground";
-  return { label: `${Math.round(h)}h`, tone };
+  return { label: h < 48 ? `${Math.round(h)} h` : `${Math.floor(h / 24)} d`, tone };
 }
 
 const META_RESOLUCION = 50; // meta configurada de tasa de resolucion (%)
@@ -250,7 +258,7 @@ function EstadoCausasPanel({ exec, onVerTodas }: { exec: IncidentExecutiveStats 
                     <span className="w-10 text-right font-mono text-sm font-bold tabular-nums">{c.total}</span>
                     <span className="w-10 text-right font-mono text-xs tabular-nums text-muted-foreground">{Math.round(c.pct)}%</span>
                     <span className="w-16 text-right">
-                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${recTone}`}>{Math.round(c.recuperacion)}% rec.</span>
+                      <span className={`whitespace-nowrap rounded-[5px] px-1.5 py-0.5 text-xs font-medium leading-4 ${recTone}`}>{Math.round(c.recuperacion)}% rec.</span>
                     </span>
                   </div>
                 );
@@ -573,12 +581,12 @@ function FilterPill({ active, onClick, count, dot, activeClass, disabled, childr
       onClick={onClick}
       disabled={disabled}
       aria-pressed={active}
-      className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+      className={`inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-[5px] px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
         active
           ? (activeClass ?? SEGMENTO_ACTIVO)
           : disabled
             ? "text-muted-foreground/40 cursor-not-allowed"
-            : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+            : "text-muted-foreground hover:bg-card/70 hover:text-foreground"
       }`}
     >
       {dot && <span className={`h-1.5 w-1.5 rounded-full ${dot} ${disabled ? "opacity-40" : ""}`} />}
@@ -589,6 +597,25 @@ function FilterPill({ active, onClick, count, dot, activeClass, disabled, childr
         }`}>{count}</span>
       )}
     </button>
+  );
+}
+
+// Una fila de filtros: etiqueta a la izquierda y el carril segmentado. En
+// escritorio el carril envuelve; en telefono se desliza de lado dentro de su
+// fila (nunca estira la pagina).
+function FilaFiltro({ etiqueta, nota, angosta = false, children }: {
+  etiqueta: string; nota?: string; angosta?: boolean; children: ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-start sm:gap-3" role="group" aria-label={`Filtrar por ${etiqueta.toLowerCase()}`}>
+      <span className={`shrink-0 text-xs font-medium text-muted-foreground sm:pt-2 ${angosta ? "sm:w-auto" : "sm:w-[6.5rem]"}`}>{etiqueta}</span>
+      <div className="flex min-w-0 items-start gap-2">
+        <div className="flex min-w-0 max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-muted/60 p-0.5 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible [&>*]:shrink-0">
+          {children}
+        </div>
+        {nota && <span className="hidden self-center text-xs text-muted-foreground lg:inline">{nota}</span>}
+      </div>
+    </div>
   );
 }
 
@@ -916,38 +943,34 @@ export default function IncidenciasPage() {
       <TelefonoWeb />
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-border bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/75">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-3 sm:px-6">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="min-w-0">
-              <h1 className="text-xl font-semibold tracking-tight text-foreground">Novedades</h1>
-              <p className="text-[13px] text-muted-foreground">Entregas no realizadas · Gestión de incidencias</p>
-            </div>
+        <div className="container mx-auto flex items-start justify-between gap-3 px-4 py-4 sm:items-center sm:px-6">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Novedades</h1>
+            <p className="text-[13px] text-muted-foreground">
+              <span className="hidden sm:inline">Entregas no realizadas · </span>
+              {lastRun ? <>Detección {fmtDate(lastRun)}</> : "Gestión de incidencias"}
+              {trackingSync && (
+                <span
+                  className={trackingTone}
+                  title="Última sincronización del tracking del courier. Si está vieja, la detección puede no traer novedades nuevas."
+                >
+                  {" · "}{courierName} {fmtDate(trackingSync)}
+                </span>
+              )}
+            </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => fetchData()} className="gap-2">
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => fetchData()} className="gap-1.5" aria-label="Actualizar">
               <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Actualizar</span>
             </Button>
-            <div className="flex flex-col items-center">
-              <Button variant="outline" size="sm" onClick={detectar} disabled={busy} className="gap-2"
-                title="Actualiza el tracking del courier y luego detecta novedades">
-                {busy
-                  ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  : <Search className="h-3.5 w-3.5" />}
-                <span className="hidden sm:inline">{busy ? "Actualizando…" : "Detectar novedades"}</span>
-              </Button>
-              {lastRun && (
-                <span className="text-[11px] leading-tight text-muted-foreground mt-0.5">
-                  Actualizado {fmtDate(lastRun)}
-                </span>
-              )}
-              {trackingSync && (
-                <span className={`text-[11px] leading-tight ${trackingTone}`}
-                  title="Última sincronización del tracking del courier. Si está vieja, la detección puede no traer novedades nuevas.">
-                  {courierName} {fmtDate(trackingSync)}
-                </span>
-              )}
-            </div>
-            <Button size="sm" onClick={() => setShowNew(true)} className="gap-2">
+            <Button variant="outline" size="sm" onClick={detectar} disabled={busy} className="gap-1.5"
+              title="Actualiza el tracking del courier y luego detecta novedades" aria-label="Detectar novedades">
+              {busy
+                ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                : <Search className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">{busy ? "Actualizando…" : "Detectar novedades"}</span>
+            </Button>
+            <Button size="sm" onClick={() => setShowNew(true)} className="gap-1.5" aria-label="Nueva novedad">
               <Plus className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Nueva</span>
             </Button>
           </div>
@@ -985,113 +1008,92 @@ export default function IncidenciasPage() {
 
         {/* Filtros de la lista y su exportacion. El resumen superior es de la tienda. */}
         <Card>
-          <CardContent className="p-3 space-y-2">
-            <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filtrar por transportadora">
-              <span className="text-xs font-medium text-muted-foreground">Transportadora</span>
-              <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
-                <FilterPill active={courierFilter === ""} count={facetCounts.transportadora.all}
-                  onClick={() => setCourierFilter("")}>Todas</FilterPill>
-                {facetCounts.transportadora.options.map((courier) => (
-                  <FilterPill key={courier.key} active={courierFilter === courier.key} count={courier.count}
-                    disabled={courier.count === 0 && courierFilter !== courier.key}
-                    onClick={() => setCourierFilter(courierFilter === courier.key ? "" : courier.key)}>
-                    {courier.label}
+          <CardContent className="space-y-2.5 p-3 sm:p-4">
+            <FilaFiltro etiqueta="Transportadora" nota="Filtra la lista y su exportación.">
+              <FilterPill active={courierFilter === ""} count={facetCounts.transportadora.all}
+                onClick={() => setCourierFilter("")}>Todas</FilterPill>
+              {facetCounts.transportadora.options.map((courier) => (
+                <FilterPill key={courier.key} active={courierFilter === courier.key} count={courier.count}
+                  disabled={courier.count === 0 && courierFilter !== courier.key}
+                  onClick={() => setCourierFilter(courierFilter === courier.key ? "" : courier.key)}>
+                  {courier.label}
+                </FilterPill>
+              ))}
+            </FilaFiltro>
+            <FilaFiltro etiqueta="Estado">
+              <FilterPill active={statusFilter === ""} count={facetCounts.estado.all}
+                onClick={() => setStatusFilter("")}>Todas</FilterPill>
+              {STATUS_ORDER.map((s) => {
+                const c = facetCounts.estado.byStatus[s] ?? 0;
+                return (
+                  <FilterPill key={s} active={statusFilter === s} count={c}
+                    disabled={c === 0 && statusFilter !== s}
+                    dot={STATUS_COLOR[s].dot} activeClass={STATUS_COLOR[s].active}
+                    onClick={() => setStatusFilter(statusFilter === s ? "" : s)}>
+                    {STATUS_META[s].label}
                   </FilterPill>
-                ))}
-              </div>
-              <span className="text-[11px] text-muted-foreground">Filtra la lista y su exportación.</span>
-            </div>
-            {/* Fila 1: Estado (color por estado) + Intentos */}
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <span className="text-xs font-medium text-muted-foreground">Estado</span>
-                <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
-                  <FilterPill active={statusFilter === ""} count={facetCounts.estado.all}
-                    onClick={() => setStatusFilter("")}>Todas</FilterPill>
-                  {STATUS_ORDER.map((s) => {
-                    const c = facetCounts.estado.byStatus[s] ?? 0;
-                    return (
-                      <FilterPill key={s} active={statusFilter === s} count={c}
-                        disabled={c === 0 && statusFilter !== s}
-                        dot={STATUS_COLOR[s].dot} activeClass={STATUS_COLOR[s].active}
-                        onClick={() => setStatusFilter(statusFilter === s ? "" : s)}>
-                        {STATUS_META[s].label}
-                      </FilterPill>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <span className="text-xs font-medium text-muted-foreground">Llamadas</span>
-                <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
-                  <FilterPill active={intentosFilter === "todos"} count={facetCounts.intentos.todos}
-                    onClick={() => setIntentosFilter("todos")}>Todas</FilterPill>
-                  <FilterPill active={intentosFilter === "0"} count={facetCounts.intentos.cero}
-                    disabled={facetCounts.intentos.cero === 0 && intentosFilter !== "0"}
-                    onClick={() => setIntentosFilter("0")}>Sin llamadas</FilterPill>
-                  <FilterPill active={intentosFilter === "1"} count={facetCounts.intentos.uno}
-                    disabled={facetCounts.intentos.uno === 0 && intentosFilter !== "1"}
-                    onClick={() => setIntentosFilter("1")}>1 llamada</FilterPill>
-                  <FilterPill active={intentosFilter === "2mas"} count={facetCounts.intentos.dosMas}
-                    disabled={facetCounts.intentos.dosMas === 0 && intentosFilter !== "2mas"}
-                    onClick={() => setIntentosFilter("2mas")}>2+ llamadas</FilterPill>
-                </div>
-              </div>
-            </div>
-
-            {/* Fila 2: Causa + Edad */}
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <span className="text-xs font-medium text-muted-foreground">Causa</span>
-                <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
-                  <FilterPill active={categoryFilter === ""} count={facetCounts.causa.all}
-                    onClick={() => setCategoryFilter("")}>Todas</FilterPill>
-                  {Object.entries(CATEGORY_LABELS).map(([k, v]) => {
-                    const c = facetCounts.causa.byCategory[k as IncidentCategory] ?? 0;
-                    return (
-                      <FilterPill key={k} active={categoryFilter === k} count={c}
-                        disabled={c === 0 && categoryFilter !== k}
-                        onClick={() => setCategoryFilter(categoryFilter === k ? "" : k)}>{v}</FilterPill>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <span className="text-xs font-medium text-muted-foreground">Edad</span>
-                <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-1">
-                  <FilterPill active={edadFilter === "todos"} count={facetCounts.edad.todos}
-                    onClick={() => setEdadFilter("todos")}>Todos</FilterPill>
-                  <FilterPill active={edadFilter === "0a3"} count={facetCounts.edad.c0a3}
-                    disabled={facetCounts.edad.c0a3 === 0 && edadFilter !== "0a3"}
-                    onClick={() => setEdadFilter("0a3")}>0 a 3 h</FilterPill>
-                  <FilterPill active={edadFilter === "3a6"} count={facetCounts.edad.c3a6}
-                    disabled={facetCounts.edad.c3a6 === 0 && edadFilter !== "3a6"}
-                    onClick={() => setEdadFilter("3a6")}>3 a 6 h</FilterPill>
-                  <FilterPill active={edadFilter === "6mas"} count={facetCounts.edad.c6mas}
-                    disabled={facetCounts.edad.c6mas === 0 && edadFilter !== "6mas"}
-                    onClick={() => setEdadFilter("6mas")}>6+ h</FilterPill>
-                </div>
-              </div>
+                );
+              })}
+            </FilaFiltro>
+            <FilaFiltro etiqueta="Causa">
+              <FilterPill active={categoryFilter === ""} count={facetCounts.causa.all}
+                onClick={() => setCategoryFilter("")}>Todas</FilterPill>
+              {Object.entries(CATEGORY_LABELS).map(([k, v]) => {
+                const c = facetCounts.causa.byCategory[k as IncidentCategory] ?? 0;
+                return (
+                  <FilterPill key={k} active={categoryFilter === k} count={c}
+                    disabled={c === 0 && categoryFilter !== k}
+                    onClick={() => setCategoryFilter(categoryFilter === k ? "" : k)}>{v}</FilterPill>
+                );
+              })}
+            </FilaFiltro>
+            <div className="flex flex-col gap-2.5 xl:flex-row xl:gap-6">
+              <FilaFiltro etiqueta="Llamadas">
+                <FilterPill active={intentosFilter === "todos"} count={facetCounts.intentos.todos}
+                  onClick={() => setIntentosFilter("todos")}>Todas</FilterPill>
+                <FilterPill active={intentosFilter === "0"} count={facetCounts.intentos.cero}
+                  disabled={facetCounts.intentos.cero === 0 && intentosFilter !== "0"}
+                  onClick={() => setIntentosFilter("0")}>Sin llamadas</FilterPill>
+                <FilterPill active={intentosFilter === "1"} count={facetCounts.intentos.uno}
+                  disabled={facetCounts.intentos.uno === 0 && intentosFilter !== "1"}
+                  onClick={() => setIntentosFilter("1")}>1 llamada</FilterPill>
+                <FilterPill active={intentosFilter === "2mas"} count={facetCounts.intentos.dosMas}
+                  disabled={facetCounts.intentos.dosMas === 0 && intentosFilter !== "2mas"}
+                  onClick={() => setIntentosFilter("2mas")}>2+ llamadas</FilterPill>
+              </FilaFiltro>
+              <FilaFiltro etiqueta="Edad" angosta>
+                <FilterPill active={edadFilter === "todos"} count={facetCounts.edad.todos}
+                  onClick={() => setEdadFilter("todos")}>Todos</FilterPill>
+                <FilterPill active={edadFilter === "0a3"} count={facetCounts.edad.c0a3}
+                  disabled={facetCounts.edad.c0a3 === 0 && edadFilter !== "0a3"}
+                  onClick={() => setEdadFilter("0a3")}>0 a 3 h</FilterPill>
+                <FilterPill active={edadFilter === "3a6"} count={facetCounts.edad.c3a6}
+                  disabled={facetCounts.edad.c3a6 === 0 && edadFilter !== "3a6"}
+                  onClick={() => setEdadFilter("3a6")}>3 a 6 h</FilterPill>
+                <FilterPill active={edadFilter === "6mas"} count={facetCounts.edad.c6mas}
+                  disabled={facetCounts.edad.c6mas === 0 && edadFilter !== "6mas"}
+                  onClick={() => setEdadFilter("6mas")}>6+ h</FilterPill>
+              </FilaFiltro>
             </div>
 
             {/* Busqueda + exportar */}
-            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+            <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
               <div className="relative min-w-[180px] flex-1">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input className="pl-8 h-9" placeholder="Buscar pedido, guía o cliente…"
+                <Input className="pl-8" aria-label="Buscar novedad" placeholder="Buscar pedido, guía o cliente…"
                   value={search} onChange={(e) => setSearch(e.target.value)} />
               </div>
-              <Button variant={statusFilter === "sin_contestar" ? "default" : "outline"} size="sm" className="gap-2 h-9"
+              <Button variant={statusFilter === "sin_contestar" ? "default" : "outline"} size="sm" className="gap-1.5"
                 onClick={() => setStatusFilter(statusFilter === "sin_contestar" ? "" : "sin_contestar")}>
                 <CalendarClock className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Reintento fin del día</span>
               </Button>
-              <Button variant={showProductividad ? "default" : "outline"} size="sm" className="gap-2 h-9"
+              <Button variant={showProductividad ? "default" : "outline"} size="sm" className="gap-1.5"
                 onClick={() => setShowProductividad((v) => !v)} aria-expanded={showProductividad}
                 aria-controls="productividad-novedades"
                 title="Quién trabaja las novedades, por persona y por día">
                 <UserCheck className="h-3.5 w-3.5" /> Productividad
               </Button>
-              <Button variant="outline" size="sm" className="gap-2 h-9"
+              <Button variant="outline" size="sm" className="gap-1.5"
                 disabled={exporting || loading || !filtered.length} onClick={exportarExcel}
                 title="Descarga en Excel las novedades del filtro actual">
                 <Download className="h-3.5 w-3.5" />
@@ -1104,17 +1106,15 @@ export default function IncidenciasPage() {
         {/* Tabla */}
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
+            <table className="w-full min-w-[860px] text-[13px]">
+              <thead className="border-b border-border text-left text-xs text-muted-foreground">
                 <tr>
                   <SortTh label="Estado" sortK="estado" active={sortKey === "estado"} dir={sortDir} onSort={toggleSort} />
                   <SortTh label="Cliente" sortK="cliente" active={sortKey === "cliente"} dir={sortDir} onSort={toggleSort} />
-                  <SortTh label="Telefono" sortK="telefono" active={sortKey === "telefono"} dir={sortDir} onSort={toggleSort} />
-                  <SortTh label="Pedido" sortK="pedido" active={sortKey === "pedido"} dir={sortDir} onSort={toggleSort} />
-                  <SortTh label="Guia" sortK="guia" active={sortKey === "guia"} dir={sortDir} onSort={toggleSort} />
+                  <SortTh label="Pedido y guía" sortK="pedido" active={sortKey === "pedido"} dir={sortDir} onSort={toggleSort} />
                   <SortTh label="Causa" sortK="causa" active={sortKey === "causa"} dir={sortDir} onSort={toggleSort} />
                   <SortTh label="COD" sortK="cod" active={sortKey === "cod"} dir={sortDir} onSort={toggleSort} align="right" />
-                  <SortTh label="Llam." sortK="intentos" active={sortKey === "intentos"} dir={sortDir} onSort={toggleSort} align="center" />
+                  <SortTh label="Llamadas" sortK="intentos" active={sortKey === "intentos"} dir={sortDir} onSort={toggleSort} align="center" />
                   <SortTh label="Edad" sortK="edad" active={sortKey === "edad"} dir={sortDir} onSort={toggleSort} align="center" />
                   <SortTh label="Reprog." sortK="reprog" active={sortKey === "reprog"} dir={sortDir} onSort={toggleSort} />
                   <th className="px-3 py-2"></th>
@@ -1122,13 +1122,13 @@ export default function IncidenciasPage() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={11} className="px-3 py-10 text-center text-muted-foreground">
+                  <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">
                     <span className="inline-flex items-center gap-2">
                       <RefreshCw className="h-4 w-4 animate-spin" /> Cargando novedades…
                     </span>
                   </td></tr>
                 ) : shown.length === 0 ? (
-                  <tr><td colSpan={11} className="px-3 py-10 text-center text-muted-foreground">
+                  <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">
                     {incidents.length === 0 ? (
                       "No hay novedades. Usa “Detectar novedades” o crea una manual."
                     ) : (
@@ -1145,23 +1145,27 @@ export default function IncidenciasPage() {
                     const age = incidentAge(i.created_at);
                     const CausaIcon = CATEGORY_ICONS[i.category] ?? HelpCircle;
                     return (
-                    <tr key={i.id} className="border-t border-border/50 hover:bg-muted/20">
-                      <td className="px-3 py-2"><span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[i.status].badge}`}>{STATUS_META[i.status].label}</span></td>
-                      <td className="px-3 py-2">{i.customer_name || "—"}</td>
-                      <td className="px-3 py-2">{i.customer_phone || "—"}</td>
-                      <td className="px-3 py-2 font-mono text-xs">{i.order_name || "—"}</td>
-                      <td className="px-3 py-2 font-mono text-xs">{i.guide_number || "—"}</td>
-                      <td className="px-3 py-2 text-xs">
+                    <tr key={i.id} className="border-t border-border/60 transition-colors hover:bg-muted/40 [&>td]:px-3 [&>td]:py-2.5">
+                      <td className="whitespace-nowrap"><span className={`inline-flex items-center rounded-[5px] px-1.5 py-0.5 text-xs font-medium leading-4 ${STATUS_COLOR[i.status].badge}`}>{STATUS_META[i.status].label}</span></td>
+                      <td>
+                        <span className="block max-w-[220px] truncate text-foreground" title={i.customer_name || undefined}>{i.customer_name || "—"}</span>
+                        <span className="block text-xs tabular-nums text-muted-foreground">{i.customer_phone || "Sin teléfono"}</span>
+                      </td>
+                      <td className="whitespace-nowrap">
+                        <span className="block tabular-nums text-foreground">{i.order_name || "—"}</span>
+                        <span className="block text-xs tabular-nums text-muted-foreground">{i.guide_number ? `Guía ${i.guide_number}` : "Sin guía"}</span>
+                      </td>
+                      <td className="whitespace-nowrap">
                         <span className="inline-flex items-center gap-1.5">
                           <CausaIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                           {CATEGORY_LABELS[i.category]}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-right">{i.cod_amount ? currency(i.cod_amount, selectedStoreCode) : "—"}</td>
-                      <td className="px-3 py-2 text-center">{i.intentos_llamada || 0}</td>
-                      <td className="px-3 py-2 text-center"><span className={`tabular-nums ${age.tone}`}>{age.label}</span></td>
-                      <td className="px-3 py-2 text-xs">{i.reprogramada_para || "—"}</td>
-                      <td className="px-3 py-2 text-right">
+                      <td className="whitespace-nowrap text-right tabular-nums">{i.cod_amount ? currency(i.cod_amount, selectedStoreCode) : "—"}</td>
+                      <td className="text-center tabular-nums">{i.intentos_llamada || 0}</td>
+                      <td className="whitespace-nowrap text-center"><span className={`tabular-nums ${age.tone}`}>{age.label}</span></td>
+                      <td className="whitespace-nowrap tabular-nums text-muted-foreground">{i.reprogramada_para ? fmtDayShort(i.reprogramada_para) : "—"}</td>
+                      <td className="text-right">
                         <Button variant="outline" size="sm" onClick={() => openDetail(i)}>Gestionar</Button>
                       </td>
                     </tr>
@@ -1349,8 +1353,8 @@ function DetailModal({
           {/* Datos */}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
             <div><span className="text-muted-foreground">Cliente:</span> {incident.customer_name || "—"}</div>
-            <div><span className="text-muted-foreground">Telefono:</span> {incident.customer_phone || "—"}</div>
-            <div><span className="text-muted-foreground">Guia:</span> <span className="font-mono text-xs">{incident.guide_number || "—"}</span></div>
+            <div><span className="text-muted-foreground">Teléfono:</span> {incident.customer_phone || "—"}</div>
+            <div><span className="text-muted-foreground">Guía:</span> <span className="tabular-nums">{incident.guide_number || "—"}</span></div>
             <div><span className="text-muted-foreground">Courier:</span> {incident.courier || "—"}</div>
             <div><span className="text-muted-foreground">COD:</span> {incident.cod_amount ? currency(incident.cod_amount, storeCode) : "—"}</div>
             <div className="flex items-baseline gap-1.5">
@@ -1468,18 +1472,18 @@ function DetailModal({
               <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Llamada</span>
               <Button variant="outline" size="sm" disabled={busy} className={`gap-2 ${resaltada("contesto")}`}
                 onClick={() => registrarLlamada("contesto")}>
-                <Phone className="h-3.5 w-3.5 text-emerald-500" /> Contesto
+                <Phone className="h-3.5 w-3.5 text-emerald-500" /> Contestó
               </Button>
               <Button variant="outline" size="sm" disabled={busy} className={`gap-2 ${resaltada("no_contesto")}`}
                 onClick={() => registrarLlamada("no_contesto")}>
-                <PhoneOff className="h-3.5 w-3.5 text-rose-500" /> No contesto
+                <PhoneOff className="h-3.5 w-3.5 text-rose-500" /> No contestó
               </Button>
             </div>
             {sugerida && (
               <p className="pl-[5.5rem] text-[11px] text-violet-300">
                 {sugerida === "contesto"
-                  ? "La llamada fue contestada: confirma con «Contesto»."
-                  : "El cliente no contestó la llamada: confirma con «No contesto»."}
+                  ? "La llamada fue contestada: confirma con «Contestó»."
+                  : "El cliente no contestó la llamada: confirma con «No contestó»."}
               </p>
             )}
             <div className="flex flex-wrap gap-2 items-center">
@@ -1516,10 +1520,10 @@ function DetailModal({
               <Button variant="outline" size="sm" disabled={busy || incident.status !== "descartada"} className="gap-2"
                 title={incident.status === "descartada" ? undefined : "Pon el estado en “Descartada” para habilitar la devolución (RTS)."}
                 onClick={() => onAction("rts")}>
-                <Undo2 className="h-3.5 w-3.5" /> Devolucion (RTS)
+                <Undo2 className="h-3.5 w-3.5" /> Devolución (RTS)
               </Button>
-              <Button variant="ghost" size="sm" disabled={busy} className="gap-2" onClick={() => onAction("descartar")}>
-                Descartar
+              <Button variant="outline" size="sm" disabled={busy} className="gap-2 text-red-400 hover:text-red-400" onClick={() => onAction("descartar")}>
+                <X className="h-3.5 w-3.5" /> Descartar
               </Button>
             </div>
             {incident.status !== "descartada" && (
@@ -1717,7 +1721,7 @@ function NewModal({ storeCode, onClose, onCreated }: { storeCode: FinanceStoreCo
           <Input placeholder="Pedido (ej. #MCRC11518)" value={form.order_name} onChange={(e) => set("order_name", e.target.value)} />
           <Input placeholder="Numero de guia" value={form.guide_number} onChange={(e) => set("guide_number", e.target.value)} />
           <Input placeholder="Nombre del cliente" value={form.customer_name} onChange={(e) => set("customer_name", e.target.value)} />
-          <Input placeholder="Telefono" value={form.customer_phone} onChange={(e) => set("customer_phone", e.target.value)} />
+          <Input placeholder="Teléfono" value={form.customer_phone} onChange={(e) => set("customer_phone", e.target.value)} />
           <select className="h-8 w-full rounded-md border border-input bg-card px-3 text-[13.5px] shadow-[0_1px_1px_rgb(20_20_31/0.04)]"
             value={form.category} onChange={(e) => set("category", e.target.value)}>
             {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
