@@ -33,6 +33,8 @@ import { readKairoConfirmationIndex } from "@/lib/order-confirmations-db";
 import { findKairoConfirmation, type KairoConfirmation } from "@/lib/order-confirmations";
 import { buildAdvisorWorkIndex, matchesAdvisorActivity, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
 import { readAdvisorWorkActors, readAdvisorWorkData } from "@/lib/advisor-work-db";
+import { historialPorFila, type ClienteHistorial } from "@/lib/cliente-historial";
+import { normalizePhone, phoneConfigForStore } from "@/lib/phone-cr";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -106,7 +108,7 @@ function parsePositiveInt(value: string | null, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
 }
 
-type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork };
+type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork; cliente_historial?: ClienteHistorial };
 type ResolvedRow = { row: TrackableOrderRow; traces: SettlementTrace[]; status: string };
 
 function resolveRows(
@@ -337,11 +339,23 @@ export async function GET(req: NextRequest) {
     );
 
     const total = finalFiltered.length;
+    const phoneConfig = phoneConfigForStore(store.code);
     const attachTraces = (item: { row: TrackableOrderRow; traces: SettlementTrace[] }): RowWithTraces => {
       const estado = confirmacion?.estados.get(item.row.row_key);
       const local = confirmations && confirmedBy !== null ? findKairoConfirmation(confirmations, confirmedBy, item.row) : null;
       const work = workIndex?.byRow.get(item.row.row_key);
-      return { ...item.row, traces: item.traces, ...(estado ? { confirmacion: estado } : {}), ...(local ? { confirmation_kairo: local } : {}), ...(work ? { advisor_work: work } : {}) };
+      const historial = historiales?.get(item.row.row_key);
+      return { ...item.row, traces: item.traces, ...(estado ? { confirmacion: estado } : {}), ...(local ? { confirmation_kairo: local } : {}), ...(work ? { advisor_work: work } : {}), ...(historial ? { cliente_historial: historial } : {}) };
+    };
+    // Historial de entrega de cada cliente de la pagina (por telefono, sobre todo
+    // el dataset): solo se resuelven los pedidos de esos clientes.
+    let historiales: Map<string, ClienteHistorial> | null = null;
+    const conHistorial = (items: typeof finalFiltered) => {
+      const normalizar = (phone: string | null | undefined) => normalizePhone(phone, phoneConfig);
+      historiales = historialPorFila(items.map((i) => i.row), rows, normalizar, (cands) =>
+        resolveRows(cands, settlementTraceByKey).map(({ row, status }) => ({ row, status }))
+      );
+      return items;
     };
 
     if (exportAll) {
@@ -352,7 +366,7 @@ export async function GET(req: NextRequest) {
     }
 
     const startIdx = (page - 1) * pageSize;
-    const pageRows = finalFiltered.slice(startIdx, startIdx + pageSize).map(attachTraces);
+    const pageRows = conHistorial(finalFiltered.slice(startIdx, startIdx + pageSize)).map(attachTraces);
 
     // Guias no terminales para clientes antiguos que todavia usan ?guides=1.
     // La UI actual las recibe dentro de operationalMetadata en su primera carga.

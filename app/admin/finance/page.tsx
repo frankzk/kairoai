@@ -3,6 +3,8 @@ import { getKpiWindows, type KpiRange, type KpiWindow } from "@/lib/kpi-windows"
 import { buildKpiComparisonCopy, type KpiComparisonCopy } from "@/lib/kpi-comparison-copy";
 import { OperationalKpiCard } from "@/components/OperationalKpiCard";
 import { PlanillaTab } from "@/components/PlanillaTab";
+import { ClienteHistorialChip } from "@/components/ClienteHistorialChip";
+import type { ClienteHistorial } from "@/lib/cliente-historial";
 import type { ConfirmationActor, KairoConfirmation } from "@/lib/order-confirmations";
 import { workEvidenceLabel, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
 import {
@@ -396,7 +398,7 @@ const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
 // Las filas que devuelve /api/finance/orders ya traen las trazas de liquidacion
 // resueltas server-side, asi la tabla no necesita el settlementTraceByKey en
 // memoria.
-type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork };
+type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork; cliente_historial?: ClienteHistorial };
 type ConfirmacionCounts = { subetapa: Record<Subetapa | "all", number>; plazo: Record<Plazo | "all", number> };
 
 // Cola de confirmacion de los pendientes (lib/confirmacion.ts): el color dice
@@ -3272,6 +3274,7 @@ function OrdersTable({
                     {row.customer_name || "Sin nombre"}
                     {row.shopify_created_at ? ` · ${formatDate(row.shopify_created_at)}` : ""}
                   </p>
+                  {row.cliente_historial && <ClienteHistorialChip historial={row.cliente_historial} />}
                 </div>
                 <div className="flex flex-col items-end gap-0.5">
                   <StatusBadge status={trackingStatus === "incident" ? classifyIncident(row) : trackingStatus} label={getTrackingStatusLabel(row, traces, trackingStatus)} />
@@ -3440,6 +3443,7 @@ function OrdersTable({
                   ) : (
                     <span className="mt-0.5 block text-xs text-muted-foreground">Sin teléfono</span>
                   )}
+                  {row.cliente_historial && <ClienteHistorialChip historial={row.cliente_historial} />}
                 </td>
                 <td>
                   <div className="flex flex-col items-start gap-0.5">

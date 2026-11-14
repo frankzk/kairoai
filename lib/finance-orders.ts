@@ -361,7 +361,7 @@ function getForzaTrackingFromMap(
 export { getKpiWindows } from "./kpi-windows";
 export type { KpiRange, KpiCustomRange, KpiWindow } from "./kpi-windows";
 
-function isDispatchedStatus(status: string): boolean {
+export function isDispatchedStatus(status: string): boolean {
   return (
     status === "en_route" ||
     status === "en_route_retry" ||
