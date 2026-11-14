@@ -56,7 +56,7 @@ export function ClienteHistorialChip({ historial, className }: { historial: Clie
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-controls={panelId}
-        title={`${tono.label}. Toca para ver el detalle.`}
+        title={`${tono.label} (en esta tienda). Toca para ver el detalle.`}
         className={cn(
           "inline-flex max-w-[200px] items-center gap-1 rounded text-left text-xs font-medium tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           tono.cls
@@ -101,7 +101,7 @@ export function ClienteHistorialChip({ historial, className }: { historial: Clie
           )}
           <span className="mt-2 block text-muted-foreground">
             {historial.total === 0
-              ? "No hay otros pedidos con este teléfono."
+              ? "No hay otros pedidos con este teléfono en esta tienda."
               : `${plural(historial.total, "pedido anterior", "pedidos anteriores")}: ${[
                   plural(historial.entregados, "entregado", "entregados"),
                   plural(historial.devueltos, "devuelto", "devueltos"),
@@ -110,7 +110,7 @@ export function ClienteHistorialChip({ historial, className }: { historial: Clie
                   historial.cancelados ? plural(historial.cancelados, "cancelado", "cancelados") : "",
                 ].filter(Boolean).join(", ")}.`}
           </span>
-          <span className="mt-1 block text-[11px] text-muted-foreground">Cuenta los otros pedidos con el mismo teléfono, no este.</span>
+          <span className="mt-1 block text-[11px] text-muted-foreground">Solo pedidos de esta tienda con el mismo teléfono, sin contar este. iComfly puede mostrar más porque suma pedidos del cliente en otras tiendas.</span>
         </span>
       )}
     </span>
