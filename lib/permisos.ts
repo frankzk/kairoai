@@ -272,6 +272,8 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/finance/moovin-sync", exige: P(...OPERACION) },
   { ruta: "/api/finance/forza-sync", exige: P(...OPERACION) },
   { ruta: "/api/finance/wyn-sync", exige: P(...OPERACION) },
+  // Prueba de solo lectura: devoluciones de Boxful en ShipHero.
+  { ruta: "/api/finance/shiphero-devoluciones", exige: P("config") },
   { ruta: "/api/finance/moovin-tracking", exige: P(...OPERACION) },
   { ruta: "/api/finance/forza-tracking", exige: P(...OPERACION) },
   { ruta: "/api/finance/wyn-tracking", exige: P(...OPERACION) },
