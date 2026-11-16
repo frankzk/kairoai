@@ -34,8 +34,10 @@ export async function GET(req: NextRequest) {
   const scope = req.nextUrl.searchParams.get("scope") || "";
   const actions = scope === "actions";
   const sources = await getMarketingSources(period, process.env, fetch, {
-    details: !["overview", "basic", "report"].includes(scope),
-    daily: scope === "report" || actions || undefined,
+    details: !["overview", "basic", "report", "dias"].includes(scope),
+    // "dias": el gasto de cada campaña día por día, sin horas ni presupuestos
+    // (Resumen › Gasto por cuenta › Ver gasto por día).
+    daily: scope === "report" || scope === "dias" || actions || undefined,
     overview: scope === "overview",
     hourly: scope === "report",
     actions,
