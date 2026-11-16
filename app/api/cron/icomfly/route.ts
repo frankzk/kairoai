@@ -28,7 +28,7 @@ async function handle() {
     );
     const error = errorDeTienda(results.map((result, i) => ({ store: targets[i].store.code, result })));
     // La tabla de Gestion se rearma aca y no solo en finance-index (cada hora):
-    // un pedido nuevo de iComfly se ve en 30 minutos. Una tienda tras otra, y
+    // un pedido nuevo de iComfly se ve en 15 minutos (cron :05, :18, :35 y :48). Una tienda tras otra, y
     // un fallo de la tabla no tumba la sincronizacion.
     const tablas: Record<string, string> = {};
     for (const target of targets) {

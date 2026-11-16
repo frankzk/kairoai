@@ -2648,7 +2648,7 @@ function OrdersTab({
                 disabled={icomflySyncing}
                 onClick={syncIcomfly}
                 className="h-8 gap-1.5 px-2.5 text-xs"
-                title="Traer ya los pedidos nuevos de iComfly (solos llegan cada 30 minutos)"
+                title="Traer ya los pedidos nuevos de iComfly (solos llegan cada 15 minutos)"
                 aria-label="Sync iComfly"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${icomflySyncing ? "animate-spin" : ""}`} />

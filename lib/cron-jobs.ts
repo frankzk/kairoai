@@ -25,7 +25,7 @@ export interface CronJob {
 
 // Los pesados (mas de ~40 s) tienen cada uno su minuto en vercel.json, para no
 // cargar la base a la vez (el 02/11/2026 Postgres se reinicio por eso):
-//   :00 moovin (~3 min) · :05/:35 icomfly · :10 incidencias · :15 finance-index (~2 min)
+//   :00 moovin (~3 min) · :05/:18/:35/:48 icomfly (~1 min) · :10 incidencias · :15 finance-index (~2 min)
 //   :20/:45 wyn · :22 shopify-recheck-stale · :25 icomfly-historial · :30 forza (~2 min)
 //   :40 cargo-expreso · :50 c807 · :55 shopify-refresh
 // Livianos con minuto propio: :13 shiphero-inventario (4 veces al día) ·
@@ -43,7 +43,7 @@ export const CRON_JOBS: CronJob[] = [
   // tiempo 4.863 de 4.872 leads nuevos de Costa Rica quedaron sin conteo y el
   // tablero los mostraba a todos como "Solo saludó".
   { name: "leads-inbound", label: "Chat de los leads (Conversó)", everyMinutes: 10 },
-  { name: "icomfly", label: "Pedidos de Icomfly", everyMinutes: 30 },
+  { name: "icomfly", label: "Pedidos de Icomfly", everyMinutes: 15 },
   { name: "icomfly-historial", label: "Historial de Icomfly", everyMinutes: 60 },
   { name: "shopify-recent", label: "Pedidos nuevos de Shopify", everyMinutes: 10 },
   { name: "shopify-refresh", label: "Guías de Shopify", everyMinutes: 180 },
