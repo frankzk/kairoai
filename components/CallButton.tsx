@@ -39,6 +39,9 @@ export default function CallButton({
   const [vendedoraId, setVendedora] = useState<number | null>(null);
   const [calling, setCalling] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  // Hoy ya contesto el buzon de este numero (lib/telnyx-buzon.ts): aviso con
+  // "Llamar igual" en vez de marcar y pagar otro minuto.
+  const [buzon, setBuzon] = useState<string | null>(null);
 
   useEffect(() => {
     setVendedora(getVendedoraId());
@@ -83,6 +86,7 @@ export default function CallButton({
     }
     setCalling(true);
     setFeedback(null);
+    setBuzon(null);
     if ((await proveedorTelefoniaCliente()) === "telnyx") {
       await llamarConTelnyx(vendedoraId);
       return;
@@ -130,7 +134,7 @@ export default function CallButton({
     }
   }
 
-  async function llamarConTelnyx(vendedora: number) {
+  async function llamarConTelnyx(vendedora: number, forzar = false) {
     // Antes de pedir la llamada: si el telefono no puede marcar, no se crea
     // nada (si no, quedaba en el historial como "marcando" para siempre).
     const motivo = motivoParaNoLlamar(estadoTelefonoTelnyx());
@@ -150,9 +154,14 @@ export default function CallButton({
           lead_id: leadId,
           order_name: orderName,
           incident_id: incidentId,
+          ...(forzar ? { forzar: true } : {}),
         }),
       });
       const data = await res.json();
+      if (res.status === 409 && data.code === "buzon_hoy") {
+        setBuzon(String(data.error || "Hoy ya contestó el buzón de este número."));
+        return;
+      }
       if (!res.ok) throw new Error(data.error || "No se pudo iniciar la llamada");
       marcarTelnyx({
         destino: data.destino,
@@ -198,6 +207,33 @@ export default function CallButton({
             </option>
           ))}
         </select>
+      )}
+      {buzon && (
+        <div role="alert" className="max-w-[18rem] rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-right text-xs text-amber-300">
+          <p>{buzon}</p>
+          <div className="mt-1.5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setBuzon(null)}
+              className="rounded px-1.5 py-0.5 font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Entendido
+            </button>
+            <button
+              type="button"
+              disabled={calling || enCurso || !vendedoraId}
+              onClick={() => {
+                if (!vendedoraId) return;
+                setBuzon(null);
+                setCalling(true);
+                void llamarConTelnyx(vendedoraId, true);
+              }}
+              className="rounded px-1.5 py-0.5 font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            >
+              Llamar igual
+            </button>
+          </div>
+        </div>
       )}
       {feedback && (
         // El aviso de exito es una INSTRUCCION, no una confirmacion: si no se

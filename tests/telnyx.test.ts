@@ -71,6 +71,7 @@ vi.mock("@/lib/db", () => {
       eq: (col: string, v: unknown) => (filtros.push((f) => String(f[col]) === String(v)), api),
       is: (col: string, v: unknown) => (filtros.push((f) => (f[col] ?? null) === v), api),
       lt: (col: string, v: string) => (filtros.push((f) => String(f[col] ?? "") < v), api),
+      gte: (col: string, v: string) => (filtros.push((f) => String(f[col] ?? "") >= v), api),
       maybeSingle: () => ((una = true), api),
       limit: () => api,
       abortSignal: () => api,
@@ -312,6 +313,50 @@ describe("preparar la llamada", () => {
     expect(res.status).toBe(503);
     expect((await res.json()).error).toMatch(/TELNYX_CALLER_ID_CR/);
     expect(tablas.zadarma_calls ?? []).toEqual([]);
+  });
+});
+
+describe("rellamar al buzón", () => {
+  const hace = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+  const previa = (extra: Fila) => ({ store_id: 1, phone: "50663567891", provider: "telnyx", status: "answered", ...extra });
+
+  it("frena la llamada si hoy ya contestó el buzón (contestada y menos de 10 s)", async () => {
+    tablas.zadarma_calls = [previa({ id: 90, started_at: hace(5), answered_at: hace(5), ended_at: hace(5), duration_seconds: 4 })];
+    const res = await prepararLlamada();
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data).toMatchObject({ code: "buzon_hoy", segundos: 4 });
+    expect(data.error).toMatch(/buzón/);
+    expect(tablas.zadarma_calls).toHaveLength(1);
+  });
+
+  it("con «Llamar igual» sale aunque haya buzón", async () => {
+    tablas.zadarma_calls = [previa({ id: 90, started_at: hace(5), answered_at: hace(5), ended_at: hace(5), duration_seconds: 4 })];
+    const res = await prepararLlamada({ store: "mireva-cr", vendedora_id: 7, lead_id: 5, forzar: true });
+    expect(res.status).toBe(200);
+    expect(tablas.zadarma_calls).toHaveLength(2);
+  });
+
+  it("no frena por una conversación real, una no contestada o una de otro número", async () => {
+    tablas.zadarma_calls = [
+      previa({ id: 90, started_at: hace(5), answered_at: hace(5), ended_at: hace(4), duration_seconds: 45 }),
+      previa({ id: 91, started_at: hace(3), answered_at: null, ended_at: hace(3), duration_seconds: 0, status: "no_answer" }),
+      previa({ id: 92, phone: "50688881234", started_at: hace(2), answered_at: hace(2), ended_at: hace(2), duration_seconds: 3 }),
+    ];
+    expect((await prepararLlamada()).status).toBe(200);
+  });
+});
+
+describe("buzón: solo cuenta el día de hoy en la hora de la tienda", () => {
+  it("ignora la llamada corta de ayer", async () => {
+    const { buzonDeHoy } = await import("../lib/telnyx-buzon");
+    const ahora = new Date("2026-11-16T15:00:00Z"); // 9:00 en Costa Rica
+    const ayer = "2026-11-16T05:30:00Z"; // 23:30 del 15/11 en Costa Rica
+    const hoy = "2026-11-16T14:00:00Z";
+    const base = { answered_at: "x", ended_at: "x", duration_seconds: 3 };
+    expect(buzonDeHoy([{ ...base, started_at: ayer }], "America/Costa_Rica", ahora)).toBeNull();
+    expect(buzonDeHoy([{ ...base, started_at: hoy }], "America/Costa_Rica", ahora)).toEqual({ at: hoy, segundos: 3 });
+    expect(buzonDeHoy([{ ...base, started_at: hoy, duration_seconds: 10 }], "America/Costa_Rica", ahora)).toBeNull();
   });
 });
 
