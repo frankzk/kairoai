@@ -4,6 +4,7 @@ import { vendedoraEfectiva } from "@/lib/identidad";
 import { destinoDeLlamada, type PedidoDeLlamada } from "@/lib/llamada-destino";
 import { callerIdDeTienda, codificarEstadoCliente, getTelnyxConfig, variableCallerId } from "@/lib/telnyx";
 import { crearLlamadaTelnyx } from "@/lib/telnyx-calls";
+import { buzonHoyDeNumero, mensajeBuzon } from "@/lib/telnyx-buzon";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -11,6 +12,8 @@ export const maxDuration = 15;
 interface Body extends PedidoDeLlamada {
   store?: string;
   vendedora_id?: number;
+  /** La asesora eligio "Llamar igual" despues del aviso de buzon. */
+  forzar?: boolean;
 }
 
 /**
@@ -19,7 +22,8 @@ interface Body extends PedidoDeLlamada {
  * (@telnyx/webrtc) con estos datos; aqui no se llama a Telnyx.
  *
  * El numero sale de lib/llamada-destino.ts (de la base, no de la pantalla),
- * igual que con Zadarma.
+ * igual que con Zadarma. Si hoy ya contesto el buzon de ese numero responde
+ * 409 "buzon_hoy" y no prepara nada, salvo que venga forzar: true.
  */
 export async function POST(req: NextRequest) {
   const { config, faltan } = getTelnyxConfig();
@@ -46,6 +50,17 @@ export async function POST(req: NextRequest) {
   try {
     const destino = await destinoDeLlamada(store, body);
     if (!destino.ok) return NextResponse.json({ error: destino.error }, { status: destino.status });
+    // Hoy ya contesto el buzon: otra llamada se cobra como un minuto aunque
+    // vuelva a caer ahi (lib/telnyx-buzon.ts). Se frena salvo "Llamar igual".
+    if (body?.forzar !== true) {
+      const buzon = await buzonHoyDeNumero(store.id, destino.phone, store.timezone);
+      if (buzon) {
+        return NextResponse.json(
+          { error: mensajeBuzon(buzon, store.timezone), code: "buzon_hoy", at: buzon.at, segundos: buzon.segundos },
+          { status: 409 }
+        );
+      }
+    }
     const llamadaId = await crearLlamadaTelnyx({
       storeId: store.id,
       leadId: destino.leadId,
