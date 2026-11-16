@@ -50,6 +50,7 @@ import { useDecisions } from "./useDecisions";
 import { useInventoryDecision } from "./InventoryDecision";
 import { useAccountStatus } from "./AccountStatus";
 import type { MarketingChanges } from "./useMarketing";
+import { SpendByAccount } from "./SpendByAccount";
 import rs from "./resumen.module.css";
 
 type Resource<T> = { data: T | null; loading: boolean; error: string };
@@ -521,6 +522,8 @@ export function ResumenView({
           </p>
         )}
       </section>
+
+      <SpendByAccount sources={sources} loading={sourcesLoading} fx={fx} period={data.period} />
 
       <div className={rs.columns}>
         <section className={rs.card} aria-labelledby="resumen-decisiones">
