@@ -47,7 +47,7 @@
     },
     {
       "path": "/api/cron/icomfly",
-      "schedule": "5,35 * * * *"
+      "schedule": "5,18,35,48 * * * *"
     },
     {
       "path": "/api/cron/icomfly-historial",

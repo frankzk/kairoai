@@ -2,7 +2,7 @@
 // (lib/icomfly-comentarios.ts explica el formato).
 //
 // Se lee el pedido EN VIVO de iComfly al abrir la ficha (4 s como mucho) y, si
-// iComfly no responde, lo ultimo que trajo la sincronizacion (cada 30 min).
+// iComfly no responde, lo ultimo que trajo la sincronizacion (cada 15 min).
 
 import { getDB } from "@/lib/db";
 import { getIcomflyOrderDetalle } from "@/lib/icomfly";
