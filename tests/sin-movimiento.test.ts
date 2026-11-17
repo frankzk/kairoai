@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contarSinMovimiento, diasSinMovimiento, parseSinMovimiento, pasaSinMovimiento } from "@/lib/sin-movimiento";
+import { contarSinMovimiento, diasAlerta, diasSinMovimiento, parseSinMovimiento, pasaSinMovimiento } from "@/lib/sin-movimiento";
 
 describe("días sin movimiento de la transportadora", () => {
   const ahora = new Date("2026-11-17T18:00:00Z");
@@ -12,17 +12,28 @@ describe("días sin movimiento de la transportadora", () => {
     expect(diasSinMovimiento("no es fecha", ahora)).toBeNull();
   });
 
-  it("filtra +5 y +10 días y deja fuera las guías sin fecha", () => {
-    expect(pasaSinMovimiento(5, "5")).toBe(true);
-    expect(pasaSinMovimiento(4, "5")).toBe(false);
-    expect(pasaSinMovimiento(9, "10")).toBe(false);
-    expect(pasaSinMovimiento(null, "5")).toBe(false);
-    expect(pasaSinMovimiento(null, "all")).toBe(true);
-    expect(parseSinMovimiento("10")).toBe("10");
-    expect(parseSinMovimiento("7")).toBe("all");
+  it("cada etapa tiene sus cortes y su alerta", () => {
+    expect(diasAlerta("despacho_solicitado")).toBe(2);
+    expect(diasAlerta("recolectado")).toBe(3);
+    expect(diasAlerta("en_route")).toBe(5);
+    expect(diasAlerta("en_route_retry")).toBe(3);
+    expect(diasAlerta("delivered")).toBeNull();
+    expect(parseSinMovimiento("10", "en_route")).toBe(10);
+    expect(parseSinMovimiento("10", "recolectado")).toBe("all");
+    expect(parseSinMovimiento("7", "recolectado")).toBe(7);
+    expect(parseSinMovimiento("x", "en_route")).toBe("all");
   });
 
-  it("cuenta cada corte", () => {
-    expect(contarSinMovimiento([1, 5, 6, 12, null])).toEqual({ all: 5, "5": 3, "10": 1 });
+  it("filtra por el corte y deja fuera las guías sin fecha", () => {
+    expect(pasaSinMovimiento(5, 5)).toBe(true);
+    expect(pasaSinMovimiento(4, 5)).toBe(false);
+    expect(pasaSinMovimiento(null, 2)).toBe(false);
+    expect(pasaSinMovimiento(null, "all")).toBe(true);
+  });
+
+  it("cuenta cada corte de la etapa", () => {
+    expect(contarSinMovimiento([1, 5, 6, 12, null], "en_route")).toEqual({ all: 5, cortes: [{ dias: 5, count: 3 }, { dias: 10, count: 1 }] });
+    expect(contarSinMovimiento([1, 2, 4, null], "despacho_solicitado")).toEqual({ all: 4, cortes: [{ dias: 2, count: 2 }, { dias: 4, count: 1 }] });
+    expect(contarSinMovimiento([1], "pending")).toBeNull();
   });
 });

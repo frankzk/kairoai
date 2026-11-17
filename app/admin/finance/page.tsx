@@ -4,7 +4,7 @@ import { buildKpiComparisonCopy, type KpiComparisonCopy } from "@/lib/kpi-compar
 import { OperationalKpiCard } from "@/components/OperationalKpiCard";
 import { PlanillaTab } from "@/components/PlanillaTab";
 import { ClienteHistorialChip } from "@/components/ClienteHistorialChip";
-import { DIAS_ALERTA_SIN_MOVIMIENTO, diasSinMovimiento, type SinMovimientoCounts, type SinMovimientoFiltro } from "@/lib/sin-movimiento";
+import { diasAlerta, diasSinMovimiento, tieneCortes, type SinMovimientoCounts, type SinMovimientoFiltro } from "@/lib/sin-movimiento";
 import type { ClienteHistorial } from "@/lib/cliente-historial";
 import type { ConfirmationActor, KairoConfirmation } from "@/lib/order-confirmations";
 import { workEvidenceLabel, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
@@ -2109,8 +2109,8 @@ function OrdersTab({
       if (trackingFilter === "despacho_solicitado" && dispatchSubstageFilter !== "all") {
         params.set("dispatch_subetapa", dispatchSubstageFilter);
       }
-      if (trackingFilter === "en_route" && sinMovimientoFilter !== "all") {
-        params.set("sin_movimiento", sinMovimientoFilter);
+      if (tieneCortes(trackingFilter) && sinMovimientoFilter !== "all") {
+        params.set("sin_movimiento", String(sinMovimientoFilter));
       }
       for (const [key, value] of Object.entries(extra)) params.set(key, value);
       return params.toString();
@@ -2799,23 +2799,15 @@ function OrdersTab({
                         active={trackingFilter === valor}
                         onClick={() => setTrackingFilter(valor)}
                         dotClass={TRACKING_DOT_COLORS[valor]}
-                        abre={(valor === "pending" && !!confirmacionCounts) || (valor === "despacho_solicitado" && !!dispatchCounts) || (valor === "en_route" && !!movimientoCounts)}
+                        abre={(valor === "pending" && !!confirmacionCounts) || (valor === "despacho_solicitado" && !!dispatchCounts) || (tieneCortes(valor) && !!movimientoCounts)}
                       />
                     ))}
                   </GrupoChips>
                 ))}
               </div>
-              {trackingFilter === "en_route" && movimientoCounts && (
+              {tieneCortes(trackingFilter) && trackingFilter !== "despacho_solicitado" && movimientoCounts && (
                 <div role="group" aria-label="Días sin movimiento" className="-mt-px space-y-1.5 border border-border bg-seleccion px-3 py-2.5">
-                  <FilaFiltros etiqueta="Parada" sub>
-                    <GrupoChips>
-                      <FilterChip label="Todas" todos count={movimientoCounts.all} active={sinMovimientoFilter === "all"} onClick={() => setSinMovimientoFilter("all")} />
-                    </GrupoChips>
-                    <GrupoChips>
-                      <FilterChip label="+5 días sin movimiento" count={movimientoCounts["5"]} active={sinMovimientoFilter === "5"} onClick={() => setSinMovimientoFilter("5")} />
-                      <FilterChip label="+10 días" count={movimientoCounts["10"]} active={sinMovimientoFilter === "10"} onClick={() => setSinMovimientoFilter("10")} />
-                    </GrupoChips>
-                  </FilaFiltros>
+                  <FiltroParada counts={movimientoCounts} value={sinMovimientoFilter} onChange={setSinMovimientoFilter} />
                   <p className="text-[11px] text-muted-foreground">
                     Días desde el último evento que reportó la transportadora. Exporta la lista para reclamar las guías paradas.
                   </p>
@@ -2833,6 +2825,7 @@ function OrdersTab({
                       ))}
                     </GrupoChips>
                   </FilaFiltros>
+                  {movimientoCounts && <FiltroParada counts={movimientoCounts} value={sinMovimientoFilter} onChange={setSinMovimientoFilter} />}
                   <p className="text-[11px] text-muted-foreground">
                     {dispatchSubstageFilter === "all"
                       ? "Confirmados por solicitar, solicitudes sin guía y guías pendientes de recolección."
@@ -3161,14 +3154,39 @@ function DispatchWho({
   );
 }
 
+// Fila "Parada": Todas / +N dias sin movimiento / +M dias, con los cortes de la
+// etapa que vienen del servidor (movimientoCounts.cortes).
+function FiltroParada({ counts, value, onChange }: { counts: SinMovimientoCounts; value: SinMovimientoFiltro; onChange: (v: SinMovimientoFiltro) => void }) {
+  return (
+    <FilaFiltros etiqueta="Parada" sub>
+      <GrupoChips>
+        <FilterChip label="Todas" todos count={counts.all} active={value === "all"} onClick={() => onChange("all")} />
+      </GrupoChips>
+      <GrupoChips>
+        {counts.cortes.map((c, i) => (
+          <FilterChip
+            key={c.dias}
+            label={i === 0 ? `+${c.dias} días sin movimiento` : `+${c.dias} días`}
+            count={c.count}
+            active={value === c.dias}
+            onClick={() => onChange(c.dias)}
+          />
+        ))}
+      </GrupoChips>
+    </FilaFiltros>
+  );
+}
+
 // Dias desde el ultimo evento de la transportadora, solo en guias que siguen
-// en camino (no en entregados, devueltos ni anulados). En rojo desde 5 dias.
-const ESTADOS_EN_CAMINO = new Set(["en_route", "en_route_retry", "recolectado", "incident"]);
+// en camino (no en entregados, devueltos ni anulados).
+// El rojo depende de la etapa (lib/sin-movimiento.ts): 2 dias esperando
+// recoleccion ya es mucho; en ruta, 5.
+const ESTADOS_EN_CAMINO = new Set(["despacho_solicitado", "en_route", "en_route_retry", "recolectado", "incident"]);
 function DiasSinMovimiento({ row, status }: { row: OrderRowWithTraces; status: string }) {
   if (!ESTADOS_EN_CAMINO.has(status)) return null;
   const dias = diasSinMovimiento(row.courier_last_at);
   if (dias == null || dias < 1) return null;
-  const alerta = dias >= DIAS_ALERTA_SIN_MOVIMIENTO;
+  const alerta = dias >= (diasAlerta(status) ?? 5);
   return (
     <span
       className={alerta ? "text-[11px] font-medium text-rose-300" : "text-[11px] text-muted-foreground"}
