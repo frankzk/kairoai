@@ -26,6 +26,7 @@ import { isWynGuide, isWynIncidentCode, normalizeWynGuide } from "@/lib/wyn";
 import { isC807Guide, normalizeC807Guide } from "@/lib/c807";
 import { isCargoExpresoGuide, normalizeCargoExpresoGuide } from "@/lib/cargo-expreso";
 import { estadoFinalIcomfly } from "@/lib/icomfly-pedidos";
+import { wynTransitPhase } from "./wyn-phase";
 import {
   buildShopifyMatchIndex,
   extractExternalOrderCodesFromText,
@@ -96,6 +97,8 @@ export interface TrackableOrderRow {
   forza_group?: string;
   forza_incidents?: number;
   wyn_group?: string;
+  /** Fase de transito de WYN (lib/wyn-phase.ts): bodega, red de WYN o reparto. */
+  wyn_phase?: "despacho_solicitado" | "recolectado" | "en_route";
   wyn_incidents?: number;
   /** c807 Xpress / Cargo Expreso (courier_shipments): grupo y fallos de entrega. */
   envio_group?: string;
@@ -683,6 +686,7 @@ export function buildVisibleOrderRows(
       forza_group: deriveForzaGroup(forzaHit),
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       wyn_group: latestGroupOf(wynHit),
+      ...wynPhaseOf(wynHit),
       wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
       ...envioDe(guideNumber),
       customer_name: row.customer_name || shopify?.customer_name || "",
@@ -748,6 +752,7 @@ export function buildVisibleOrderRows(
       forza_group: deriveForzaGroup(forzaHit),
       forza_incidents: forzaHit ? countForzaIncidents(forzaHit.events) : undefined,
       wyn_group: latestGroupOf(wynHit),
+      ...wynPhaseOf(wynHit),
       wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
       ...envioDe(shopifyGuide),
       order_name: order.name,
@@ -1238,6 +1243,11 @@ export function deriveForzaGroup(row: ForzaTrackingRow | undefined): string {
   if (!row) return "";
   if (esDevolucionForza(row)) return "returned";
   return row.latest_group ?? "";
+}
+
+function wynPhaseOf(row: { latest_code?: string | null; latest_group?: string | null } | undefined) {
+  const phase = row ? wynTransitPhase(row.latest_code, row.latest_group) : null;
+  return phase ? { wyn_phase: phase } : {};
 }
 
 // WYN guarda su grupo ya reclasificado (toWynTrackingRow); no lleva la regla de
