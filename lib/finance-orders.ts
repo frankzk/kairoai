@@ -138,6 +138,8 @@ export interface TrackableOrderRow {
   anulacion_excluida?: boolean;
   /** Estado del pedido hoy en iComfly ("Confirmada", "Enviada", "Pendiente"...); ver lib/icomfly-estado-venta.ts. */
   icomfly_estado?: string;
+  /** Id del pedido en iComfly (para su ultima nota en la lista de Pendientes). */
+  icomfly_id?: string;
 }
 
 export interface OpMetrics {

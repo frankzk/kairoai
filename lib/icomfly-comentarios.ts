@@ -88,3 +88,9 @@ export const MARCA_KAIRO = "Kairo ·";
 export function esNotaDeKairo(texto: string | null | undefined): boolean {
   return String(texto ?? "").trimStart().startsWith(MARCA_KAIRO);
 }
+
+/** El comentario mas reciente de la nota interna (el ultimo escrito), o null. */
+export function ultimoComentarioIcomfly(nota: unknown): ComentarioIcomfly | null {
+  const todos = leerComentariosIcomfly(nota);
+  return todos.length ? todos[todos.length - 1] : null;
+}
