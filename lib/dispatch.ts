@@ -396,6 +396,8 @@ export function mergeDispatchIntoTracking(
     shopify_financial_status?: string | null;
     icomfly_estado?: string | null;
     guide_number?: string | null;
+    /** Fase de WYN (lib/wyn-phase.ts): manda como la de Moovin. */
+    wyn_phase?: "despacho_solicitado" | "recolectado" | "en_route" | null;
   }
 ): string {
   // Anulado manda (replica isShopifyCancelled sin arrastrar finance-orders, que
@@ -416,6 +418,10 @@ export function mergeDispatchIntoTracking(
   ) {
     return "despacho_solicitado";
   }
+  // WYN: "Orden creada" sigue en la bodega (Esperando recoleccion), "En
+  // almacen intermedio"/"Recibido en centro de distribucion" ya esta en su red
+  // (Recolectado). Antes las dos caian en "En ruta".
+  if (row.wyn_phase) return row.wyn_phase;
   switch (dispatchState) {
     case "despacho_solicitado":
       return "despacho_solicitado";
