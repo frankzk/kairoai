@@ -34,6 +34,9 @@ import { findKairoConfirmation, type KairoConfirmation } from "@/lib/order-confi
 import { buildAdvisorWorkIndex, matchesAdvisorActivity, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
 import { readAdvisorWorkActors, readAdvisorWorkData } from "@/lib/advisor-work-db";
 import { historialPorFila, type ClienteHistorial } from "@/lib/cliente-historial";
+import { contarEstadosIcomfly, pasaEstadoIcomfly, type EstadoIcomflyCount } from "@/lib/icomfly-estado-lista";
+import { ultimasNotasIcomfly } from "@/lib/icomfly-notas-lista-db";
+import type { ComentarioIcomfly } from "@/lib/icomfly-comentarios";
 import { contarSinMovimiento, diasSinMovimiento, parseSinMovimiento, pasaSinMovimiento, tieneCortes, type SinMovimientoCounts } from "@/lib/sin-movimiento";
 import { normalizePhone, phoneConfigForStore } from "@/lib/phone-cr";
 
@@ -109,7 +112,7 @@ function parsePositiveInt(value: string | null, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
 }
 
-type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork; cliente_historial?: ClienteHistorial };
+type RowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork; cliente_historial?: ClienteHistorial; icomfly_nota?: ComentarioIcomfly };
 type ResolvedRow = { row: TrackableOrderRow; traces: SettlementTrace[]; status: string };
 
 function resolveRows(
@@ -254,6 +257,7 @@ export async function GET(req: NextRequest) {
   const plazoFilter = parsePlazo(params.get("plazo"));
   const dispatchSubstageFilter = parseDispatchSubstage(params.get("dispatch_subetapa"));
   const sinMovimiento = parseSinMovimiento(params.get("sin_movimiento"), trackingFilter);
+  const estadoIcomflyFiltro = (params.get("estado_icomfly") || "").trim().slice(0, 120);
   const period = parsePeriod(params.get("period"));
   const month = (params.get("month") || "").trim();
   const startDate = (params.get("start") || "").trim();
@@ -321,6 +325,13 @@ export async function GET(req: NextRequest) {
     const confirmacion =
       trackingFilter === "pending" ? await aplicarConfirmacion(porEstado, store, subetapaFilter, plazoFilter, now) : null;
     let trackingFiltered = confirmacion ? confirmacion.filtrados : porEstado;
+    // Pendientes: estado de hoy en iComfly ("Comprar Después", "Modificar
+    // Dirección"...), con su conteo y filtro (lib/icomfly-estado-lista.ts).
+    let estadosIcomfly: EstadoIcomflyCount[] | null = null;
+    if (trackingFilter === "pending") {
+      estadosIcomfly = contarEstadosIcomfly(trackingFiltered.map((item) => item.row));
+      if (estadoIcomflyFiltro) trackingFiltered = trackingFiltered.filter((item) => pasaEstadoIcomfly(item.row, estadoIcomflyFiltro));
+    }
     let dispatchCounts: DispatchSubstageCounts | null = null;
     if (trackingFilter === "despacho_solicitado") {
       dispatchCounts = { all: porEstado.length, por_solicitar: 0, esperando_guia: 0, esperando_recoleccion: 0 };
@@ -359,11 +370,15 @@ export async function GET(req: NextRequest) {
       const local = confirmations && confirmedBy !== null ? findKairoConfirmation(confirmations, confirmedBy, item.row) : null;
       const work = workIndex?.byRow.get(item.row.row_key);
       const historial = historiales?.get(item.row.row_key);
-      return { ...item.row, traces: item.traces, ...(estado ? { confirmacion: estado } : {}), ...(local ? { confirmation_kairo: local } : {}), ...(work ? { advisor_work: work } : {}), ...(historial ? { cliente_historial: historial } : {}) };
+      const icomflyId = item.row.icomfly_id || /icomfly-(\d+)/.exec(item.row.row_key)?.[1] || "";
+      const nota = icomflyId ? notasIcomfly?.get(icomflyId) : undefined;
+      return { ...item.row, traces: item.traces, ...(estado ? { confirmacion: estado } : {}), ...(local ? { confirmation_kairo: local } : {}), ...(work ? { advisor_work: work } : {}), ...(historial ? { cliente_historial: historial } : {}), ...(nota ? { icomfly_nota: nota } : {}) };
     };
     // Historial de entrega de cada cliente de la pagina (por telefono, sobre todo
     // el dataset): solo se resuelven los pedidos de esos clientes.
     let historiales: Map<string, ClienteHistorial> | null = null;
+    // Ultima nota de iComfly de los pedidos de la pagina (no del export).
+    let notasIcomfly: Map<string, ComentarioIcomfly> | null = null;
     const conHistorial = (items: typeof finalFiltered) => {
       const normalizar = (phone: string | null | undefined) => normalizePhone(phone, phoneConfig);
       historiales = historialPorFila(items.map((i) => i.row), rows, normalizar, (cands) =>
@@ -380,7 +395,12 @@ export async function GET(req: NextRequest) {
     }
 
     const startIdx = (page - 1) * pageSize;
-    const pageRows = conHistorial(finalFiltered.slice(startIdx, startIdx + pageSize)).map(attachTraces);
+    const pagina = conHistorial(finalFiltered.slice(startIdx, startIdx + pageSize));
+    notasIcomfly = await ultimasNotasIcomfly(
+      store.id,
+      pagina.map((i) => i.row.icomfly_id || /icomfly-(\d+)/.exec(i.row.row_key)?.[1] || "")
+    ).catch(() => null);
+    const pageRows = pagina.map(attachTraces);
 
     // Guias no terminales para clientes antiguos que todavia usan ?guides=1.
     // La UI actual las recibe dentro de operationalMetadata en su primera carga.
@@ -411,6 +431,7 @@ export async function GET(req: NextRequest) {
       ...(confirmacion ? { confirmacionCounts: confirmacion.counts } : {}),
       ...(dispatchCounts ? { dispatchCounts } : {}),
       ...(movimientoCounts ? { movimientoCounts } : {}),
+      ...(estadosIcomfly ? { estadosIcomfly } : {}),
       ...(enRouteGuides ? { enRouteGuides } : {}),
       ...(operationalMetadata ? { operationalMetadata } : {}),
       ...(includeMetadata ? { confirmationActors: confirmations?.actors ?? [] } : {}),

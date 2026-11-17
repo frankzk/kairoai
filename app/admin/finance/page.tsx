@@ -5,6 +5,8 @@ import { OperationalKpiCard } from "@/components/OperationalKpiCard";
 import { PlanillaTab } from "@/components/PlanillaTab";
 import { ClienteHistorialChip } from "@/components/ClienteHistorialChip";
 import { diasAlerta, diasSinMovimiento, tieneCortes, type SinMovimientoCounts, type SinMovimientoFiltro } from "@/lib/sin-movimiento";
+import { claseEstadoIcomfly, etiquetaEstadoIcomfly, type EstadoIcomflyCount } from "@/lib/icomfly-estado-lista";
+import type { ComentarioIcomfly } from "@/lib/icomfly-comentarios";
 import type { ClienteHistorial } from "@/lib/cliente-historial";
 import type { ConfirmationActor, KairoConfirmation } from "@/lib/order-confirmations";
 import { workEvidenceLabel, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
@@ -209,6 +211,8 @@ interface TrackableOrderRow {
   wyn_group?: string;
   /** Ultimo evento que reporto la transportadora (ISO): dias sin movimiento. */
   courier_last_at?: string | null;
+  /** Estado de hoy en iComfly ("Comprar Después", "Modificar Dirección"...). */
+  icomfly_estado?: string;
   wyn_incidents?: number;
   envio_group?: string;
   envio_incidents?: number;
@@ -401,7 +405,7 @@ const ORDER_PERIOD_MODES: Array<{ value: OrderPeriodMode; label: string }> = [
 // Las filas que devuelve /api/finance/orders ya traen las trazas de liquidacion
 // resueltas server-side, asi la tabla no necesita el settlementTraceByKey en
 // memoria.
-type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork; cliente_historial?: ClienteHistorial };
+type OrderRowWithTraces = TrackableOrderRow & { traces: SettlementTrace[]; confirmacion?: EstadoConfirmacion; confirmation_kairo?: KairoConfirmation; advisor_work?: AdvisorWork; cliente_historial?: ClienteHistorial; icomfly_nota?: ComentarioIcomfly };
 type ConfirmacionCounts = { subetapa: Record<Subetapa | "all", number>; plazo: Record<Plazo | "all", number> };
 
 // Cola de confirmacion de los pendientes (lib/confirmacion.ts): el color dice
@@ -1988,6 +1992,9 @@ function OrdersTab({
   // Sub-filtros de Pendientes (cola de confirmacion).
   const [subetapaFilter, setSubetapaFilter] = useState<Subetapa | "all">("all");
   const [plazoFilter, setPlazoFilter] = useState<Plazo | "all">("all");
+  // Pendientes: estado de hoy en iComfly ("Comprar Después"...) y su conteo.
+  const [estadoIcomflyFilter, setEstadoIcomflyFilter] = useState("");
+  const [estadosIcomfly, setEstadosIcomfly] = useState<EstadoIcomflyCount[] | null>(null);
   const [confirmacionCounts, setConfirmacionCounts] = useState<ConfirmacionCounts | null>(null);
   const [dispatchSubstageFilter, setDispatchSubstageFilter] = useState<DispatchSubstageFilter>("all");
   const [dispatchCounts, setDispatchCounts] = useState<DispatchSubstageCounts | null>(null);
@@ -2047,7 +2054,7 @@ function OrdersTab({
   // Cualquier cambio de filtro vuelve a la primera pagina.
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, sinMovimientoFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code, confirmedBy, advisorActivity]);
+  }, [debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, estadoIcomflyFilter, dispatchSubstageFilter, sinMovimientoFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code, confirmedBy, advisorActivity]);
 
   // La subetapa y el plazo son solo de Pendientes: al salir de ahi se limpian.
   useEffect(() => {
@@ -2055,6 +2062,8 @@ function OrdersTab({
       setSubetapaFilter("all");
       setPlazoFilter("all");
       setConfirmacionCounts(null);
+      setEstadoIcomflyFilter("");
+      setEstadosIcomfly(null);
     }
   }, [trackingFilter]);
 
@@ -2105,6 +2114,7 @@ function OrdersTab({
       if (trackingFilter === "pending") {
         if (subetapaFilter !== "all") params.set("subetapa", subetapaFilter);
         if (plazoFilter !== "all") params.set("plazo", plazoFilter);
+        if (estadoIcomflyFilter) params.set("estado_icomfly", estadoIcomflyFilter);
       }
       if (trackingFilter === "despacho_solicitado" && dispatchSubstageFilter !== "all") {
         params.set("dispatch_subetapa", dispatchSubstageFilter);
@@ -2115,7 +2125,7 @@ function OrdersTab({
       for (const [key, value] of Object.entries(extra)) params.set(key, value);
       return params.toString();
     },
-    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, sinMovimientoFilter, confirmedBy, advisorActivity]
+    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, estadoIcomflyFilter, dispatchSubstageFilter, sinMovimientoFilter, confirmedBy, advisorActivity]
   );
 
   useEffect(() => {
@@ -2143,6 +2153,7 @@ function OrdersTab({
         setTrackingCounts((json.trackingCounts as Record<OrderTrackingFilter, number>) ?? EMPTY_TRACKING_COUNTS);
         setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
         setConfirmacionCounts((json.confirmacionCounts as ConfirmacionCounts | undefined) ?? null);
+        setEstadosIcomfly((json.estadosIcomfly as EstadoIcomflyCount[] | undefined) ?? null);
         setDispatchCounts((json.dispatchCounts as DispatchSubstageCounts | undefined) ?? null);
         setMovimientoCounts((json.movimientoCounts as SinMovimientoCounts | undefined) ?? null);
         if (Array.isArray(json.confirmationActors)) setConfirmationActors(json.confirmationActors as ConfirmationActor[]);
@@ -2343,6 +2354,7 @@ function OrdersTab({
     subetapaFilter !== "all" ||
     dispatchSubstageFilter !== "all" ||
     sinMovimientoFilter !== "all" ||
+    estadoIcomflyFilter !== "" ||
     plazoFilter !== "all";
   const chooseConfirmationActor = (value: string) => {
     setConfirmedBy(value); setTrackingFilter("all"); setSettlementFilter("all");
@@ -2367,6 +2379,7 @@ function OrdersTab({
     setSubetapaFilter("all");
     setDispatchSubstageFilter("all");
     setPlazoFilter("all");
+    setEstadoIcomflyFilter("");
   };
   const boxfulSinMatch = latestLogisticsImport?.unmatched_rows ?? 0;
   const tooltipShopify = `Shopify es la base del seguimiento: ${(shopifyCoverage?.count ?? shopifyOrderCount).toLocaleString("es-CR")} pedidos${
@@ -2886,6 +2899,30 @@ function OrdersTab({
                       ))}
                     </GrupoChips>
                   </FilaFiltros>
+                  {estadosIcomfly && estadosIcomfly.length > 0 && (
+                    <FilaFiltros etiqueta="En iComfly" sub>
+                      <GrupoChips>
+                        <FilterChip
+                          label="Todos"
+                          todos
+                          count={estadosIcomfly.reduce((n, e) => n + e.count, 0)}
+                          active={estadoIcomflyFilter === ""}
+                          onClick={() => setEstadoIcomflyFilter("")}
+                        />
+                      </GrupoChips>
+                      <GrupoChips nombre="Estados de iComfly">
+                        {estadosIcomfly.map((e) => (
+                          <FilterChip
+                            key={e.estado}
+                            label={etiquetaEstadoIcomfly(e.estado)}
+                            count={e.count}
+                            active={estadoIcomflyFilter === e.estado}
+                            onClick={() => setEstadoIcomflyFilter(e.estado)}
+                          />
+                        ))}
+                      </GrupoChips>
+                    </FilaFiltros>
+                  )}
                 </div>
               )}
             </div>
@@ -3212,6 +3249,37 @@ function AdvisorWorkLine({ work, tz }: { work: AdvisorWork; tz: string }) {
 
 // La cola de confirmacion de un pedido pendiente, debajo de su estado: que
 // toca (subetapa), cuando (plazo con su fecha) y cuanto se lo trabajo.
+// Pendientes: el estado de hoy en iComfly ("Comprar Después", "Modificar
+// Dirección"...) y su última nota, sin abrir el pedido (lib/icomfly-estado-lista.ts).
+function EstadoYNotaIcomfly({ row }: { row: OrderRowWithTraces }) {
+  const estado = (row.icomfly_estado ?? "").trim();
+  const mostrarEstado = Boolean(estado) && !/^pendiente$/i.test(estado);
+  const nota = row.icomfly_nota;
+  if (!mostrarEstado && !nota) return null;
+  const quien = [nota?.autor?.split(" ")[0], nota?.fecha ? formatNotaFecha(nota.fecha) : ""].filter(Boolean).join(" · ");
+  return (
+    <span className="mt-1 flex max-w-[230px] flex-col items-start gap-0.5">
+      {mostrarEstado && (
+        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 ${claseEstadoIcomfly(estado)}`} title="Estado del pedido en iComfly">
+          {etiquetaEstadoIcomfly(estado)}
+        </span>
+      )}
+      {nota && (
+        <span className="line-clamp-2 text-[11px] leading-4 text-muted-foreground" title={`${quien ? `${quien}: ` : ""}${nota.texto}`}>
+          {quien && <span className="font-medium text-foreground/80">{quien}: </span>}
+          {nota.texto}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** "2026-11-17 09:33" -> "17/11 09:33". */
+function formatNotaFecha(fecha: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}:\d{2})/.exec(fecha);
+  return m ? `${m[3]}/${m[2]} ${m[4]}` : fecha;
+}
+
 function LineaConfirmacion({ c, tz }: { c: EstadoConfirmacion; tz: string }) {
   const cuando = cuandoVence(c.vence, tz);
   const conDias = c.diasGestion > 0 && c.subetapa !== "confirmado";
@@ -3354,6 +3422,7 @@ function OrdersTable({
                   {row.advisor_work && <AdvisorWorkLine work={row.advisor_work} tz={tz} />}
                   {row.confirmation_kairo && <span className="text-[11px] text-muted-foreground" title={new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: tz })}>Confirmó en Kairo: {row.confirmation_kairo.staffName}</span>}
                   {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
+                  {trackingStatus === "pending" && <EstadoYNotaIcomfly row={row} />}
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
@@ -3529,6 +3598,7 @@ function OrdersTable({
                     {row.advisor_work && <AdvisorWorkLine work={row.advisor_work} tz={tz} />}
                     {row.confirmation_kairo && <span className="text-[11px] text-muted-foreground" title={new Date(row.confirmation_kairo.at).toLocaleString("es", { timeZone: tz })}>Confirmó en Kairo: {row.confirmation_kairo.staffName}</span>}
                     {row.confirmacion && <LineaConfirmacion c={row.confirmacion} tz={tz} />}
+                  {trackingStatus === "pending" && <EstadoYNotaIcomfly row={row} />}
                   </div>
                 </td>
                 <td className="whitespace-nowrap tabular-nums text-muted-foreground">
