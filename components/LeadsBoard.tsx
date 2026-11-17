@@ -668,6 +668,14 @@ export default function LeadsBoard() {
     () => (repartoActivo ? assignmentCounts(leads, chartNow) : null),
     [repartoActivo, leads, chartNow]
   );
+  // Los botones de Asignacion cuentan lo MISMO que las pestanas: con un rango
+  // de ultima interaccion, solo los leads de ese rango. Antes "Leonor 3.302"
+  // era todo lo abierto a su nombre aunque el filtro dijera 17/11 y Hoy 75.
+  // Productividad sigue recibiendo el total (asignados).
+  const asignadosVista = useMemo(
+    () => (repartoActivo ? (hasInteractionRange ? assignmentCounts(rangeFilteredLeads, chartNow) : asignados) : null),
+    [repartoActivo, hasInteractionRange, rangeFilteredLeads, chartNow, asignados]
+  );
   const nombreDe = useCallback(
     (userId: number) =>
       assignment?.users.find((u) => u.id === userId)?.nombre ?? `Usuario ${userId}`,
@@ -984,7 +992,9 @@ export default function LeadsBoard() {
   // primero en Hoy" y la cola subia 7. Ahora el contador ES la banda de Hoy, y
   // con el reloj del tablero, no con `Date.now()`.
   const overdue = useMemo(() => {
-    const vencidos = vencidosEnCola(filtrandoPorDuena ? leads.filter(matchesOwner) : leads, chartNow);
+    // Con rango de fecha, los vencidos del rango (como la banda de la lista).
+    const base = hasInteractionRange ? rangeFilteredLeads : leads;
+    const vencidos = vencidosEnCola(filtrandoPorDuena ? base.filter(matchesOwner) : base, chartNow);
     return {
       total: vencidos.length,
       // Prometio el cliente ("llamame el jueves"): es una cita, no un reintento.
@@ -992,7 +1002,7 @@ export default function LeadsBoard() {
       // Los agendo el sistema al marcar buzon / no responde / cuelga.
       reintentos: vencidos.filter((l) => isNoAnswerStatus(l.status)).length,
     };
-  }, [leads, chartNow, filtrandoPorDuena, matchesOwner]);
+  }, [leads, rangeFilteredLeads, hasInteractionRange, chartNow, filtrandoPorDuena, matchesOwner]);
 
   // Descartados solo aparece con el toggle; el resto son fijos.
   const tabs: BoardTab[] = showHidden ? [...TABS_VISIBLES, "descartado"] : TABS_VISIBLES;
@@ -1343,7 +1353,7 @@ export default function LeadsBoard() {
         {/* Reparto automatico encendido (Configuracion): de quien son los
             leads que se miran. Los numeros cuentan los leads abiertos (Hoy +
             Seguimiento) de cada una. La busqueda no se filtra por dueña. */}
-        {repartoActivo && asignados && !searching && (
+        {repartoActivo && asignadosVista && !searching && (
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <span className="text-xs text-muted-foreground">
               Asignación
@@ -1354,20 +1364,20 @@ export default function LeadsBoard() {
                   ? [{
                       key: "mine" as OwnerFilter,
                       label: "Mis leads",
-                      count: (asignados.porUsuario[assignment.me] ?? 0) + asignados.sinAsignar,
+                      count: (asignadosVista.porUsuario[assignment.me] ?? 0) + asignadosVista.sinAsignar,
                     }]
                   : []),
-                { key: "all" as OwnerFilter, label: "Todos", count: asignados.total },
+                { key: "all" as OwnerFilter, label: "Todos", count: asignadosVista.total },
                 ...(assignment?.team
                   ? [
-                      { key: "unassigned" as OwnerFilter, label: "Sin asignar", count: asignados.sinAsignar },
+                      { key: "unassigned" as OwnerFilter, label: "Sin asignar", count: asignadosVista.sinAsignar },
                       ...(assignment?.users ?? [])
                         .filter((u) => u.id !== assignment?.me)
-                        .filter((u) => (asignados.porUsuario[u.id] ?? 0) > 0 || ownerFilter === u.id)
+                        .filter((u) => (asignadosVista.porUsuario[u.id] ?? 0) > 0 || ownerFilter === u.id)
                         .map((u) => ({
                           key: u.id as OwnerFilter,
                           label: u.nombre,
-                          count: asignados.porUsuario[u.id] ?? 0,
+                          count: asignadosVista.porUsuario[u.id] ?? 0,
                         })),
                     ]
                   : []),

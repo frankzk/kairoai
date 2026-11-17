@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CalendarRange, RefreshCw, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import type { RecibidosAsesora } from "@/lib/leads-recibidos";
 import ProductivityTable, { type ProductivityTotals } from "@/components/ProductivityTable";
 import { localDateKey, RANGE_LABELS, type RangeKey } from "@/lib/leads-metrics";
 import { PRESENCE_OFFLINE_MS, PRESENCE_POLL_MS } from "@/lib/leads-presence";
@@ -23,6 +24,8 @@ export default function ProductivityPanel({ store, asignados = null }: {
   const today = localDateKey(new Date()) ?? undefined;
   const [rows, setRows] = useState<ConnectedProductivityRow[]>([]);
   const [totals, setTotals] = useState<ProductivityTotals | null>(null);
+  // Leads que el reparto le asigno a cada una en el periodo (lib/leads-recibidos.ts).
+  const [recibidos, setRecibidos] = useState<Record<number, RecibidosAsesora> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(0);
@@ -70,6 +73,7 @@ export default function ProductivityPanel({ store, asignados = null }: {
         currentRows.current = data.rows;
         setRows(data.rows);
         setTotals(data.totals ?? null);
+        setRecibidos(data.recibidos ?? null);
       }
       setError(null);
     } catch (err) {
@@ -142,7 +146,7 @@ export default function ProductivityPanel({ store, asignados = null }: {
           {rows.length ? <span>{rows.length} {rows.length === 1 ? "persona" : "personas"}</span> : null}
         </div>
         {error ? <p role="status" className="mb-3 text-xs text-amber-300">{error}</p> : null}
-        <ProductivityTable rows={rows} totals={totals} now={now} loading={loading} stale={stale} asignados={asignados} />
+        <ProductivityTable rows={rows} totals={totals} now={now} loading={loading} stale={stale} asignados={asignados} recibidos={recibidos} />
       </CardContent>
     </Card>
   );

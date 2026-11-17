@@ -1,5 +1,6 @@
 import { activityAgo, presenceStatus } from "@/lib/leads-presence";
 import type { ConnectedProductivityRow } from "@/lib/leads-productivity-presence";
+import type { RecibidosAsesora } from "@/lib/leads-recibidos";
 
 const STATES = {
   active: { label: "Activa", color: "oklch(0.76 0.17 163)" },
@@ -9,16 +10,29 @@ const STATES = {
 export interface ProductivityTotals { gestiones: number; leads: number; pedidos: number }
 const conversion = (orders: number | null, actions: number | null) => actions && orders !== null ? `${Math.round(orders / actions * 100)}%` : "–";
 
-export default function ProductivityTable({ rows, totals, now, loading, stale, asignados = null }: {
+export default function ProductivityTable({ rows, totals, now, loading, stale, asignados = null, recibidos = null }: {
   rows: ConnectedProductivityRow[]; totals: ProductivityTotals | null; now: number; loading: boolean; stale: boolean;
   /** Reparto de leads encendido: leads abiertos asignados ahora por usuario. Null = sin columna. */
   asignados?: Record<number, number> | null;
+  /** Leads que el reparto le asigno en el periodo, con cuantos trabajo / cerro / sin tocar. Null = sin columnas. */
+  recibidos?: Record<number, RecibidosAsesora> | null;
 }) {
   const conAsignados = asignados != null;
-  const columnas = conAsignados ? 8 : 7;
+  const conRecibidos = recibidos != null;
+  const columnas = 7 + (conAsignados ? 1 : 0) + (conRecibidos ? 4 : 0);
+  const totRecibidos = conRecibidos
+    ? rows.reduce(
+        (acc, r) => {
+          const x = recibidos[r.user_id];
+          if (x) { acc.recibidos += x.recibidos; acc.trabajados += x.trabajados; acc.cerrados += x.cerrados; acc.sinTocar += x.sinTocar; }
+          return acc;
+        },
+        { recibidos: 0, trabajados: 0, cerrados: 0, sinTocar: 0 }
+      )
+    : null;
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[680px] text-xs">
+      <table className="w-full min-w-[920px] text-xs">
         <caption className="sr-only">Productividad de personas conectadas a Leads durante el período seleccionado. El estado indica su presencia actual.</caption>
         <thead>
           <tr className="border-b border-border text-left text-[11px] text-muted-foreground">
@@ -26,6 +40,14 @@ export default function ProductivityTable({ rows, totals, now, loading, stale, a
             <th scope="col" className="py-2 pr-5 font-medium">Estado actual</th>
             <th scope="col" className="py-2 pr-5 font-medium">Última actividad del período</th>
             {conAsignados ? <th scope="col" className="py-2 pr-4 text-right font-medium" title="Leads abiertos (Hoy + Seguimiento) que el reparto automático le asignó, ahora">Asignados</th> : null}
+            {conRecibidos ? (
+              <>
+                <th scope="col" className="py-2 pr-4 text-right font-medium" title="Leads que el reparto automático le asignó en el período">Recibidos</th>
+                <th scope="col" className="py-2 pr-4 text-right font-medium" title="De los recibidos, con al menos una gestión suya desde que se los asignaron">Trabajados</th>
+                <th scope="col" className="py-2 pr-4 text-right font-medium" title="De los recibidos, los que hoy están en Cerrado (con pedido o cierre)">Cerrados</th>
+                <th scope="col" className="py-2 pr-4 text-right font-medium" title="De los recibidos, sin ninguna gestión suya">Sin tocar</th>
+              </>
+            ) : null}
             <th scope="col" className="py-2 pr-4 text-right font-medium">Gestiones</th>
             <th scope="col" className="py-2 pr-4 text-right font-medium">Leads</th>
             <th scope="col" className="py-2 pr-4 text-right font-medium">Pedidos</th>
@@ -58,6 +80,17 @@ export default function ProductivityTable({ rows, totals, now, loading, stale, a
                   {!row.period_last_activity_at && activity ? "Conexión " : ""}{activityAgo(activity, now)}
                 </td>
                 {conAsignados ? <td className="py-3 pr-4 text-right tabular-nums">{asignados[row.user_id] ?? 0}</td> : null}
+                {conRecibidos ? (() => {
+                  const x = recibidos[row.user_id];
+                  return (
+                    <>
+                      <td className="py-3 pr-4 text-right tabular-nums">{x?.recibidos ?? 0}</td>
+                      <td className="py-3 pr-4 text-right tabular-nums">{x?.trabajados ?? 0}</td>
+                      <td className="py-3 pr-4 text-right tabular-nums">{x?.cerrados ?? 0}</td>
+                      <td className={`py-3 pr-4 text-right tabular-nums ${x && x.sinTocar > 0 ? "font-semibold text-amber-300" : ""}`}>{x?.sinTocar ?? 0}</td>
+                    </>
+                  );
+                })() : null}
                 <td className="py-3 pr-4 text-right tabular-nums">{row.gestiones ?? "–"}</td>
                 <td className="py-3 pr-4 text-right tabular-nums">{row.leads ?? "–"}</td>
                 <td className="py-3 pr-4 text-right font-semibold tabular-nums">{row.pedidos ?? "–"}</td>
@@ -69,6 +102,14 @@ export default function ProductivityTable({ rows, totals, now, loading, stale, a
         {totals && rows.length > 0 ? <tfoot>
           <tr className="border-t border-border font-semibold">
             <th scope="row" colSpan={conAsignados ? 4 : 3} className="py-3 pr-4 text-left">Total del período</th>
+            {totRecibidos ? (
+              <>
+                <td className="py-3 pr-4 text-right tabular-nums">{totRecibidos.recibidos}</td>
+                <td className="py-3 pr-4 text-right tabular-nums">{totRecibidos.trabajados}</td>
+                <td className="py-3 pr-4 text-right tabular-nums">{totRecibidos.cerrados}</td>
+                <td className="py-3 pr-4 text-right tabular-nums">{totRecibidos.sinTocar}</td>
+              </>
+            ) : null}
             <td className="py-3 pr-4 text-right tabular-nums">{totals.gestiones}</td>
             <td className="py-3 pr-4 text-right tabular-nums">{totals.leads}</td>
             <td className="py-3 pr-4 text-right tabular-nums">{totals.pedidos}</td>

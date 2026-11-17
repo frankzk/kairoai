@@ -5,6 +5,7 @@ import { identidadActual } from "@/lib/identidad";
 import { veProductividadDelEquipo } from "@/lib/permisos";
 import { readPresence } from "@/lib/leads-presence-server";
 import { connectedProductivityRows } from "@/lib/leads-productivity-presence";
+import { leerRecibidosPorAsesora } from "@/lib/leads-recibidos-db";
 import { crDateRange, crRange, MAX_CUSTOM_RANGE_DAYS, parseRange, RANGE_LABELS } from "@/lib/leads-metrics";
 
 export const runtime = "nodejs";
@@ -49,9 +50,12 @@ export async function GET(req: NextRequest) {
   try {
     const { fromIso, toIso } = bounds;
     const presenceOnly = sp.get("presence_only") === "1";
-    const [todas, presence] = await Promise.all([
+    const [todas, presence, recibidosTodos] = await Promise.all([
       presenceOnly ? Promise.resolve([]) : getProductivity(store.id, fromIso, toIso),
       readPresence(yo, store.id, store.code, Date.now(), bounds),
+      // Leads que el reparto le asigno a cada una en el periodo (lib/leads-recibidos.ts).
+      // Opcional: si falla (o falta la migracion del reparto), la tabla sale sin esas columnas.
+      presenceOnly ? Promise.resolve(null) : leerRecibidosPorAsesora(store.id, fromIso, toIso).catch(() => null),
     ]);
     if (presenceOnly) return NextResponse.json({ rows: presence, server_time: new Date().toISOString() }, { headers: { "Cache-Control": "private, no-store" } });
     // Una asesora sin supervision ni "ver productividad del equipo" ve solo su
@@ -74,6 +78,11 @@ export async function GET(req: NextRequest) {
       to: toIso,
       rows,
       totals,
+      recibidos: recibidosTodos
+        ? soloPropia
+          ? Object.fromEntries(Object.entries(recibidosTodos).filter(([id]) => Number(id) === yo.id))
+          : recibidosTodos
+        : null,
       solo_propia: soloPropia,
       server_time: new Date().toISOString(),
     }, { headers: { "Cache-Control": "private, no-store" } });
