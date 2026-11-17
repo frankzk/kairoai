@@ -4,6 +4,7 @@ import { buildKpiComparisonCopy, type KpiComparisonCopy } from "@/lib/kpi-compar
 import { OperationalKpiCard } from "@/components/OperationalKpiCard";
 import { PlanillaTab } from "@/components/PlanillaTab";
 import { ClienteHistorialChip } from "@/components/ClienteHistorialChip";
+import { DIAS_ALERTA_SIN_MOVIMIENTO, diasSinMovimiento, type SinMovimientoCounts, type SinMovimientoFiltro } from "@/lib/sin-movimiento";
 import type { ClienteHistorial } from "@/lib/cliente-historial";
 import type { ConfirmationActor, KairoConfirmation } from "@/lib/order-confirmations";
 import { workEvidenceLabel, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
@@ -206,6 +207,8 @@ interface TrackableOrderRow {
   forza_group?: string;
   forza_incidents?: number;
   wyn_group?: string;
+  /** Ultimo evento que reporto la transportadora (ISO): dias sin movimiento. */
+  courier_last_at?: string | null;
   wyn_incidents?: number;
   envio_group?: string;
   envio_incidents?: number;
@@ -1988,6 +1991,9 @@ function OrdersTab({
   const [confirmacionCounts, setConfirmacionCounts] = useState<ConfirmacionCounts | null>(null);
   const [dispatchSubstageFilter, setDispatchSubstageFilter] = useState<DispatchSubstageFilter>("all");
   const [dispatchCounts, setDispatchCounts] = useState<DispatchSubstageCounts | null>(null);
+  // En ruta: guias sin movimiento de la transportadora (+5 / +10 dias).
+  const [sinMovimientoFilter, setSinMovimientoFilter] = useState<SinMovimientoFiltro>("all");
+  const [movimientoCounts, setMovimientoCounts] = useState<SinMovimientoCounts | null>(null);
   const [settlementFilter, setSettlementFilter] = useState<OrderSettlementFilter>("all");
   // En mobile los filtros (periodo/estado/liquidacion) se colapsan detras de un
   // boton para no saturar la vista; en desktop siempre se muestran.
@@ -2041,7 +2047,7 @@ function OrdersTab({
   // Cualquier cambio de filtro vuelve a la primera pagina.
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code, confirmedBy, advisorActivity]);
+  }, [debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, sinMovimientoFilter, periodMode, selectedOrderMonth, rangeStart, rangeEnd, selectedStore.code, confirmedBy, advisorActivity]);
 
   // La subetapa y el plazo son solo de Pendientes: al salir de ahi se limpian.
   useEffect(() => {
@@ -2067,6 +2073,8 @@ function OrdersTab({
     setUnmatchedAdvisorOrders(0);
     setDispatchCounts(null);
     setDispatchSubstageFilter("all");
+    setMovimientoCounts(null);
+    setSinMovimientoFilter("all");
   }, [selectedStore.code]);
 
   // A new advisor must never display the previous advisor's clients after a failed request.
@@ -2101,10 +2109,13 @@ function OrdersTab({
       if (trackingFilter === "despacho_solicitado" && dispatchSubstageFilter !== "all") {
         params.set("dispatch_subetapa", dispatchSubstageFilter);
       }
+      if (trackingFilter === "en_route" && sinMovimientoFilter !== "all") {
+        params.set("sin_movimiento", sinMovimientoFilter);
+      }
       for (const [key, value] of Object.entries(extra)) params.set(key, value);
       return params.toString();
     },
-    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, confirmedBy, advisorActivity]
+    [periodMode, selectedOrderMonth, rangeStart, rangeEnd, debouncedSearch, trackingFilter, settlementFilter, subetapaFilter, plazoFilter, dispatchSubstageFilter, sinMovimientoFilter, confirmedBy, advisorActivity]
   );
 
   useEffect(() => {
@@ -2133,6 +2144,7 @@ function OrdersTab({
         setSettlementCounts((json.settlementCounts as Record<OrderSettlementFilter, number>) ?? EMPTY_SETTLEMENT_COUNTS);
         setConfirmacionCounts((json.confirmacionCounts as ConfirmacionCounts | undefined) ?? null);
         setDispatchCounts((json.dispatchCounts as DispatchSubstageCounts | undefined) ?? null);
+        setMovimientoCounts((json.movimientoCounts as SinMovimientoCounts | undefined) ?? null);
         if (Array.isArray(json.confirmationActors)) setConfirmationActors(json.confirmationActors as ConfirmationActor[]);
         if (Array.isArray(json.advisorActors)) setConfirmationActors(json.advisorActors as ConfirmationActor[]);
         setUnmatchedAdvisorOrders(Number(json.unmatchedAdvisorOrders ?? 0));
@@ -2330,10 +2342,12 @@ function OrdersTab({
     settlementFilter !== "all" ||
     subetapaFilter !== "all" ||
     dispatchSubstageFilter !== "all" ||
+    sinMovimientoFilter !== "all" ||
     plazoFilter !== "all";
   const chooseConfirmationActor = (value: string) => {
     setConfirmedBy(value); setTrackingFilter("all"); setSettlementFilter("all");
     setDispatchSubstageFilter("all");
+    setSinMovimientoFilter("all");
     const url = new URL(window.location.href);
     url.searchParams.delete("confirmed_by");
     if (value) { url.searchParams.set("worked_by", value); url.searchParams.set("advisor_activity", advisorActivity); }
@@ -2475,6 +2489,11 @@ function OrdersTab({
           Apellido: row.last_name ?? "",
           Celular: row.phone ?? "",
           "Estado seguimiento": getTrackingStatusLabel(row, traces, status),
+          "Días sin movimiento": (() => {
+            const dias = diasSinMovimiento(row.courier_last_at);
+            return dias == null ? "" : dias;
+          })(),
+          "Último movimiento courier": row.courier_last_at ? new Date(row.courier_last_at).toLocaleString("es", { timeZone: selectedStore.timezone }) : "",
           "Subetapa de despacho": (() => {
             const substage = getDispatchSubstage(status, row);
             return substage ? dispatchSubstageLabel(substage) : "";
@@ -2780,12 +2799,28 @@ function OrdersTab({
                         active={trackingFilter === valor}
                         onClick={() => setTrackingFilter(valor)}
                         dotClass={TRACKING_DOT_COLORS[valor]}
-                        abre={(valor === "pending" && !!confirmacionCounts) || (valor === "despacho_solicitado" && !!dispatchCounts)}
+                        abre={(valor === "pending" && !!confirmacionCounts) || (valor === "despacho_solicitado" && !!dispatchCounts) || (valor === "en_route" && !!movimientoCounts)}
                       />
                     ))}
                   </GrupoChips>
                 ))}
               </div>
+              {trackingFilter === "en_route" && movimientoCounts && (
+                <div role="group" aria-label="Días sin movimiento" className="-mt-px space-y-1.5 border border-border bg-seleccion px-3 py-2.5">
+                  <FilaFiltros etiqueta="Parada" sub>
+                    <GrupoChips>
+                      <FilterChip label="Todas" todos count={movimientoCounts.all} active={sinMovimientoFilter === "all"} onClick={() => setSinMovimientoFilter("all")} />
+                    </GrupoChips>
+                    <GrupoChips>
+                      <FilterChip label="+5 días sin movimiento" count={movimientoCounts["5"]} active={sinMovimientoFilter === "5"} onClick={() => setSinMovimientoFilter("5")} />
+                      <FilterChip label="+10 días" count={movimientoCounts["10"]} active={sinMovimientoFilter === "10"} onClick={() => setSinMovimientoFilter("10")} />
+                    </GrupoChips>
+                  </FilaFiltros>
+                  <p className="text-[11px] text-muted-foreground">
+                    Días desde el último evento que reportó la transportadora. Exporta la lista para reclamar las guías paradas.
+                  </p>
+                </div>
+              )}
               {trackingFilter === "despacho_solicitado" && dispatchCounts && (
                 <div role="group" aria-label="Subetapas de despacho" className="-mt-px space-y-1.5 border border-border bg-seleccion px-3 py-2.5">
                   <FilaFiltros etiqueta="Subetapa" sub>
@@ -3126,6 +3161,24 @@ function DispatchWho({
   );
 }
 
+// Dias desde el ultimo evento de la transportadora, solo en guias que siguen
+// en camino (no en entregados, devueltos ni anulados). En rojo desde 5 dias.
+const ESTADOS_EN_CAMINO = new Set(["en_route", "en_route_retry", "recolectado", "incident"]);
+function DiasSinMovimiento({ row, status }: { row: OrderRowWithTraces; status: string }) {
+  if (!ESTADOS_EN_CAMINO.has(status)) return null;
+  const dias = diasSinMovimiento(row.courier_last_at);
+  if (dias == null || dias < 1) return null;
+  const alerta = dias >= DIAS_ALERTA_SIN_MOVIMIENTO;
+  return (
+    <span
+      className={alerta ? "text-[11px] font-medium text-rose-300" : "text-[11px] text-muted-foreground"}
+      title={`Último evento de la transportadora: ${new Date(row.courier_last_at!).toLocaleString("es")}`}
+    >
+      {dias === 1 ? "1 día" : `${dias} días`} sin movimiento
+    </span>
+  );
+}
+
 function LineaDespacho({ row, status }: { row: OrderRowWithTraces; status: string }) {
   const substage = getDispatchSubstage(status, row);
   if (!substage) return null;
@@ -3308,6 +3361,7 @@ function OrdersTable({
                     {!isWynCourier(displayCourier, row.guide_number) && isForzaCourier(displayCourier, selectedStore) && (
                       <ForzaTrackingButton guide={row.guide_number} cached={forza} />
                     )}
+                    <DiasSinMovimiento row={row} status={trackingStatus} />
                   </>
                 ) : (
                   <span className="text-muted-foreground">Sin guía</span>
@@ -3418,6 +3472,7 @@ function OrdersTable({
                       {!isWynCourier(displayCourier, row.guide_number) && isForzaCourier(displayCourier, selectedStore) && row.guide_number && (
                         <ForzaTrackingButton guide={row.guide_number} cached={forza} />
                       )}
+                      <DiasSinMovimiento row={row} status={trackingStatus} />
                     </div>
                   ) : (
                     <span className="text-muted-foreground">Sin guía</span>

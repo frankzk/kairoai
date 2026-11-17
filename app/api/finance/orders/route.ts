@@ -34,6 +34,7 @@ import { findKairoConfirmation, type KairoConfirmation } from "@/lib/order-confi
 import { buildAdvisorWorkIndex, matchesAdvisorActivity, type AdvisorActivity, type AdvisorWork } from "@/lib/advisor-work";
 import { readAdvisorWorkActors, readAdvisorWorkData } from "@/lib/advisor-work-db";
 import { historialPorFila, type ClienteHistorial } from "@/lib/cliente-historial";
+import { contarSinMovimiento, diasSinMovimiento, parseSinMovimiento, pasaSinMovimiento, type SinMovimientoCounts } from "@/lib/sin-movimiento";
 import { normalizePhone, phoneConfigForStore } from "@/lib/phone-cr";
 
 export const runtime = "nodejs";
@@ -252,6 +253,7 @@ export async function GET(req: NextRequest) {
   const subetapaFilter = parseSubetapa(params.get("subetapa"));
   const plazoFilter = parsePlazo(params.get("plazo"));
   const dispatchSubstageFilter = parseDispatchSubstage(params.get("dispatch_subetapa"));
+  const sinMovimiento = parseSinMovimiento(params.get("sin_movimiento"));
   const period = parsePeriod(params.get("period"));
   const month = (params.get("month") || "").trim();
   const startDate = (params.get("start") || "").trim();
@@ -331,6 +333,17 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // En ruta: dias sin movimiento de la transportadora (lib/sin-movimiento.ts).
+    let movimientoCounts: SinMovimientoCounts | null = null;
+    if (trackingFilter === "en_route") {
+      const ahora = new Date();
+      const dias = new Map(trackingFiltered.map((item) => [item.row.row_key, diasSinMovimiento(item.row.courier_last_at, ahora)]));
+      movimientoCounts = contarSinMovimiento(Array.from(dias.values()));
+      if (sinMovimiento !== "all") {
+        trackingFiltered = trackingFiltered.filter((item) => pasaSinMovimiento(dias.get(item.row.row_key) ?? null, sinMovimiento));
+      }
+    }
+
     const settlementCounts = countSettlements(trackingFiltered);
 
     // 4) Filtro de liquidacion -> conjunto final mostrado.
@@ -396,6 +409,7 @@ export async function GET(req: NextRequest) {
       settlementCounts,
       ...(confirmacion ? { confirmacionCounts: confirmacion.counts } : {}),
       ...(dispatchCounts ? { dispatchCounts } : {}),
+      ...(movimientoCounts ? { movimientoCounts } : {}),
       ...(enRouteGuides ? { enRouteGuides } : {}),
       ...(operationalMetadata ? { operationalMetadata } : {}),
       ...(includeMetadata ? { confirmationActors: confirmations?.actors ?? [] } : {}),

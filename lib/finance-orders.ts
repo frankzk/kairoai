@@ -97,6 +97,8 @@ export interface TrackableOrderRow {
   forza_group?: string;
   forza_incidents?: number;
   wyn_group?: string;
+  /** Ultimo evento que reporto la transportadora (ISO), para los dias sin movimiento. */
+  courier_last_at?: string | null;
   /** Fase de transito de WYN (lib/wyn-phase.ts): bodega, red de WYN o reparto. */
   wyn_phase?: "despacho_solicitado" | "recolectado" | "en_route";
   wyn_incidents?: number;
@@ -645,10 +647,11 @@ export function buildVisibleOrderRows(
   envioByGuide: Map<string, ShipmentTrackingRow> = new Map()
 ): TrackableOrderRow[] {
   // Rastreo de c807 Xpress / Cargo Expreso por guia (ya normalizada).
-  const envioDe = (guide: string): Pick<TrackableOrderRow, "envio_group" | "envio_incidents"> => {
+  const envioDe = (guide: string): Pick<TrackableOrderRow, "envio_group" | "envio_incidents" | "courier_last_at"> => {
     const hit = guide && (isC807Guide(guide) || isCargoExpresoGuide(guide)) ? envioByGuide.get(guide) : undefined;
     if (!hit) return {};
     return {
+      courier_last_at: hit.latest_at ?? null,
       envio_group: hit.latest_group ?? "",
       envio_incidents: (hit.events ?? []).filter((e) => e.group === "failed").length,
     };
@@ -689,6 +692,7 @@ export function buildVisibleOrderRows(
       ...wynPhaseOf(wynHit),
       wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
       ...envioDe(guideNumber),
+      ...ultimoMovimiento(wynHit ?? moovinHit ?? forzaHit),
       customer_name: row.customer_name || shopify?.customer_name || "",
       last_name: row.last_name || shopify?.last_name || "",
       phone: shopify?.phone || row.customer_phone || null,
@@ -755,6 +759,7 @@ export function buildVisibleOrderRows(
       ...wynPhaseOf(wynHit),
       wyn_incidents: wynHit ? countWynIncidents(wynHit.events) : undefined,
       ...envioDe(shopifyGuide),
+      ...ultimoMovimiento(wynHit ?? moovinHit ?? forzaHit),
       order_name: order.name,
       customer_name: order.customer_name,
       last_name: order.last_name || "",
@@ -1243,6 +1248,10 @@ export function deriveForzaGroup(row: ForzaTrackingRow | undefined): string {
   if (!row) return "";
   if (esDevolucionForza(row)) return "returned";
   return row.latest_group ?? "";
+}
+
+function ultimoMovimiento(hit: { latest_at?: string | null } | undefined) {
+  return hit?.latest_at ? { courier_last_at: hit.latest_at } : {};
 }
 
 function wynPhaseOf(row: { latest_code?: string | null; latest_group?: string | null } | undefined) {
