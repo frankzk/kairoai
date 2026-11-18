@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// Cron: foto del inventario de ShipHero (Mireva CR), 4 veces al día.
+// Cron: foto del inventario de ShipHero (Mireva CR), cada 15 minutos.
 // Idempotente por día: reemplaza solo la foto ShipHero de hoy. Sin conexión
 // (o sin la migración) no hace nada y responde ok.
 async function handle() {

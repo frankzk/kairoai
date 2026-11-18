@@ -79,7 +79,7 @@
     },
     {
       "path": "/api/cron/shiphero-inventario",
-      "schedule": "13 0,12,16,20 * * *"
+      "schedule": "13,28,43,58 * * * *"
     },
     {
       "path": "/api/cron/call-recordings",

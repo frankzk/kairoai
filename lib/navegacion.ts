@@ -16,6 +16,7 @@ export type IconoNav =
   | "leads"
   | "novedades"
   | "gestion"
+  | "inventario"
   | "marketing"
   | "upsell"
   | "config"
@@ -57,6 +58,7 @@ const GRUPO: Record<string, { grupo: GrupoNav["key"]; icono: IconoNav }> = {
   "/admin/leads": { grupo: "operacion", icono: "leads" },
   "/admin/incidencias": { grupo: "operacion", icono: "novedades" },
   "/admin/finance": { grupo: "operacion", icono: "gestion" },
+  "/admin/inventario": { grupo: "operacion", icono: "inventario" },
   "/admin/marketing": { grupo: "crecimiento", icono: "marketing" },
   "/admin/upsell": { grupo: "crecimiento", icono: "upsell" },
   "/admin/settings": { grupo: "ajustes", icono: "config" },
@@ -70,10 +72,13 @@ const GRUPOS: Array<Pick<GrupoNav, "key" | "label">> = [
 ];
 
 /** Orden dentro de Operación: el resumen primero. */
-const ORDEN = ["/", "/admin/leads", "/admin/incidencias", "/admin/finance"];
+const ORDEN = ["/", "/admin/leads", "/admin/incidencias", "/admin/finance", "/admin/inventario"];
 
 /** Marketing es solo de Mireva Costa Rica. */
 export const TIENDA_MARKETING = "mireva-cr";
+
+/** Pantallas que solo existen para Mireva Costa Rica (Marketing, y el inventario de ShipHero/Boxful). */
+const SOLO_CR = new Set(["/admin/marketing", "/admin/inventario"]);
 
 /**
  * Tiendas que la persona puede elegir, en el orden del selector: primero las
@@ -113,7 +118,7 @@ export function tiendasDe(yo: Persona): TiendaNav[] {
 
 /**
  * La tienda que se está viendo: una Kenku si la ruta es su pantalla; en
- * Marketing, Mireva Costa Rica; si no, la elegida (useSelectedStore).
+ * Marketing e Inventario, Mireva Costa Rica; si no, la elegida (useSelectedStore).
  */
 export function tiendaActual(
   tiendas: readonly TiendaNav[],
@@ -125,7 +130,7 @@ export function tiendaActual(
       t.ruta && (pathname === t.ruta || pathname.startsWith(`${t.ruta}/`)),
   );
   if (kenku) return kenku;
-  const code = pathname.startsWith("/admin/marketing")
+  const code = Array.from(SOLO_CR).some((r) => pathname.startsWith(r))
     ? TIENDA_MARKETING
     : elegida;
   return (
@@ -152,7 +157,7 @@ export function menuDe(yo: Persona, tienda: TiendaNav | null = null): GrupoNav[]
       const meta = GRUPO[p.ruta];
       if (!meta || meta.grupo === "ajustes") continue;
       if (
-        p.ruta === "/admin/marketing" &&
+        SOLO_CR.has(p.ruta) &&
         (!yo.tiendas.includes(TIENDA_MARKETING) ||
           (tienda && tienda.code !== TIENDA_MARKETING))
       )

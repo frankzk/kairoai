@@ -50,7 +50,7 @@ describe("menuDe", () => {
   it("groups a Mireva Costa Rica admin's sections by work, Panel first", () => {
     const tienda = tiendaActual(tiendasDe(admin), "/", "mireva-cr");
     expect(labels(menuDe(admin, tienda))).toEqual([
-      ["Operación", ["Panel", "Leads", "Novedades", "Gestión de pedidos"]],
+      ["Operación", ["Panel", "Leads", "Novedades", "Gestión de pedidos", "Inventario"]],
       ["Crecimiento", ["Marketing", "Upsells"]],
       ["Ajustes", ["Configuración", "Usuarios"]],
     ]);
@@ -80,14 +80,25 @@ describe("menuDe", () => {
     ]);
   });
 
-  it("shows an advisor only Leads, with no empty groups", () => {
+  it("shows an advisor only Leads and Inventario, with no empty groups", () => {
     expect(menuDe({ id: 7, permisos: ["leads"], tiendas: ["mireva-cr"] })).toEqual([
       {
         key: "operacion",
         label: "Operación",
-        items: [{ ruta: "/admin/leads", label: "Leads", icono: "leads" }],
+        items: [
+          { ruta: "/admin/leads", label: "Leads", icono: "leads" },
+          { ruta: "/admin/inventario", label: "Inventario", icono: "inventario" },
+        ],
       },
     ]);
+  });
+
+  it("shows Inventario (ShipHero) only for Mireva Costa Rica", () => {
+    const hn = tiendaActual(tiendasDe(admin), "/admin/leads", "mireva-hn");
+    expect(labels(menuDe(admin, hn))[0][1]).not.toContain("Inventario");
+    expect(tiendaActual(tiendasDe(admin), "/admin/inventario", "mireva-hn")?.code).toBe("mireva-cr");
+    const soloHn = menuDe({ id: 8, permisos: ["leads"], tiendas: ["mireva-hn"] });
+    expect(soloHn.flatMap((g) => g.items.map((i) => i.label))).toEqual(["Leads"]);
   });
 
   it("hides Marketing without the Mireva Costa Rica store", () => {

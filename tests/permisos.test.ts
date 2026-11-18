@@ -199,7 +199,7 @@ describe("inicio y pantallas", () => {
   });
 
   it("la navegacion solo muestra lo permitido", () => {
-    expect(pantallasDe(["leads"]).map((p) => p.ruta)).toEqual(["/admin/leads"]);
+    expect(pantallasDe(["leads"]).map((p) => p.ruta)).toEqual(["/admin/leads", "/admin/inventario"]);
   });
 
   it("solo redirige a rutas internas", () => {

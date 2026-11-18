@@ -28,7 +28,7 @@ export interface CronJob {
 //   :00 moovin (~3 min) · :05/:18/:35/:48 icomfly (~1 min) · :10 incidencias · :15 finance-index (~2 min)
 //   :20/:45 wyn · :22 shopify-recheck-stale · :25 icomfly-historial · :30 forza (~2 min)
 //   :40 cargo-expreso · :50 c807 · :55 shopify-refresh
-// Livianos con minuto propio: :13 shiphero-inventario (4 veces al día) ·
+// Livianos con minuto propio: :13/:28/:43/:58 shiphero-inventario (~11 s) ·
 //   :04/:19/:34/:49 call-recordings.
 // Al agregar uno pesado, busca un minuto libre.
 export const CRON_JOBS: CronJob[] = [
@@ -59,8 +59,10 @@ export const CRON_JOBS: CronJob[] = [
   { name: "cargo-expreso", label: "Tracking Cargo Expreso (Honduras)", everyMinutes: 60 },
   { name: "c807", label: "Tracking c807 Xpress (Honduras)", everyMinutes: 60 },
   { name: "wyn", label: "Tracking WYN", everyMinutes: 30 },
-  // 06:13, 10:13, 14:13 y 18:13 de Costa Rica. Sin conexión responde ok.
-  { name: "shiphero-inventario", label: "Inventario de ShipHero (Mireva CR)", everyMinutes: 360 },
+  // Cada 15 min desde el 18/11/2026: la pantalla Inventario muestra el stock
+  // casi en tiempo real (~200 de complejidad por corrida; ShipHero repone
+  // créditos en segundos). Sin conexión responde ok.
+  { name: "shiphero-inventario", label: "Inventario de ShipHero (Mireva CR)", everyMinutes: 15 },
   // Copia las grabaciones de las llamadas a nuestro bucket (lib/grabaciones.ts).
   { name: "call-recordings", label: "Grabaciones de llamadas", everyMinutes: 15 },
   // Agente de voz Retell: sin llamadas desde el 25/08 y nunca programado.

@@ -161,6 +161,9 @@ const P = (...alguno: Permiso[]): Exigencia => ({ tipo: "permiso", alguno });
 const CHAT: Permiso[] = ["leads", "leads_equipo", "novedades", "pedidos"];
 const LEADS: Permiso[] = ["leads", "leads_equipo"];
 const OPERACION: Permiso[] = ["pedidos", "finanzas"];
+// Inventario de ShipHero (Boxful): lo consulta todo el equipo que vende o
+// atiende pedidos, para no preguntarle a la lider de tienda si hay stock.
+const INVENTARIO: Permiso[] = [...CHAT, "finanzas", "marketing"];
 
 export type Regla = { ruta: string; metodo?: string; exige: Exigencia };
 
@@ -178,6 +181,7 @@ export const REGLAS: Regla[] = [
   { ruta: "/admin/leads", exige: P(...LEADS) },
   { ruta: "/admin/incidencias", exige: P("novedades") },
   { ruta: "/admin/finance", exige: P(...OPERACION) },
+  { ruta: "/admin/inventario", exige: P(...INVENTARIO) },
   { ruta: "/admin/marketing", exige: P("marketing") },
   { ruta: "/admin/settings", exige: P("config") },
   { ruta: "/admin/upsell", exige: P("upsell") },
@@ -190,6 +194,7 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/auth/password", exige: SES },
   { ruta: "/api/users", exige: P("usuarios") },
   { ruta: "/api/health/crons", exige: SES },
+  { ruta: "/api/inventario", exige: P(...INVENTARIO) },
 
   // Webhooks externos: se autentican con su propia firma
   { ruta: "/api/shopify/webhook", exige: PUB },
@@ -373,6 +378,8 @@ export const PANTALLAS: Array<{ ruta: string; label: string; exige: Permiso[] }>
   { ruta: "/admin/upsell", label: "Upsells", exige: ["upsell"] },
   { ruta: "/admin/settings", label: "Configuración", exige: ["config"] },
   { ruta: "/admin/usuarios", label: "Usuarios", exige: ["usuarios"] },
+  // Al final: es una consulta, nunca la pantalla de inicio (el menú la ordena aparte).
+  { ruta: "/admin/inventario", label: "Inventario", exige: INVENTARIO },
 ];
 
 /** Pantallas que puede abrir alguien con `permisos`. */
