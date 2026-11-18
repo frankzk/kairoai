@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Mic, MicOff, Phone, PhoneOff } from "lucide-react";
+import { AvisoTelefono, BarraLlamada, type EstadoLlamada } from "@/components/BarraLlamada";
 import { getVendedoraId, onVendedoraChange } from "@/lib/vendedora";
 import { startPhoneConnection, phoneError } from "@/lib/telnyx-connection";
 import {
@@ -45,8 +45,6 @@ interface ClienteRTC {
   }): LlamadaRTC;
 }
 
-type EstadoLlamada = "marcando" | "timbrando" | "en_llamada" | "terminada";
-
 // Estados de @telnyx/webrtc (en minusculas) → lo que ve la asesora.
 function estadoVisible(state: string): EstadoLlamada | null {
   switch (state) {
@@ -69,13 +67,6 @@ function estadoVisible(state: string): EstadoLlamada | null {
       return null;
   }
 }
-
-const ETIQUETA: Record<EstadoLlamada, string> = {
-  marcando: "Marcando…",
-  timbrando: "Timbrando al cliente…",
-  en_llamada: "En llamada",
-  terminada: "Llamada terminada",
-};
 
 const AUDIO_ID = "kairo-telnyx-audio";
 
@@ -128,12 +119,6 @@ function guardarToken(staffId: number, token: string | null): void {
   } catch {
     // Almacenamiento bloqueado: se pide el token cada vez, como antes.
   }
-}
-
-function duracion(segundos: number): string {
-  const m = Math.floor(segundos / 60);
-  const s = segundos % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 export default function TelnyxPhone() {
@@ -307,11 +292,11 @@ export default function TelnyxPhone() {
   const enCurso = estado !== null && estado !== "terminada";
   useEffect(
     () =>
-      publicarEstadoTelefono({ listo, enCurso, motivo: error ?? undefined }),
+      publicarEstadoTelefono({ proveedor: "telnyx", listo, enCurso, motivo: error ?? undefined }),
     [listo, enCurso, error],
   );
   useEffect(
-    () => () => publicarEstadoTelefono({ listo: false, enCurso: false }),
+    () => () => publicarEstadoTelefono({ proveedor: null, listo: false, enCurso: false }),
     [],
   );
 
@@ -339,76 +324,17 @@ export default function TelnyxPhone() {
       <audio id={AUDIO_ID} autoPlay className="hidden" />
 
       {estado && (
-        // Encima de los drawers (z-50 / z-[60]): se llama desde la ficha.
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-3 right-3 z-[70] flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 shadow-lg"
-        >
-          {estado === "marcando" || estado === "timbrando" ? (
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          ) : (
-            <Phone
-              className={`h-4 w-4 ${estado === "en_llamada" ? "text-emerald-400" : "text-muted-foreground"}`}
-            />
-          )}
-          <div className="text-sm">
-            <p className="font-medium">{ETIQUETA[estado]}</p>
-            {estado === "en_llamada" && desde && (
-              <p className="text-xs tabular-nums text-muted-foreground">
-                {duracion(Math.floor((ahora - desde) / 1000))}
-              </p>
-            )}
-          </div>
-          {enCurso && (
-            <>
-              <button
-                type="button"
-                onClick={alternarSilencio}
-                disabled={estado !== "en_llamada"}
-                aria-pressed={silenciado}
-                aria-label={
-                  silenciado ? "Activar micrófono" : "Silenciar micrófono"
-                }
-                title={silenciado ? "Activar micrófono" : "Silenciar micrófono"}
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground hover:text-foreground disabled:opacity-40"
-              >
-                {silenciado ? (
-                  <MicOff className="h-4 w-4" />
-                ) : (
-                  <Mic className="h-4 w-4" />
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={colgar}
-                aria-label="Colgar"
-                title="Colgar"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:opacity-90"
-              >
-                <PhoneOff className="h-4 w-4" />
-              </button>
-            </>
-          )}
-        </div>
+        <BarraLlamada
+          estado={estado}
+          desde={desde}
+          ahora={ahora}
+          silenciado={silenciado}
+          onSilencio={alternarSilencio}
+          onColgar={colgar}
+        />
       )}
 
-      {error && !estado && (
-        // Aviso discreto, como el de Zadarma: nunca tapa el tablero.
-        <div
-          role="status"
-          className="fixed bottom-2 left-2 z-[70] max-w-xs rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground"
-        >
-          <p>Teléfono: {error}</p>
-          <button
-            type="button"
-            onClick={() => reconectar.current()}
-            className="mt-1 font-medium text-foreground underline underline-offset-2"
-          >
-            Reconectar teléfono
-          </button>
-        </div>
-      )}
+      {error && !estado && <AvisoTelefono nombre="Telnyx" error={error} onReconectar={() => reconectar.current()} />}
     </>
   );
 }

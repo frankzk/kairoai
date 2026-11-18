@@ -29,7 +29,6 @@ import LeadsPresenceReporter from "@/components/LeadsPresenceReporter";
 import CustomerPanel from "@/components/CustomerPanel";
 import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
-import { hideWebphone } from "@/lib/webphone";
 import { creaEnIcomfly } from "@/lib/icomfly-pedido-lead";
 import TelefonoWeb from "@/components/TelefonoWeb";
 import { Button } from "@/components/ui/button";
@@ -1832,9 +1831,6 @@ function LeadDrawer({
   const [historyKey, setHistoryKey] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Al cerrar la ficha se lleva el telefono. Va en el desmontaje y no en el
-  // boton de cerrar para cubrir todas las salidas: la X y el clic en el fondo.
-  useEffect(() => () => hideWebphone(), []);
 
   /**
    * Esta ficha tapa la pantalla entera: es un dialogo, y tenia que comportarse

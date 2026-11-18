@@ -158,6 +158,13 @@ export async function upsertZadarmaCall(input: ZadarmaCallUpsert): Promise<void>
  * Enriquece un evento de la centralita con lead / tienda / asesora. Cada pieza
  * es opcional: una llamada a un numero desconocido igual se registra.
  */
+/** Tienda Mireva del pais del numero (506 → Costa Rica, 504 → Honduras), o null. */
+export function tiendaPorNumero(digits: string): number | null {
+  if (digits.length < 9) return null;
+  const tienda = FINANCE_STORES.find((s) => digits.startsWith(phoneConfigForStore(s.code).countryCode));
+  return tienda?.id ?? null;
+}
+
 export async function resolveCallContext(opts: {
   rawPhone?: string | null;
   internal?: string | null;
@@ -171,9 +178,12 @@ export async function resolveCallContext(opts: {
     opts.rawPhone ? findLeadByPhone(opts.rawPhone).catch(() => null) : Promise.resolve(null),
     opts.internal ? getAgentBySip(opts.internal).catch(() => null) : Promise.resolve(null),
   ]);
+  const digits = opts.rawPhone ? opts.rawPhone.replace(/\D+/g, "") : "";
   return {
     leadId: lead?.leadId ?? null,
-    storeId: lead?.storeId ?? null,
+    // Sin lead (se llamo desde un pedido o una novedad): la tienda del pais
+    // del numero, para que la llamada cuente en su tienda.
+    storeId: lead?.storeId ?? tiendaPorNumero(digits),
     vendedoraId: agent?.id ?? null,
     phone: lead?.phone ?? (opts.rawPhone ? opts.rawPhone.replace(/\D+/g, "") || null : null),
   };

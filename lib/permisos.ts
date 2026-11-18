@@ -300,11 +300,13 @@ export const REGLAS: Regla[] = [
 
   // Telefonia
   { ruta: "/api/zadarma", exige: P("config") },
-  { ruta: "/api/zadarma/call", exige: P(...LEADS, "pedidos", "novedades") },
+  { ruta: "/api/zadarma/llamada", exige: P(...LEADS, "pedidos", "novedades") },
   { ruta: "/api/zadarma/webphone", exige: P(...LEADS, ...OPERACION, "novedades") },
   { ruta: "/api/zadarma/last-call", exige: P(...LEADS, ...OPERACION, "novedades") },
   { ruta: "/api/zadarma/extensions", exige: P("finanzas", "usuarios", "config") },
-  { ruta: "/api/telefonia", exige: P(...LEADS, ...OPERACION, "novedades") },
+  { ruta: "/api/telefonia", exige: P(...LEADS, ...OPERACION, "novedades", "config") },
+  // Cambiar el proveedor de una tienda (Configuración › Telefonía).
+  { ruta: "/api/telefonia", metodo: "POST", exige: P("config") },
   { ruta: "/api/telnyx", exige: P("config") },
   { ruta: "/api/telnyx/llamada", exige: P(...LEADS, "pedidos", "novedades") },
   { ruta: "/api/telnyx/token", exige: P(...LEADS, ...OPERACION, "novedades") },
