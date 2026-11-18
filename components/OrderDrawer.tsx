@@ -39,7 +39,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
 import OrderUpsellPanel from "@/components/OrderUpsellPanel";
-import { hideWebphone } from "@/lib/webphone";
 import { onResultadoLlamada, type SugerenciaLlamada } from "@/lib/telefonia-cliente";
 import { useOrderUpsellAccess } from "@/lib/use-order-upsell-access";
 import { getVendedoraId, setVendedoraId as persistVendedoraId, vendedoraBloqueada } from "@/lib/vendedora";
@@ -332,9 +331,6 @@ export default function OrderDrawer({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Al cerrar la ficha se lleva el telefono. Va en el desmontaje y no en el
-  // boton de cerrar para cubrir todas las salidas: la X, el fondo y Escape.
-  useEffect(() => () => hideWebphone(), []);
 
   const load = useCallback(async () => {
     setLoading(true);

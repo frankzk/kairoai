@@ -1,23 +1,29 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import ZadarmaWebphone from "@/components/ZadarmaWebphone";
+import ZadarmaPhone from "@/components/ZadarmaPhone";
 import TelnyxPhone from "@/components/TelnyxPhone";
-import { proveedorTelefoniaCliente, type ProveedorTelefonia } from "@/lib/telefonia-cliente";
+import { useSelectedStore } from "@/lib/use-selected-store";
+import { configTelefoniaCliente, onUsarProveedor, type ProveedorTelefonia } from "@/lib/telefonia-cliente";
 
-// El telefono web de la pagina: Zadarma o Telnyx segun TELEFONIA en el
-// servidor. Solo se monta uno: con los dos, la asesora quedaria registrada en
-// dos centralitas a la vez.
+// El telefono web de la pagina: el proveedor principal de la tienda elegida
+// (Configuracion › Telefonia). Solo se monta uno: con los dos, la asesora
+// quedaria registrada en dos centralitas a la vez. Si el boton "Llamar" pide
+// el de respaldo (el principal no conecto), se cambia hasta recargar la pagina
+// o cambiar de tienda.
 export default function TelefonoWeb() {
+  const [store] = useSelectedStore();
   const [proveedor, setProveedor] = useState<ProveedorTelefonia | null>(null);
   useEffect(() => {
     let vivo = true;
-    void proveedorTelefoniaCliente().then((p) => vivo && setProveedor(p));
+    setProveedor(null);
+    void configTelefoniaCliente(store).then((c) => vivo && setProveedor(c.principal));
     return () => {
       vivo = false;
     };
-  }, []);
+  }, [store]);
+  useEffect(() => onUsarProveedor(setProveedor), []);
   if (proveedor === "telnyx") return <TelnyxPhone />;
-  if (proveedor === "zadarma") return <ZadarmaWebphone />;
+  if (proveedor === "zadarma") return <ZadarmaPhone />;
   return null;
 }

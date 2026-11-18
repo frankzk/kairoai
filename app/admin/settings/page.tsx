@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ZadarmaStatusCard from "@/components/ZadarmaStatusCard";
 import TelnyxStatusCard from "@/components/TelnyxStatusCard";
+import TelefoniaTiendasCard from "@/components/TelefoniaTiendasCard";
 import TelnyxCostosCard from "@/components/TelnyxCostosCard";
 import LeadAssignmentSettingsCard from "@/components/LeadAssignmentSettingsCard";
 import type { AgentSettings } from "@/lib/db";
@@ -270,7 +271,8 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
 
-            {/* ── Telefonía: por qué no timbra ───────────────────── */}
+            {/* ── Telefonía: proveedor por tienda y por qué no timbra ── */}
+            <TelefoniaTiendasCard />
             <TelnyxStatusCard />
             <TelnyxCostosCard />
             <ZadarmaStatusCard />
