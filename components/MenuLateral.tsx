@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  Boxes,
   Inbox,
   LayoutDashboard,
   LogOut,
@@ -41,6 +42,7 @@ const ICONOS: Record<IconoNav, LucideIcon> = {
   leads: Inbox,
   novedades: AlertTriangle,
   gestion: Package,
+  inventario: Boxes,
   marketing: Megaphone,
   upsell: Sparkles,
   config: Settings,

@@ -24,7 +24,7 @@ describe("independent Marketing access", () => {
 
   it("opens the dashboard and its readers without granting finance, orders, settings or user administration", () => {
     const permissions = ["marketing"] as const;
-    expect(pantallasDe(permissions).map(page => page.ruta)).toEqual(["/admin/marketing"]);
+    expect(pantallasDe(permissions).map(page => page.ruta)).toEqual(["/admin/marketing", "/admin/inventario"]);
     expect(inicioDe(permissions)).toBe("/admin/marketing");
     for (const route of ["/admin/marketing", "/api/marketing/summary", "/api/marketing/sources"]) {
       expect(cumple(exigenciaDe(route), permissions), route).toBe(true);
