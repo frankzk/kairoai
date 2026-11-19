@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody } from "@/lib/stores";
 import { vendedoraEfectiva } from "@/lib/identidad";
 import { destinoDeLlamada, type PedidoDeLlamada } from "@/lib/llamada-destino";
-import { getAgentById } from "@/lib/zadarma-calls";
 import { isZadarmaConfigured } from "@/lib/zadarma";
 
 export const runtime = "nodejs";
@@ -16,11 +15,13 @@ interface Body extends PedidoDeLlamada {
 /**
  * Prepara una llamada de Zadarma con el teléfono propio de Kairo
  * (components/ZadarmaPhone.tsx): a qué número marcar. El navegador marca
- * directo desde la extensión de la asesora; aquí no se llama a Zadarma.
+ * directo desde la extensión que tiene prestada (lib/zadarma-prestamos.ts);
+ * aquí no se llama a Zadarma.
  *
  * El número sale de lib/llamada-destino.ts (de la base, no de la pantalla),
  * igual que con Telnyx. El CDR lo escribe el webhook (NOTIFY_OUT_*), que
- * reconoce a la asesora por la extensión y al lead por el teléfono.
+ * reconoce a la asesora por quién tenía la extensión a esa hora y al lead
+ * por el teléfono.
  *
  * Sin freno de buzón: Zadarma cobra por segundo, así que volver a caer al
  * buzón cuesta segundos y no un minuto entero (ver lib/telnyx-buzon.ts).
@@ -39,13 +40,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Selecciona quién eres (asesora) antes de llamar." }, { status: 400 });
   }
   try {
-    const agent = await getAgentById(vendedoraId);
-    if (!agent) {
-      return NextResponse.json(
-        { error: "Esta asesora no tiene extensión de Zadarma: asígnala en Gestión › Gastos › Planilla › Personal." },
-        { status: 409 },
-      );
-    }
     const destino = await destinoDeLlamada(store, body);
     if (!destino.ok) return NextResponse.json({ error: destino.error }, { status: destino.status });
     // Zadarma marca el número internacional sin "+": 50688887777.

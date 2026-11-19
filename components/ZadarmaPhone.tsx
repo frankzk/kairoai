@@ -41,8 +41,14 @@ const ICE_MAX_MS = 3_000;
 const REINTENTOS_MS = [15_000, 30_000, 60_000, 120_000, 300_000];
 const OPCIONES_MEDIA = { mediaConstraints: { audio: true, video: false }, pcConfig: { iceServers: ZADARMA_ICE } };
 
-async function credenciales(vendedoraId: number, forzar: boolean): Promise<CredencialesSip> {
-  const res = await fetch(`/api/zadarma/webphone?vendedora_id=${vendedoraId}${forzar ? "&force=1" : ""}`, {
+// La extensión se presta a quien abre Kairo (lib/zadarma-prestamos.ts): cada
+// minuto se avisa que la página sigue abierta; sin aviso 2 min, se libera.
+const LATIDO_MS = 60_000;
+
+const urlWebphone = (store: string) => `/api/zadarma/webphone?store=${encodeURIComponent(store)}`;
+
+async function credenciales(vendedoraId: number, store: string, forzar: boolean): Promise<CredencialesSip> {
+  const res = await fetch(`${urlWebphone(store)}&vendedora_id=${vendedoraId}${forzar ? "&force=1" : ""}`, {
     cache: "no-store",
     signal: AbortSignal.timeout(20_000),
   });
@@ -56,7 +62,7 @@ function numeroDe(session: RTCSession): string {
   return String(uri?.user ?? "");
 }
 
-export default function ZadarmaPhone() {
+export default function ZadarmaPhone({ store }: { store: string }) {
   const [vendedoraId, setVendedora] = useState<number | null>(null);
   const [listo, setListo] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +74,8 @@ export default function ZadarmaPhone() {
   const [intento, setIntento] = useState(0);
   const ua = useRef<UA | null>(null);
   const dominio = useRef<string>("");
+  // La extensión prestada en esta conexión.
+  const extension = useRef<string>("");
   const sesion = useRef<RTCSession | null>(null);
   const contexto = useRef<ContextoLlamada>({});
   const timbreDesde = useRef<number | null>(null);
@@ -97,8 +105,9 @@ export default function ZadarmaPhone() {
     const conectar = async () => {
       setListo(false);
       try {
-        const cred = await credenciales(vendedoraId, forzar);
+        const cred = await credenciales(vendedoraId, store, forzar);
         if (!vivo) return;
+        extension.current = cred.authUser;
         const JsSIP = (await import("jssip")).default;
         if (!vivo) return;
         dominio.current = cred.domain;
@@ -156,8 +165,40 @@ export default function ZadarmaPhone() {
       }
     };
     void conectar();
+
+    // Señal de vida: renueva el préstamo. Si la extensión ya no es suya (la
+    // página estuvo dormida y otra persona la tomó), se reconecta con otra.
+    const latido = window.setInterval(() => {
+      const sip = extension.current;
+      if (!sip || !vivo) return;
+      void fetch(urlWebphone(store), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "latido", sip, vendedora_id: vendedoraId }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d: { ok?: boolean } | null) => {
+          if (vivo && d && d.ok === false && !sesion.current) setIntento((n) => n + 1);
+        })
+        .catch(() => undefined);
+    }, LATIDO_MS);
+    // Al cerrar la página la extensión vuelve al grupo de inmediato.
+    const devolver = () => {
+      const sip = extension.current;
+      if (!sip) return;
+      const cuerpo = JSON.stringify({ accion: "devolver", sip });
+      if (!navigator.sendBeacon?.(urlWebphone(store), cuerpo)) {
+        void fetch(urlWebphone(store), { method: "POST", body: cuerpo, keepalive: true }).catch(() => undefined);
+      }
+      extension.current = "";
+    };
+    window.addEventListener("pagehide", devolver);
+
     return () => {
       vivo = false;
+      window.clearInterval(latido);
+      window.removeEventListener("pagehide", devolver);
+      devolver();
       window.clearTimeout(reintento);
       try {
         agente?.stop();
@@ -168,7 +209,7 @@ export default function ZadarmaPhone() {
       setListo(false);
     };
     // intento: "Reconectar teléfono" fuerza una conexión nueva.
-  }, [vendedoraId, intento]);
+  }, [vendedoraId, intento, store]);
 
   function audioRemoto(session: RTCSession) {
     const conectar = (pc: RTCPeerConnection) =>

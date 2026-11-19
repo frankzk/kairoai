@@ -24,6 +24,7 @@ export default function TelefonoWeb() {
   }, [store]);
   useEffect(() => onUsarProveedor(setProveedor), []);
   if (proveedor === "telnyx") return <TelnyxPhone />;
-  if (proveedor === "zadarma") return <ZadarmaPhone />;
+  // key: al cambiar de tienda, teléfono nuevo con la extensión de esa tienda.
+  if (proveedor === "zadarma") return <ZadarmaPhone key={store} store={store} />;
   return null;
 }

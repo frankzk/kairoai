@@ -6,6 +6,7 @@ import { getDB } from "@/lib/db";
 import { normalizePhone, phoneConfigForStore } from "@/lib/phone-cr";
 import { FINANCE_STORES } from "@/lib/store-config";
 import { isValidSipLogin, parseZadarmaTime } from "@/lib/zadarma";
+import { asesoraConExtension } from "@/lib/zadarma-prestamos";
 
 export interface ZadarmaAgent {
   id: number;
@@ -168,14 +169,19 @@ export function tiendaPorNumero(digits: string): number | null {
 export async function resolveCallContext(opts: {
   rawPhone?: string | null;
   internal?: string | null;
+  /** Hora de la llamada: la extensión se presta y cambia de manos. */
+  at?: string | null;
 }): Promise<{
   leadId: number | null;
   storeId: number | null;
   vendedoraId: number | null;
   phone: string | null;
 }> {
-  const [lead, agent] = await Promise.all([
+  const [lead, prestada, agent] = await Promise.all([
     opts.rawPhone ? findLeadByPhone(opts.rawPhone).catch(() => null) : Promise.resolve(null),
+    // Quién tenía la extensión prestada a esa hora (lib/zadarma-prestamos.ts);
+    // si nadie, la asignación fija de la planilla.
+    opts.internal ? asesoraConExtension(opts.internal, opts.at ?? null).catch(() => null) : Promise.resolve(null),
     opts.internal ? getAgentBySip(opts.internal).catch(() => null) : Promise.resolve(null),
   ]);
   const digits = opts.rawPhone ? opts.rawPhone.replace(/\D+/g, "") : "";
@@ -184,7 +190,7 @@ export async function resolveCallContext(opts: {
     // Sin lead (se llamo desde un pedido o una novedad): la tienda del pais
     // del numero, para que la llamada cuente en su tienda.
     storeId: lead?.storeId ?? tiendaPorNumero(digits),
-    vendedoraId: agent?.id ?? null,
+    vendedoraId: prestada ?? agent?.id ?? null,
     phone: lead?.phone ?? (opts.rawPhone ? opts.rawPhone.replace(/\D+/g, "") || null : null),
   };
 }

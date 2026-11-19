@@ -128,6 +128,7 @@ async function handleEvent(
       const context = await resolveCallContext({
         rawPhone: legs.customerPhone,
         internal: legs.internal,
+        at: startedAt,
       });
       await upsertZadarmaCall({
         pbxCallId,
@@ -145,6 +146,7 @@ async function handleEvent(
       const context = await resolveCallContext({
         rawPhone: legs.customerPhone,
         internal: legs.internal,
+        at: startedAt,
       });
       await upsertZadarmaCall({
         pbxCallId,
@@ -182,6 +184,7 @@ async function handleEvent(
       const context = await resolveCallContext({
         rawPhone: body.caller_id,
         internal: body.internal,
+        at: startedAt,
       });
       await upsertZadarmaCall({
         pbxCallId,
@@ -194,7 +197,7 @@ async function handleEvent(
     }
     case "NOTIFY_END": {
       const internal = body.last_internal ?? body.internal ?? null;
-      const context = await resolveCallContext({ rawPhone: body.caller_id, internal });
+      const context = await resolveCallContext({ rawPhone: body.caller_id, internal, at: startedAt });
       await upsertZadarmaCall({
         pbxCallId,
         direction: "incoming",

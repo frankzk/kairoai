@@ -196,7 +196,7 @@ export default function ZadarmaStatusCard() {
                   <Row
                     ok={(status.extensions.assigned ?? 0) > 0}
                     label="Extensiones"
-                    detail={`${status.extensions.assigned ?? 0} de ${status.extensions.total} asignadas (se asignan en Gestión → Gastos → Planilla → Personal)`}
+                    detail={`${status.extensions.assigned ?? 0} de ${status.extensions.total} asignadas con extensión fija (opcional: si no, Kairo presta una libre a quien abre el teléfono)`}
                   />
                   {/* Una fila por extension: es lo que contesta "a ella no le
                       timbra". "Sin registrar" con el widget abierto significa
