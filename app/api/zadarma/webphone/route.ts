@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAgentById } from "@/lib/zadarma-calls";
-import {
-  getWebrtcIntegration,
-  getWebrtcKey,
-  isZadarmaConfigured,
-  ZadarmaError,
-} from "@/lib/zadarma";
+import { isZadarmaConfigured, ZadarmaError } from "@/lib/zadarma";
+import { llaveWebrtc } from "@/lib/zadarma-webrtc-db";
 import { vendedoraEfectiva } from "@/lib/identidad";
 
 export const runtime = "nodejs";
@@ -44,21 +40,9 @@ export async function GET(req: NextRequest) {
     }
 
     const force = req.nextUrl.searchParams.get("force") === "1";
-    // La apariencia sale de los ajustes de la integracion; si esa lectura
-    // falla no se cae la llamada, solo se usa el valor por defecto.
-    const [{ key }, integration] = await Promise.all([
-      getWebrtcKey(agent.sip, force),
-      getWebrtcIntegration().catch(() => null),
-    ]);
-
-    return NextResponse.json({
-      sip: agent.sip,
-      key,
-      name: agent.name,
-      language: process.env.ZADARMA_WIDGET_LANGUAGE || "es",
-      shape: integration?.shape ?? "square",
-      position: integration?.position ?? "bottom_right",
-    });
+    // Una sola consulta a Zadarma por extensión cada 48 h (lib/zadarma-webrtc-db.ts).
+    const key = await llaveWebrtc(agent.sip, force);
+    return NextResponse.json({ sip: agent.sip, key, name: agent.name });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error al preparar el teléfono";
     const status = err instanceof ZadarmaError ? 502 : 500;
