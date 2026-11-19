@@ -66,7 +66,7 @@ export interface ContextoLlamada {
 
 /** Llamada por el telefono propio de Zadarma (components/ZadarmaPhone.tsx). */
 export interface LlamadaZadarma {
-  /** Numero internacional sin "+": 50688887777. */
+  /** Numero internacional en digitos (50688887777); el telefono le pone el "+". */
   destino: string;
   contexto?: ContextoLlamada;
 }

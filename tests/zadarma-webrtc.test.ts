@@ -18,8 +18,9 @@ describe("teléfono propio de Zadarma", () => {
     expect(() => credencialesDeWebphone("499499-101", null)).toThrow("Zadarma no entregó");
   });
 
-  it("marca el número internacional sin signos", () => {
-    expect(destinoSip("+504 9988-7766", "pbx.zadarma.com")).toBe("sip:50499887766@pbx.zadarma.com");
+  it("marca el número internacional con +", () => {
+    expect(destinoSip("+504 9988-7766", "pbx.zadarma.com")).toBe("sip:+50499887766@pbx.zadarma.com");
+    expect(destinoSip("50499887766", "pbx.zadarma.com")).toBe("sip:+50499887766@pbx.zadarma.com");
   });
 
   it("solo culpa al proveedor si la llamada no llegó a sonar y no es causa del cliente", () => {
