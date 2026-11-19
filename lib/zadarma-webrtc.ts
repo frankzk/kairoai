@@ -38,9 +38,13 @@ export function credencialesDeWebphone(sip: string, data: unknown): Credenciales
   return { uri: `sip:${sip}@${domain}`, authUser: sip, password: pass, wsUrl: `wss://${domain}:4443`, domain };
 }
 
-/** Destino SIP: el número internacional sin "+" en el servidor de la extensión. */
+/**
+ * Destino SIP: el número internacional CON "+" en el servidor de la extensión.
+ * Sin el "+" Zadarma no lo toma como internacional y la llamada sale "no ha
+ * podido realizarse" (18/11/2026: 50432193330 falló; +504… salía bien).
+ */
 export function destinoSip(numero: string, domain: string): string {
-  return `sip:${numero.replace(/\D/g, "")}@${domain}`;
+  return `sip:+${numero.replace(/\D/g, "")}@${domain}`;
 }
 
 /**

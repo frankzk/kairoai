@@ -42,7 +42,8 @@ export async function POST(req: NextRequest) {
   try {
     const destino = await destinoDeLlamada(store, body);
     if (!destino.ok) return NextResponse.json({ error: destino.error }, { status: destino.status });
-    // Zadarma marca el número internacional sin "+": 50688887777.
+    // Solo dígitos: el teléfono le agrega el "+" que Zadarma necesita
+    // (lib/zadarma-webrtc.ts › destinoSip).
     return NextResponse.json({ ok: true, destino: destino.phone.replace(/\D/g, "") });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "No se pudo preparar la llamada" }, { status: 500 });
