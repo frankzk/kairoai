@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import LeadChatPanel from "@/components/LeadChatPanel";
 import CallButton from "@/components/CallButton";
+import EntregaWyn from "@/components/EntregaWyn";
 import TelefonoWeb from "@/components/TelefonoWeb";
 import { onResultadoLlamada, type SugerenciaLlamada } from "@/lib/telefonia-cliente";
 import type { LlamadaHistorial } from "@/lib/llamadas-historial";
@@ -1366,6 +1367,10 @@ function DetailModal({
           </div>
           {orderProducts && (
             <div className="text-sm"><span className="text-muted-foreground">Producto:</span> {orderProducts}</div>
+          )}
+          {/* Días de WYN para reprogramar (solo Costa Rica y envíos por WYN). */}
+          {incident.order_name && (!incident.courier || /wyn|mail ?boxes/i.test(incident.courier)) && (
+            <EntregaWyn store={storeCode} orderName={incident.order_name} />
           )}
           {sinMasReintentos && (
             <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">

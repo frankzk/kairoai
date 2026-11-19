@@ -195,6 +195,10 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/users", exige: P("usuarios") },
   { ruta: "/api/health/crons", exige: SES },
   { ruta: "/api/inventario", exige: P(...INVENTARIO) },
+  // Rutas y días de entrega de WYN: los leen pedidos, Novedades y Crear pedido;
+  // cargar un Excel nuevo es de configuración.
+  { ruta: "/api/wyn", exige: P(...CHAT, "finanzas", "config") },
+  { ruta: "/api/wyn/rutas", metodo: "POST", exige: P("config") },
 
   // Webhooks externos: se autentican con su propia firma
   { ruta: "/api/shopify/webhook", exige: PUB },

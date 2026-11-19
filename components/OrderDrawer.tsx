@@ -37,6 +37,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import LeadChatPanel from "@/components/LeadChatPanel";
+import EntregaWyn from "@/components/EntregaWyn";
 import CallButton from "@/components/CallButton";
 import OrderUpsellPanel from "@/components/OrderUpsellPanel";
 import { onResultadoLlamada, type SugerenciaLlamada } from "@/lib/telefonia-cliente";
@@ -589,6 +590,9 @@ export default function OrderDrawer({
                   <span className="text-muted-foreground">Producto:</span> {target.items_summary}
                 </div>
               )}
+
+              {/* Días de entrega de WYN de la zona del cliente (solo Costa Rica). */}
+              <EntregaWyn store={storeCode} orderName={target.order_name} />
 
               <div className="space-y-2">
                 <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
