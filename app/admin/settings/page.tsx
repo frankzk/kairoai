@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ZadarmaStatusCard from "@/components/ZadarmaStatusCard";
 import TelnyxStatusCard from "@/components/TelnyxStatusCard";
 import TelefoniaTiendasCard from "@/components/TelefoniaTiendasCard";
+import RutasWynCard from "@/components/RutasWynCard";
 import TelnyxCostosCard from "@/components/TelnyxCostosCard";
 import LeadAssignmentSettingsCard from "@/components/LeadAssignmentSettingsCard";
 import type { AgentSettings } from "@/lib/db";
@@ -132,6 +133,8 @@ export default function SettingsPage() {
         )}
         {/* Reparto automático de leads: se guarda solo al tocar el interruptor. */}
         {puedeReparto && <LeadAssignmentSettingsCard />}
+        {/* Días de entrega de WYN por zona (se cargan desde su Excel). */}
+        <RutasWynCard />
         {loading ? (
           <div className="h-64 rounded-lg border border-border bg-card animate-pulse" />
         ) : (

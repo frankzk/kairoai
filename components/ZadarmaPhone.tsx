@@ -211,12 +211,31 @@ export default function ZadarmaPhone({ store }: { store: string }) {
     // intento: "Reconectar teléfono" fuerza una conexión nueva.
   }, [vendedoraId, intento, store]);
 
+  // Audio del cliente. Zadarma manda el audio sin "stream" asociado (su SDP
+  // no trae msid), así que `ev.streams[0]` llega vacío y el parlante nunca
+  // recibía nada (18/11/2026: la llamada conectaba en silencio). Se arma el
+  // stream con las pistas que llegan y se vuelve a armar al contestar.
+  function reproducir(pc: RTCPeerConnection, pista?: MediaStreamTrack) {
+    const audio = document.getElementById(AUDIO_ID) as HTMLAudioElement | null;
+    if (!audio) return;
+    const pistas = pc
+      .getReceivers()
+      .map((r) => r.track)
+      .filter((t): t is MediaStreamTrack => Boolean(t) && t.kind === "audio");
+    if (pista && pista.kind === "audio" && !pistas.includes(pista)) pistas.push(pista);
+    if (!pistas.length) return;
+    audio.srcObject = new MediaStream(pistas);
+    audio.muted = false;
+    void audio.play().catch(() => undefined);
+  }
+
   function audioRemoto(session: RTCSession) {
-    const conectar = (pc: RTCPeerConnection) =>
-      pc.addEventListener("track", (ev) => {
-        const audio = document.getElementById(AUDIO_ID) as HTMLAudioElement | null;
-        if (audio && ev.streams[0]) audio.srcObject = ev.streams[0];
-      });
+    const conectar = (pc: RTCPeerConnection) => {
+      pc.addEventListener("track", (ev) => reproducir(pc, ev.track));
+      // Al contestar (y al confirmar) ya están todas las pistas.
+      session.on("accepted", () => reproducir(pc));
+      session.on("confirmed", () => reproducir(pc));
+    };
     if (session.connection) conectar(session.connection as unknown as RTCPeerConnection);
     else session.on("peerconnection", (e: { peerconnection: RTCPeerConnection }) => conectar(e.peerconnection));
   }

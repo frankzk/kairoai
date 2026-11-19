@@ -5,6 +5,7 @@ import { sanitizeExternalError } from "@/lib/api-errors";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Loader2, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import EntregaWyn from "@/components/EntregaWyn";
 import { Input } from "@/components/ui/input";
 import { ProductPicker } from "@/components/ProductPicker";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +79,10 @@ export default function CreateOrderPanel({
   const [canton, setCanton] = useState("");
   const [address, setAddress] = useState("");
   const [reference, setReference] = useState("");
+  const ubicacionWyn = useMemo(
+    () => ({ provincia: province, canton, direccion: [address, reference].filter(Boolean).join(", ") }),
+    [province, canton, address, reference],
+  );
   const [paymentMethod, setPaymentMethod] = useState<"cod" | "sinpe">("cod");
 
   const [confirming, setConfirming] = useState(false);
@@ -443,6 +448,8 @@ export default function CreateOrderPanel({
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Referencia</label>
           <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Color de casa, punto de referencia..." />
         </div>
+        {/* Días de entrega de WYN mientras se escribe la ubicación (solo Costa Rica). */}
+        <EntregaWyn store={store} ubicacion={ubicacionWyn} />
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Método de pago</label>
           <select
