@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   AGENT_LEG_RINGING,
   agentLegStatus,
+  diagnosticoFirma,
   getRecordLink,
   isZadarmaNotifyIp,
   readOutgoingLegRoles,
@@ -58,17 +59,20 @@ export async function POST(req: NextRequest) {
   }
 
   const signature = req.headers.get("signature") ?? req.headers.get("Signature");
+  const ip = req.headers.get("x-forwarded-for");
+  const desdeZadarma = isZadarmaNotifyIp(ip);
   if (!verifyNotifySignature(signatureString, signature)) {
+    // Desde el 18/11/2026 Zadarma manda avisos que no pasan la firma aunque la
+    // misma clave sí sirve para la API, y las llamadas no se registraban. Se
+    // aceptan si vienen de las IP oficiales de Zadarma (Vercel reescribe
+    // x-forwarded-for: no la falsea el que llama) y se deja el diagnóstico
+    // para corregir la firma. Desde otra IP se rechaza como siempre.
     console.warn(
-      `[zadarma/webhook] firma invalida event=${event} ip=${req.headers.get("x-forwarded-for") ?? "?"}`
+      `[zadarma/webhook] firma invalida event=${event} ip=${ip ?? "?"} ${diagnosticoFirma(event, body, signature)}${desdeZadarma ? " → aceptado por IP de Zadarma" : ""}`
     );
-    return NextResponse.json({ error: "Firma inválida" }, { status: 401 });
-  }
-
-  if (!isZadarmaNotifyIp(req.headers.get("x-forwarded-for"))) {
-    console.warn(
-      `[zadarma/webhook] firma valida desde IP fuera del rango: ${req.headers.get("x-forwarded-for") ?? "?"}`
-    );
+    if (!desdeZadarma) return NextResponse.json({ error: "Firma inválida" }, { status: 401 });
+  } else if (!desdeZadarma) {
+    console.warn(`[zadarma/webhook] firma valida desde IP fuera del rango: ${ip ?? "?"}`);
   }
 
   try {

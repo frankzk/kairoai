@@ -580,6 +580,47 @@ export function verifyNotifySignature(
 }
 
 /**
+ * Diagnóstico de una firma que no coincide (sin datos sensibles): qué campos
+ * trae el evento y si alguna variante conocida de la cadena o de la
+ * codificación sí coincide. Así el registro dice qué cambió en Zadarma.
+ */
+export function diagnosticoFirma(
+  event: string,
+  body: Record<string, string | undefined>,
+  headerSignature: string | null | undefined,
+  secret?: string,
+): string {
+  const apiSecret = secret ?? getZadarmaCredentials()?.secret ?? "";
+  const firma = String(headerSignature ?? "");
+  const hmac = (cadena: string) => crypto.createHmac("sha1", apiSecret).update(cadena);
+  const coincide = (cadena: string) => {
+    if (!apiSecret || !firma) return null;
+    const hex = hmac(cadena).digest("hex");
+    if (Buffer.from(hex).toString("base64") === firma) return "base64(hex)";
+    if (hmac(cadena).digest("base64") === firma) return "base64(raw)";
+    if (hex === firma) return "hex";
+    return null;
+  };
+  const b = (k: string) => body[k] ?? "";
+  const variantes: Record<string, string> = {
+    oficial: signatureStringForEvent(event, body) ?? "",
+    "caller_id+destination+call_start": `${b("caller_id")}${b("destination")}${b("call_start")}`,
+    "internal+destination+call_start": `${b("internal")}${b("destination")}${b("call_start")}`,
+    "caller_id+called_did+call_start": `${b("caller_id")}${b("called_did")}${b("call_start")}`,
+    "pbx_call_id+call_id_with_rec": `${b("pbx_call_id")}${b("call_id_with_rec")}`,
+  };
+  const hallada = Object.entries(variantes)
+    .map(([nombre, cadena]) => [nombre, coincide(cadena)] as const)
+    .find(([, cod]) => cod);
+  return [
+    `campos=${Object.keys(body).sort().join(",")}`,
+    `firma_len=${firma.length}`,
+    `secreto=${apiSecret ? "si" : "no"}`,
+    hallada ? `coincide=${hallada[0]}/${hallada[1]}` : "coincide=ninguna",
+  ].join(" ");
+}
+
+/**
  * Convierte `call_start` de Zadarma ("YYYY-MM-DD HH:mm:ss", hora de la
  * centralita) a ISO. La centralita entrega la hora en la zona configurada en
  * la cuenta; `ZADARMA_TIMEZONE_OFFSET` (p.ej. "-06:00") la ancla. Sin ese

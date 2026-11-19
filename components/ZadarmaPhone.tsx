@@ -36,7 +36,9 @@ const AUDIO_ID = "kairo-zadarma-audio";
 // Tope de la búsqueda de rutas de audio (ICE): sin él, Chrome puede tardar
 // ~40 s en mandar la llamada si un servidor no responde.
 const ICE_MAX_MS = 3_000;
-const REINTENTO_MS = 15_000;
+// Reintentos cada vez más espaciados: con uno fijo cada 15 s, varias pestañas
+// fallando a la vez hicieron que Zadarma frenara a Kairo ("rate limit by IP").
+const REINTENTOS_MS = [15_000, 30_000, 60_000, 120_000, 300_000];
 const OPCIONES_MEDIA = { mediaConstraints: { audio: true, video: false }, pcConfig: { iceServers: ZADARMA_ICE } };
 
 async function credenciales(vendedoraId: number, forzar: boolean): Promise<CredencialesSip> {
@@ -85,6 +87,12 @@ export default function ZadarmaPhone() {
     let reintento: number | undefined;
     let forzar = intento > 0;
     let agente: UA | null = null;
+    let fallos = 0;
+    const reintentar = () => {
+      const espera = REINTENTOS_MS[Math.min(fallos, REINTENTOS_MS.length - 1)];
+      fallos += 1;
+      reintento = window.setTimeout(() => vivo && void conectar(), espera);
+    };
 
     const conectar = async () => {
       setListo(false);
@@ -108,6 +116,7 @@ export default function ZadarmaPhone() {
         agente.on("registered", () => {
           if (!vivo) return;
           forzar = false;
+          fallos = 0;
           setError(null);
           setListo(true);
         });
@@ -122,8 +131,10 @@ export default function ZadarmaPhone() {
           setListo(false);
           setError(mensajeDeCausa(e.cause));
           agente?.stop();
-          forzar = e.cause === "Authentication Error";
-          reintento = window.setTimeout(() => vivo && void conectar(), REINTENTO_MS);
+          // Llave nueva solo una vez seguida: el servidor la renueva como
+          // mucho cada 5 min (lib/zadarma-webrtc-db.ts).
+          forzar = e.cause === "Authentication Error" && fallos === 0;
+          reintentar();
         });
         agente.on("newRTCSession", (e: { originator: string; session: RTCSession }) => {
           if (e.originator !== "remote") return;
@@ -140,7 +151,8 @@ export default function ZadarmaPhone() {
         if (!vivo) return;
         setListo(false);
         setError(err instanceof Error ? err.message : "No se pudo conectar con Zadarma.");
-        reintento = window.setTimeout(() => vivo && void conectar(), REINTENTO_MS);
+        forzar = false;
+        reintentar();
       }
     };
     void conectar();
