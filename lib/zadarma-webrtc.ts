@@ -74,12 +74,29 @@ const MENSAJE_CAUSA: Record<string, string> = {
   "Authentication Error": "Zadarma rechazó la extensión: reconectando…",
   "User Denied Media Access": "Permite el acceso al micrófono en el navegador.",
   "WebRTC Error": "No se pudo iniciar el audio de la llamada. Revisa el micrófono.",
-  "SIP Failure Code": "Zadarma no pudo hacer la llamada (revisa el saldo de la cuenta).",
+  "SIP Failure Code": "Zadarma rechazó la llamada.",
   "Internal Error": "Error interno del teléfono.",
 };
 
-export function mensajeDeCausa(causa: string | null | undefined): string {
-  return MENSAJE_CAUSA[String(causa ?? "")] ?? `No se pudo completar la llamada${causa ? ` (${causa})` : ""}.`;
+/** Qué suele significar cada código SIP con que Zadarma rechaza una llamada. */
+const PISTA_CODIGO: Record<number, string> = {
+  402: "sin saldo o límite de gasto",
+  403: "Zadarma no permite esa llamada: revisa en Zadarma las restricciones de llamadas a ese país y el número saliente (CallerID) de la extensión",
+  404: "el número no existe o está mal escrito",
+  408: "no hubo respuesta",
+  480: "el número no está disponible",
+  484: "número incompleto",
+  486: "ocupado",
+  488: "audio no compatible",
+  503: "el servicio de Zadarma no está disponible para ese destino",
+  603: "rechazada",
+};
+
+export function mensajeDeCausa(causa: string | null | undefined, sip: { codigo?: number; razon?: string } = {}): string {
+  const base = MENSAJE_CAUSA[String(causa ?? "")] ?? `No se pudo completar la llamada${causa ? ` (${causa})` : ""}.`;
+  if (!sip.codigo) return base;
+  const pista = PISTA_CODIGO[sip.codigo];
+  return `${base} Código ${sip.codigo}${sip.razon ? ` ${sip.razon}` : ""}${pista ? `: ${pista}.` : "."}`;
 }
 
 /** Pide get_webphone_data por JSONP: el endpoint lo envuelve en un callback. */

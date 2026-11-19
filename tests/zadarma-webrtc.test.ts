@@ -38,6 +38,8 @@ describe("teléfono propio de Zadarma", () => {
     expect(causaParaSugerencia("Rejected")).toBe("CALL_REJECTED");
     expect(mensajeDeCausa("Busy")).toBe("El cliente está ocupado.");
     expect(mensajeDeCausa("Algo raro")).toBe("No se pudo completar la llamada (Algo raro).");
+    expect(mensajeDeCausa("SIP Failure Code", { codigo: 403, razon: "Forbidden" })).toContain("Código 403 Forbidden: Zadarma no permite esa llamada");
+    expect(mensajeDeCausa("SIP Failure Code", { codigo: 499 })).toBe("Zadarma rechazó la llamada. Código 499.");
   });
 });
 
