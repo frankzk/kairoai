@@ -221,7 +221,7 @@ export default function ZadarmaPhone({ store }: { store: string }) {
     else session.on("peerconnection", (e: { peerconnection: RTCPeerConnection }) => conectar(e.peerconnection));
   }
 
-  function terminar(session: RTCSession, causa: string | null) {
+  function terminar(session: RTCSession, causa: string | null, sip: { codigo?: number; razon?: string } = {}) {
     if (sesion.current !== session) return;
     const segundosTimbre = timbreDesde.current ? Math.round((Date.now() - timbreDesde.current) / 1000) : 0;
     const entrante = session.direction === "incoming";
@@ -232,13 +232,13 @@ export default function ZadarmaPhone({ store }: { store: string }) {
         sugerencia: sugerenciaDeLlamada({ contestada: contestada.current, segundosTimbre, causa: causaParaSugerencia(causa) }),
       });
       if (esFalloDelProveedor(causa, sono.current || contestada.current)) {
-        avisarFalloProveedor({ proveedor: "zadarma", motivo: mensajeDeCausa(causa), contexto: contexto.current });
+        avisarFalloProveedor({ proveedor: "zadarma", motivo: mensajeDeCausa(causa, sip), contexto: contexto.current });
       }
     }
     sesion.current = null;
     setSilenciado(false);
     setEstado("terminada");
-    setDetalle(causa && !contestada.current ? mensajeDeCausa(causa) : null);
+    setDetalle(causa && !contestada.current ? mensajeDeCausa(causa, sip) : null);
     window.setTimeout(() => {
       if (!sesion.current) {
         setEstado(null);
@@ -277,9 +277,11 @@ export default function ZadarmaPhone({ store }: { store: string }) {
       window.clearTimeout(tope);
       terminar(session, e.cause ?? null);
     });
-    session.on("failed", (e: { cause?: string }) => {
+    session.on("failed", (e) => {
       window.clearTimeout(tope);
-      terminar(session, e.cause ?? null);
+      // El código SIP de Zadarma (403, 404, 480…) dice el motivo real.
+      const msg = e.message as unknown as { status_code?: number; reason_phrase?: string } | undefined;
+      terminar(session, e.cause ?? null, { codigo: msg?.status_code, razon: msg?.reason_phrase });
     });
     audioRemoto(session);
   }
