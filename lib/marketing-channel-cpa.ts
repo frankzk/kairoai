@@ -115,8 +115,10 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
 /**
  * Spend of one campaign in [from, to] split by channel. Meta: each day's
  * spend × the share of its ad sets per destination (`channelSpend`); a day
- * without ad set rows stays `unknown`. TikTok: all Landing. Null without
- * daily detail.
+ * without its own ad set rows uses the campaign's share over all the rows it
+ * has (Meta now answers with period totals: one row per campaign), and only
+ * a campaign with no rows at all stays `unknown`. TikTok: all Landing. Null
+ * without daily detail.
  */
 export function campaignChannelSpend(
   campaign: Pick<MarketingCampaign, "daily" | "channelSpend">,
@@ -137,13 +139,19 @@ export function campaignChannelSpend(
   for (const day of campaign.daily)
     if (day.date >= from && day.date <= to)
       days.set(day.date, (days.get(day.date) ?? 0) + day.spend);
+  // Whole-period share: covers the days without their own ad set rows.
+  const overall = { landing: 0, whatsapp: 0 };
+  for (const v of Array.from(split.values())) {
+    overall.landing += v.landing;
+    overall.whatsapp += v.whatsapp;
+  }
   for (const [date, spend] of Array.from(days)) {
     out.total += spend;
     if (platform === "tiktok") {
       out.landing += spend;
       continue;
     }
-    const share = split.get(date);
+    const share = split.get(date) ?? overall;
     const sum = share ? share.landing + share.whatsapp : 0;
     if (!share || sum <= 0) {
       out.unknown += spend;
