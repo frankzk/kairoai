@@ -49,6 +49,7 @@ import {
 } from "@/lib/marketing-loading";
 import { ResumenView } from "./ResumenView";
 import { ActionsView } from "./ActionsView";
+import { CpaProductView } from "./CpaProductView";
 
 type View = MarketingView;
 const presets: Array<[MarketingPreset, string]> = [
@@ -430,6 +431,7 @@ export default function MarketingDashboard() {
             [
               ["resumen", "Resumen", "resumen"],
               ["acciones", "Acciones", "acciones"],
+              ["cpa", "CPA por producto", "cpa"],
               ["detalle", "Detalle", lastDetail],
             ] as Array<[MarketingTab, string, View]>
           ).map(([key, label, target], index) => (
@@ -630,6 +632,19 @@ export default function MarketingDashboard() {
                     ? periodLabelText(period, marketingDate())
                     : null
                 }
+              />
+            ) : view === "cpa" ? (
+              <CpaProductView
+                data={data}
+                sources={api.sources.data}
+                settings={api.settings.data}
+                fx={charlie.settings.data?.fx ?? null}
+                periodControl={api.periodControl}
+                loading={api.sources.loading}
+                onAssign={() => {
+                  setDetailView("campaigns");
+                  setView("details");
+                }}
               />
             ) : view === "report" ? (
               <TeamReport
