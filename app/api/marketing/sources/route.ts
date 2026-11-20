@@ -40,6 +40,9 @@ export async function GET(req: NextRequest) {
     daily: scope === "report" || scope === "dias" || actions || undefined,
     overview: scope === "overview",
     hourly: scope === "report",
+    // Tablero › CPA por producto y canal: Landing/WhatsApp split of Meta spend.
+    channels:
+      scope === "report" && req.nextUrl.searchParams.get("channels") === "1",
     actions,
     // Sin acceso a la API de TikTok, el gasto que manda Make (lib/tiktok-diario.ts).
     tiktokDesdeMake: (from, to) =>

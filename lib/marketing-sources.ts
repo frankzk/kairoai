@@ -13,6 +13,7 @@ import {
   changesFromUpdatedTime,
   readMetaActivities,
 } from "./marketing-meta-activity";
+import { metaDestinationChannel } from "./marketing-channel-cpa";
 import type {
   CampaignLifetime,
   MarketingAdsAccounts,
@@ -179,6 +180,8 @@ export function metaAccountIds(env: Env): string[] {
 }
 
 interface MetaExtras {
+  /** Landing/WhatsApp split of each campaign's daily spend for these CR dates (ad set destinations). */
+  channels?: { from: string; to: string };
   /** Account-level spend per hour for these CR dates (only CR time-zone accounts). */
   hourly?: { from: string; to: string };
   /** Spend and pixel purchases since launch per campaign. */
@@ -301,6 +304,131 @@ async function metaHourly(
 }
 
 /**
+ * Ad set → destination type. A destination does not change after creation,
+ * so it is kept for a day per server instance; only unseen ad sets are asked.
+ */
+const destinationCache = new Map<string, { at: number; destination: string }>();
+const DESTINATION_TTL_MS = 24 * 3_600_000;
+const DESTINATION_MAX = 5_000;
+
+/** Test hook: empties the destination cache. */
+export function clearDestinationCache() {
+  destinationCache.clear();
+}
+
+async function adsetDestinations(
+  version: string,
+  ids: string[],
+  headers: Record<string, string>,
+  signal: AbortSignal,
+  fetcher: typeof fetch,
+): Promise<Map<string, string>> {
+  const now = Date.now();
+  const out = new Map<string, string>();
+  const missing: string[] = [];
+  for (const id of ids) {
+    const hit = destinationCache.get(id);
+    if (hit && now - hit.at < DESTINATION_TTL_MS) out.set(id, hit.destination);
+    else missing.push(id);
+  }
+  // By id (not the /adsets edge): archived and deleted ad sets still answer.
+  for (let i = 0; i < missing.length; i += 50) {
+    const chunk = missing.slice(i, i + 50);
+    const url = new URL(`https://graph.facebook.com/${version}/`);
+    url.searchParams.set("ids", chunk.join(","));
+    url.searchParams.set("fields", "id,destination_type");
+    const body = await json(fetcher, url, { headers, signal });
+    if (body.error) throw new Error("Invalid Meta destinations");
+    for (const id of chunk) {
+      const entry = obj(body[id]);
+      if (str(entry.id) !== id) throw new Error("Missing Meta destination");
+      // Meta omits the field on some website ad sets: same as UNDEFINED.
+      const destination = str(entry.destination_type) || "UNDEFINED";
+      out.set(id, destination);
+      destinationCache.set(id, { at: now, destination });
+    }
+  }
+  while (destinationCache.size > DESTINATION_MAX)
+    destinationCache.delete(destinationCache.keys().next().value!);
+  return out;
+}
+
+/**
+ * Daily spend of each campaign's ad sets by channel (account currency):
+ * `level=adset` insights plus each ad set's `destination_type`.
+ */
+async function metaChannelSpend(
+  base: string,
+  version: string,
+  range: { from: string; to: string },
+  headers: Record<string, string>,
+  signal: AbortSignal,
+  fetcher: typeof fetch,
+): Promise<Map<string, Array<{ date: string; whatsapp: number; landing: number }>>> {
+  const rows = await metaPages(
+    fetcher,
+    (after) => {
+      const url = new URL(`${base}/insights`);
+      url.searchParams.set("fields", "adset_id,campaign_id,spend");
+      url.searchParams.set("level", "adset");
+      url.searchParams.set("time_increment", "1");
+      url.searchParams.set(
+        "time_range",
+        JSON.stringify({ since: range.from, until: range.to }),
+      );
+      url.searchParams.set("limit", "500");
+      if (after) url.searchParams.set("after", after);
+      return url;
+    },
+    headers,
+    signal,
+  );
+  const parsed = rows.map((row) => {
+    const date = str(row.date_start);
+    if (
+      !str(row.adset_id) ||
+      !str(row.campaign_id) ||
+      !/^20\d{2}-\d{2}-\d{2}$/.test(date) ||
+      date < range.from ||
+      date > range.to
+    )
+      throw new Error("Invalid ad set row");
+    return {
+      adset: str(row.adset_id),
+      campaign: str(row.campaign_id),
+      date,
+      spend: metric(row.spend),
+    };
+  });
+  const destinations = await adsetDestinations(
+    version,
+    Array.from(new Set(parsed.filter((r) => r.spend > 0).map((r) => r.adset))),
+    headers,
+    signal,
+    fetcher,
+  );
+  const byCampaign = new Map<string, Map<string, { whatsapp: number; landing: number }>>();
+  for (const row of parsed) {
+    if (row.spend <= 0) continue;
+    const days = byCampaign.get(row.campaign) ?? new Map();
+    const day = days.get(row.date) ?? { whatsapp: 0, landing: 0 };
+    day[metaDestinationChannel(destinations.get(row.adset))] += row.spend;
+    days.set(row.date, day);
+    byCampaign.set(row.campaign, days);
+  }
+  return new Map(
+    Array.from(byCampaign, ([campaign, days]) => [
+      campaign,
+      Array.from(days, ([date, v]) => ({
+        date,
+        whatsapp: Math.round(v.whatsapp * 100) / 100,
+        landing: Math.round(v.landing * 100) / 100,
+      })).sort((a, b) => a.date.localeCompare(b.date)),
+    ]),
+  );
+}
+
+/**
  * Budgets/bids, lifetime, activity log and hourly spend. None of them may fail
  * the account: each failure only leaves a message (spend stays usable).
  */
@@ -310,11 +438,11 @@ async function enrichMetaAccount(
   headers: Record<string, string>,
   signal: AbortSignal,
   fetcher: typeof fetch,
-  extra: MetaExtras & { details: boolean; since: string },
+  extra: MetaExtras & { details: boolean; since: string; version: string },
 ) {
   const needCatalog = extra.details || extra.lifetime || extra.activities;
   const hourlyAllowed = result.timezone === "America/Costa_Rica";
-  const [catalog, lifetime, hourly] = await Promise.all([
+  const [catalog, lifetime, hourly, channels] = await Promise.all([
     needCatalog
       ? readMetaCampaignCatalog(
           base,
@@ -332,7 +460,26 @@ async function enrichMetaAccount(
           () => null,
         )
       : Promise.resolve(null),
+    extra.channels
+      ? metaChannelSpend(
+          base,
+          extra.version,
+          extra.channels,
+          headers,
+          signal,
+          fetcher,
+        ).catch(() => null)
+      : Promise.resolve(null),
   ]);
+  if (extra.channels) {
+    // Fail soft: without destinations the spend has no split (never guessed).
+    result.channels = channels ? "ok" : "unavailable";
+    if (channels)
+      for (const campaign of result.campaigns) {
+        const days = channels.get(campaign.id);
+        if (days) campaign.channelSpend = days;
+      }
+  }
   if (catalog) {
     const merged = new Map(
       result.campaigns.map((campaign) => [campaign.id, campaign]),
@@ -535,11 +682,18 @@ async function metaAds(
             }
           : {}),
       };
-      if (details || extra.lifetime || extra.activities || extra.hourly)
+      if (
+        details ||
+        extra.lifetime ||
+        extra.activities ||
+        extra.hourly ||
+        extra.channels
+      )
         await enrichMetaAccount(result, base, headers, signal, fetcher, {
           ...extra,
           details,
           since: period.from,
+          version,
         });
       return result;
     }
@@ -741,6 +895,8 @@ export async function getMarketingSources(
     daily?: boolean;
     /** Account spend per hour for today and the previous 7 days (CR accounts only). */
     hourly?: boolean;
+    /** Meta: Landing/WhatsApp split of each campaign's daily spend (ad set destinations). */
+    channels?: boolean;
     /** Actions table: details + daily + lifetime + activity log (Meta) and lifetime (TikTok). */
     actions?: boolean;
     now?: Date;
@@ -791,6 +947,9 @@ export async function getMarketingSources(
               {
                 hourly: options.hourly
                   ? { from: shiftDate(today, -7), to: today }
+                  : undefined,
+                channels: options.channels
+                  ? { from: period.from, to: period.to }
                   : undefined,
                 lifetime: options.actions === true,
                 activities: options.actions === true,

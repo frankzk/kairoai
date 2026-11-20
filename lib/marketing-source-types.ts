@@ -27,6 +27,12 @@ export interface MarketingCampaign {
   updatedTime?: string | null;
   /** Since launch: account-currency spend, pixel purchases and first CR date. */
   lifetime?: CampaignLifetime | null;
+  /**
+   * Meta: spend per day of its ad sets by destination (account currency):
+   * WhatsApp ad sets vs the rest (landing). Absent when the destinations could
+   * not be read; see lib/marketing-channel-cpa.ts.
+   */
+  channelSpend?: Array<{ date: string; whatsapp: number; landing: number }>;
 }
 
 export interface CampaignLifetime {
@@ -118,6 +124,8 @@ export interface MarketingAdsData {
   hourly?: MarketingHourlySpend;
   hourlyMessage?: string;
   lifetimeMessage?: string;
+  /** Meta, when the Landing/WhatsApp split was asked: "unavailable" if it could not be read. */
+  channels?: "ok" | "unavailable";
   changes?: CampaignChange[];
   /** activity = Meta activity log; updated_time = last edit only; unavailable = neither. */
   changesStatus?: "activity" | "updated_time" | "unavailable";

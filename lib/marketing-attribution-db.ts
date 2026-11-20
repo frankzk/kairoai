@@ -10,7 +10,7 @@ import { readOriginCatalog } from "./marketing-origin-catalog";
 import { filtrosPedidoIcomfly } from "./zadarma-calls";
 
 const columns =
-  "icomfly_order_id,order_number:payload->>order_number,shopify_display_number:payload->>shopify_display_number,store_web_seq:payload->>store_web_seq,tracking_number:payload->>tracking_number,ad_origin:payload->ad_origin";
+  "icomfly_order_id,order_number:payload->>order_number,shopify_display_number:payload->>shopify_display_number,store_web_seq:payload->>store_web_seq,tracking_number:payload->>tracking_number,ad_origin:payload->ad_origin,labels:payload->labels,sales_channel:payload->>sales_channel,creator:payload->atribucion->creo->>nombre";
 type Raw = Record<string, unknown>;
 async function pages(
   query: (

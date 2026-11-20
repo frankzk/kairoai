@@ -153,7 +153,12 @@ export function useMarketing(
     revision + financialRevision,
   );
   const sources = useResource<MarketingSources>(
-    query ? `/api/marketing/sources?${query}&scope=${plan.sourceScope}` : null,
+    query
+      ? `/api/marketing/sources?${query}&scope=${plan.sourceScope}${
+          // CPA por producto y canal: ad set destinations (Landing/WhatsApp).
+          view === "report" ? "&channels=1" : ""
+        }`
+      : null,
     revision,
   );
   const today = marketingDate();

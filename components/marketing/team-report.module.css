@@ -1475,3 +1475,96 @@
 .simBar > .simActive {
   filter: brightness(0.88);
 }
+
+/* Tablero › CPA por producto y canal: fila del producto que se abre en
+   Landing y WhatsApp; el total de todos los productos va primero. */
+.report .channelTable tbody + tbody {
+  border-top: 1px solid var(--mk-border);
+}
+.report .channelTable tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.report .channelTable tbody th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--mk-surface);
+  min-width: 170px;
+  max-width: 260px;
+}
+.report .channelTable tbody tr:hover th:first-child {
+  background: var(--mk-hover);
+}
+.report .channelToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mk-text);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+}
+.report .channelToggle:hover {
+  background: none;
+  color: var(--mk-accent);
+}
+.channelToggle svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--mk-muted);
+  transition: transform 0.15s ease;
+}
+.channelToggle[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+.report .channelTable tr.channelSub > * {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  color: var(--mk-muted);
+  font-size: 11px;
+}
+.report .channelTable tr.channelSub > th {
+  padding-left: 34px;
+}
+.report .channelTable tr.channelSub > td.risk {
+  color: var(--mk-bad);
+}
+.report .channelTable tbody.channelTotal tr:first-child > * {
+  font-weight: 650;
+}
+.report .channelTable tbody.channelTotal tr > *,
+.report .channelTable tbody.channelTotal tr > th:first-child {
+  background: var(--mk-soft);
+}
+.report .channelTable td small {
+  white-space: nowrap;
+  max-width: none;
+}
+.report .channelTable td.channelEmpty {
+  text-align: left;
+  white-space: normal;
+  color: var(--mk-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .channelToggle svg {
+    transition: none;
+  }
+}
+@media (max-width: 700px) {
+  .report .channelTable tbody th:first-child {
+    min-width: 140px;
+    max-width: 170px;
+  }
+  .report .channelTable th,
+  .report .channelTable td {
+    padding: 10px;
+  }
+  .report .channelTable tr.channelSub > th {
+    padding-left: 28px;
+  }
+}

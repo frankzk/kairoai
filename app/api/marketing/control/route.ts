@@ -1,5 +1,6 @@
 // Pedidos reales por día (creados − anulados), UTM por campaña/anuncio,
-// pedidos sin UTM por producto y el ritmo de hoy en tramos de 15 minutos.
+// pedidos sin UTM por producto, canal de venta (Landing / WhatsApp) con sus
+// productos y unidades, y el ritmo de hoy en tramos de 15 minutos.
 // Solo agregados: ningún pedido, cliente ni teléfono sale de esta ruta.
 import { NextRequest } from "next/server";
 import { getOrdersDataset } from "@/app/api/finance/_shared/orders-dataset";
@@ -13,6 +14,10 @@ import {
   shiftDate,
 } from "@/lib/marketing-dates";
 import { marketingAccess, marketingReply } from "@/lib/marketing-access";
+import {
+  attachChannelMix,
+  matchChannelsToOrders,
+} from "@/lib/marketing-channel-orders";
 import {
   buildPaceSlots,
   buildRealOrderDays,
@@ -104,14 +109,16 @@ export async function GET(req: NextRequest) {
       [],
       dataset.settlementTraceByKey,
     ).orders;
+    const cohort = orders.filter((o) => {
+      const t = Date.parse(o.created_at || "");
+      return t >= period.start && t < period.end;
+    });
     const matched = origin.rows
-      ? matchOriginsToOrders(
-          orders.filter((o) => {
-            const t = Date.parse(o.created_at || "");
-            return t >= period.start && t < period.end;
-          }),
-          origin.rows,
-        )
+      ? matchOriginsToOrders(cohort, origin.rows)
+      : null;
+    // Without iComfly rows every order stays "sin canal" (never guessed).
+    const channels = origin.rows
+      ? matchChannelsToOrders(cohort, origin.rows)
       : null;
     const body: MarketingControl = {
       from: period.from,
@@ -119,7 +126,13 @@ export async function GET(req: NextRequest) {
       today,
       generatedAt: now.toISOString(),
       origins: origin.status,
-      days: buildRealOrderDays(orders, matched, period, now),
+      days: attachChannelMix(
+        buildRealOrderDays(orders, matched, period, now),
+        orders,
+        channels,
+        period,
+        now,
+      ),
       pace: period.to === today ? buildPaceSlots(orders, today, now) : null,
     };
     return marketingReply(body);
