@@ -232,25 +232,45 @@ describe("marketing source readers", () => {
 
 describe("Landing / WhatsApp split of Meta spend (ad set destinations)", () => {
   const period = { from: "2026-11-18", to: "2026-11-19" };
-  function router(options: { failIds?: boolean; failAdsets?: boolean } = {}) {
+  type Options = {
+    failAdsetEdge?: boolean;
+    failAdsets?: boolean;
+    refuseStatus?: boolean;
+    refuseGoal?: boolean;
+    hide?: string[];
+  };
+  function router(options: Options = {}) {
     return vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/act_123"))
         return response({ id: "act_123", currency: "USD", timezone_name: "America/Costa_Rica" });
-      if (url.pathname === "/v24.0/") {
-        if (options.failIds) return response({ error: { message: "private-meta-token" } }, 400);
-        const ids = url.searchParams.get("ids")!.split(",");
-        const types: Record<string, string> = { S1: "WEBSITE", S2: "WHATSAPP", S3: "UNDEFINED" };
-        return response(Object.fromEntries(ids.map((id) => [id, { id, destination_type: types[id] }])));
+      if (url.pathname.endsWith("/act_123/adsets")) {
+        if (options.failAdsetEdge) return response({ error: { message: "private-meta-token" } }, 400);
+        if (options.refuseStatus && url.searchParams.get("effective_status"))
+          return response({ error: { message: "bad status" } }, 400);
+        const campaigns: string[] = JSON.parse(url.searchParams.get("filtering")!)[0].value;
+        const all = [
+          { id: "S1", campaign: "C1", destination_type: "WEBSITE" },
+          { id: "S2", campaign: "C1", destination_type: "WHATSAPP" },
+          { id: "S3", campaign: "C2", destination_type: "UNDEFINED" },
+        ];
+        return response({
+          data: all
+            .filter((a) => campaigns.includes(a.campaign) && !(options.hide ?? []).includes(a.id))
+            .map(({ id, destination_type }) => ({ id, destination_type })),
+        });
       }
       if (url.pathname.endsWith("/insights")) {
         if (url.searchParams.get("level") === "adset") {
           if (options.failAdsets) return response({ error: {} }, 500);
+          if (options.refuseGoal && url.searchParams.get("fields")!.includes("optimization_goal"))
+            return response({ error: { message: "bad field" } }, 400);
+          const withGoal = url.searchParams.get("fields")!.includes("optimization_goal");
           return response({ data: [
-            { adset_id: "S1", campaign_id: "C1", date_start: "2026-11-18", spend: "30" },
-            { adset_id: "S2", campaign_id: "C1", date_start: "2026-11-18", spend: "10" },
-            { adset_id: "S3", campaign_id: "C2", date_start: "2026-11-19", spend: "5" },
-          ] });
+            { adset_id: "S1", campaign_id: "C1", optimization_goal: "OFFSITE_CONVERSIONS", spend: "30" },
+            { adset_id: "S2", campaign_id: "C1", optimization_goal: "CONVERSATIONS", spend: "10" },
+            { adset_id: "S3", campaign_id: "C2", optimization_goal: "CONVERSATIONS", spend: "5" },
+          ].map(({ optimization_goal, ...row }) => (withGoal ? { ...row, optimization_goal } : row)) });
         }
         return response({ data: [
           { campaign_id: "C1", campaign_name: "Fat Burn", date_start: "2026-11-18", spend: "40", impressions: "1", clicks: "1" },
@@ -260,30 +280,44 @@ describe("Landing / WhatsApp split of Meta spend (ad set destinations)", () => {
       return response({}, 404);
     });
   }
+  const spendOf = (result: Awaited<ReturnType<typeof getMarketingSources>>, id: string) =>
+    result.meta.data!.accounts[0].campaigns.find((c) => c.id === id)!.channelSpend;
 
-  it("splits each campaign day by the destination of its ad sets, caching destinations", async () => {
+  it("splits each campaign by the destination of its ad sets (account /adsets edge), caching destinations", async () => {
     clearDestinationCache();
     const fetcher = router();
     const result = await getMarketingSources(period, metaEnv, fetcher, { daily: true, channels: true });
-    const account = result.meta.data!.accounts[0];
-    expect(account.channels).toBe("ok");
-    expect(account.campaigns.find((c) => c.id === "C1")!.channelSpend).toEqual([{ date: "2026-11-18", whatsapp: 10, landing: 30 }]);
-    // UNDEFINED (website conversions) is Landing.
-    // Period totals per ad set (dated at the first day of the range).
-    expect(account.campaigns.find((c) => c.id === "C2")!.channelSpend).toEqual([{ date: "2026-11-18", whatsapp: 0, landing: 5 }]);
+    expect(result.meta.data!.accounts[0].channels).toBe("ok");
+    expect(spendOf(result, "C1")).toEqual([{ date: "2026-11-18", whatsapp: 10, landing: 30 }]);
+    // UNDEFINED (website conversions) is Landing; the destination wins over the goal.
+    expect(spendOf(result, "C2")).toEqual([{ date: "2026-11-18", whatsapp: 0, landing: 5 }]);
     const adsetCall = fetcher.mock.calls.find(([u]) => new URL(String(u)).searchParams.get("level") === "adset")!;
     expect(new URL(String(adsetCall[0])).searchParams.get("time_increment")).toBeNull();
-    const lookups = fetcher.mock.calls.filter(([u]) => new URL(String(u)).pathname === "/v24.0/");
+    const lookups = fetcher.mock.calls.filter(([u]) => new URL(String(u)).pathname.endsWith("/adsets"));
     expect(lookups).toHaveLength(1);
-    expect(new URL(String(lookups[0][0])).searchParams.get("fields")).toBe("id,destination_type");
+    expect(JSON.parse(new URL(String(lookups[0][0])).searchParams.get("filtering")!)[0]).toMatchObject({ field: "campaign.id", operator: "IN" });
+    expect(fetcher.mock.calls.some(([u]) => new URL(String(u)).searchParams.get("ids"))).toBe(false);
     const again = router();
     await getMarketingSources(period, metaEnv, again, { daily: true, channels: true });
-    expect(again.mock.calls.some(([u]) => new URL(String(u)).pathname === "/v24.0/")).toBe(false);
+    expect(again.mock.calls.some(([u]) => new URL(String(u)).pathname.endsWith("/adsets"))).toBe(false);
     expect(JSON.stringify(result)).not.toContain("private-meta-token");
   });
 
+  it("an ad set without destination falls back to its goal: CONVERSATIONS is WhatsApp", async () => {
+    clearDestinationCache();
+    const result = await getMarketingSources(period, metaEnv, router({ hide: ["S3"] }), { daily: true, channels: true });
+    expect(spendOf(result, "C2")).toEqual([{ date: "2026-11-18", whatsapp: 5, landing: 0 }]);
+  });
+
+  it("retries without the status list, and without the goal field, when Meta refuses them", async () => {
+    clearDestinationCache();
+    const result = await getMarketingSources(period, metaEnv, router({ refuseStatus: true, refuseGoal: true }), { daily: true, channels: true });
+    expect(result.meta.data!.accounts[0].channels).toBe("ok");
+    expect(spendOf(result, "C1")).toEqual([{ date: "2026-11-18", whatsapp: 10, landing: 30 }]);
+  });
+
   it("fails soft: spend stays, the split is marked unavailable", async () => {
-    for (const fail of [{ failIds: true }, { failAdsets: true }]) {
+    for (const fail of [{ failAdsetEdge: true, refuseGoal: true }, { failAdsets: true }]) {
       clearDestinationCache();
       const result = await getMarketingSources(period, metaEnv, router(fail), { daily: true, channels: true });
       const account = result.meta.data!.accounts[0];
@@ -294,33 +328,13 @@ describe("Landing / WhatsApp split of Meta spend (ad set destinations)", () => {
     }
   });
 
-  it("a chunk that fails is asked id by id; an ad set that never answers is left out", async () => {
-    clearDestinationCache();
-    const fetcher = vi.fn(async (input: string | URL | Request) => {
-      const url = new URL(String(input));
-      if (url.pathname === "/v24.0/") {
-        const ids = url.searchParams.get("ids")!.split(",");
-        // S3 (deleted) makes Meta fail the whole request.
-        if (ids.includes("S3")) return response({ error: { message: "x" } }, 400);
-        const types: Record<string, string> = { S1: "WEBSITE", S2: "WHATSAPP" };
-        return response(Object.fromEntries(ids.map((id) => [id, { id, destination_type: types[id] }])));
-      }
-      return router()(input);
-    });
-    const result = await getMarketingSources(period, metaEnv, fetcher, { daily: true, channels: true });
-    const account = result.meta.data!.accounts[0];
-    expect(account.channels).toBe("ok");
-    expect(account.campaigns.find((c) => c.id === "C1")!.channelSpend).toEqual([{ date: "2026-11-18", whatsapp: 10, landing: 30 }]);
-    // C2 only had the unreadable ad set: no split (unknown), never Landing.
-    expect(account.campaigns.find((c) => c.id === "C2")!.channelSpend).toBeUndefined();
-  });
-
   it("does not ask for ad sets unless the split is requested", async () => {
     const fetcher = router();
     await getMarketingSources(period, metaEnv, fetcher, { daily: true });
     expect(fetcher.mock.calls.some(([u]) => new URL(String(u)).searchParams.get("level") === "adset")).toBe(false);
   });
 });
+
 
 describe("ShipHero: saved connection snapshot before the static env", () => {
   const saved = {
