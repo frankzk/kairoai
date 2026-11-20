@@ -316,49 +316,80 @@ export function clearDestinationCache() {
   destinationCache.clear();
 }
 
+const ADSET_STATUSES = JSON.stringify([
+  "ACTIVE",
+  "PAUSED",
+  "CAMPAIGN_PAUSED",
+  "ARCHIVED",
+  "DELETED",
+  "IN_PROCESS",
+  "WITH_ISSUES",
+]);
+
+/**
+ * Destination of each ad set. Read from the account's own `/adsets` edge (the
+ * same path as the reports that already work; the multi-id `?ids=` lookup was
+ * refused by Meta for every ad set in production), filtered by the campaigns
+ * that spent, with every status so archived and deleted ad sets answer too.
+ * Ad sets that still do not answer are left out (the caller can fall back to
+ * the ad set's optimization goal).
+ */
 async function adsetDestinations(
-  version: string,
-  ids: string[],
+  base: string,
+  wanted: Array<{ adset: string; campaign: string }>,
   headers: Record<string, string>,
   signal: AbortSignal,
   fetcher: typeof fetch,
 ): Promise<Map<string, string>> {
   const now = Date.now();
   const out = new Map<string, string>();
-  const missing: string[] = [];
-  for (const id of ids) {
-    const hit = destinationCache.get(id);
-    if (hit && now - hit.at < DESTINATION_TTL_MS) out.set(id, hit.destination);
-    else missing.push(id);
+  const missing = new Map<string, string>();
+  for (const { adset, campaign } of wanted) {
+    const hit = destinationCache.get(adset);
+    if (hit && now - hit.at < DESTINATION_TTL_MS) out.set(adset, hit.destination);
+    else missing.set(adset, campaign);
   }
-  // By id (not the /adsets edge): archived and deleted ad sets still answer.
-  // Meta fails the whole `ids` request when one id does not answer (a deleted
-  // ad set, no permission), so a failed chunk is asked id by id and only the
-  // ids that still fail stay without destination (their spend is left out of
-  // the share, never guessed as Landing).
-  const read = async (chunk: string[]) => {
-    const url = new URL(`https://graph.facebook.com/${version}/`);
-    url.searchParams.set("ids", chunk.join(","));
-    url.searchParams.set("fields", "id,destination_type");
-    const body = await json(fetcher, url, { headers, signal });
-    if (body.error) throw new Error("Invalid Meta destinations");
-    for (const id of chunk) {
-      const entry = obj(body[id]);
-      if (str(entry.id) !== id) throw new Error("Missing Meta destination");
-      // Meta omits the field on some website ad sets: same as UNDEFINED.
-      const destination = str(entry.destination_type) || "UNDEFINED";
-      out.set(id, destination);
-      destinationCache.set(id, { at: now, destination });
-    }
-  };
-  for (let i = 0; i < missing.length; i += 50) {
-    const chunk = missing.slice(i, i + 50);
+  const campaigns = Array.from(new Set(missing.values()));
+  const read = (chunk: string[], withStatus: boolean) =>
+    metaPages(
+      fetcher,
+      (after) => {
+        const url = new URL(`${base}/adsets`);
+        url.searchParams.set("fields", "id,destination_type");
+        url.searchParams.set(
+          "filtering",
+          JSON.stringify([
+            { field: "campaign.id", operator: "IN", value: chunk },
+          ]),
+        );
+        if (withStatus) url.searchParams.set("effective_status", ADSET_STATUSES);
+        url.searchParams.set("limit", "500");
+        if (after) url.searchParams.set("after", after);
+        return url;
+      },
+      headers,
+      signal,
+    );
+  for (let i = 0; i < campaigns.length; i += 50) {
+    const chunk = campaigns.slice(i, i + 50);
+    let rows: Json[] = [];
     try {
-      await read(chunk);
+      rows = await read(chunk, true);
     } catch (err) {
       if (signal.aborted) throw err;
-      if (chunk.length === 1) continue;
-      await Promise.all(chunk.map((id) => read([id]).catch(() => undefined)));
+      // Some API versions refuse a status in the list: ask without it.
+      rows = await read(chunk, false).catch((again) => {
+        if (signal.aborted) throw again;
+        return [];
+      });
+    }
+    for (const row of rows) {
+      const id = str(row.id);
+      if (!id) continue;
+      // Meta omits the field on some website ad sets: same as UNDEFINED.
+      const destination = str(row.destination_type) || "UNDEFINED";
+      out.set(id, destination);
+      destinationCache.set(id, { at: now, destination });
     }
   }
   while (destinationCache.size > DESTINATION_MAX)
@@ -367,36 +398,44 @@ async function adsetDestinations(
 }
 
 /**
- * Daily spend of each campaign's ad sets by channel (account currency):
- * `level=adset` insights plus each ad set's `destination_type`.
+ * Spend of each campaign's ad sets by channel over the range (account
+ * currency): `level=adset` insights plus each ad set's `destination_type`.
  */
 async function metaChannelSpend(
   base: string,
-  version: string,
   range: { from: string; to: string },
   headers: Record<string, string>,
   signal: AbortSignal,
   fetcher: typeof fetch,
 ): Promise<Map<string, Array<{ date: string; whatsapp: number; landing: number }>>> {
-  const rows = await metaPages(
-    fetcher,
-    (after) => {
-      const url = new URL(`${base}/insights`);
-      // Period totals per ad set (no time_increment): a campaign keeps its
-      // destination mix, and a day-by-day read of every ad set was too slow
-      // for the 25 s the report has.
-      url.searchParams.set("fields", "adset_id,campaign_id,spend");
-      url.searchParams.set("level", "adset");
-      url.searchParams.set(
-        "time_range",
-        JSON.stringify({ since: range.from, until: range.to }),
-      );
-      url.searchParams.set("limit", "500");
-      if (after) url.searchParams.set("after", after);
-      return url;
+  const read = (fields: string) =>
+    metaPages(
+      fetcher,
+      (after) => {
+        const url = new URL(`${base}/insights`);
+        // Period totals per ad set (no time_increment): a campaign keeps its
+        // destination mix, and a day-by-day read of every ad set was too slow
+        // for the 25 s the report has.
+        url.searchParams.set("fields", fields);
+        url.searchParams.set("level", "adset");
+        url.searchParams.set(
+          "time_range",
+          JSON.stringify({ since: range.from, until: range.to }),
+        );
+        url.searchParams.set("limit", "500");
+        if (after) url.searchParams.set("after", after);
+        return url;
+      },
+      headers,
+      signal,
+    );
+  // The ad set's optimization goal is the fallback when its destination does
+  // not answer; if Meta refuses the field, the spend is read without it.
+  const rows = await read("adset_id,campaign_id,optimization_goal,spend").catch(
+    (err) => {
+      if (signal.aborted) throw err;
+      return read("adset_id,campaign_id,spend");
     },
-    headers,
-    signal,
   );
   // One row per ad set for the whole range, dated at its first day.
   const parsed = rows.flatMap((row) =>
@@ -407,18 +446,26 @@ async function metaChannelSpend(
             campaign: str(row.campaign_id),
             date: range.from,
             spend: metric(row.spend),
+            goal: str(row.optimization_goal).toUpperCase(),
           },
         ]
       : [],
   );
+  const spent = parsed.filter((r) => r.spend > 0);
   const destinations = await adsetDestinations(
-    version,
-    Array.from(new Set(parsed.filter((r) => r.spend > 0).map((r) => r.adset))),
+    base,
+    Array.from(new Map(spent.map((r) => [r.adset, r])).values()),
     headers,
     signal,
     fetcher,
   );
-  if (!destinations.size && parsed.some((r) => r.spend > 0))
+  // Without a destination, a CONVERSATIONS goal is a WhatsApp ad set (the
+  // messaging campaigns of the team are all WhatsApp); any other goal stays
+  // unknown rather than guessed.
+  for (const row of spent)
+    if (!destinations.has(row.adset) && row.goal === "CONVERSATIONS")
+      destinations.set(row.adset, "WHATSAPP");
+  if (!destinations.size && spent.length)
     throw new Error("Meta destinations unreadable");
   const byCampaign = new Map<string, Map<string, { whatsapp: number; landing: number }>>();
   for (const row of parsed) {
@@ -478,7 +525,6 @@ async function enrichMetaAccount(
     extra.channels
       ? metaChannelSpend(
           base,
-          extra.version,
           extra.channels,
           headers,
           signal,
