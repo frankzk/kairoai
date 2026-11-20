@@ -12,6 +12,7 @@ import {
 } from "./icomfly-ad-origin";
 import { nombrePedidoIcomfly } from "./icomfly-pedidos";
 import type { OrderProfitabilityRow } from "./finance-orders";
+import type { ChannelOrderGroup } from "./marketing-channel-cpa";
 import type { MarketingOriginRow } from "./marketing-attribution";
 import {
   dateTime,
@@ -35,6 +36,8 @@ export interface RealOrderDay {
   unlinkedBySku: Record<string, number>;
   /** Real orders without UTM and without items. */
   unlinkedNoProduct: number;
+  /** Real orders by sale channel and lines (lib/marketing-channel-orders.ts). */
+  mix?: ChannelOrderGroup[];
 }
 
 export interface MarketingPaceDay {
@@ -81,6 +84,41 @@ export function matchOriginsToOrders(
   rows: MarketingOriginRow[],
   catalog: OriginCampaign[] = [],
 ): Map<string, IcomflyAdOrigin | "ambiguous"> {
+  const match = orderMatcher(orders);
+  const candidates = new Map<string, IcomflyAdOrigin[]>();
+  for (const row of rows) {
+    const parsed = row.resolvedOrigin ?? readIcomflyAdOrigin(row.ad_origin);
+    if (!parsed) continue;
+    const origin = resolveOriginCampaign(parsed, catalog);
+    const orderKey = match(row);
+    if (!orderKey) continue;
+    candidates.set(orderKey, [...(candidates.get(orderKey) ?? []), origin]);
+  }
+  const result = new Map<string, IcomflyAdOrigin | "ambiguous">();
+  for (const [orderKey, variants] of Array.from(candidates)) {
+    const merged = mergeAdOrigins(variants);
+    if (merged.ambiguous) result.set(orderKey, "ambiguous");
+    else if (merged.origin) result.set(orderKey, merged.origin);
+  }
+  return result;
+}
+
+/**
+ * Order key of an iComfly/Shopify row: by order name (or guide when the name
+ * does not match), only when the match is unique; null otherwise.
+ */
+export function orderMatcher(
+  orders: Pick<OrderProfitabilityRow, "order_key" | "order_name" | "guide_number">[],
+): (
+  row: Pick<
+    MarketingOriginRow,
+    | "shopify_display_number"
+    | "order_number"
+    | "icomfly_order_id"
+    | "store_web_seq"
+    | "tracking_number"
+  >,
+) => string | null {
   const byName = new Map<string, Set<string>>(),
     byGuide = new Map<string, Set<string>>();
   const key = (s: unknown) =>
@@ -100,11 +138,7 @@ export function matchOriginsToOrders(
     add(byName, o.order_name, o.order_key);
     add(byGuide, o.guide_number, o.order_key);
   }
-  const candidates = new Map<string, IcomflyAdOrigin[]>();
-  for (const row of rows) {
-    const parsed = row.resolvedOrigin ?? readIcomflyAdOrigin(row.ad_origin);
-    if (!parsed) continue;
-    const origin = resolveOriginCampaign(parsed, catalog);
+  return (row) => {
     const name =
       row.shopify_display_number ||
       nombrePedidoIcomfly(
@@ -116,17 +150,8 @@ export function matchOriginsToOrders(
     const matches = direct?.size
       ? direct
       : byGuide.get(key(row.tracking_number));
-    if (matches?.size !== 1) continue;
-    const orderKey = Array.from(matches)[0];
-    candidates.set(orderKey, [...(candidates.get(orderKey) ?? []), origin]);
-  }
-  const result = new Map<string, IcomflyAdOrigin | "ambiguous">();
-  for (const [orderKey, variants] of Array.from(candidates)) {
-    const merged = mergeAdOrigins(variants);
-    if (merged.ambiguous) result.set(orderKey, "ambiguous");
-    else if (merged.origin) result.set(orderKey, merged.origin);
-  }
-  return result;
+    return matches?.size === 1 ? Array.from(matches)[0] : null;
+  };
 }
 
 /** A linked order has one clean Meta/TikTok origin with a campaign id. */

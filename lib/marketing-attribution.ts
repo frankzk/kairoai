@@ -10,6 +10,10 @@ export interface MarketingOriginRow {
   store_web_seq: unknown;
   tracking_number: unknown;
   ad_origin: unknown;
+  /** iComfly rows: signals of the sale channel (lib/marketing-channel-orders.ts). */
+  labels?: unknown;
+  sales_channel?: unknown;
+  creator?: unknown;
   resolvedOrigin?: IcomflyAdOrigin | null;
   originSource?:
     | "icomfly"
