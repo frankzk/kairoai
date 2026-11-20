@@ -167,7 +167,7 @@ describe("reparto del gasto por canal", () => {
       campaignChannelSpend({ daily }, "tiktok", "2026-11-18", "2026-11-19"),
     ).toEqual({ total: 40, landing: 40, whatsapp: 0, unknown: 0 });
   });
-  it("missing destinations leave the spend without split", () => {
+  it("a day without rows uses the campaign's share; no rows at all stays unknown", () => {
     expect(
       campaignChannelSpend({ daily }, "meta", "2026-11-18", "2026-11-19"),
     ).toEqual({ total: 40, landing: 0, whatsapp: 0, unknown: 40 });
@@ -181,7 +181,18 @@ describe("reparto del gasto por canal", () => {
         "2026-11-18",
         "2026-11-19",
       ),
-    ).toEqual({ total: 40, landing: 0, whatsapp: 30, unknown: 10 });
+    ).toEqual({ total: 40, landing: 0, whatsapp: 40, unknown: 0 });
+    expect(
+      campaignChannelSpend(
+        {
+          daily,
+          channelSpend: [{ date: "2026-11-18", whatsapp: 10, landing: 30 }],
+        },
+        "meta",
+        "2026-11-18",
+        "2026-11-19",
+      ),
+    ).toEqual({ total: 40, landing: 30, whatsapp: 10, unknown: 0 });
     expect(
       campaignChannelSpend({}, "meta", "2026-11-18", "2026-11-19"),
     ).toBeNull();

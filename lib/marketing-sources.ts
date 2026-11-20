@@ -332,8 +332,11 @@ async function adsetDestinations(
     else missing.push(id);
   }
   // By id (not the /adsets edge): archived and deleted ad sets still answer.
-  for (let i = 0; i < missing.length; i += 50) {
-    const chunk = missing.slice(i, i + 50);
+  // Meta fails the whole `ids` request when one id does not answer (a deleted
+  // ad set, no permission), so a failed chunk is asked id by id and only the
+  // ids that still fail stay without destination (their spend is left out of
+  // the share, never guessed as Landing).
+  const read = async (chunk: string[]) => {
     const url = new URL(`https://graph.facebook.com/${version}/`);
     url.searchParams.set("ids", chunk.join(","));
     url.searchParams.set("fields", "id,destination_type");
@@ -346,6 +349,16 @@ async function adsetDestinations(
       const destination = str(entry.destination_type) || "UNDEFINED";
       out.set(id, destination);
       destinationCache.set(id, { at: now, destination });
+    }
+  };
+  for (let i = 0; i < missing.length; i += 50) {
+    const chunk = missing.slice(i, i + 50);
+    try {
+      await read(chunk);
+    } catch (err) {
+      if (signal.aborted) throw err;
+      if (chunk.length === 1) continue;
+      await Promise.all(chunk.map((id) => read([id]).catch(() => undefined)));
     }
   }
   while (destinationCache.size > DESTINATION_MAX)
@@ -369,9 +382,11 @@ async function metaChannelSpend(
     fetcher,
     (after) => {
       const url = new URL(`${base}/insights`);
+      // Period totals per ad set (no time_increment): a campaign keeps its
+      // destination mix, and a day-by-day read of every ad set was too slow
+      // for the 25 s the report has.
       url.searchParams.set("fields", "adset_id,campaign_id,spend");
       url.searchParams.set("level", "adset");
-      url.searchParams.set("time_increment", "1");
       url.searchParams.set(
         "time_range",
         JSON.stringify({ since: range.from, until: range.to }),
@@ -383,23 +398,19 @@ async function metaChannelSpend(
     headers,
     signal,
   );
-  const parsed = rows.map((row) => {
-    const date = str(row.date_start);
-    if (
-      !str(row.adset_id) ||
-      !str(row.campaign_id) ||
-      !/^20\d{2}-\d{2}-\d{2}$/.test(date) ||
-      date < range.from ||
-      date > range.to
-    )
-      throw new Error("Invalid ad set row");
-    return {
-      adset: str(row.adset_id),
-      campaign: str(row.campaign_id),
-      date,
-      spend: metric(row.spend),
-    };
-  });
+  // One row per ad set for the whole range, dated at its first day.
+  const parsed = rows.flatMap((row) =>
+    str(row.adset_id) && str(row.campaign_id)
+      ? [
+          {
+            adset: str(row.adset_id),
+            campaign: str(row.campaign_id),
+            date: range.from,
+            spend: metric(row.spend),
+          },
+        ]
+      : [],
+  );
   const destinations = await adsetDestinations(
     version,
     Array.from(new Set(parsed.filter((r) => r.spend > 0).map((r) => r.adset))),
@@ -407,12 +418,16 @@ async function metaChannelSpend(
     signal,
     fetcher,
   );
+  if (!destinations.size && parsed.some((r) => r.spend > 0))
+    throw new Error("Meta destinations unreadable");
   const byCampaign = new Map<string, Map<string, { whatsapp: number; landing: number }>>();
   for (const row of parsed) {
     if (row.spend <= 0) continue;
+    const destination = destinations.get(row.adset);
+    if (destination === undefined) continue;
     const days = byCampaign.get(row.campaign) ?? new Map();
     const day = days.get(row.date) ?? { whatsapp: 0, landing: 0 };
-    day[metaDestinationChannel(destinations.get(row.adset))] += row.spend;
+    day[metaDestinationChannel(destination)] += row.spend;
     days.set(row.date, day);
     byCampaign.set(row.campaign, days);
   }
@@ -468,7 +483,13 @@ async function enrichMetaAccount(
           headers,
           signal,
           fetcher,
-        ).catch(() => null)
+        ).catch((err) => {
+          // No token or URL in the message: our own errors or fetch's.
+          console.warn(
+            `[marketing/sources] desglose por canal sin leer (${result.accountId}): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return null;
+        })
       : Promise.resolve(null),
   ]);
   if (extra.channels) {
