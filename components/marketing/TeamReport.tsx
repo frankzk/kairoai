@@ -19,7 +19,6 @@ import {
 } from "@/lib/marketing-real-cpa";
 import { buildKeywordIndex } from "@/lib/marketing-campaign-keywords";
 import { stockDaysRows } from "@/lib/marketing-report-alerts";
-import { productChannelCpa } from "@/lib/marketing-channel-cpa";
 import {
   decimalText,
   periodIsToday,
@@ -37,7 +36,6 @@ import { CampaignGroups } from "./TeamReportCampaigns";
 import { WeekdayChart, TrendChart, AdDiagnostics } from "./TeamReportCharts";
 import { ENTITY_COLORS } from "./charts";
 import { CampaignActions } from "./CampaignActions";
-import { ChannelCpaTable } from "./ChannelCpaTable";
 import { InventoryUpload, inventoryStatusText } from "./InventoryUpload";
 import { KeywordRules } from "./KeywordRules";
 import { PixelCheck } from "./PixelCheck";
@@ -239,23 +237,6 @@ export function TeamReport({
       data.period.to,
     );
   }, [periodControl.data, data, sources, settings, fx]);
-  // CPA por producto y canal: the report period, spend split by Meta ad set
-  // destination and real orders by origin (Landing / WhatsApp).
-  const channelCpa = useMemo(
-    () =>
-      sources && periodControl.data
-        ? productChannelCpa({
-            summary: data,
-            sources,
-            settings,
-            control: periodControl.data,
-            fx,
-            from: data.period.from,
-            to: data.period.to,
-          })
-        : null,
-    [data, sources, settings, periodControl.data, fx],
-  );
   const meta = reportChannel(sources, "meta", fx),
     tiktok = reportChannel(sources, "tiktok", fx);
   const tiktokThrough = sources?.tiktok.data?.accounts
@@ -671,18 +652,6 @@ export function TeamReport({
           </button>
         </div>
       </section>
-      <ChannelCpaTable
-        report={channelCpa}
-        loading={loading || periodControl.loading}
-        error={
-          periodControl.error ||
-          (data.period.to > today
-            ? "El período incluye fechas futuras: elige un rango hasta hoy."
-            : "")
-        }
-        periodText={periodText}
-        onAssign={onAssign}
-      />
       <section
         id="inventario"
         className={`${r.section} ${r.inventoryGrid}`}

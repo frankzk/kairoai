@@ -194,7 +194,7 @@ export function ChannelCpaTable({
             Asignar campañas para calcular el CPA
           </button>
           <p>
-            {periodText}, el período superior del reporte. CPA por orden =
+            {periodText}, el período elegido arriba. CPA por orden =
             gasto de las campañas asignadas / pedidos reales del producto (sin
             anulados); CPA por unidad = gasto / unidades de esos pedidos. Abre
             un producto para ver Landing y WhatsApp.

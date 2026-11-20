@@ -156,7 +156,7 @@ export function useMarketing(
     query
       ? `/api/marketing/sources?${query}&scope=${plan.sourceScope}${
           // CPA por producto y canal: ad set destinations (Landing/WhatsApp).
-          view === "report" ? "&channels=1" : ""
+          view === "cpa" ? "&channels=1" : ""
         }`
       : null,
     revision,
