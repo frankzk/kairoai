@@ -1269,7 +1269,39 @@ export async function listIcomflyOrders(
     all.push(...page);
     if (page.length < pageSize) break;
   }
-  return all;
+  return completarNumeroShopify(all, opts.storeId);
+}
+
+/**
+ * iComfly no guardó el número de Shopify en muchos pedidos de agosto y
+ * septiembre; los que se pudieron cruzar por teléfono y hora de creación
+ * viven en icomfly_vinculos_shopify (la sincronización reescribe
+ * icomfly_orders). Solo completa los que vienen vacíos. Best-effort: si la
+ * tabla falla, los pedidos quedan como estaban.
+ */
+async function completarNumeroShopify(
+  rows: IcomflyOrderRecord[],
+  storeId: number | undefined
+): Promise<IcomflyOrderRecord[]> {
+  if (!rows.some((r) => !r.shopify_display_number)) return rows;
+  let query = getDB().from("icomfly_vinculos_shopify").select("store_id, icomfly_order_id, shopify_name");
+  if (storeId != null) query = query.eq("store_id", storeId);
+  const { data, error } = await query;
+  if (error || !data?.length) {
+    if (error) console.warn("[listIcomflyOrders] vínculos Shopify:", error.message);
+    return rows;
+  }
+  const porPedido = new Map(
+    (data as Array<{ store_id: number; icomfly_order_id: string; shopify_name: string }>).map((v) => [
+      `${v.store_id}:${v.icomfly_order_id}`,
+      v.shopify_name,
+    ])
+  );
+  return rows.map((r) => {
+    if (r.shopify_display_number) return r;
+    const nombre = porPedido.get(`${r.store_id}:${r.icomfly_order_id}`);
+    return nombre ? { ...r, shopify_display_number: nombre } : r;
+  });
 }
 
 export async function upsertIcomflyOrders(
