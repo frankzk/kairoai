@@ -2,6 +2,7 @@ export type MarketingView =
   | "resumen"
   | "acciones"
   | "cpa"
+  | "publicidad"
   | "report"
   | "summary"
   | "details"
@@ -43,14 +44,18 @@ export function marketingLoadPlan(
     // Resumen and Acciones only need the period's campaign totals (no daily
     // rows, no hourly spend, no budgets): the lightest Meta read.
     // CPA por producto needs the report's daily rows to split spend by day.
+    // Publicidad reads Meta through its own route (/api/marketing/publicidad):
+    // null = the shared sources are not requested at all.
     sourceScope:
-      view === "report" || view === "cpa"
-        ? ("report" as const)
-        : view === "summary"
-          ? ("overview" as const)
-          : ["details", "trends", "structure"].includes(view)
-            ? ("details" as const)
-            : ("basic" as const),
+      view === "publicidad"
+        ? null
+        : view === "report" || view === "cpa"
+          ? ("report" as const)
+          : view === "summary"
+            ? ("overview" as const)
+            : ["details", "trends", "structure"].includes(view)
+              ? ("details" as const)
+              : ("basic" as const),
     reportScope:
       view === "structure"
         ? ("structure" as const)
@@ -105,7 +110,12 @@ export function marketingLoadPlan(
 }
 
 /** The top-level tabs of the Marketing page. */
-export type MarketingTab = "resumen" | "acciones" | "cpa" | "detalle";
+export type MarketingTab =
+  | "resumen"
+  | "acciones"
+  | "cpa"
+  | "publicidad"
+  | "detalle";
 
 /** Detalle's sub-tabs, in order: everything that existed before the redesign. */
 export const DETAIL_VIEWS: ReadonlyArray<[MarketingView, string]> = [
@@ -124,11 +134,15 @@ export const MARKETING_VIEWS: readonly MarketingView[] = [
   "resumen",
   "acciones",
   "cpa",
+  "publicidad",
   ...DETAIL_VIEWS.map(([view]) => view),
 ];
 
 export function marketingTab(view: MarketingView): MarketingTab {
-  return view === "resumen" || view === "acciones" || view === "cpa"
+  return view === "resumen" ||
+    view === "acciones" ||
+    view === "cpa" ||
+    view === "publicidad"
     ? view
     : "detalle";
 }

@@ -50,6 +50,7 @@ import {
 import { ResumenView } from "./ResumenView";
 import { ActionsView } from "./ActionsView";
 import { CpaProductView } from "./CpaProductView";
+import { PublicidadView } from "./PublicidadView";
 
 type View = MarketingView;
 const presets: Array<[MarketingPreset, string]> = [
@@ -432,6 +433,7 @@ export default function MarketingDashboard() {
               ["resumen", "Resumen", "resumen"],
               ["acciones", "Acciones", "acciones"],
               ["cpa", "CPA por producto", "cpa"],
+              ["publicidad", "Publicidad", "publicidad"],
               ["detalle", "Detalle", lastDetail],
             ] as Array<[MarketingTab, string, View]>
           ).map(([key, label, target], index) => (
@@ -477,24 +479,27 @@ export default function MarketingDashboard() {
                     : "USD · referencia de conversión pendiente"}
               </span>
             </div>
-            <div className={s.notice} role="status">
-              <span>
-                {api.sources.loading
-                  ? "Consultando inversión y disponibilidad de las conexiones…"
-                  : api.sources.error
-                    ? "No se pudieron consultar las conexiones. La inversión queda sin datos."
-                    : missing.length
-                      ? `${missing.join(", ")}: conexión pendiente o consulta no disponible.${missing.some((name) => name !== "ShipHero") ? " La inversión puede ser parcial." : " Inventario sin datos."}`
-                      : metaFaltantes.length
-                        ? `Meta Ads: no se pudo leer ${metaFaltantes.length === 1 ? "la cuenta" : "las cuentas"} ${metaFaltantes.join(", ")}. La inversión de Meta es parcial (sin ${metaFaltantes.length === 1 ? "esa cuenta" : "esas cuentas"}).`
-                        : "Fuentes consultadas. Los pedidos por campaña usan el UTM y, sin UTM, la asignación de producto (≈)."}
-              </span>
-              {view !== "sources" && (
-                <button className={s.link} onClick={() => setView("sources")}>
-                  Ver fuentes
-                </button>
-              )}
-            </div>
+            {/* Publicidad reads Meta on its own and reports its own failures. */}
+            {view !== "publicidad" && (
+              <div className={s.notice} role="status">
+                <span>
+                  {api.sources.loading
+                    ? "Consultando inversión y disponibilidad de las conexiones…"
+                    : api.sources.error
+                      ? "No se pudieron consultar las conexiones. La inversión queda sin datos."
+                      : missing.length
+                        ? `${missing.join(", ")}: conexión pendiente o consulta no disponible.${missing.some((name) => name !== "ShipHero") ? " La inversión puede ser parcial." : " Inventario sin datos."}`
+                        : metaFaltantes.length
+                          ? `Meta Ads: no se pudo leer ${metaFaltantes.length === 1 ? "la cuenta" : "las cuentas"} ${metaFaltantes.join(", ")}. La inversión de Meta es parcial (sin ${metaFaltantes.length === 1 ? "esa cuenta" : "esas cuentas"}).`
+                          : "Fuentes consultadas. Los pedidos por campaña usan el UTM y, sin UTM, la asignación de producto (≈)."}
+                </span>
+                {view !== "sources" && (
+                  <button className={s.link} onClick={() => setView("sources")}>
+                    Ver fuentes
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
         {(api.settings.error || api.saveError) && (
@@ -510,6 +515,8 @@ export default function MarketingDashboard() {
             canEdit={canEdit}
             onChanged={() => setRevision((value) => value + 1)}
           />
+        ) : view === "publicidad" ? (
+          <PublicidadView period={period} revision={revision} />
         ) : ["matrix", "structure", "subtraction"].includes(view) ? (
           charlie.report.loading || !charlieModel || !period ? (
             <div
