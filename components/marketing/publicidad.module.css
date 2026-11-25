@@ -275,19 +275,107 @@
   letter-spacing: 0;
   color: var(--mk-muted);
 }
-/* Tabla: primera columna fija; el scroll horizontal queda dentro del marco. */
-.frame {
-  max-height: 72vh;
+/* Tabla. Dos modos, según el ancho que le da la sección (data-fit, medido en
+   PublicidadView):
+   - ajustada: todas las columnas caben; sin scroll propio, la página la
+     desplaza y el encabezado y los totales se quedan pegados a la ventana;
+   - con scroll lateral (teléfono o muchas columnas): ancho natural y primera
+     columna fija. Nunca tiene alto propio. */
+.frame[data-fit="true"] {
+  /* clip (no auto): recorta las esquinas sin crear un contenedor de scroll,
+     así el encabezado se pega a la página y no al marco. */
+  overflow: clip;
 }
-.view .table {
-  min-width: max-content;
+.frame[data-fit="true"] .table {
+  table-layout: fixed;
+  width: 100%;
 }
-.view .table thead th {
+.frame[data-fit="true"] .table th,
+.frame[data-fit="true"] .table td {
+  padding: 10px 6px;
+}
+.frame[data-fit="true"] .table th.name {
+  padding-left: 14px;
+}
+.frame[data-fit="true"] .table td:last-child,
+.frame[data-fit="true"] .table th:last-child {
+  padding-right: 12px;
+}
+.frame[data-fit="true"] .table thead th {
   position: sticky;
   top: 0;
   z-index: 2;
+  white-space: normal;
+  vertical-align: bottom;
+  font-size: 10.5px;
+  line-height: 1.3;
 }
-.view .table th.name {
+.frame[data-fit="true"] .table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.frame[data-fit="true"] .sort {
+  display: inline;
+  white-space: normal;
+  text-align: right;
+}
+.frame[data-fit="true"] .sort svg {
+  display: inline;
+  margin-left: 2px;
+  vertical-align: -2px;
+}
+/* Estado en la tabla ajustada: punto y texto (como un administrador de
+   anuncios), que sí parte en dos líneas; la pastilla no cabe en 80 px. */
+.frame[data-fit="true"] .state {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: normal;
+  color: var(--mk-muted);
+}
+.frame[data-fit="true"] .state::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+}
+.frame[data-fit="true"] .state[data-state="active"] {
+  color: var(--mk-good);
+}
+.frame[data-fit="true"] .state[data-state="active"]::before {
+  opacity: 1;
+}
+.frame[data-fit="true"] .state[data-state="other"] {
+  color: var(--mk-warn);
+}
+/* Sin sitio para la flecha en cada encabezado: solo en la columna ordenada. */
+.frame[data-fit="true"] .sort:not([data-active="true"]) svg {
+  display: none;
+}
+.frame[data-fit="true"] .table th.name .sort {
+  text-align: left;
+}
+.frame[data-fit="true"] .table small {
+  max-width: none;
+}
+.frame[data-fit="true"] .rowName,
+.frame[data-fit="true"] .drill > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.frame:not([data-fit="true"]) .table {
+  min-width: max-content;
+}
+.frame:not([data-fit="true"]) .table th.name {
   position: sticky;
   left: 0;
   z-index: 1;
@@ -296,25 +384,83 @@
   background: var(--mk-surface);
   box-shadow: 1px 0 0 var(--mk-border);
 }
-.view .table thead th.name {
-  z-index: 3;
+.frame:not([data-fit="true"]) .table thead th.name {
   background: var(--mk-soft);
 }
-.view .table tbody tr:hover th.name {
+.frame:not([data-fit="true"]) .table tbody tr:hover th.name {
   background: var(--mk-hover);
 }
 .view .table tfoot th,
 .view .table tfoot td {
-  position: sticky;
-  bottom: 0;
   border-top: 1px solid var(--mk-border);
   border-bottom: 0;
   background: var(--mk-soft);
   font-weight: 650;
 }
-.view .table tfoot th.name {
-  z-index: 3;
+.frame[data-fit="true"] .table tfoot th,
+.frame[data-fit="true"] .table tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  box-shadow: 0 -1px 0 var(--mk-border);
+}
+.frame:not([data-fit="true"]) .table tfoot th.name {
   background: var(--mk-soft);
+}
+.wrap {
+  white-space: normal;
+}
+/* Línea bajo el nombre: cuenta y el ID. El ID es un botón que lo copia. */
+.view .table .rowId {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: none;
+  white-space: nowrap;
+}
+/* La cuenta cede el sitio (se recorta); el ID siempre entero, en una línea. */
+.rowAccount {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.view .copyId {
+  flex: none;
+}
+.rowAccount::after {
+  content: "·";
+  margin-left: 6px;
+  color: var(--mk-subtle);
+}
+.view .copyId {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--mk-subtle);
+  font-size: 10px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: copy;
+}
+.view .copyId:hover {
+  background: none;
+  color: var(--mk-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.view .copyId[data-copied="true"] {
+  color: var(--mk-good);
+  text-decoration: none;
+}
+.view .copyId:focus-visible {
+  outline: 2px solid var(--mk-accent);
+  outline-offset: 2px;
 }
 .view .table td.left {
   text-align: left;
@@ -476,7 +622,7 @@
   .columnsFoot {
     grid-column: 1 / -1;
   }
-  .view .table th.name {
+  .frame:not([data-fit="true"]) .table th.name {
     min-width: 150px;
     max-width: 170px;
   }
@@ -492,4 +638,12 @@
   .skeleton {
     animation: none;
   }
+}
+.frame[data-fit="true"] .pending {
+  white-space: normal;
+}
+/* "Estado" va a la izquierda, como sus celdas. */
+.view .table thead th.left,
+.view .table thead th.left .sort {
+  text-align: left;
 }

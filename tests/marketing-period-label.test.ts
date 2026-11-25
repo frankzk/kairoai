@@ -4,7 +4,7 @@ import {
   periodIsToday,
   periodLabelText,
 } from "../lib/marketing-copy";
-import { presetPeriod } from "../lib/marketing-dates";
+import { presetPeriod, shiftDate } from "../lib/marketing-dates";
 
 // 7 nov 2026, 10:00 in Costa Rica.
 const now = new Date("2026-11-07T16:00:00Z");
@@ -18,6 +18,9 @@ describe("periodLabelText", () => {
       periodLabelText(presetPeriod("yesterday", now), today, { withDate: true }),
     ).toBe("Ayer · 6 nov");
     expect(periodLabelText(presetPeriod("7d", now), today)).toBe("1 al 7 nov");
+    // "Hoy y ayer" y "Últimos 3 días" terminan hoy, como los demás "últimos N días".
+    expect(presetPeriod("2d", now)).toMatchObject({ from: shiftDate(today, -1), to: today, days: 2 });
+    expect(presetPeriod("3d", now)).toMatchObject({ from: shiftDate(today, -2), to: today, days: 3 });
     expect(periodLabelText({ from: "2026-11-05", to: "2026-11-05" }, today)).toBe(
       "5 nov",
     );

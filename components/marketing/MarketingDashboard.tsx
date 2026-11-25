@@ -56,6 +56,8 @@ type View = MarketingView;
 const presets: Array<[MarketingPreset, string]> = [
   ["today", "Hoy"],
   ["yesterday", "Ayer"],
+  ["2d", "Hoy y ayer"],
+  ["3d", "Últimos 3 días"],
   ["week", "Esta semana"],
   ["month", "Este mes"],
   ["last-month", "Mes anterior"],

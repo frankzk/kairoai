@@ -382,6 +382,28 @@ describe("estado y presupuesto", () => {
 });
 
 describe("filas de la tabla", () => {
+  it("con la lectura completa, lo que gastó y Meta ya no lista sale Eliminado (no sin estado)", () => {
+    // El equipo recrea campañas con el mismo nombre: la vieja no es la activa.
+    const input = {
+      level: "campaign" as const,
+      account,
+      insights: [
+        insight({ id: "vieja", campaignId: "vieja", name: "WSP BATANA OIL | CR", spend: 6.08 }),
+        insight({ id: "nueva", campaignId: "nueva", name: "WSP BATANA OIL | CR", spend: 4.08 }),
+      ],
+      entities: [entity({ id: "nueva", effectiveStatus: "ACTIVE", dailyBudget: 5 })],
+    };
+    const completa = buildPublicidadRows({ ...input, entitiesComplete: true });
+    expect(completa.find((r) => r.id === "vieja")).toMatchObject({ status: "deleted", statusLabel: "Eliminado", budget: null });
+    expect(completa.find((r) => r.id === "nueva")).toMatchObject({ status: "active", statusLabel: "Activo" });
+    // Lectura parcial: no se afirma que se eliminó.
+    const parcial = buildPublicidadRows({ ...input, entitiesComplete: false });
+    expect(parcial.find((r) => r.id === "vieja")).toMatchObject({ status: "unknown", statusLabel: "—" });
+    // Sin lectura de estado: todo desconocido.
+    const sin = buildPublicidadRows({ ...input, entities: null, entitiesComplete: true });
+    expect(sin.every((r) => r.status === "unknown")).toBe(true);
+  });
+
   it("lista lo que tuvo entrega y lo activo sin entrega; omite lo pausado sin gasto", () => {
     const rows = buildPublicidadRows({
       level: "campaign",
