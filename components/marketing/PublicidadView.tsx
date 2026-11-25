@@ -103,6 +103,31 @@ const decimal2 = new Intl.NumberFormat("es-CR", {
   maximumFractionDigits: 2,
 });
 const usd = (value: number) => money(value, "USD");
+/** Table cells: "$1 200,66". The page header already says the amounts are USD. */
+const usdCell = (value: number) => `$${decimal2.format(value)}`;
+/**
+ * Width of each metric column when the table is fitted to the section (px).
+ * The name column takes what is left; below `NAME_MIN` the table goes back to
+ * its natural width with a horizontal scroll.
+ */
+const COLUMN_WIDTH: Record<string, number> = {
+  status: 80,
+  purchases: 58,
+  costPerPurchase: 70,
+  purchaseValue: 78,
+  roas: 50,
+  leads: 46,
+  budget: 76,
+  spend: 74,
+  results: 86,
+  costPerResult: 72,
+  impressions: 74,
+  clicks: 54,
+  ctr: 58,
+  realOrders: 80,
+};
+// 170 + the 13 default columns = 1046 px: a 1366 px laptop with the side menu.
+const NAME_MIN = 170;
 const Dash = () => <span className={p.dash}>—</span>;
 
 interface DrillFilter {
@@ -157,6 +182,18 @@ export function PublicidadView({
     {},
   );
   const columnsRef = useRef<HTMLDivElement>(null);
+  // Width the section gives the table: decides whether it fits without scroll.
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [frameWidth, setFrameWidth] = useState(0);
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) =>
+      setFrameWidth(Math.floor(entry.contentRect.width)),
+    );
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => setChoices(readColumnChoices()), []);
   function chooseColumn(id: PublicidadColumn, visible: boolean) {
     setChoices((current) => {
@@ -301,6 +338,13 @@ export function PublicidadView({
   const visible = rows.slice(0, limit);
   const meta = LEVELS.find((entry) => entry.id === level)!;
   const columns = PUBLICIDAD_COLUMNS.filter((column) => shown(column.id));
+  // Fitted: every visible column inside the section, no scroll of its own and
+  // the header pinned to the page. Otherwise (phone, many columns) the table
+  // keeps its natural width and scrolls sideways inside the frame.
+  const fit =
+    frameWidth >=
+    NAME_MIN +
+      columns.reduce((sum, column) => sum + (COLUMN_WIDTH[column.id] ?? 80), 0);
   const accountOptions = Object.entries(knownAccounts)
     .filter(([key]) => key.startsWith(`${platform}:`))
     .map(([key, name]) => [key.slice(platform.length + 1), name] as const)
@@ -366,7 +410,11 @@ export function PublicidadView({
     );
   }
 
-  const moneyCell = (value: number | null, pending: boolean) =>
+  const moneyCell = (
+    value: number | null,
+    pending: boolean,
+    format: (value: number) => string = usdCell,
+  ) =>
     value == null ? (
       pending ? (
         <span className={p.pending}>{PENDING}</span>
@@ -374,7 +422,7 @@ export function PublicidadView({
         <Dash />
       )
     ) : (
-      usd(value)
+      format(value)
     );
   const countCell = (value: number | null) =>
     value == null || value === 0 ? <Dash /> : count(Math.round(value));
@@ -403,7 +451,8 @@ export function PublicidadView({
           <Dash />
         ) : (
           <span
-            className={`${r.chip} ${
+            data-state={full.status}
+            className={`${p.state} ${r.chip} ${
               full.status === "active"
                 ? r.chipOk
                 : full.status === "other"
@@ -436,7 +485,7 @@ export function PublicidadView({
         if (!full.budget)
           return full.budgetInAdsets ? (
             <span
-              className={p.dash}
+              className={`${p.dash} ${p.wrap}`}
               title="La campaña no tiene presupuesto propio: se define en cada conjunto de anuncios."
             >
               En los conjuntos
@@ -446,7 +495,7 @@ export function PublicidadView({
           );
         return (
           <>
-            {usd(full.budget.amount)}
+            {usdCell(full.budget.amount)}
             <small>
               {full.budget.kind === "daily" ? "Diario" : "Total"}
               {full.budget.scope === "campaign"
@@ -461,7 +510,7 @@ export function PublicidadView({
         return row.results == null || row.results === 0 ? (
           row.resultType === "mixed" ? (
             <span
-              className={p.dash}
+              className={`${p.dash} ${p.wrap}`}
               title="Resultados de distinto tipo: no se suman."
             >
               Varios tipos
@@ -497,7 +546,7 @@ export function PublicidadView({
   }
 
   const kpiValues: Record<(typeof KPIS)[number], ReactNode> = {
-    Inversión: moneyCell(totals.spend, totals.spend == null && rows.length > 0),
+    Inversión: moneyCell(totals.spend, totals.spend == null && rows.length > 0, usd),
     Impresiones: countCell(totals.impressions),
     Clics: countCell(totals.clicks),
     CTR:
@@ -506,14 +555,14 @@ export function PublicidadView({
       ) : (
         percent2.format(totals.derived.ctr)
       ),
-    CPC: moneyCell(totals.derived.cpc, totals.spend == null && rows.length > 0),
+    CPC: moneyCell(totals.derived.cpc, totals.spend == null && rows.length > 0, usd),
     Leads: countCell(totals.leads),
     Compras: countCell(totals.purchases),
     Revenue:
       totals.purchaseValue === 0 ? (
         <Dash />
       ) : (
-        moneyCell(totals.purchaseValue, totals.spend == null && rows.length > 0)
+        moneyCell(totals.purchaseValue, totals.spend == null && rows.length > 0, usd)
       ),
     ROAS: !totals.derived.roas ? (
       <Dash />
@@ -809,8 +858,10 @@ export function PublicidadView({
           ))}
         </dl>
         <div
+          ref={frameRef}
           className={`${r.tableWrap} ${p.frame}`}
-          tabIndex={0}
+          data-fit={fit}
+          tabIndex={fit ? undefined : 0}
           role="region"
           aria-label={`${meta.tab} de ${platform === "meta" ? "Meta" : "TikTok"}`}
         >
@@ -837,13 +888,19 @@ export function PublicidadView({
                 </th>
                 {columns.map((column) =>
                   column.id === "realOrders" ? (
-                    <th key={column.id} scope="col">
+                    <th
+                      key={column.id}
+                      scope="col"
+                      style={fit ? { width: COLUMN_WIDTH[column.id] } : undefined}
+                    >
                       {column.label}
                     </th>
                   ) : (
                     <th
                       key={column.id}
                       scope="col"
+                      className={column.id === "status" ? p.left : undefined}
+                      style={fit ? { width: COLUMN_WIDTH[column.id] } : undefined}
                       aria-sort={
                         sort.key === column.id
                           ? sort.direction === "asc"
@@ -912,7 +969,9 @@ export function PublicidadView({
                     <tr key={`${row.accountId}:${row.id}`}>
                       <th scope="row" className={p.name}>
                         {level === "ad" ? (
-                          <span className={p.rowName}>{row.name}</span>
+                          <span className={p.rowName} title={row.name}>
+                            {row.name}
+                          </span>
                         ) : (
                           <button
                             type="button"
@@ -924,7 +983,7 @@ export function PublicidadView({
                             }
                             onClick={() => open(row)}
                           >
-                            <span>{row.name}</span>
+                            <span title={row.name}>{row.name}</span>
                             <ChevronRight size={13} aria-hidden />
                           </button>
                         )}
@@ -933,9 +992,14 @@ export function PublicidadView({
                             {parents.join(" › ")}
                           </small>
                         )}
-                        {severalAccounts && row.accountName && (
-                          <small className={p.rowMeta}>{row.accountName}</small>
-                        )}
+                        <small className={`${p.rowMeta} ${p.rowId}`}>
+                          {severalAccounts && row.accountName && (
+                            <span className={p.rowAccount}>
+                              {row.accountName}
+                            </span>
+                          )}
+                          <CopyId id={row.id} what={meta.column} />
+                        </small>
                       </th>
                       {columns.map((column) => (
                         <td
@@ -999,6 +1063,32 @@ export function PublicidadView({
         </p>
       </section>
     </div>
+  );
+}
+
+/** The Meta / TikTok id of a row: tells apart entities recreated with the same name. Click copies it. */
+function CopyId({ id, what }: { id: string; what: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1400);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  return (
+    <button
+      type="button"
+      className={p.copyId}
+      data-copied={copied}
+      title={`Copiar el ID de ${what.toLocaleLowerCase("es")}`}
+      onClick={() => {
+        navigator.clipboard
+          ?.writeText(id)
+          .then(() => setCopied(true))
+          .catch(() => {});
+      }}
+    >
+      <span aria-live="polite">{copied ? "ID copiado" : `ID ${id}`}</span>
+    </button>
   );
 }
 
