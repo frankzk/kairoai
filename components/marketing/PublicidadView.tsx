@@ -994,7 +994,7 @@ export function PublicidadView({
         )}
         <p className={p.foot}>
           {platform === "meta"
-            ? "Los datos son los que reporta Meta: compras y valor de conversión del píxel, leads y resultados de Meta (atribución 7 días clic / 1 día vista). No son los pedidos reales de Kairo. Costo por compra, ROAS, CTR y CPC se calculan con los totales; los importes van en USD con la referencia de conversión de arriba. Se listan las filas con gasto o impresiones en el período y las activas sin entrega; las pausadas sin gasto no aparecen. Es solo lectura: desde Kairo no se enciende, apaga ni edita nada en Meta."
+            ? "Los datos son los que reporta Meta: compras y valor de conversión del píxel, leads y resultados de Meta (atribución 7 días clic / 1 día vista). No son los pedidos reales de Kairo. Costo por compra, ROAS, CTR y CPC se calculan con los totales; los importes van en USD con la referencia de conversión de arriba. Se listan las filas con gasto o impresiones en el período y las activas sin entrega; las pausadas sin gasto no aparecen. \"Eliminado\" es una campaña, conjunto o anuncio que gastó en el período y que Meta ya no lista (se eliminó o archivó); si se volvió a crear con el mismo nombre, la nueva sale en otra fila. Es solo lectura: desde Kairo no se enciende, apaga ni edita nada en Meta."
             : "Los datos son los que TikTok reportó a Make, no los pedidos reales de Kairo; compras = Complete Payment. Los importes van en USD con la referencia de conversión de arriba. Es solo lectura."}
         </p>
       </section>

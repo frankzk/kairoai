@@ -386,6 +386,7 @@ async function readAccount(
       account,
       insights: report.insights,
       entities: own.entities,
+      entitiesComplete: own.complete,
       campaigns: parents.entities,
     }),
     // A partial read is not kept: the next request tries the whole thing again.

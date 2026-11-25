@@ -23,7 +23,12 @@ import { asUsd } from "./marketing-usd-rate";
 
 export type PublicidadLevel = "campaign" | "adset" | "ad";
 export type PublicidadPlatform = "meta" | "tiktok";
-export type PublicidadStatus = "active" | "paused" | "other" | "unknown";
+export type PublicidadStatus =
+  | "active"
+  | "paused"
+  | "other"
+  | "deleted"
+  | "unknown";
 
 export const PUBLICIDAD_LEVELS: readonly PublicidadLevel[] = [
   "campaign",
@@ -320,7 +325,7 @@ const STATUS_LABELS: Record<string, [PublicidadStatus, string]> = {
   WITH_ISSUES: ["other", "Con problemas"],
   DISAPPROVED: ["other", "Rechazado"],
   ARCHIVED: ["other", "Archivado"],
-  DELETED: ["other", "Eliminado"],
+  DELETED: ["deleted", "Eliminado"],
 };
 
 /** Meta `effective_status` → status and short Spanish label; "" → unknown ("—"). */
@@ -417,6 +422,13 @@ export function buildPublicidadRows(input: {
   account: { accountId: string; accountName: string; currency: string };
   insights: PublicidadInsight[];
   entities: PublicidadEntity[] | null;
+  /**
+   * The entity read answered whole. Then a row with delivery and no entity is
+   * one Meta no longer lists: deleted (or archived). The team recreates
+   * campaigns with the same name, so the old one must not look like the live
+   * one without status. Without this (partial read) it stays unknown ("—").
+   */
+  entitiesComplete?: boolean;
   /** Campaigns of the account (ad set level): CBO budgets and names. */
   campaigns?: PublicidadEntity[] | null;
 }): PublicidadRow[] {
@@ -468,7 +480,9 @@ export function buildPublicidadRows(input: {
       ...(adsetId
         ? { adsetId, adsetName: insight?.adsetName || undefined }
         : {}),
-      ...publicidadStatus(entity?.effectiveStatus),
+      ...(!entity && input.entities && input.entitiesComplete
+        ? { status: "deleted" as const, statusLabel: "Eliminado" }
+        : publicidadStatus(entity?.effectiveStatus)),
       budget,
       ...(level === "campaign" &&
       entity &&
