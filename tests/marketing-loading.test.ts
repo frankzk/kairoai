@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { marketingLoadPlan } from "../lib/marketing-loading";
+import {
+  DETAIL_VIEWS,
+  MARKETING_VIEWS,
+  marketingLoadPlan,
+  marketingTab,
+  viewFromParam,
+} from "../lib/marketing-loading";
 import { getMarketingSources } from "../lib/marketing-sources";
 import { marketingPeriod } from "../lib/marketing-dates";
 import { buildCharlieRevenue } from "../lib/marketing-charlie-revenue";
@@ -226,6 +232,42 @@ describe("Lightweight executive Meta query", () => {
         now,
       ).trailing.every((row) => row.metaSpendUsd === null),
     ).toBe(true);
+  });
+});
+
+describe("Publicidad tab loading", () => {
+  it("has its own URL value and top-level tab", () => {
+    expect(MARKETING_VIEWS).toContain("publicidad");
+    expect(viewFromParam("publicidad")).toBe("publicidad");
+    expect(viewFromParam(" Publicidad ")).toBe("publicidad");
+    expect(marketingTab("publicidad")).toBe("publicidad");
+    // It is a tab of its own, not a sub-tab of Detalle.
+    expect(DETAIL_VIEWS.map(([view]) => view)).not.toContain("publicidad");
+    expect(MARKETING_VIEWS.indexOf("publicidad")).toBe(
+      MARKETING_VIEWS.indexOf("cpa") + 1,
+    );
+  });
+  it("loads nothing shared: it reads Meta through its own route", () => {
+    expect(marketingLoadPlan("publicidad")).toEqual({
+      summary: false,
+      settings: false,
+      sourceScope: null,
+      reportScope: null,
+      recent: "never",
+      control: false,
+      periodControl: false,
+      actions: false,
+      changes: false,
+      inventory: false,
+      accounts: false,
+      ordersInsights: false,
+      cancellations: false,
+      costCapAds: false,
+      productsInsights: false,
+    });
+    // Every other view still asks for the shared sources.
+    for (const view of MARKETING_VIEWS.filter((v) => v !== "publicidad"))
+      expect(marketingLoadPlan(view).sourceScope, view).not.toBeNull();
   });
 });
 

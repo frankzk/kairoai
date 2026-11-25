@@ -153,7 +153,8 @@ export function useMarketing(
     revision + financialRevision,
   );
   const sources = useResource<MarketingSources>(
-    query
+    // Publicidad has its own Meta reader: no shared sources (sourceScope null).
+    query && plan.sourceScope
       ? `/api/marketing/sources?${query}&scope=${plan.sourceScope}${
           // CPA por producto y canal: ad set destinations (Landing/WhatsApp).
           view === "cpa" ? "&channels=1" : ""
