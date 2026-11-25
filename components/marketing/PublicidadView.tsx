@@ -27,11 +27,13 @@ import {
   ListFilter,
   RefreshCw,
   Search,
+  Target,
   X,
 } from "lucide-react";
 import {
   marketingDate,
   periodQuery,
+  shiftDate,
   type MarketingPeriod,
 } from "@/lib/marketing-dates";
 import { periodLabelText, timeCrText } from "@/lib/marketing-copy";
@@ -62,6 +64,8 @@ import {
   type PublicidadUsdRow,
 } from "@/lib/marketing-publicidad";
 import type { MarketingControl } from "@/lib/marketing-real-orders";
+import { costCapReadyAds } from "@/lib/marketing-cost-cap-move";
+import { DECISION_RULES } from "@/lib/marketing-decisions";
 import { useUsdRate } from "./UsdContext";
 import { useResource } from "./useMarketing";
 import { count, money, shortDate } from "./format";
@@ -354,6 +358,32 @@ export function PublicidadView({
     () => (data?.rows ?? []).map((row) => publicidadRowUsd(row, fx)),
     [data, fx],
   );
+  // "Lista para COST CAP" (misma regla de Acciones) en el nivel Anuncios de
+  // Meta: sale de los últimos 3 días completos, no del período elegido. Si el
+  // período ya es ese, se usan las filas de la tabla; si no, una lectura
+  // aparte y liviana de la misma ruta (caché de 60 s), con el mismo alcance.
+  const readyFrom = shiftDate(today, -DECISION_RULES.windowDays),
+    readyTo = shiftDate(today, -1);
+  const wantsReady = platform === "meta" && level === "ad" && Boolean(url);
+  const readyInTable =
+    wantsReady && period?.from === readyFrom && period?.to === readyTo;
+  const readyRead = useResource<PublicidadPayload>(
+    wantsReady && !readyInTable
+      ? `/api/marketing/publicidad?${periodQuery({ from: readyFrom, to: readyTo })}&platform=meta&level=ad${
+          scope
+            ? `&account=${scope.accountId}&${drill.adset ? "adset" : "campaign"}=${scope.id}`
+            : ""
+        }`
+      : null,
+    refreshKey,
+  );
+  const readyAds = useMemo(() => {
+    if (!wantsReady) return null;
+    const source = readyInTable ? data?.rows : readyRead.data?.rows;
+    return source
+      ? costCapReadyAds(source.map((row) => publicidadRowUsd(row, fx)))
+      : null;
+  }, [wantsReady, readyInTable, data, readyRead.data, fx]);
   const rows = useMemo(
     () =>
       sortPublicidadRows(
@@ -1118,6 +1148,15 @@ export function PublicidadView({
                           )}
                           <CopyId id={row.id} what={meta.column} />
                         </small>
+                        {readyAds?.has(`${row.accountId}:${row.id}`) && (
+                          <span
+                            className={p.readyTag}
+                            title={`${count(DECISION_RULES.costCapMinPurchases)} compras o más y costo por compra menor a ${money(DECISION_RULES.costCapMaxCostPerPurchaseUsd, "USD")} en los últimos 3 días completos. Se pasa desde Acciones.`}
+                          >
+                            <Target size={11} aria-hidden />
+                            Lista para COST CAP
+                          </span>
+                        )}
                       </th>
                       {columns.map((column) => (
                         <td

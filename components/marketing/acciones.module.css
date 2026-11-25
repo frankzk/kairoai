@@ -451,6 +451,341 @@
 .failure {
   color: var(--mk-bad) !important;
 }
+
+/* "Pasar a COST CAP": compras de Meta en vez de pedidos reales, el botón que
+   abre la confirmación y, si el producto no tiene COST CAP, el aviso. */
+.basis {
+  display: block;
+  color: var(--mk-muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.budgetCell small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.move {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+  min-width: 0;
+}
+.moveButton,
+.primary,
+.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  cursor: pointer;
+}
+.moveButton,
+.primary {
+  border: 1px solid var(--mk-accent);
+  background: var(--mk-accent);
+  color: hsl(var(--primary-foreground));
+}
+/* La columna Estado es angosta: el rótulo parte en dos líneas antes que salirse. */
+.moveButton {
+  max-width: 100%;
+  padding: 5px 9px;
+  line-height: 1.25;
+  text-align: left;
+}
+.moveButton:hover:not(:disabled),
+.primary:hover:not(:disabled) {
+  border-color: var(--mk-accent-strong);
+  background: var(--mk-accent-strong);
+}
+.moveButton > svg {
+  display: none;
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.secondary {
+  border: 1px solid var(--mk-border);
+  background: var(--mk-surface);
+  color: var(--mk-text);
+}
+.secondary:hover:not(:disabled) {
+  background: var(--mk-hover);
+}
+.moveButton:disabled,
+.primary:disabled,
+.secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.noMove {
+  max-width: 190px;
+  color: var(--mk-warn) !important;
+  font-weight: 600;
+}
+
+/* Confirmación: fija a la ventana, sobre todo lo demás. En el teléfono ocupa
+   el ancho y se apoya abajo; el cuerpo se desplaza si no cabe. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(10 10 20 / 0.5);
+}
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(780px, calc(100dvh - 32px));
+  border: 1px solid var(--mk-border);
+  border-radius: 12px;
+  background: var(--mk-surface);
+  color: var(--mk-text);
+  box-shadow:
+    0 24px 60px -12px rgb(10 10 20 / 0.4),
+    0 2px 8px rgb(10 10 20 / 0.12);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+}
+.dialog:focus {
+  outline: none;
+}
+.dialogHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px 20px;
+  border-bottom: 1px solid var(--mk-border);
+}
+.dialogHead h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.dialogHead h3 > svg {
+  width: 16px;
+  height: 16px;
+  color: var(--mk-accent);
+}
+.dialogClose {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--mk-muted);
+  cursor: pointer;
+}
+.dialogClose:hover:not(:disabled) {
+  background: var(--mk-hover);
+  color: var(--mk-text);
+}
+.dialogClose > svg {
+  width: 16px;
+  height: 16px;
+}
+.dialogBody {
+  display: grid;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+.block {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.blockLabel {
+  margin: 0 0 4px;
+  padding: 0;
+  color: var(--mk-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.blockTitle {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.blockSub {
+  margin: 2px 0 0;
+  color: var(--mk-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.blockSub code,
+.dialogState code {
+  border-radius: 4px;
+  background: var(--mk-soft);
+  padding: 1px 5px;
+  color: var(--mk-text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 8px;
+}
+.facts > div {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--mk-border);
+  border-radius: 8px;
+}
+.facts dt {
+  color: var(--mk-muted);
+  font-size: 11px;
+}
+.facts dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.options {
+  display: grid;
+  gap: 6px;
+}
+.option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--mk-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.option:hover {
+  background: var(--mk-hover);
+}
+.option:has(input:checked) {
+  border-color: var(--mk-accent);
+  background: var(--mk-accent-soft);
+}
+.option[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+.option[data-disabled="true"]:hover {
+  background: none;
+}
+.option input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--mk-accent);
+}
+.option strong {
+  display: block;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.option small {
+  display: block;
+  color: var(--mk-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.option .optionBlocked {
+  color: var(--mk-warn);
+  font-weight: 600;
+}
+.happen {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--mk-soft);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.dialogState {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--mk-soft);
+  color: var(--mk-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.dialogState > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 2px;
+}
+.dialogState strong {
+  font-weight: 650;
+}
+.stateLine {
+  display: block;
+  margin-top: 4px;
+}
+.stateWarn {
+  background: var(--mk-warn-soft);
+  color: var(--mk-text);
+}
+.stateWarn > svg {
+  color: var(--mk-warn);
+}
+.stateBad {
+  background: var(--mk-bad-soft);
+  color: var(--mk-text);
+}
+.stateBad > svg {
+  color: var(--mk-bad);
+}
+.stateGood {
+  background: var(--mk-good-soft);
+  color: var(--mk-text);
+}
+.stateGood > svg {
+  color: var(--mk-good);
+}
+.dialogFoot {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--mk-border);
+}
+.dialogFoot .primary,
+.dialogFoot .secondary {
+  min-height: 36px;
+  padding: 6px 16px;
+  font-size: 13px;
+}
 .empty {
   padding: 18px 0 !important;
   color: var(--mk-muted);
@@ -618,6 +953,56 @@
     width: 100%;
     justify-content: center;
     min-height: 40px;
+  }
+  .move {
+    justify-items: stretch;
+  }
+  .moveButton {
+    width: 100%;
+    min-height: 40px;
+    text-align: center;
+  }
+  .moveButton > svg {
+    display: block;
+  }
+  .move .link {
+    justify-self: center;
+    min-height: 32px;
+  }
+  .noMove {
+    max-width: none;
+  }
+  .basis {
+    display: inline;
+    margin-left: 4px;
+  }
+  .overlay {
+    place-items: end center;
+    padding: 0;
+  }
+  .dialog {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+    border-radius: 14px 14px 0 0;
+    border-bottom: 0;
+  }
+  .dialogBody {
+    padding: 14px 16px;
+  }
+  .dialogHead {
+    padding: 12px 10px 10px 16px;
+  }
+  .dialogFoot {
+    padding: 10px 16px calc(14px + env(safe-area-inset-bottom));
+  }
+  .dialogFoot .primary,
+  .dialogFoot .secondary {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+  .dialogClose {
+    width: 40px;
+    height: 40px;
   }
   .search {
     max-width: none;

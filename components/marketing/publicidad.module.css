@@ -529,6 +529,22 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
+/* Anuncio que ya cumple la regla de COST CAP (3 días completos): marca chica
+   bajo el nombre; el paso se hace en Acciones. */
+.readyTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  padding: 0 7px 0 5px;
+  border-radius: 999px;
+  background: var(--mk-good-soft);
+  color: var(--mk-good);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
 .dash {
   color: var(--mk-subtle);
 }

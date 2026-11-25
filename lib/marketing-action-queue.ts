@@ -8,8 +8,9 @@
 //   (sin pedidos, todo el gasto). Es la plata que esos días costaron de más.
 // - Escalar: pedidos extra esperados con el +20 % si el CPA real se mantiene
 //   (pedidos reales × 20 %), valorados al CPA meta.
-// - Pasar a COST CAP: igual que escalar con los pedidos reales del anuncio
-//   (≈): el COST CAP es otra forma de darle más entrega a lo que ya vende.
+// - Pasar a COST CAP: igual que escalar, con las compras que reporta Meta
+//   del anuncio (la regla de COST CAP se lee en Publicidad, no en pedidos
+//   reales): el COST CAP es otra forma de darle más entrega a lo que ya vende.
 // Así todo queda en la misma unidad (pedidos valorados al CPA meta) y la
 // lista mezcla acciones de distinto tipo. Empates: apagar → bajar → escalar
 // → COST CAP, luego más gasto. Debajo, lo que no se toca hoy (en
@@ -77,6 +78,12 @@ export interface QueueItem {
   cpaReal: number | null;
   /** Pedidos reales repartidos (≈). */
   approximate: boolean;
+  /**
+   * De dónde salen `real` y `cpaReal`: pedidos reales de Kairo, o compras
+   * reportadas por Meta (solo COST CAP: `real` = compras, `cpaReal` = costo
+   * por compra).
+   */
+  basis: "real" | "meta";
   currency: string;
   budget: number | null;
   suggestedBudget: number | null;
@@ -164,7 +171,9 @@ function impactText(
   }
   if (kind === "escalar" || kind === "costcap") {
     const extra = round1(real * rules.scaleStep);
-    return extra > 0 ? `≈ +${orders(extra)} pedidos` : null;
+    return extra > 0
+      ? `≈ +${orders(extra)} ${kind === "costcap" ? "compras" : "pedidos"}`
+      : null;
   }
   return null;
 }
@@ -234,6 +243,7 @@ export function campaignQueueItem(
     real: d.window.real,
     cpaReal: d.window.cpaReal,
     approximate: d.approximate,
+    basis: "real",
     currency: d.currency,
     budget: d.dailyBudget,
     suggestedBudget: d.suggestedBudget,
@@ -257,8 +267,7 @@ export function creativeQueueItem(
   c: CreativeDecision,
   rules: DecisionRules = DECISION_RULES,
 ): QueueItem {
-  const approx = c.basis === "estimado" ? "≈ " : "";
-  const w = { spendUsd: c.spendUsd, real: c.real };
+  const w = { spendUsd: c.spendUsd, real: c.purchases };
   return {
     key: `costcap:${c.key}`,
     kind: "costcap",
@@ -276,13 +285,14 @@ export function creativeQueueItem(
     product: c.product,
     productKey: c.productKey,
     spendUsd: c.spendUsd,
-    real: c.real,
-    cpaReal: c.cpaReal,
-    approximate: c.basis === "estimado",
+    real: c.purchases,
+    cpaReal: c.costPerPurchase,
+    approximate: false,
+    basis: "meta",
     currency: "USD",
     budget: null,
     suggestedBudget: null,
-    why: `${approx}${orders(c.real)} pedidos reales (más de ${countText(rules.costCapMoreThanOrders)}) y CPA real ${approx}${usd(c.cpaReal)} < ${usd(rules.costCapMaxCpaUsd)}.`,
+    why: `${orders(c.purchases)} compras de Meta (mín. ${countText(rules.costCapMinPurchases)}) y costo por compra ${usd(c.costPerPurchase)} < ${usd(rules.costCapMaxCostPerPurchaseUsd)}.`,
     impactUsd: queueImpact("costcap", w, rules),
     impactText: impactText("costcap", w, rules),
     todayAlert: null,

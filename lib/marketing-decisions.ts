@@ -15,16 +15,15 @@
 //   anuncios, así que una ABO también se evalúa entera (se anota).
 // - Nunca se decide con promedios de desgloses (ubicaciones, edad, género):
 //   solo con el total de la campaña o del anuncio.
+// - "Pasar a COST CAP" (25/11/2026) es la única decisión que NO usa pedidos
+//   reales: el dueño la lee en la pestaña Publicidad, así que la regla usa las
+//   compras que reporta Meta ("Compras" y "Costo por compra" de Publicidad):
+//   3 o más compras y costo por compra menor a USD 7 en la ventana.
 // Puro.
 import type { CampaignActionRow } from "./marketing-actions";
 import { campaignActive } from "./marketing-actions";
 import type { CampaignChange } from "./marketing-source-types";
 import type { CharlieReport, UsdRate } from "./marketing-charlie-types";
-import type { RealOrderDay } from "./marketing-real-orders";
-import {
-  estimateAdRealOrders,
-  type CampaignEstimates,
-} from "./marketing-real-cpa";
 import { campaignKey } from "./marketing-settings-types";
 import { charlieAdSpendRows } from "./marketing-subtraction-real";
 import { MARKETING_TARGETS } from "./marketing-targets";
@@ -46,10 +45,10 @@ export const DECISION_RULES = {
   lowerMaxCpaUsd: 11,
   /** Gasto sin ningún pedido real que apaga (2 × CPA objetivo). */
   killNoOrdersSpendUsd: 2 * MARKETING_TARGETS.cpaUsd,
-  /** COST CAP: más de estos pedidos reales del anuncio en la ventana… */
-  costCapMoreThanOrders: 5,
-  /** …y CPA real por debajo de esto. */
-  costCapMaxCpaUsd: 6,
+  /** COST CAP: desde estas compras reportadas por Meta del anuncio en la ventana… */
+  costCapMinPurchases: 3,
+  /** …y costo por compra (gasto ÷ compras de Meta) por debajo de esto. */
+  costCapMaxCostPerPurchaseUsd: 7,
   /** Horas tras un cambio en las que no se escala. */
   learningHours: 72,
   /** Cambios que reinician el aprendizaje ("otro" = edición de Meta sin detalle, puede ser presupuesto). */
@@ -104,6 +103,11 @@ export interface DoneMark {
   id: string | null;
   /** Anuncio marcado (solo COST CAP). */
   adId: string | null;
+  /**
+   * Anuncio nuevo que Kairo creó en Meta (solo COST CAP hecho con el botón;
+   * null si alguien lo marcó a mano). Ver lib/marketing-cost-cap-move.ts.
+   */
+  newAdId: string | null;
 }
 
 export interface CampaignDecision {
@@ -208,6 +212,7 @@ export function parseDoneMark(change: CampaignChange): DoneMark | null {
     by: change.by ?? null,
     id: change.id ?? null,
     adId: match[2] ?? null,
+    newAdId: /· nuevo (\d{1,40})(?:\b|$)/.exec(change.detail ?? "")?.[1] ?? null,
   };
 }
 
@@ -541,27 +546,49 @@ export interface CreativeDecision {
   product: string | null;
   productKey: string | null;
   spendUsd: number;
-  /** Pedidos reales del anuncio: UTM del anuncio + su parte del reparto (≈). */
-  real: number;
-  cpaReal: number;
-  basis: "utm" | "estimado";
+  /** Compras que reporta Meta del anuncio en la ventana (las de Publicidad). */
+  purchases: number;
+  /** Gasto ÷ compras de Meta, en USD. */
+  costPerPurchase: number;
   /** Ya se marcó "Hecho" (pasado a COST CAP) en las últimas `learningHours`. */
   done: DoneMark | null;
 }
 
 /**
- * Ads ready for a COST CAP: more than 5 real orders and a real CPA under
- * USD 6 in the last 3 complete days, in a campaign that is not a COST CAP yet,
- * not paused and whose product has stock. Per-ad real orders are the existing estimate
- * (estimateAdRealOrders: the ad's UTM orders plus its spend share of the
- * campaign's remaining real orders), so the figure is ≈ unless every order
- * came with the ad's UTM.
+ * La regla de "Pasar a COST CAP" sobre los números de un anuncio en la
+ * ventana: `costCapMinPurchases` compras de Meta o más y costo por compra
+ * (gasto USD ÷ compras) estrictamente menor a `costCapMaxCostPerPurchaseUsd`.
+ * La usan Acciones y el marcador de Publicidad.
+ */
+export function costCapRuleMet(
+  ad: { purchases: number | null; spendUsd: number | null },
+  rules: DecisionRules = DECISION_RULES,
+): boolean {
+  const { purchases, spendUsd } = ad;
+  if (
+    purchases == null ||
+    spendUsd == null ||
+    !Number.isFinite(purchases) ||
+    !Number.isFinite(spendUsd) ||
+    spendUsd <= 0 ||
+    purchases < rules.costCapMinPurchases
+  )
+    return false;
+  return spendUsd / purchases < rules.costCapMaxCostPerPurchaseUsd;
+}
+
+/**
+ * Ads ready for a COST CAP: 3 or more Meta-reported purchases and a cost per
+ * purchase under USD 7 in the last 3 complete days (the numbers of the
+ * Publicidad tab, not Kairo's real orders). Only Meta ads that are delivering
+ * (ad ACTIVE, campaign neither paused nor with issues), in a campaign that is
+ * not a COST CAP yet and whose product has stock. A day of the window without
+ * a row is a day without delivery (0); a spend that cannot be converted to
+ * USD leaves the ad out.
  */
 export function buildCreativeDecisions(input: {
   report: CharlieReport | null;
   rows: CampaignActionRow[];
-  estimates: CampaignEstimates;
-  days: RealOrderDay[];
   fx: UsdRate | null;
   /** Registro de cambios (Meta + a mano), para las marcas "Hecho". */
   changes?: CampaignChange[];
@@ -574,17 +601,9 @@ export function buildCreativeDecisions(input: {
   const today = marketingDate(now);
   const from = shiftDate(today, -rules.windowDays),
     to = shiftDate(today, -1);
-  const dates: string[] = [];
-  for (let d = from; d <= to; d = shiftDate(d, 1)) dates.push(d);
-  const spendRows = charlieAdSpendRows(input.report, input.fx);
-  const adReal = estimateAdRealOrders({
-    days: input.days,
-    campaigns: input.estimates,
-    ads: spendRows,
-  });
   const rows = new Map(input.rows.map((row) => [row.key, row]));
   const spendOf = new Map<string, number | null>();
-  for (const s of spendRows) {
+  for (const s of charlieAdSpendRows(input.report, input.fx)) {
     if (s.date < from || s.date > to) continue;
     const key = `${s.platform}:${s.accountId}:${s.adId}`;
     const before = spendOf.get(key);
@@ -596,6 +615,8 @@ export function buildCreativeDecisions(input: {
   const out: CreativeDecision[] = [];
   for (const account of input.report.data.accounts) {
     const platform = account.platform ?? "meta";
+    // Compras de Meta y campañas COST CAP de Meta: TikTok no entra.
+    if (platform !== "meta") continue;
     for (const ad of account.ads) {
       const row = rows.get(campaignKey(platform, account.id, ad.campaignId));
       // Unknown campaign: it cannot be verified that it is not a COST CAP.
@@ -603,28 +624,20 @@ export function buildCreativeDecisions(input: {
         !row ||
         row.type === "COST CAP" ||
         row.status === "pausada" ||
+        row.status === "otra" ||
         lowStock(row)
       )
         continue;
       if (/COST[ _-]*CAP/i.test(ad.campaignName ?? "")) continue;
       if (ad.effectiveStatus && ad.effectiveStatus !== "ACTIVE") continue;
       const spend = spendOf.get(`${platform}:${account.id}:${ad.id}`);
-      if (spend == null || spend <= 0) continue;
-      let real = 0,
-        estimated = false,
-        known = true;
-      for (const date of dates) {
-        const day = adReal(platform, account.id, ad.campaignId, ad.id, date);
-        if (!day) {
-          known = false;
-          break;
-        }
-        real += day.orders;
-        if (day.basis === "estimado") estimated = true;
-      }
-      if (!known || real <= rules.costCapMoreThanOrders) continue;
-      const cpa = spend / real;
-      if (cpa >= rules.costCapMaxCpaUsd) continue;
+      const purchases = ad.daily.reduce(
+        (sum, day) =>
+          day.date >= from && day.date <= to ? sum + day.purchases : sum,
+        0,
+      );
+      if (spend == null || !costCapRuleMet({ purchases, spendUsd: spend }, rules))
+        continue;
       out.push({
         key: `${platform}:${account.id}:${ad.id}`,
         platform,
@@ -638,9 +651,8 @@ export function buildCreativeDecisions(input: {
         product: row.product?.name ?? null,
         productKey: row.product?.key ?? null,
         spendUsd: Math.round(spend * 100) / 100,
-        real: Math.round(real * 10) / 10,
-        cpaReal: cpa,
-        basis: estimated ? "estimado" : "utm",
+        purchases,
+        costPerPurchase: spend / purchases,
         done: findDoneMark(
           input.changes ?? [],
           {
@@ -656,7 +668,9 @@ export function buildCreativeDecisions(input: {
       });
     }
   }
-  return out.sort((a, b) => a.cpaReal - b.cpaReal || b.real - a.real);
+  return out.sort(
+    (a, b) => a.costPerPurchase - b.costPerPurchase || b.purchases - a.purchases,
+  );
 }
 
 /** Decisiones pendientes: lo marcado "Hecho" ya no cuenta (salvo como aprendizaje). */

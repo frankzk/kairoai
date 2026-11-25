@@ -71,4 +71,32 @@ describe("independent Marketing access", () => {
     const denied = await middleware(new NextRequest("https://kairo.test/api/finance/expenses?store=mireva-cr", { headers: { cookie: `${SESSION_COOKIE}=${cookie}` } }));
     expect(denied.status).toBe(403);
   });
+
+  it("guards the only route that writes to Meta (cost-cap-move) with the Marketing permission and the store", async () => {
+    vi.stubEnv("AUTH_SECRET", "marketing-permission-test-secret");
+    vi.stubEnv("SUPABASE_URL", "https://database.test");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "test-key");
+    const session = async (id: number, permisos: string[]) => {
+      limpiarCache();
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([{
+        activo: true, session_version: 1, nombre: "Persona", permisos, tiendas: ["mireva-cr"], staff_id: null, debe_cambiar_clave: false,
+      }]), { status: 200 })));
+      return firmarSesion(claims({ u: id, p: permisos as never }));
+    };
+    const call = (cookie: string, method: string, store = "mireva-cr") =>
+      middleware(new NextRequest(`https://kairo.test/api/marketing/cost-cap-move?store=${store}`, {
+        method, headers: { cookie: `${SESSION_COOKIE}=${cookie}` },
+      }));
+    for (const method of ["GET", "POST"]) {
+      expect(exigenciaDe("/api/marketing/cost-cap-move", method)).toEqual({ tipo: "permiso", alguno: ["marketing"] });
+      const marketing = await session(81, ["marketing"]);
+      expect((await call(marketing, method)).status, method).toBe(200);
+      expect((await call(marketing, method, "mireva-hn")).status, method).toBe(403);
+      const finance = await session(82, ["finanzas", "pedidos", "panel"]);
+      expect((await call(finance, method)).status, method).toBe(403);
+    }
+    // Without a session nothing reaches the route.
+    const anonymous = await middleware(new NextRequest("https://kairo.test/api/marketing/cost-cap-move?store=mireva-cr", { method: "POST" }));
+    expect([401, 403, 307]).toContain(anonymous.status);
+  });
 });

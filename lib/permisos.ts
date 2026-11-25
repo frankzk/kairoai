@@ -252,6 +252,11 @@ export const REGLAS: Regla[] = [
   // Gestion de pedidos / finanzas
   { ruta: "/api/finance", exige: P("finanzas") },
   { ruta: "/api/marketing", exige: P("marketing") },
+  // "Pasar a COST CAP": el unico lugar donde Kairo escribe en Meta (crea un
+  // anuncio). Ver la vista previa pide Marketing; el POST, ademas, poder
+  // editar Marketing: lo comprueba la ruta (canEditMarketing), como el resto
+  // de los cambios de Marketing.
+  { ruta: "/api/marketing/cost-cap-move", exige: P("marketing") },
   { ruta: "/api/finance/orders", exige: P(...OPERACION) },
   { ruta: "/api/woo/orders", exige: P(...OPERACION) },
   { ruta: "/api/italia", exige: P(...OPERACION) },

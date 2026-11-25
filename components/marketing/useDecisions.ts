@@ -6,7 +6,6 @@ import type { MarketingSettings } from "@/lib/marketing-settings-types";
 import type { MarketingControl } from "@/lib/marketing-real-orders";
 import type { CharlieReport, UsdRate } from "@/lib/marketing-charlie-types";
 import type { CampaignActionRow } from "@/lib/marketing-actions";
-import { buildRealEstimate } from "@/lib/marketing-real-cpa";
 import {
   buildCampaignDecisions,
   buildCreativeDecisions,
@@ -33,7 +32,7 @@ export function useDecisions(input: {
   actionRows: CampaignActionRow[] | null;
   costCapAds: Resource<CharlieReport>;
 }) {
-  const { data, actions, control, changes, settings, fx, actionRows } = input;
+  const { actions, control, changes, fx, actionRows } = input;
   // Meta activity + the manual log (learning guard and "Hecho" marks).
   const allChanges = useMemo(
     () =>
@@ -54,34 +53,19 @@ export function useDecisions(input: {
         : null,
     [actionRows, control.data, allChanges],
   );
-  const estimates = useMemo(
-    () =>
-      actions.data && control.data
-        ? buildRealEstimate({
-            summary: data,
-            sources: actions.data,
-            settings,
-            control: control.data,
-            fx,
-          }).estimates
-        : null,
-    [actions.data, control.data, data, settings, fx],
-  );
   const report = input.costCapAds.data;
   const creatives = useMemo(
     () =>
-      actionRows && estimates && control.data && report?.status === "ready"
+      actionRows && control.data && report?.status === "ready"
         ? buildCreativeDecisions({
             report,
             rows: actionRows,
-            estimates,
-            days: control.data.days,
             fx,
             changes: allChanges,
             now: new Date(control.data.generatedAt),
           })
         : null,
-    [actionRows, estimates, control.data, report, fx, allChanges],
+    [actionRows, control.data, report, fx, allChanges],
   );
   const loading = actions.loading || control.loading || changes.loading;
   const creativesStatus: "ready" | "loading" | "unavailable" = creatives

@@ -48,10 +48,17 @@ import {
   type QueueItem,
   type QueueKind,
 } from "@/lib/marketing-action-queue";
+import {
+  costCapHint,
+  MOVE_TEXT,
+  type MoveHintDestination,
+} from "@/lib/marketing-cost-cap-move";
+import type { CampaignActionRow } from "@/lib/marketing-actions";
 import { decimalText, periodLabelText } from "@/lib/marketing-copy";
 import { marketingDate, shiftDate } from "@/lib/marketing-dates";
 import { count, money } from "./format";
 import { CostCapControl } from "./CostCapControl";
+import { CostCapMoveDialog } from "./CostCapMoveDialog";
 import { useCampaignActions } from "./useCampaignActions";
 import { useDecisions } from "./useDecisions";
 import type { MarketingChanges } from "./useMarketing";
@@ -125,6 +132,7 @@ export function ActionsView({
   canEdit,
   logChange,
   deleteChange,
+  reloadChanges,
   filterLabel,
   focus = null,
 }: {
@@ -141,18 +149,21 @@ export function ActionsView({
   save?: Save;
   logChange: (body: Record<string, unknown>) => Promise<string | null>;
   deleteChange?: (id: string) => Promise<string | null>;
+  /** Vuelve a leer el registro de cambios (tras crear un anuncio en la COST CAP). */
+  reloadChanges?: () => void;
   filterLabel: string | null;
   /** Anchor of a Resumen link (decisiones-escalar…): selects its filter on arrival. */
   focus?: { id: string; n: number } | null;
 }) {
-  const { actionResult, actionRows, costCap } = useCampaignActions({
-    data,
-    actions,
-    control,
-    changes,
-    settings,
-    fx,
-  });
+  const { actionResult, actionRows, costCap, campaignMembers } =
+    useCampaignActions({
+      data,
+      actions,
+      control,
+      changes,
+      settings,
+      fx,
+    });
   const decisions = useDecisions({
     data,
     actions,
@@ -201,6 +212,9 @@ export function ActionsView({
         sourceNotes={sourceNotes}
         logChange={logChange}
         deleteChange={deleteChange}
+        reloadChanges={reloadChanges}
+        rows={actionResult ? actionRows : null}
+        members={campaignMembers}
         now={now}
         focus={focus}
       />
@@ -238,6 +252,9 @@ function ActionQueue({
   sourceNotes,
   logChange,
   deleteChange,
+  reloadChanges,
+  rows,
+  members,
   now,
   focus,
 }: {
@@ -254,6 +271,10 @@ function ActionQueue({
   sourceNotes: string[];
   logChange: (body: Record<string, unknown>) => Promise<string | null>;
   deleteChange?: (id: string) => Promise<string | null>;
+  reloadChanges?: () => void;
+  /** Campañas ya cargadas (para saber si el producto tiene COST CAP activa). */
+  rows: CampaignActionRow[] | null;
+  members: ReadonlyMap<string, string[]> | null;
   now: Date;
   focus: { id: string; n: number } | null;
 }) {
@@ -267,8 +288,10 @@ function ActionQueue({
   }, [focus?.id, focus?.n]);
   // "Hecho" of this session: shown at once and kept in place until reload.
   const [local, setLocal] = useState<
-    Record<string, { at: string; action: DoneAction }>
+    Record<string, { at: string; action: DoneAction; newAdId?: string }>
   >({});
+  // "Pasar a COST CAP": el anuncio cuya confirmación está abierta.
+  const [moving, setMoving] = useState<QueueItem | null>(null);
   const [busy, setBusy] = useState("");
   const [failure, setFailure] = useState<{ key: string; text: string } | null>(
     null,
@@ -291,6 +314,7 @@ function ActionQueue({
               by: null,
               id: null,
               adId: item.adId,
+              newAdId: local[item.key].newAdId ?? null,
             },
           }
         : item,
@@ -452,9 +476,21 @@ function ActionQueue({
                     disabled={Boolean(busy)}
                     failure={failure?.key === item.key ? failure.text : ""}
                     onDone={() => markDone(item)}
+                    hint={
+                      item.kind === "costcap" && rows
+                        ? costCapHint(item, rows, members)
+                        : null
+                    }
+                    onMove={
+                      canEdit && item.kind === "costcap" && !item.done
+                        ? () => setMoving(item)
+                        : undefined
+                    }
                     onUndo={
                       deleteChange &&
                       item.done?.id &&
+                      // Un anuncio creado en Meta no se "deshace" borrando la nota.
+                      !item.done.newAdId &&
                       canEdit &&
                       now.getTime() - Date.parse(item.done.at) <
                         UNDO_MINUTES * 60_000
@@ -486,11 +522,32 @@ function ActionQueue({
         Impacto: apagar y bajar, gasto sobre la meta (gasto − pedidos reales ×{" "}
         {usd(DECISION_RULES.targetCpaUsd)}); escalar y COST CAP, pedidos extra
         con +{Math.round(DECISION_RULES.scaleStep * 100)} % si el CPA se
-        mantiene. Por campaña (las fuentes no traen conjuntos de anuncios; una
+        mantiene. Pasar a COST CAP usa las compras que reporta Meta (las de
+        Publicidad): {count(DECISION_RULES.costCapMinPurchases)} o más y costo
+        por compra menor a {usd(DECISION_RULES.costCapMaxCostPerPurchaseUsd)};
+        el botón crea el anuncio en la COST CAP del mismo producto, siempre
+        con confirmación. Por campaña (las fuentes no traen conjuntos de anuncios; una
         ABO se evalúa entera). Pedidos con ≈: reparto por producto. Hoy solo
         avisa. «Hecho» queda en el registro de cambios: un presupuesto tocado
         no se escala en {count(DECISION_RULES.learningHours)} h.
       </p>
+      {moving && (
+        <CostCapMoveDialog
+          item={moving}
+          onClose={() => setMoving(null)}
+          onCreated={(result) => {
+            setLocal((current) => ({
+              ...current,
+              [moving.key]: {
+                at: result.at,
+                action: "costcap",
+                newAdId: result.adId,
+              },
+            }));
+            reloadChanges?.();
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -506,7 +563,7 @@ function emptyText(filters: QueueFilter[]) {
         ? `Ninguna campaña con CPA real entre ${usd(DECISION_RULES.targetCpaUsd)} y ${usd(DECISION_RULES.lowerMaxCpaUsd)}.`
         : "Ninguna campaña para apagar.";
   if (f === "costcap")
-    return `Ningún anuncio con más de ${count(DECISION_RULES.costCapMoreThanOrders)} pedidos reales y CPA real menor a ${usd(DECISION_RULES.costCapMaxCpaUsd)}.`;
+    return `Ningún anuncio con ${count(DECISION_RULES.costCapMinPurchases)} compras de Meta o más y costo por compra menor a ${usd(DECISION_RULES.costCapMaxCostPerPurchaseUsd)}.`;
   if (f === "aprendizaje") return "Ninguna campaña en aprendizaje.";
   if (f === "alertas") return "Ninguna alerta de hoy.";
   return "Nada que tocar hoy.";
@@ -562,12 +619,38 @@ function CpaMarker({ cpa }: { cpa: number | null }) {
   );
 }
 
-function BudgetCell({ item }: { item: QueueItem }) {
+function BudgetCell({
+  item,
+  hint,
+}: {
+  item: QueueItem;
+  hint: MoveHintDestination[] | null;
+}) {
   if (item.kind === "costcap")
-    return (
+    return !hint ? (
       <>
-        Nueva COST CAP
-        <small>puja {usd(DECISION_RULES.targetCpaUsd)}</small>
+        COST CAP
+        <small>del mismo producto</small>
+      </>
+    ) : hint.length === 1 ? (
+      <>
+        A la COST CAP
+        <small title={hint[0].name}>
+          {hint[0].name}
+          {hint[0].accountId !== item.accountId
+            ? ` · ${hint[0].accountLabel}`
+            : ""}
+        </small>
+      </>
+    ) : hint.length ? (
+      <>
+        {count(hint.length)} COST CAP
+        <small>se elige al confirmar</small>
+      </>
+    ) : (
+      <>
+        Sin COST CAP
+        <small>de este producto</small>
       </>
     );
   if (item.budget == null)
@@ -658,7 +741,9 @@ function QueueRow({
   busy,
   disabled,
   failure,
+  hint,
   onDone,
+  onMove,
   onUndo,
 }: {
   item: QueueItem;
@@ -668,10 +753,17 @@ function QueueRow({
   busy: boolean;
   disabled: boolean;
   failure: string;
+  /** COST CAP activas del mismo producto (null = no aplica o sin datos). */
+  hint: MoveHintDestination[] | null;
   onDone: () => void;
+  /** Abre la confirmación de "Pasar a COST CAP" (solo quien puede editar). */
+  onMove?: () => void;
   onUndo?: () => void;
 }) {
   const approx = item.approximate ? "≈ " : "";
+  // COST CAP: compras y costo por compra de Meta, no pedidos reales.
+  const meta = item.basis === "meta";
+  const movable = Boolean(onMove) && item.platform === "meta";
   return (
     <tr className={a.row} data-done={item.done ? "true" : undefined}>
       <th scope="row" className={a.nameCell}>
@@ -702,7 +794,10 @@ function QueueRow({
           </span>
         )}
       </td>
-      <td className={a.num} data-label="CPA real 3d">
+      <td
+        className={a.num}
+        data-label={meta ? "Costo por compra 3d" : "CPA real 3d"}
+      >
         <span className={a.value}>
           {item.cpaReal == null ? (
             <span className={a.dim}>Sin pedidos</span>
@@ -710,16 +805,21 @@ function QueueRow({
             `${approx}${usd(item.cpaReal)}`
           )}
         </span>
-        <CpaMarker cpa={item.cpaReal} />
+        {meta ? (
+          <small className={a.basis}>por compra · Meta</small>
+        ) : (
+          <CpaMarker cpa={item.cpaReal} />
+        )}
       </td>
-      <td className={a.num} data-label="Pedidos 3d">
+      <td className={a.num} data-label={meta ? "Compras 3d" : "Pedidos 3d"}>
         {item.real == null ? "Sin datos" : `${approx}${ordersText(item.real)}`}
+        {meta && <small className={a.basis}>compras · Meta</small>}
       </td>
       <td className={a.num} data-label="Gasto 3d">
         {usd(item.spendUsd)}
       </td>
       <td className={a.budgetCell} data-label="Presupuesto">
-        <BudgetCell item={item} />
+        <BudgetCell item={item} hint={hint} />
       </td>
       <td className={a.impact} data-label="Impacto">
         {item.impactText ?? <span className={a.dim}>—</span>}
@@ -738,6 +838,11 @@ function QueueRow({
             {item.learningUntil && item.kind === "escalar" && (
               <small>{learningUntilText(item.learningUntil)}</small>
             )}
+            {item.done.newAdId && (
+              <small>
+                Anuncio nuevo en la COST CAP: ID {item.done.newAdId}
+              </small>
+            )}
             {onUndo && (
               <button
                 type="button"
@@ -746,6 +851,40 @@ function QueueRow({
                 disabled={disabled}
               >
                 {busy ? "Deshaciendo…" : "Deshacer"}
+              </button>
+            )}
+          </span>
+        ) : movable ? (
+          <span className={a.move}>
+            {!item.postId ? (
+              <small className={a.noMove}>
+                Sin Post ID de Meta: se pasa a mano.
+              </small>
+            ) : hint && !hint.length ? (
+              <small className={a.noMove}>{MOVE_TEXT.noDestination}</small>
+            ) : (
+              <button
+                type="button"
+                className={a.moveButton}
+                onClick={onMove}
+                disabled={disabled}
+                aria-haspopup="dialog"
+                aria-label={`Pasar a COST CAP el anuncio ${item.name}`}
+                title="Abre la confirmación: nada se crea hasta que confirmes."
+              >
+                <Target aria-hidden="true" />
+                Pasar a COST CAP
+              </button>
+            )}
+            {canMark && (
+              <button
+                type="button"
+                className={a.link}
+                onClick={onDone}
+                disabled={disabled}
+                title="Si ya lo pasaste en Meta, lo anota en el registro de cambios."
+              >
+                {busy ? "Guardando…" : "Ya lo pasé a mano"}
               </button>
             )}
           </span>

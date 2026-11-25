@@ -443,6 +443,8 @@ export function useMarketing(
     saveRate,
     logChange,
     deleteChange,
+    /** Vuelve a leer el registro de cambios (otra ruta escribió en él). */
+    reloadChanges: () => setChangesRevision((value) => value + 1),
     saving,
     saveError,
     saved,
