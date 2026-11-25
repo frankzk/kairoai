@@ -845,6 +845,142 @@ export function sortPublicidadRows<T extends PublicidadRow | PublicidadUsdRow>(
     .map((entry) => entry.row);
 }
 
+/* ------------------------------------------------- filtros por métrica */
+
+/** Columns that take a numeric filter from the header. */
+export const PUBLICIDAD_FILTER_COLUMNS = [
+  "purchases",
+  "costPerPurchase",
+  "purchaseValue",
+  "roas",
+  "leads",
+  "spend",
+  "results",
+  "costPerResult",
+  "impressions",
+  "clicks",
+  "ctr",
+] as const;
+export type PublicidadFilterColumn = (typeof PUBLICIDAD_FILTER_COLUMNS)[number];
+export type PublicidadFilterOp = "gte" | "lte" | "eq" | "between";
+export interface PublicidadMetricFilter {
+  op: PublicidadFilterOp;
+  value: number;
+  /** Upper end of "between". */
+  value2?: number;
+}
+export type PublicidadMetricFilters = Partial<
+  Record<PublicidadFilterColumn, PublicidadMetricFilter>
+>;
+
+/** Counts: a row without the event has 0 of them ("2 compras o menos" includes none). */
+const COUNT_FILTERS: ReadonlySet<PublicidadFilterColumn> =
+  new Set<PublicidadFilterColumn>([
+  "purchases",
+  "leads",
+  "results",
+  "impressions",
+  "clicks",
+]);
+export const isCountFilter = (column: PublicidadFilterColumn) =>
+  COUNT_FILTERS.has(column);
+
+/**
+ * The number a filter compares, in the unit the table shows: counts, USD, ROAS
+ * as a multiple and CTR as a percentage (2.25, not 0.0225). Null = the row has
+ * no such value (a cost without purchases, an amount without rate): it never
+ * passes a filter on that column.
+ */
+export function metricFilterValue(
+  row: PublicidadUsdRow,
+  column: PublicidadFilterColumn,
+): number | null {
+  switch (column) {
+    case "costPerPurchase":
+      return row.derived.costPerPurchase;
+    case "roas":
+      return row.derived.roas;
+    case "ctr":
+      return row.derived.ctr == null ? null : row.derived.ctr * 100;
+    case "costPerResult":
+      return row.costPerResult;
+    case "purchaseValue":
+    case "spend":
+      return row[column];
+    default:
+      return row[column] ?? 0;
+  }
+}
+
+const cents = (value: number) => Math.round(value * 100);
+
+/** Compared at two decimals, the precision the table shows. */
+export function matchesMetricFilter(
+  value: number | null,
+  filter: PublicidadMetricFilter,
+): boolean {
+  if (value == null || !Number.isFinite(value)) return false;
+  const v = cents(value);
+  const a = cents(filter.value);
+  if (filter.op === "gte") return v >= a;
+  if (filter.op === "lte") return v <= a;
+  if (filter.op === "eq") return v === a;
+  const b = cents(filter.value2 ?? filter.value);
+  return v >= Math.min(a, b) && v <= Math.max(a, b);
+}
+
+/** Rows that pass every active filter. */
+export function applyMetricFilters<T extends PublicidadUsdRow>(
+  rows: T[],
+  filters: PublicidadMetricFilters,
+): T[] {
+  const active = PUBLICIDAD_FILTER_COLUMNS.flatMap((column) => {
+    const filter = filters[column];
+    return filter ? [[column, filter] as const] : [];
+  });
+  if (!active.length) return rows;
+  return rows.filter((row) =>
+    active.every(([column, filter]) =>
+      matchesMetricFilter(metricFilterValue(row, column), filter),
+    ),
+  );
+}
+
+/**
+ * What a person types: "2", "2,5", "2.5", "1 200,50", "$6,50", "3%". With both
+ * separators the last one is the decimal. Null when it is not a number ≥ 0.
+ */
+export function parseFilterNumber(text: string): number | null {
+  let clean = text.replace(/[^0-9.,]/g, "");
+  if (!/[0-9]/.test(clean)) return null;
+  const comma = clean.lastIndexOf(",");
+  const dot = clean.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) {
+    const decimal = comma > dot ? "," : ".";
+    clean = clean
+      .split(decimal === "," ? "." : ",")
+      .join("")
+      .replace(decimal, ".");
+  } else clean = clean.replace(",", ".");
+  if ((clean.match(/\./g) ?? []).length > 1) return null;
+  const value = Number(clean);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/** "≥ 2", "≤ 6,50", "= 1", "2 – 5": the condition as the header shows it. */
+export function metricFilterText(
+  filter: PublicidadMetricFilter,
+  format: (value: number) => string,
+): string {
+  if (filter.op === "between") {
+    const a = filter.value;
+    const b = filter.value2 ?? filter.value;
+    return `${format(Math.min(a, b))} – ${format(Math.max(a, b))}`;
+  }
+  const sign = filter.op === "gte" ? "≥" : filter.op === "lte" ? "≤" : "=";
+  return `${sign} ${format(filter.value)}`;
+}
+
 /* ------------------------------------------------------------- columnas */
 
 export type PublicidadColumn =

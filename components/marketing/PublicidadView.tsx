@@ -10,6 +10,7 @@
 // no hay tipo de cambio, nunca un número inventado). Las reglas (qué filas se
 // listan, métricas derivadas, totales) están en lib/marketing-publicidad.ts.
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -23,6 +24,7 @@ import {
   ChevronRight,
   ChevronsUpDown,
   Columns,
+  ListFilter,
   RefreshCw,
   Search,
   X,
@@ -37,6 +39,15 @@ import {
   PUBLICIDAD_COLUMNS,
   availablePublicidadColumns,
   filterPublicidadRows,
+  applyMetricFilters,
+  isCountFilter,
+  metricFilterText,
+  parseFilterNumber,
+  PUBLICIDAD_FILTER_COLUMNS,
+  type PublicidadFilterColumn,
+  type PublicidadFilterOp,
+  type PublicidadMetricFilter,
+  type PublicidadMetricFilters,
   publicidadRowUsd,
   publicidadTotals,
   realOrdersByRow,
@@ -173,6 +184,27 @@ export function PublicidadView({
     direction: "asc" | "desc";
   }>({ key: "spend", direction: "desc" });
   const [limit, setLimit] = useState(PAGE);
+  // Filters by metric, set from each column header ("2 compras o más").
+  const [filters, setFilters] = useState<PublicidadMetricFilters>({});
+  const [filterOpen, setFilterOpen] = useState<{
+    column: PublicidadFilterColumn;
+    top: number;
+    left: number;
+  } | null>(null);
+  const closeFilter = useCallback(() => setFilterOpen(null), []);
+  function setFilter(
+    column: PublicidadFilterColumn,
+    filter: PublicidadMetricFilter | null,
+  ) {
+    setFilters((current) => {
+      const next = { ...current };
+      if (filter) next[column] = filter;
+      else delete next[column];
+      return next;
+    });
+    setLimit(PAGE);
+    setFilterOpen(null);
+  }
   const [nonce, setNonce] = useState(0);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [choices, setChoices] = useState<
@@ -325,12 +357,19 @@ export function PublicidadView({
   const rows = useMemo(
     () =>
       sortPublicidadRows(
-        filterPublicidadRows(allRows, { account, search }),
+        applyMetricFilters(
+          filterPublicidadRows(allRows, { account, search }),
+          filters,
+        ),
         sort.key,
         sort.direction,
       ),
-    [allRows, account, search, sort],
+    [allRows, account, search, sort, filters],
   );
+  const activeFilters = PUBLICIDAD_FILTER_COLUMNS.flatMap((column) => {
+    const filter = filters[column];
+    return filter && shown(column) ? [{ column, filter }] : [];
+  });
   const totals = useMemo(() => publicidadTotals(rows), [rows]);
   const realTotal = realOrders
     ? rows.reduce((sum, row) => sum + (realOrders.get(row.id) ?? 0), 0)
@@ -622,7 +661,9 @@ export function PublicidadView({
               ? `Make no ha guardado ${meta.plural} de TikTok en este período.`
               : `Sin ${meta.plural} con entrega ni activos en este período${drill.campaign || drill.adset ? " para este filtro" : ""}.`
           : data && !rows.length
-            ? "Ninguna fila coincide con la cuenta o la búsqueda."
+            ? activeFilters.length
+              ? "Ninguna fila cumple los filtros. Cámbialos o quítalos desde el encabezado."
+              : "Ninguna fila coincide con la cuenta o la búsqueda."
             : "";
 
   return (
@@ -857,6 +898,56 @@ export function PublicidadView({
             </div>
           ))}
         </dl>
+        {activeFilters.length > 0 && (
+          <div className={p.crumbs} aria-label="Filtros de métricas">
+            <span>Solo filas con</span>
+            {activeFilters.map(({ column, filter }) => {
+              const label =
+                PUBLICIDAD_COLUMNS.find((entry) => entry.id === column)
+                  ?.label ?? column;
+              return (
+                <span key={column} className={p.crumb}>
+                  <span>
+                    {label} {metricFilterText(filter, filterNumber(column))}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Quitar el filtro de ${label.toLocaleLowerCase("es")}`}
+                    onClick={() => setFilter(column, null)}
+                  >
+                    <X size={12} aria-hidden />
+                  </button>
+                </span>
+              );
+            })}
+            {activeFilters.length > 1 && (
+              <button
+                type="button"
+                className={p.textButton}
+                onClick={() => {
+                  setFilters({});
+                  setLimit(PAGE);
+                }}
+              >
+                Quitar todos
+              </button>
+            )}
+          </div>
+        )}
+        {filterOpen && (
+          <FilterPopover
+            key={filterOpen.column}
+            column={filterOpen.column}
+            label={
+              PUBLICIDAD_COLUMNS.find((entry) => entry.id === filterOpen.column)
+                ?.label ?? ""
+            }
+            place={filterOpen}
+            value={filters[filterOpen.column] ?? null}
+            onApply={(filter) => setFilter(filterOpen.column, filter)}
+            onClose={closeFilter}
+          />
+        )}
         <div
           ref={frameRef}
           className={`${r.tableWrap} ${p.frame}`}
@@ -885,6 +976,7 @@ export function PublicidadView({
                     direction={sort.direction}
                     onClick={() => sortBy("name")}
                   />
+                  <span className={p.filterSpace} aria-hidden />
                 </th>
                 {columns.map((column) =>
                   column.id === "realOrders" ? (
@@ -894,6 +986,7 @@ export function PublicidadView({
                       style={fit ? { width: COLUMN_WIDTH[column.id] } : undefined}
                     >
                       {column.label}
+                      <span className={p.filterSpace} aria-hidden />
                     </th>
                   ) : (
                     <th
@@ -915,6 +1008,31 @@ export function PublicidadView({
                         direction={sort.direction}
                         onClick={() => sortBy(column.id as PublicidadSortKey)}
                       />
+                      {isFilterColumn(column.id) && (
+                        <FilterButton
+                          label={column.label}
+                          text={
+                            filters[column.id]
+                              ? metricFilterText(
+                                  filters[column.id]!,
+                                  filterNumber(column.id),
+                                )
+                              : ""
+                          }
+                          open={filterOpen?.column === column.id}
+                          onOpen={(anchor) => {
+                            const id = column.id as PublicidadFilterColumn;
+                            setFilterOpen((current) =>
+                              current?.column === id
+                                ? null
+                                : { column: id, ...popoverPlace(anchor) },
+                            );
+                          }}
+                        />
+                      )}
+                      {!isFilterColumn(column.id) && (
+                        <span className={p.filterSpace} aria-hidden />
+                      )}
                     </th>
                   ),
                 )}
@@ -1063,6 +1181,218 @@ export function PublicidadView({
         </p>
       </section>
     </div>
+  );
+}
+
+const isFilterColumn = (id: string): id is PublicidadFilterColumn =>
+  (PUBLICIDAD_FILTER_COLUMNS as readonly string[]).includes(id);
+/** Unit of what is typed in a filter: none for counts. */
+const filterUnit = (column: PublicidadFilterColumn) =>
+  column === "ctr" ? "%" : column === "roas" ? "×" : isCountFilter(column) ? "" : "USD";
+/** How a filter value reads in the header and the chips. */
+const filterNumber = (column: PublicidadFilterColumn) => (value: number) =>
+  column === "ctr"
+    ? `${decimal2.format(value)}%`
+    : isCountFilter(column)
+      ? count(value)
+      : column === "roas"
+        ? decimal2.format(value)
+        : `$${decimal2.format(value)}`;
+const POPOVER_WIDTH = 236;
+/** Under the header button, kept inside the window. */
+function popoverPlace(anchor: HTMLElement) {
+  const box = anchor.getBoundingClientRect();
+  return {
+    top: Math.round(box.bottom + 6),
+    left: Math.round(
+      Math.max(
+        8,
+        Math.min(box.right - POPOVER_WIDTH, window.innerWidth - POPOVER_WIDTH - 8),
+      ),
+    ),
+  };
+}
+
+/** Under each header label: the funnel, or the active condition ("≥ 2"). */
+function FilterButton({
+  label,
+  text,
+  open,
+  onOpen,
+}: {
+  label: string;
+  text: string;
+  open: boolean;
+  onOpen: (anchor: HTMLElement) => void;
+}) {
+  const name = label.toLocaleLowerCase("es");
+  return (
+    <button
+      type="button"
+      className={p.filter}
+      data-active={Boolean(text)}
+      data-filter-button
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      aria-label={
+        text ? `Filtro de ${name}: ${text}. Cambiar` : `Filtrar por ${name}`
+      }
+      title={text ? `Filtro: ${text}` : `Filtrar por ${name}`}
+      onClick={(event) => onOpen(event.currentTarget)}
+    >
+      {text || <ListFilter size={11} aria-hidden />}
+    </button>
+  );
+}
+
+const FILTER_OPS: Array<[PublicidadFilterOp, string]> = [
+  ["gte", "o más (≥)"],
+  ["lte", "o menos (≤)"],
+  ["eq", "exactamente (=)"],
+  ["between", "entre"],
+];
+
+/** Small dialog of one column filter. Fixed to the window: it closes on scroll. */
+function FilterPopover({
+  column,
+  label,
+  place,
+  value,
+  onApply,
+  onClose,
+}: {
+  column: PublicidadFilterColumn;
+  label: string;
+  place: { top: number; left: number };
+  value: PublicidadMetricFilter | null;
+  onApply: (filter: PublicidadMetricFilter | null) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLFormElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const text = (n: number | undefined) =>
+    n == null ? "" : String(n).replace(".", ",");
+  const [op, setOp] = useState<PublicidadFilterOp>(value?.op ?? "gte");
+  const [first, setFirst] = useState(text(value?.value));
+  const [second, setSecond] = useState(text(value?.value2));
+  const [error, setError] = useState("");
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+    const close = (event: Event) => {
+      if (event instanceof KeyboardEvent) {
+        if (event.key === "Escape") onClose();
+        return;
+      }
+      const target = event.target as Element | null;
+      if (event.type === "scroll") {
+        // Scrolling the page moves the header away from the dialog.
+        if (!ref.current?.contains(target)) onClose();
+      } else if (
+        !ref.current?.contains(target) &&
+        !target?.closest?.("[data-filter-button]")
+      )
+        onClose();
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", onClose);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+  const unit = filterUnit(column);
+  const whole = isCountFilter(column);
+  function submit() {
+    const a = parseFilterNumber(first);
+    const b = op === "between" ? parseFilterNumber(second) : null;
+    if (a == null || (op === "between" && b == null)) {
+      setError(
+        op === "between" ? "Escribe los dos números." : "Escribe un número.",
+      );
+      return;
+    }
+    onApply({ op, value: a, ...(b != null ? { value2: b } : {}) });
+  }
+  const name = label.toLocaleLowerCase("es");
+  return (
+    <form
+      ref={ref}
+      className={p.filterPop}
+      style={{ top: place.top, left: place.left, width: POPOVER_WIDTH }}
+      role="dialog"
+      aria-label={`Filtrar por ${name}`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <p>
+        Mostrar solo las filas con <strong>{name}</strong>
+        {unit && unit !== "USD" ? ` (${unit})` : unit ? " (USD)" : ""}
+      </p>
+      <div className={p.filterRow}>
+        <input
+          ref={input}
+          inputMode={whole ? "numeric" : "decimal"}
+          aria-label={op === "between" ? "Desde" : "Valor"}
+          placeholder={op === "between" ? "Desde" : whole ? "2" : "6,50"}
+          value={first}
+          onChange={(event) => {
+            setFirst(event.target.value);
+            setError("");
+          }}
+        />
+        {op === "between" && (
+          <input
+            inputMode={whole ? "numeric" : "decimal"}
+            aria-label="Hasta"
+            placeholder="Hasta"
+            value={second}
+            onChange={(event) => {
+              setSecond(event.target.value);
+              setError("");
+            }}
+          />
+        )}
+        <select
+          aria-label="Condición"
+          value={op}
+          onChange={(event) => setOp(event.target.value as PublicidadFilterOp)}
+        >
+          {FILTER_OPS.map(([id, text]) => (
+            <option key={id} value={id}>
+              {text}
+            </option>
+          ))}
+        </select>
+      </div>
+      {error && (
+        <p className={p.filterError} role="alert">
+          {error}
+        </p>
+      )}
+      <div className={p.filterFoot}>
+        {value ? (
+          <button
+            type="button"
+            className={p.textButton}
+            onClick={() => onApply(null)}
+          >
+            Quitar filtro
+          </button>
+        ) : (
+          <span />
+        )}
+        <button type="submit" className={p.filterApply}>
+          Aplicar
+        </button>
+      </div>
+    </form>
   );
 }
 
