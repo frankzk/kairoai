@@ -12,6 +12,8 @@ export type MarketingPreset =
   | "week"
   | "month"
   | "last-month"
+  | "2d"
+  | "3d"
   | "7d"
   | "14d"
   | "28d"
