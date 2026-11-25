@@ -635,6 +635,7 @@ export default function MarketingDashboard() {
                 save={api.save}
                 logChange={api.logChange}
                 deleteChange={api.deleteChange}
+                reloadChanges={api.reloadChanges}
                 focus={actionsFocus}
                 filterLabel={
                   period && !periodIsToday(period, marketingDate())

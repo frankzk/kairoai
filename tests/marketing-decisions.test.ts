@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCampaignDecisions,
   buildCreativeDecisions,
+  costCapRuleMet,
   decideCampaign,
   decisionChanges,
   decisionCounts,
@@ -23,11 +24,6 @@ import type {
   CharlieDay,
   CharlieReport,
 } from "../lib/marketing-charlie-types";
-import type {
-  CampaignEstimates,
-  CampaignRealDay,
-} from "../lib/marketing-real-cpa";
-import type { RealOrderDay } from "../lib/marketing-real-orders";
 
 const now = new Date("2026-11-13T20:35:00Z"); // 14:35 CR, 13 nov
 const TODAY = "2026-11-13";
@@ -121,8 +117,8 @@ describe("reglas de decisión (ventana de 3 días completos, CPA real)", () => {
       scaleMinRealOrders: 5,
       lowerMaxCpaUsd: 11,
       killNoOrdersSpendUsd: 17,
-      costCapMoreThanOrders: 5,
-      costCapMaxCpaUsd: 6,
+      costCapMinPurchases: 3,
+      costCapMaxCostPerPurchaseUsd: 7,
       learningHours: 72,
       scaleStep: 0.2,
       reduceStep: 0.2,
@@ -464,18 +460,30 @@ describe("reglas de decisión (ventana de 3 días completos, CPA real)", () => {
 
 /* -------------------------------------------------------------- COST CAP */
 
-const charlieDay = (date: string, spend: number): CharlieDay => ({
+const charlieDay = (
+  date: string,
+  spend: number,
+  purchases: number,
+): CharlieDay => ({
   date,
   spend,
   impressions: 1000,
   clicks: 30,
   frequency: 1.2,
-  purchases: 2,
+  purchases,
   purchaseValue: null,
   interactions: 0,
 });
+/** One ad: spend and Meta purchases per day of the window (index = day). */
+type AdInput = {
+  id: string;
+  campaignId: string;
+  spend: number[];
+  purchases: number[];
+};
 const adsAccount = (
-  ads: Array<{ id: string; campaignId: string; spend: number[] }>,
+  ads: AdInput[],
+  patch: Partial<CharlieAccount> = {},
 ): CharlieAccount => ({
   platform: "meta",
   id: "1",
@@ -490,11 +498,14 @@ const adsAccount = (
     campaignId: ad.campaignId,
     campaignName: `CBO ${ad.campaignId}`,
     effectiveStatus: "",
-    postId: null,
+    postId: `100_${ad.id.replace(/\D/g, "") || "1"}`,
     creativeId: null,
     assets: null,
-    daily: ad.spend.map((spend, i) => charlieDay(WINDOW[i], spend)),
+    daily: ad.spend.map((spend, i) =>
+      charlieDay(WINDOW[i], spend, ad.purchases[i] ?? 0),
+    ),
   })),
+  ...patch,
 });
 const report = (accounts: CharlieAccount[]): CharlieReport => ({
   status: "ready",
@@ -508,190 +519,189 @@ const report = (accounts: CharlieAccount[]): CharlieReport => ({
     trailTo: WINDOW[2],
   },
 });
-const realDay = (date: string, byAd: Record<string, number>): RealOrderDay => ({
-  date,
-  created: 20,
-  real: 18,
-  withCampaign: 0,
-  byCampaign: {},
-  byAd,
-  unlinkedBySku: {},
-  unlinkedNoProduct: 0,
-});
-/** Campaign estimate = UTM orders of its ads (+ `assigned` spread by spend). */
-const estimates = (
-  perCampaign: Record<string, { total: number; assigned?: number }[]>,
-): CampaignEstimates =>
-  new Map(
-    Object.entries(perCampaign).map(([campaign, days]) => [
-      `meta:1:${campaign}`,
-      new Map(
-        days.map((d, i): [string, CampaignRealDay] => [
-          WINDOW[i],
-          {
-            utm: d.total - (d.assigned ?? 0),
-            assigned: d.assigned ?? 0,
-            total: d.total,
-            partial: false,
-          },
-        ]),
-      ),
-    ]),
-  );
 const rowsFor = (...campaigns: Array<Partial<CampaignActionRow> & { campaignId: string }>) =>
   campaigns.map((c) =>
     row({ key: `meta:1:${c.campaignId}`, name: `CBO ${c.campaignId}`, ...c }),
   );
 
-describe("creativos listos para COST CAP", () => {
-  const utm = (counts: number[], ad = "a1") =>
-    counts.map((n, i) => realDay(WINDOW[i], { [`meta:${ad}`]: n }));
+describe("creativos listos para COST CAP (compras de Meta)", () => {
+  it("la regla: 3 compras o más y costo por compra menor a USD 7", () => {
+    expect(costCapRuleMet({ purchases: 3, spendUsd: 20.97 })).toBe(true);
+    // 2 compras no alcanzan, aunque salgan baratas.
+    expect(costCapRuleMet({ purchases: 2, spendUsd: 4 })).toBe(false);
+    // Exactamente USD 7 por compra no es "menor a 7".
+    expect(costCapRuleMet({ purchases: 3, spendUsd: 21 })).toBe(false);
+    expect(costCapRuleMet({ purchases: 10, spendUsd: 69.99 })).toBe(true);
+    // Sin gasto, sin compras o sin dato: nunca.
+    expect(costCapRuleMet({ purchases: 5, spendUsd: 0 })).toBe(false);
+    expect(costCapRuleMet({ purchases: 0, spendUsd: 30 })).toBe(false);
+    expect(costCapRuleMet({ purchases: null, spendUsd: 30 })).toBe(false);
+    expect(costCapRuleMet({ purchases: 5, spendUsd: null })).toBe(false);
+    expect(costCapRuleMet({ purchases: 5, spendUsd: Number.NaN })).toBe(false);
+  });
 
-  it("takes ads with more than 5 real orders and CPA real under USD 6", () => {
+  it("toma los anuncios con las compras de Meta de los 3 días completos, no los pedidos reales", () => {
     const out = plain(
       buildCreativeDecisions({
         report: report([
-          adsAccount([{ id: "a1", campaignId: "c1", spend: [10, 10, 10] }]),
+          adsAccount([
+            { id: "a1", campaignId: "c1", spend: [5, 5, 5], purchases: [1, 0, 2] },
+          ]),
         ]),
         rows: rowsFor({ campaignId: "c1" }),
-        estimates: estimates({
-          c1: [{ total: 2 }, { total: 3 }, { total: 2 }],
-        }),
-        days: utm([2, 3, 2]),
         fx: null,
         now,
       }),
     );
     expect(out).toEqual([
       expect.objectContaining({
+        key: "meta:1:a1",
+        accountId: "1",
+        campaignId: "c1",
         adId: "a1",
         adName: "Anuncio a1",
         accountLabel: "CR4",
         campaignName: "CBO c1",
+        postId: "100_1",
         product: "Gomitas",
-        spendUsd: 30,
-        real: 7,
-        basis: "utm",
+        productKey: "family:1",
+        spendUsd: 15,
+        purchases: 3,
+        costPerPurchase: 5,
+        done: null,
       }),
     ]);
-    expect(out[0].cpaReal).toBeCloseTo(30 / 7);
   });
 
-  it("uses the spend share of the campaign estimate (≈) when orders lack the ad UTM", () => {
+  it("ordena por costo por compra y deja fuera lo que no cumple", () => {
     const out = buildCreativeDecisions({
       report: report([
         adsAccount([
-          { id: "a1", campaignId: "c1", spend: [9, 9, 9] },
-          { id: "a2", campaignId: "c1", spend: [3, 3, 3] },
+          { id: "a1", campaignId: "c1", spend: [6, 6, 6], purchases: [1, 1, 1] }, // 6,00
+          { id: "a2", campaignId: "c1", spend: [3, 3, 3], purchases: [2, 2, 2] }, // 1,50
+          { id: "a3", campaignId: "c1", spend: [7, 7, 7], purchases: [1, 1, 1] }, // 7,00: no
+          { id: "a4", campaignId: "c1", spend: [1, 1, 1], purchases: [1, 1, 0] }, // 2 compras: no
         ]),
       ]),
       rows: rowsFor({ campaignId: "c1" }),
-      estimates: estimates({
-        c1: [
-          { total: 4, assigned: 4 },
-          { total: 4, assigned: 4 },
-          { total: 4, assigned: 4 },
-        ],
-      }),
-      days: WINDOW.map((d) => realDay(d, {})),
       fx: null,
       now,
     });
-    // a1 gets 3 of every 4 orders: 9 orders, CPA 27 / 9 = 3. a2: 3 orders.
-    expect(out.map((c) => [c.adId, c.real, c.basis])).toEqual([
-      ["a1", 9, "estimado"],
+    expect(out.map((c) => [c.adId, c.purchases, c.costPerPurchase])).toEqual([
+      ["a2", 6, 1.5],
+      ["a1", 3, 6],
     ]);
   });
 
-  it("excludes COST CAP and paused campaigns, 5 orders or fewer, CPA ≥ 6 and unknowns", () => {
-    const base = {
-      fx: null,
-      now,
-    };
+  it("solo cuenta los días de la ventana (hoy y lo anterior no entran)", () => {
+    const account = adsAccount([
+      { id: "a1", campaignId: "c1", spend: [5, 5, 5], purchases: [1, 0, 1] },
+    ]);
+    // Hoy (parcial) y hace 4 días traen compras: no cuentan.
+    account.ads[0].daily.push(charlieDay(TODAY, 2, 4), charlieDay("2026-11-09", 2, 4));
+    expect(
+      buildCreativeDecisions({
+        report: report([account]),
+        rows: rowsFor({ campaignId: "c1" }),
+        fx: null,
+        now,
+      }),
+    ).toHaveLength(0);
+  });
+
+  it("nunca recomienda lo que ya está en una COST CAP, lo que no entrega ni lo que no se puede leer", () => {
     const run = (
-      spend: number[],
-      orders: number[],
       patch: Partial<CampaignActionRow> = {},
-      campaignName?: string,
+      tweak: (account: CharlieAccount) => void = () => undefined,
+      changes: CampaignChange[] = [],
     ) => {
-      const account = adsAccount([{ id: "a1", campaignId: "c1", spend }]);
-      if (campaignName) account.ads[0].campaignName = campaignName;
+      const account = adsAccount([
+        { id: "a1", campaignId: "c1", spend: [5, 5, 5], purchases: [1, 1, 1] },
+      ]);
+      tweak(account);
       return buildCreativeDecisions({
-        ...base,
         report: report([account]),
         rows: rowsFor({ campaignId: "c1", ...patch }),
-        estimates: estimates({
-          c1: orders.map((total) => ({ total })),
-        }),
-        days: utm(orders),
+        fx: null,
+        now,
+        changes,
       });
     };
-    expect(run([10, 10, 10], [2, 2, 2])).toMatchObject([
-      { accountId: "1", campaignId: "c1", adId: "a1", done: null },
-    ]);
-    // "Hecho" of this ad (not of another ad of the campaign) marks it done.
-    const doneMark = (adId: string): CampaignChange => ({
+    expect(run()).toMatchObject([{ adId: "a1", done: null }]);
+    // Ya está en una COST CAP: por el tipo de la campaña o por su nombre.
+    expect(run({ type: "COST CAP" })).toHaveLength(0);
+    expect(
+      run({}, (a) => (a.ads[0].campaignName = "COST CAP GOMITAS | CR")),
+    ).toHaveLength(0);
+    // No entrega: campaña pausada o con problemas, anuncio no activo.
+    expect(run({ status: "pausada" })).toHaveLength(0);
+    expect(run({ status: "otra" })).toHaveLength(0);
+    expect(run({}, (a) => (a.ads[0].effectiveStatus = "NO_ACTIVO"))).toHaveLength(0);
+    expect(run({}, (a) => (a.ads[0].effectiveStatus = "DISAPPROVED"))).toHaveLength(0);
+    expect(run({}, (a) => (a.ads[0].effectiveStatus = "ACTIVE"))).toHaveLength(1);
+    // Producto agotado: no se le da más entrega.
+    expect(run({ coverage: coverageOf(0, 70) })).toHaveLength(0);
+    // TikTok no tiene compras de Meta ni COST CAP de Meta.
+    expect(run({}, (a) => (a.platform = "tiktok"))).toHaveLength(0);
+    // Gasto en una moneda sin tipo de cambio: no se inventa el costo.
+    expect(run({}, (a) => (a.currency = "CRC"))).toHaveLength(0);
+    // Sin fila de la campaña no se puede saber si ya es una COST CAP.
+    expect(
+      buildCreativeDecisions({
+        report: report([
+          adsAccount([
+            { id: "a1", campaignId: "c9", spend: [5, 5, 5], purchases: [1, 1, 1] },
+          ]),
+        ]),
+        rows: rowsFor({ campaignId: "c1" }),
+        fx: null,
+        now,
+      }),
+    ).toHaveLength(0);
+    expect(
+      buildCreativeDecisions({
+        report: { ...report([]), status: "error", data: null },
+        rows: [],
+        fx: null,
+        now,
+      }),
+    ).toEqual([]);
+
+    // "Hecho" de este anuncio (no de otro de la campaña) lo marca hecho.
+    const doneMark = (adId: string, text = "Pasar a COST CAP"): CampaignChange => ({
       ...change(1, "creativo", "c1"),
       source: "manual",
       id: "m1",
-      detail: doneDetail("costcap", "Pasar a COST CAP", adId),
+      detail: doneDetail("costcap", text, adId),
     });
-    const withChanges = (changes: CampaignChange[]) =>
-      buildCreativeDecisions({
-        ...base,
-        report: report([adsAccount([{ id: "a1", campaignId: "c1", spend: [10, 10, 10] }])]),
-        rows: rowsFor({ campaignId: "c1" }),
-        estimates: estimates({ c1: [{ total: 2 }, { total: 2 }, { total: 2 }] }),
-        days: utm([2, 2, 2]),
-        changes,
-      });
-    expect(withChanges([doneMark("a1")])[0].done).toMatchObject({ adId: "a1" });
-    expect(withChanges([doneMark("a2")])[0].done).toBeNull();
-    expect(decisionCounts([], withChanges([doneMark("a1")])).costCap).toBe(0);
-    expect(run([10, 10, 10], [2, 2, 2], { type: "COST CAP" })).toHaveLength(0);
+    expect(run({}, undefined, [doneMark("a1")])[0].done).toMatchObject({
+      adId: "a1",
+      newAdId: null,
+    });
+    expect(run({}, undefined, [doneMark("a2")])[0].done).toBeNull();
     expect(
-      run([10, 10, 10], [2, 2, 2], {}, "COST CAP GOMITAS | CR"),
-    ).toHaveLength(0);
-    expect(run([10, 10, 10], [2, 2, 2], { status: "pausada" })).toHaveLength(0);
+      decisionCounts([], run({}, undefined, [doneMark("a1")])).costCap,
+    ).toBe(0);
+    // Creado con el botón: la marca trae el anuncio nuevo.
     expect(
-      run([10, 10, 10], [2, 2, 2], { coverage: coverageOf(0, 70) }),
-    ).toHaveLength(0);
-    // Exactly 5 is not "more than 5".
-    expect(run([5, 5, 5], [2, 2, 1])).toHaveLength(0);
-    // CPA exactly 6 is not "under 6".
-    expect(run([12, 12, 12], [2, 2, 2])).toHaveLength(0);
-    // No action row for the campaign: it cannot be verified it is not a COST CAP.
-    expect(
-      buildCreativeDecisions({
-        ...base,
-        report: report([
-          adsAccount([{ id: "a1", campaignId: "c9", spend: [10, 10, 10] }]),
-        ]),
-        rows: rowsFor({ campaignId: "c1" }),
-        estimates: estimates({ c9: [{ total: 2 }, { total: 2 }, { total: 2 }] }),
-        days: utm([2, 2, 2]),
-      }),
-    ).toHaveLength(0);
-    // A day without a campaign estimate (unassigned / unknown spend): skipped.
-    expect(
-      buildCreativeDecisions({
-        ...base,
-        report: report([
-          adsAccount([{ id: "a1", campaignId: "c1", spend: [10, 10, 10] }]),
-        ]),
-        rows: rowsFor({ campaignId: "c1" }),
-        estimates: estimates({ c1: [{ total: 3 }, { total: 4 }] }),
-        days: utm([3, 4, 0]),
-      }),
-    ).toHaveLength(0);
-    expect(
-      buildCreativeDecisions({
-        ...base,
-        report: { ...report([]), status: "error", data: null },
-        rows: [],
-        estimates: new Map(),
-        days: [],
-      }),
-    ).toEqual([]);
+      run({}, undefined, [
+        doneMark("a1", "post 100_1 · camp 77 · conj 88 · nuevo 120299"),
+      ])[0].done,
+    ).toMatchObject({ adId: "a1", newAdId: "120299" });
+  });
+
+  it("convierte el gasto a USD con el tipo de cambio de la cuenta", () => {
+    const account = adsAccount(
+      [{ id: "a1", campaignId: "c1", spend: [2500, 2500, 2500], purchases: [1, 1, 1] }],
+      { currency: "CRC" },
+    );
+    const out = buildCreativeDecisions({
+      report: report([account]),
+      rows: rowsFor({ campaignId: "c1" }),
+      fx: { rate: 500, date: TODAY, source: "hacienda", checkedAt: "", message: "" } as never,
+      now,
+    });
+    // ₡7 500 ÷ 500 = USD 15 → USD 5 por compra.
+    expect(out).toMatchObject([{ spendUsd: 15, purchases: 3, costPerPurchase: 5 }]);
   });
 });

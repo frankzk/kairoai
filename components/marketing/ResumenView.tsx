@@ -565,7 +565,7 @@ export function ResumenView({
               detail={
                 decisions.creativesStatus === "unavailable"
                   ? "Anuncios no disponibles"
-                  : `≈ más de ${count(DECISION_RULES.costCapMoreThanOrders)} pedidos reales y CPA real < ${usd(DECISION_RULES.costCapMaxCpaUsd)}`
+                  : `${count(DECISION_RULES.costCapMinPurchases)} compras de Meta o más y costo por compra < ${usd(DECISION_RULES.costCapMaxCostPerPurchaseUsd)}`
               }
               icon={<Target aria-hidden="true" />}
               tone="neutral"

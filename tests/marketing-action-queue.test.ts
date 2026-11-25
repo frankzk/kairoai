@@ -28,6 +28,7 @@ const mark = (action: DoneMark["action"], minutes = 5): DoneMark => ({
   by: "Ana",
   id: "7",
   adId: null,
+  newAdId: null,
 });
 
 const dec = (
@@ -86,9 +87,8 @@ const creative = (
   product: "Gomitas",
   productKey: "family:gomitas",
   spendUsd: spend,
-  real,
-  cpaReal: spend / real,
-  basis: "estimado",
+  purchases: real,
+  costPerPurchase: spend / real,
   done: null,
   ...patch,
 });
@@ -237,6 +237,22 @@ describe("Hecho (registro manual de cambios)", () => {
   const [costcap] = buildActionQueue({
     campaigns: [],
     creatives: [creative("987", 30, 6)],
+  });
+
+  it("COST CAP muestra las compras de Meta y el costo por compra, no pedidos reales", () => {
+    expect(plain(costcap)).toMatchObject({
+      kind: "costcap",
+      basis: "meta",
+      real: 6,
+      cpaReal: 5,
+      approximate: false,
+      adId: "987",
+      postId: "100200_987",
+      why: "6 compras de Meta (mín. 3) y costo por compra USD 5,00 < USD 7,00.",
+      impactText: "≈ +1,2 compras",
+    });
+    expect(escalar.basis).toBe("real");
+    expect(escalar.impactText).toMatch(/pedidos$/);
   });
 
   it("guarda presupuesto con el monto, estado al apagar y creativo al pasar a COST CAP", () => {
