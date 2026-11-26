@@ -26,8 +26,8 @@ export interface CronJob {
 // Los pesados (mas de ~40 s) tienen cada uno su minuto en vercel.json, para no
 // cargar la base a la vez (el 02/11/2026 Postgres se reinicio por eso):
 //   :00 moovin (~3 min) · :05/:18/:35/:48 icomfly (~1 min) · :10 incidencias · :15 finance-index (~2 min)
-//   :20/:45 wyn · :22 shopify-recheck-stale · :25 icomfly-historial · :30 forza (~2 min)
-//   :40 cargo-expreso · :50 c807 · :55 shopify-refresh
+//   :20/:45 wyn · :25 icomfly-historial · :30 forza (~2 min)
+//   :40 cargo-expreso · :50 c807
 // Livianos con minuto propio: :13/:28/:43/:58 shiphero-inventario (~11 s) ·
 //   :04/:19/:34/:49 call-recordings.
 // Al agregar uno pesado, busca un minuto libre.
@@ -45,11 +45,14 @@ export const CRON_JOBS: CronJob[] = [
   { name: "leads-inbound", label: "Chat de los leads (Conversó)", everyMinutes: 10 },
   { name: "icomfly", label: "Pedidos de Icomfly", everyMinutes: 15 },
   { name: "icomfly-historial", label: "Historial de Icomfly", everyMinutes: 60 },
-  { name: "shopify-recent", label: "Pedidos nuevos de Shopify", everyMinutes: 10 },
-  { name: "shopify-refresh", label: "Guías de Shopify", everyMinutes: 180 },
-  { name: "shopify-recheck-stale", label: "Pedidos viejos de Shopify", everyMinutes: 720 },
-  // Respaldo completo antes de que se suspendan las tiendas (28/10/2026).
-  { name: "shopify-archivo", label: "Respaldo de Shopify", everyMinutes: 5 },
+  // Shopify: apagados el 25/11/2026. Las 5 tiendas responden "Unavailable
+  // Shop" desde el 04/11 y el respaldo ya estaba completo; seguian corriendo
+  // (el respaldo cada 5 min) sin traer nada. Las rutas siguen para correrlas a
+  // mano si alguna tienda volviera.
+  { name: "shopify-recent", label: "Pedidos nuevos de Shopify", everyMinutes: null },
+  { name: "shopify-refresh", label: "Guías de Shopify", everyMinutes: null },
+  { name: "shopify-recheck-stale", label: "Pedidos viejos de Shopify", everyMinutes: null },
+  { name: "shopify-archivo", label: "Respaldo de Shopify", everyMinutes: null },
   { name: "finance-index", label: "Índice de Finanzas", everyMinutes: 60 },
   // Reconstrucciones del dataset que quedaron en cola (una a la vez).
   { name: "finance-pendientes", label: "Tabla de Gestión en cola", everyMinutes: 3 },

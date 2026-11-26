@@ -616,10 +616,49 @@ export interface PersistedShopifyOrderSummary
   note_attributes: Array<{ name?: string | null; value?: string | null }>;
 }
 
+/**
+ * Lectura completa de shopify_orders guardada en memoria (25/11/2026).
+ *
+ * POR QUE: Shopify cerro el 28/10/2026 y la tabla no cambia desde el 04/11
+ * (su unica escritura es la sincronizacion con Shopify, que responde
+ * "Unavailable Shop"). Aun asi, el armado del dataset de Gestion y el cruce de
+ * Novedades la releian ENTERA cada vez: ~2.000 lecturas de 1.000 filas en las
+ * 3 horas antes de que la base (tamano Small) dejara de responder 2 h 20 min.
+ * Ahora cada servidor la lee una vez cada 6 horas. upsertPersistedShopifyOrders
+ * la invalida si alguna vez se vuelve a escribir.
+ */
+const SHOPIFY_FULL_READ_TTL_MS = 6 * 60 * 60 * 1000;
+const shopifyFullReads = new Map<string, { at: number; rows: Promise<PersistedShopifyOrderSummary[]> }>();
+
+/** Para pruebas y para cuando se escribe en shopify_orders. */
+export function clearPersistedShopifyOrdersCache(): void {
+  shopifyFullReads.clear();
+}
+
 export async function listPersistedShopifyOrders(
   limit = 1000,
   offset = 0,
   storeId = DEFAULT_FINANCE_STORE_ID
+): Promise<PersistedShopifyOrderSummary[]> {
+  // Solo la lectura completa desde el principio (dataset y Novedades); las
+  // paginas sueltas del GET de shopify-sync van directo.
+  if (offset > 0 || limit < 5000) return readPersistedShopifyOrders(limit, offset, storeId);
+  const key = `${storeId}:${limit}`;
+  const cached = shopifyFullReads.get(key);
+  if (cached && Date.now() - cached.at < SHOPIFY_FULL_READ_TTL_MS) return cached.rows;
+  const rows = readPersistedShopifyOrders(limit, offset, storeId);
+  shopifyFullReads.set(key, { at: Date.now(), rows });
+  // Una lectura que fallo no se guarda: la proxima vuelve a intentar.
+  rows.catch(() => {
+    if (shopifyFullReads.get(key)?.rows === rows) shopifyFullReads.delete(key);
+  });
+  return rows;
+}
+
+async function readPersistedShopifyOrders(
+  limit: number,
+  offset: number,
+  storeId: number
 ): Promise<PersistedShopifyOrderSummary[]> {
   type RawSummary = PersistedShopifyOrderSummary & {
     raw_line_items: Array<Record<string, unknown>> | null;
@@ -788,6 +827,7 @@ export async function upsertPersistedShopifyOrders(
   storeId = DEFAULT_FINANCE_STORE_ID
 ): Promise<void> {
   if (!orders.length) return;
+  clearPersistedShopifyOrdersCache();
   const payload = orders.map((order) => ({
     ...order,
     store_id: storeId,
