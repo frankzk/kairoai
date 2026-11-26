@@ -1741,3 +1741,67 @@
     width: 28px;
   }
 }
+/* Búsqueda por producto de CPA por producto. */
+.cpaSearch {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 14px;
+}
+.cpaSearchBox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 340px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--mk-border);
+  border-radius: 7px;
+  background: var(--mk-surface);
+  color: var(--mk-subtle);
+}
+.cpaSearchBox:focus-within {
+  outline: 2px solid var(--mk-accent);
+  outline-offset: 1px;
+}
+.report .cpaSearchBox input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--mk-text);
+  font-size: 13px;
+  outline: none;
+}
+.report .cpaSearchBox input::-webkit-search-cancel-button {
+  display: none;
+}
+.report .cpaSearchBox button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mk-subtle);
+  cursor: pointer;
+}
+.report .cpaSearchBox button:hover {
+  background: var(--mk-accent-soft);
+  color: var(--mk-text);
+}
+.cpaSearchCount {
+  font-size: 12px;
+  color: var(--mk-muted);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 640px) {
+  .cpaSearchBox {
+    flex-basis: 100%;
+  }
+}

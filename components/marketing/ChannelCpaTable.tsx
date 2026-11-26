@@ -10,9 +10,14 @@
 // productos por canal → origen (bot, Leads en Kairo, asesora…; formulario,
 // carrito, Shopify); en cada producto abierto, el mismo detalle a un clic.
 // Solo pedidos, unidades y % del canal: el gasto no se separa por origen.
+//
+// Búsqueda por producto (26/11/2026): filtra la tabla y el resumen pasa a
+// sumar solo los productos encontrados.
 import { useState, type CSSProperties } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Search, X } from "lucide-react";
 import {
+  filterCpaRows,
+  sumCpaOrigins,
   SALE_CHANNEL_LABEL,
   SALE_CHANNELS,
   SALE_ORIGIN_HINT,
@@ -242,16 +247,33 @@ function OriginPair({
 function OriginSummary({
   report,
   loading,
+  filtered,
 }: {
   report: ChannelCpaReport;
   loading: boolean;
+  /** Products found by the search (null = no search: all products). */
+  filtered: ChannelCpaRow[] | null;
 }) {
+  const view = filtered ? filteredRow(filtered) : report.totals;
   return (
     <section className={r.originSummary} aria-labelledby="cpa-origen">
-      <h3 id="cpa-origen">De dónde salieron los pedidos</h3>
-      <p>{ORIGIN_NOTE}</p>
-      {report.totals.origins ? (
-        <OriginPair row={report.totals} loading={loading} product={null} />
+      <h3 id="cpa-origen">
+        De dónde salieron los pedidos
+        {filtered &&
+          (filtered.length === 1
+            ? ` · ${filtered[0].name}`
+            : ` · ${count(filtered.length)} productos`)}
+      </h3>
+      <p>
+        {ORIGIN_NOTE}
+        {filtered && filtered.length > 1
+          ? " Suma de los productos encontrados: un pedido con dos de ellos cuenta en cada uno."
+          : ""}
+      </p>
+      {filtered && !filtered.length ? (
+        <p className={r.originEmpty}>Ningún producto coincide con la búsqueda.</p>
+      ) : view?.origins ? (
+        <OriginPair row={view} loading={loading} product={null} />
       ) : (
         <p className={r.originEmpty}>
           {loading
@@ -259,7 +281,7 @@ function OriginSummary({
             : "El canal de los pedidos no está disponible: no se pudo cruzar con iComfly."}
         </p>
       )}
-      {!loading && report.totals.origins && report.unknownOrders > 0 && (
+      {!loading && !filtered && report.totals.origins && report.unknownOrders > 0 && (
         <p className={r.originFoot}>
           {count(report.unknownOrders)}{" "}
           {report.unknownOrders === 1
@@ -270,6 +292,40 @@ function OriginSummary({
       )}
     </section>
   );
+}
+
+/** Several product rows as one, for the filtered summary (≈ when more than one). */
+function filteredRow(rows: ChannelCpaRow[]): ChannelCpaRow | null {
+  if (!rows.length) return null;
+  if (rows.length === 1) return rows[0];
+  const sum = (channel: "total" | SaleChannel): ChannelCell => {
+    const cells = rows.map((row) => row[channel]);
+    const add = (pick: (c: ChannelCell) => number | null) =>
+      cells.some((c) => pick(c) == null)
+        ? null
+        : cells.reduce((n, c) => n + (pick(c) ?? 0), 0);
+    const spend = add((c) => c.spend);
+    const orders = add((c) => c.orders);
+    const units = add((c) => c.units);
+    return {
+      spend,
+      orders,
+      units,
+      cpaOrder: spend && orders ? spend / orders : null,
+      cpaUnit: spend && units ? spend / units : null,
+    };
+  };
+  return {
+    ...rows[0],
+    key: "filtered",
+    name: `${rows.length} productos`,
+    total: sum("total"),
+    landing: sum("landing"),
+    whatsapp: sum("whatsapp"),
+    origins: sumCpaOrigins(rows),
+    // Orders with two of these products count in each: approximate.
+    approximate: true,
+  };
 }
 
 function Group({
@@ -384,12 +440,16 @@ export function ChannelCpaTable({
   const [open, setOpen] = useState<Record<string, boolean>>({ total: true });
   const [originOpen, setOriginOpen] = useState<Record<string, boolean>>({});
   const [all, setAll] = useState(false);
+  const [query, setQuery] = useState("");
   const toggle = (key: string) =>
     setOpen((current) => ({ ...current, [key]: !current[key] }));
   const toggleOrigin = (key: string) =>
     setOriginOpen((current) => ({ ...current, [key]: !current[key] }));
   const rows = report?.rows ?? [];
-  const visible = all ? rows : rows.slice(0, PAGE);
+  const searching = query.trim().length > 0;
+  const found = searching ? filterCpaRows(rows, query) : rows;
+  // A search shows every match: no "Ver todos".
+  const visible = searching || all ? found : rows.slice(0, PAGE);
   const notes = report
     ? [
         report.ordersChannel === "unavailable"
@@ -421,7 +481,43 @@ export function ChannelCpaTable({
           </p>
         </div>
       </div>
-      {report && <OriginSummary report={report} loading={loading} />}
+      {rows.length > 0 && (
+        <div className={r.cpaSearch}>
+          <label className={r.cpaSearchBox}>
+            <Search size={14} aria-hidden />
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Buscar producto…"
+              aria-label="Buscar producto"
+            />
+            {searching && (
+              <button
+                type="button"
+                aria-label="Borrar la búsqueda"
+                onClick={() => setQuery("")}
+              >
+                <X size={13} aria-hidden />
+              </button>
+            )}
+          </label>
+          {searching && (
+            <span className={r.cpaSearchCount} aria-live="polite">
+              {found.length === 1
+                ? "1 producto"
+                : `${count(found.length)} de ${count(rows.length)} productos`}
+            </span>
+          )}
+        </div>
+      )}
+      {report && (
+        <OriginSummary
+          report={report}
+          loading={loading}
+          filtered={searching ? found : null}
+        />
+      )}
       <div
         className={r.tableWrap}
         tabIndex={0}
@@ -439,7 +535,7 @@ export function ChannelCpaTable({
               <th scope="col">CPA por unidad</th>
             </tr>
           </thead>
-          {report && (
+          {report && !searching && (
             <Group
               row={report.totals}
               open={Boolean(open.total)}
@@ -465,8 +561,10 @@ export function ChannelCpaTable({
                 <td colSpan={6} className={r.channelEmpty}>
                   {loading
                     ? "Consultando gasto y pedidos…"
-                    : error ||
-                      "Sin gasto ni pedidos reales de productos en este período."}
+                    : searching && rows.length
+                      ? `Ningún producto coincide con «${query.trim()}».`
+                      : error ||
+                        "Sin gasto ni pedidos reales de productos en este período."}
                 </td>
               </tr>
             </tbody>
@@ -480,7 +578,7 @@ export function ChannelCpaTable({
             "Página web = formulario, carrito recuperado y Shopify (hasta el 28/10). WhatsApp = bot de WhatsApp, pedidos creados desde Leads en Kairo, asesoras en iComfly y pedidos MANUAL sin creador. El gasto de Meta se reparte por el destino de cada conjunto de anuncios; TikTok cuenta como Página web. El total incluye campañas sin asignar y no es la suma de las filas.",
           ].join(" ")}
         </p>
-        {rows.length > PAGE && (
+        {!searching && rows.length > PAGE && (
           <button type="button" onClick={() => setAll(!all)}>
             {all ? "Ver menos" : `Ver todos (${count(rows.length)})`}
           </button>

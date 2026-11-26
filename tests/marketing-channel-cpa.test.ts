@@ -880,3 +880,40 @@ describe("CPA por producto y canal", () => {
     expect(result.rows.find((r) => r.key === keyA)!.partial).toBe(true);
   });
 });
+
+describe("búsqueda por producto", () => {
+  const rowsOf = (names: string[]) => names.map((name) => ({ name }));
+  it("encuentra por partes del nombre, sin tildes ni mayúsculas", async () => {
+    const { filterCpaRows } = await import("../lib/marketing-channel-cpa");
+    const rows = rowsOf(["Colágeno Hidrolizado + Biotina", "Magnesio Citrato 500 mg", "Omega 3 Premium"]);
+    expect(filterCpaRows(rows, "colageno bio").map((r) => r.name)).toEqual(["Colágeno Hidrolizado + Biotina"]);
+    expect(filterCpaRows(rows, "  MAGNESIO ").map((r) => r.name)).toEqual(["Magnesio Citrato 500 mg"]);
+    expect(filterCpaRows(rows, "")).toBe(rows);
+    expect(filterCpaRows(rows, "batana")).toEqual([]);
+  });
+
+  it("suma el origen de los productos filtrados y recalcula el % del canal", async () => {
+    const { sumCpaOrigins } = await import("../lib/marketing-channel-cpa");
+    const o = (origin: string, orders: number, units = orders) => ({ origin, orders, units, share: null });
+    const row = (landing: ReturnType<typeof o>[], whatsapp: ReturnType<typeof o>[]) =>
+      ({ origins: { landing, whatsapp } }) as unknown as Parameters<typeof sumCpaOrigins>[0][number];
+    const sum = sumCpaOrigins([
+      row([o("formulario", 3), o("carrito", 1), o("shopify", 0)], [o("bot", 2), o("conector_ia", 0), o("asesora", 1), o("manual", 0)]),
+      row([o("formulario", 1), o("carrito", 0), o("shopify", 0)], [o("bot", 1), o("conector_ia", 1), o("asesora", 0), o("manual", 0), o("otro", 1)]),
+    ])!;
+    expect(sum.landing.map((c) => [c.origin, c.orders, c.share])).toEqual([
+      ["formulario", 4, 0.8],
+      ["carrito", 1, 0.2],
+      ["shopify", 0, 0],
+    ]);
+    expect(sum.whatsapp.map((c) => [c.origin, c.orders])).toEqual([
+      ["bot", 3],
+      ["conector_ia", 1],
+      ["asesora", 1],
+      ["manual", 0],
+      ["otro", 1],
+    ]);
+    expect(sumCpaOrigins([{ origins: null }])).toBeNull();
+    expect(sumCpaOrigins([])).toBeNull();
+  });
+});

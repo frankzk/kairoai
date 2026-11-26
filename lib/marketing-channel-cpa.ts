@@ -546,3 +546,60 @@ export function productChannelCpa(input: {
         : "partial",
   };
 }
+
+/* ------------------------------------------------ búsqueda por producto */
+
+const foldText = (text: string) =>
+  text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+
+/**
+ * Products whose name contains every word typed, without accents or case
+ * ("colageno bio" finds "Colágeno Hidrolizado + Biotina"). Empty = all rows.
+ */
+export function filterCpaRows<T extends Pick<ChannelCpaRow, "name">>(
+  rows: T[],
+  query: string,
+): T[] {
+  const words = foldText(query).split(/\s+/).filter(Boolean);
+  if (!words.length) return rows;
+  return rows.filter((row) => {
+    const name = foldText(row.name);
+    return words.every((word) => name.includes(word));
+  });
+}
+
+/**
+ * Origins of several products added up, for the summary when the table is
+ * filtered. An order with two of these products counts once in each (as in
+ * the rows), so the result can exceed the real orders. Null when any of the
+ * rows has no origin detail.
+ */
+export function sumCpaOrigins(
+  rows: Array<Pick<ChannelCpaRow, "origins">>,
+): Record<SaleChannel, OriginCell[]> | null {
+  if (!rows.length || rows.some((row) => !row.origins)) return null;
+  const out = {} as Record<SaleChannel, OriginCell[]>;
+  for (const channel of SALE_CHANNELS) {
+    const sums = new Map<SaleOrigin, { orders: number; units: number }>();
+    for (const row of rows)
+      for (const cellOf of row.origins![channel]) {
+        const current = sums.get(cellOf.origin) ?? { orders: 0, units: 0 };
+        current.orders += cellOf.orders;
+        current.units += cellOf.units;
+        sums.set(cellOf.origin, current);
+      }
+    const orders = Array.from(sums.values()).reduce((n, s) => n + s.orders, 0);
+    out[channel] = SALE_ORIGINS[channel]
+      .filter((origin) => origin !== "otro" || (sums.get(origin)?.orders ?? 0) > 0)
+      .map((origin) => {
+        const sum = sums.get(origin) ?? { orders: 0, units: 0 };
+        return {
+          origin,
+          orders: sum.orders,
+          units: Math.round(sum.units * 1000) / 1000,
+          share: orders ? sum.orders / orders : null,
+        };
+      });
+  }
+  return out;
+}
