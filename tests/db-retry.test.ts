@@ -105,3 +105,47 @@ describe("supabaseFetchWithReadRetry", () => {
     expect(fn).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("cuando Supabase devuelve la pagina de error de Cloudflare", () => {
+  const html =
+    '<!DOCTYPE html><html><head><title>supabase.co | 522: Connection timed out</title></head><body>…</body></html>';
+
+  it("el error dice que no responde la base, con la tabla y el codigo (no el HTML)", async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(html, { status: 522, headers: { "content-type": "text/html" } }),
+    ) as unknown as typeof fetch;
+    const pendiente = supabaseFetchWithReadRetry(
+      "https://x.supabase.co/rest/v1/leads?select=*",
+      { method: "POST" },
+    );
+    const response = await pendiente;
+    expect(response.status).toBe(522);
+    const body = await response.json();
+    expect(body.message).toContain("La base de datos de Kairo (Supabase) no responde");
+    expect(body.message).toContain("«leads»");
+    expect(body.message).toContain("error 522");
+    expect(body.message).not.toContain("<");
+  });
+
+  it("un error JSON real de la base se deja como esta", async () => {
+    const real = JSON.stringify({ message: "permission denied", code: "42501" });
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(real, { status: 500, headers: { "content-type": "application/json" } }),
+    ) as unknown as typeof fetch;
+    const response = await supabaseFetchWithReadRetry(
+      "https://x.supabase.co/rest/v1/rpc/zadarma_prestar",
+      { method: "POST" },
+    );
+    expect(await response.text()).toBe(real);
+  });
+
+  it("nombra la funcion de una llamada rpc", async () => {
+    const { recursoSupabase } = await import("../lib/db");
+    expect(recursoSupabase("https://x.supabase.co/rest/v1/rpc/zadarma_prestar")).toBe(
+      "zadarma_prestar",
+    );
+    expect(recursoSupabase("https://x.supabase.co/auth/v1/user")).toBeNull();
+  });
+});
