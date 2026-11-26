@@ -21,16 +21,25 @@ import {
   type MarketingTargets,
 } from "./marketing-targets";
 
-export type RateSource = "hacienda" | "bcrp" | "manual" | "unavailable";
+export type RateSource = "hacienda" | "bcrp" | "bch" | "manual" | "unavailable";
+
+/**
+ * Currencies Marketing converts to USD: CRC and PEN in Costa Rica (Hacienda,
+ * BCRP or a fixed rate), HNL in Honduras (only the team's manual rate).
+ */
+export type RateCurrency = "CRC" | "PEN" | "HNL";
 
 export interface AppliedRate {
-  currency: "CRC" | "PEN";
+  currency: RateCurrency;
   /** Units of `currency` per USD actually applied; null = not converted. */
   rate: number | null;
   source: RateSource;
   date: string | null;
-  /** Team reference (3.5 PEN, 505 CRC). */
-  reference: number;
+  /**
+   * Team reference (3.5 PEN, 505 CRC). null for a currency without an
+   * official source (HNL): the team's manual rate is the applied one.
+   */
+  reference: number | null;
   /** (rate − reference) / reference × 100. */
   driftPct: number | null;
   /** |driftPct| above MARKETING_FX_REFERENCE.maxDriftPct. */
@@ -40,6 +49,7 @@ export interface AppliedRate {
 export const RATE_SOURCE_LABEL: Record<RateSource, string> = {
   hacienda: "Hacienda",
   bcrp: "BCRP",
+  bch: "BCH",
   manual: "fija a mano",
   unavailable: "sin tasa",
 };
@@ -102,11 +112,49 @@ const SIGNED = new Intl.NumberFormat("es-CR", {
 /** "517,30" / "3,52". */
 export const rateNumberText = (value: number) => TWO.format(value);
 
-/** Team reference: "505" for CRC, "3,50" for PEN. */
+/** Team reference: "505" for CRC, "3,50" for PEN ("" without one). */
 export const referenceText = (rate: AppliedRate) =>
-  rate.currency === "CRC"
-    ? new Intl.NumberFormat("es-CR").format(rate.reference)
-    : TWO.format(rate.reference);
+  rate.reference == null
+    ? ""
+    : rate.currency === "CRC"
+      ? new Intl.NumberFormat("es-CR").format(rate.reference)
+      : TWO.format(rate.reference);
+
+/**
+ * The rates that convert the selected store's amounts: CRC and PEN in Costa
+ * Rica (as always), only the store's own currency elsewhere (HNL: the team's
+ * manual rate in `fx.local`; without it "sin tipo de cambio").
+ */
+export function storeRates(
+  fx: UsdRate | null,
+  storeCurrency: string,
+): AppliedRate[] {
+  if (storeCurrency === "CRC") {
+    const { crc, pen } = appliedRates(fx);
+    return [crc, pen];
+  }
+  const local =
+    fx?.local && fx.local.currency === storeCurrency ? fx.local : null;
+  const valid = local != null && Number.isFinite(local.rate) && local.rate > 0;
+  return [
+    {
+      currency: storeCurrency as RateCurrency,
+      rate: valid ? local.rate : null,
+      // "manual" today; an official source (BCH) keeps its own label.
+      source: valid ? local.source : "unavailable",
+      date: valid ? local.date : null,
+      reference: null,
+      driftPct: null,
+      drift: false,
+    },
+  ];
+}
+
+/** A rate without a team reference (HNL): the applied rate is the team's or the official one. */
+const teamOnly = (rate: AppliedRate) => rate.reference == null;
+/** "tasa del equipo" for a manual rate, else the source ("BCH"). */
+const ownSourceText = (rate: AppliedRate) =>
+  rate.source === "manual" ? "tasa del equipo" : RATE_SOURCE_LABEL[rate.source];
 
 /** "+2,4 %". */
 export const driftText = (driftPct: number) =>
@@ -114,6 +162,10 @@ export const driftText = (driftPct: number) =>
 
 /** "1 USD = 517,30 CRC (Hacienda, 4 nov) · referencia del equipo 505 (+2,4 %)". */
 export function appliedRateText(rate: AppliedRate): string {
+  if (teamOnly(rate))
+    return rate.rate == null
+      ? `Sin tipo de cambio ${rate.currency}: los importes en ${rate.currency} quedan sin convertir hasta que se fije la tasa del equipo`
+      : `1 USD = ${rateNumberText(rate.rate)} ${rate.currency} (${ownSourceText(rate)}${rate.date ? `, ${shortDateText(rate.date)}` : ""})`;
   if (rate.rate == null)
     return `Sin tasa ${rate.currency}: los importes en ${rate.currency} quedan sin convertir · referencia del equipo ${referenceText(rate)}`;
   const when = rate.date ? `, ${shortDateText(rate.date)}` : "";
@@ -125,11 +177,20 @@ export function appliedRatesShortText(rates: {
   crc: AppliedRate;
   pen: AppliedRate;
 }): string {
+  return storeRatesShortText([rates.crc, rates.pen]);
+}
+
+/** Toolbar of any store: Costa Rica as above; Honduras "USD · 25,40 HNL/USD (tasa del equipo, 26 nov)". */
+export function storeRatesShortText(rates: AppliedRate[]): string {
   const part = (rate: AppliedRate) =>
-    rate.rate == null
-      ? `${rate.currency} sin tasa (equipo ${referenceText(rate)})`
-      : `${rateNumberText(rate.rate)} ${rate.currency}/USD (${RATE_SOURCE_LABEL[rate.source]}${rate.date ? `, ${shortDateText(rate.date)}` : ""} · equipo ${referenceText(rate)})`;
-  return `USD · ${part(rates.crc)} · ${part(rates.pen)}`;
+    teamOnly(rate)
+      ? rate.rate == null
+        ? `${rate.currency} sin tipo de cambio (sin convertir)`
+        : `${rateNumberText(rate.rate)} ${rate.currency}/USD (${ownSourceText(rate)}${rate.date ? `, ${shortDateText(rate.date)}` : ""})`
+      : rate.rate == null
+        ? `${rate.currency} sin tasa (equipo ${referenceText(rate)})`
+        : `${rateNumberText(rate.rate)} ${rate.currency}/USD (${RATE_SOURCE_LABEL[rate.source]}${rate.date ? `, ${shortDateText(rate.date)}` : ""} · equipo ${referenceText(rate)})`;
+  return `USD · ${rates.map(part).join(" · ")}`;
 }
 
 /* ---------- Estado de las cuentas ---------- */
@@ -284,6 +345,8 @@ export function accountStatusRows(input: {
   metaError: boolean;
   tiktok: TiktokFeedStatus[];
   tiktokError?: boolean;
+  /** The store has no TikTok (Honduras): one note, no feed checks. */
+  tiktokNotConnected?: string;
   labels: AccountLabel[];
   today: string;
   t?: MarketingTargets;
@@ -350,6 +413,10 @@ export function accountStatusRows(input: {
         detail: `TikTok llega al día siguiente por Make.${loaded}`,
         problem: false,
       });
+  }
+  if (input.tiktokNotConnected) {
+    notes.push(input.tiktokNotConnected);
+    return { rows, problems: rows.filter((row) => row.problem), notes };
   }
   if (input.tiktokError)
     rows.push({

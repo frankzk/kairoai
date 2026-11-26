@@ -4,8 +4,12 @@ import type {
   AdsetRole,
   CharlieConfig,
   CharlieSettings,
+  LocalRate,
   PenRate,
+  UsdRate,
 } from "./marketing-charlie-types";
+import { marketingStoreInfo } from "./marketing-stores";
+import type { FinanceStoreCode } from "./store-config";
 const CONFIG_COLUMNS = "crc_per_usd,rate_date,hero_product_keys";
 /** Postgres/PostgREST "undefined column": 20261105120600 not applied yet. */
 const missingColumn = (error: { code?: string } | null) =>
@@ -57,8 +61,52 @@ export function appliedPenRate(
       }
     : official;
 }
+/**
+ * Honduras (HNL): the team's manual rate, kept in its own row's
+ * crc_per_usd/rate_date (the columns hold the store's currency per USD),
+ * wins; otherwise `official` (none yet: a future BCH reader goes there, like
+ * Hacienda for CRC and the BCRP for PEN). Without either the HNL amounts stay
+ * unconverted: never guessed, never taken as USD.
+ */
+export function storeUsdRate(
+  config: CharlieConfig,
+  currency: string,
+  now = new Date(),
+  official: LocalRate | null = null,
+): UsdRate {
+  const rate = Number(config.crc_per_usd);
+  const local: LocalRate | null =
+    config.crc_per_usd != null &&
+    Number.isFinite(rate) &&
+    rate > 0 &&
+    config.rate_date
+      ? {
+          currency,
+          rate,
+          date: String(config.rate_date).slice(0, 10),
+          source: "manual",
+        }
+      : official && official.currency === currency && official.rate > 0
+        ? official
+        : null;
+  return {
+    rate: null,
+    date: null,
+    source: "unavailable",
+    checkedAt: now.toISOString(),
+    message: local
+      ? local.source === "manual"
+        ? "Tasa del equipo fijada a mano, no tipo de cambio histórico ni liquidación bancaria."
+        : "Referencia oficial del día. Períodos anteriores reexpresados a esta tasa, no tipo de cambio histórico ni liquidación bancaria."
+      : `Sin tipo de cambio ${currency}: los importes en ${currency} quedan sin convertir hasta que alguien fije la tasa del equipo.`,
+    pen: null,
+    local,
+  };
+}
+
 export async function readCharlieSettings(
   storeId: number,
+  store: FinanceStoreCode = "mireva-cr",
 ): Promise<CharlieSettings> {
   const readRoles = async () => {
     const rows: AdsetRole[] = [];
@@ -76,6 +124,15 @@ export async function readCharlieSettings(
     }
     throw new Error("Roles pagination limit");
   };
+  const currency = marketingStoreInfo(store).currency;
+  if (currency !== "CRC") {
+    // Not Costa Rica: no Hacienda nor BCRP, only the store's manual rate.
+    const [config, roles] = await Promise.all([
+      readCharlieConfig(storeId),
+      readRoles(),
+    ]);
+    return { config, roles, fx: storeUsdRate(config, currency) };
+  }
   const [config, roles, official, bcrp] = await Promise.all([
     readCharlieConfig(storeId),
     readRoles(),

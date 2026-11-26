@@ -14,6 +14,8 @@ import type { CampaignChange } from "@/lib/marketing-source-types";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import { count, dateTimeCr, money } from "./format";
 import r from "./team-report.module.css";
+import { marketingStoreInfo } from "@/lib/marketing-stores";
+import { useMarketingStore } from "./MarketingStoreContext";
 
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
 type Result = ReturnType<typeof buildCampaignActionRows>;
@@ -512,6 +514,7 @@ function ChangeForm({
   onClose: () => void;
   logChange: LogChange;
 }) {
+  const marketingStore = marketingStoreInfo(useMarketingStore());
   const [kind, setKind] = useState<CampaignChange["kind"]>("presupuesto");
   const [at, setAt] = useState(nowCr);
   const [detail, setDetail] = useState("");
@@ -551,7 +554,7 @@ function ChangeForm({
         </select>
       </label>
       <label className={r.field}>
-        Fecha y hora (Costa Rica)
+        Fecha y hora ({marketingStore.country})
         <input
           type="datetime-local"
           value={at}

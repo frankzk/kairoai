@@ -24,13 +24,13 @@ export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const start = Date.now();
-  const allowed = marketingAccess(req);
+  const allowed = marketingAccess(req, "shiphero");
   if (!canEditMarketing(allowed))
     return marketingReply(
       {
         error: allowed
           ? "No tienes permiso para modificar Marketing."
-          : "No tienes acceso a Marketing de Costa Rica.",
+          : "No tienes acceso a Marketing de la tienda elegida.",
       },
       403,
     );

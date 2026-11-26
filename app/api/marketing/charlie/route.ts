@@ -1,6 +1,8 @@
 import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { getRequiredStoreFromSearchParams } from "@/lib/stores";
+import { marketingStoreFromParams } from "@/lib/marketing-access";
+import { metaConfigFor } from "@/lib/marketing-meta-config";
+import { marketingStoreInfo } from "@/lib/marketing-stores";
 import { periodFromParams } from "@/lib/marketing-dates";
 import { getCharlieReport } from "@/lib/marketing-charlie-source";
 import { leerCuentasCharlieTiktok } from "@/lib/tiktok-anuncios";
@@ -9,11 +11,11 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 const cache = new Map<string, { at: number; report: Promise<CharlieReport> }>();
 export async function GET(req: NextRequest) {
-  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams),
+  const store = marketingStoreFromParams(req.nextUrl.searchParams),
     period = periodFromParams(req.nextUrl.searchParams);
-  if (store?.code !== "mireva-cr")
+  if (!store)
     return NextResponse.json(
-      { error: "store=mireva-cr requerido y autorizado." },
+      { error: "store=mireva-cr o mireva-hn requerido y autorizado." },
       { status: 400 },
     );
   if (!period)
@@ -22,13 +24,15 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   const includeStructure = req.nextUrl.searchParams.get("scope") !== "ads";
+  // The store's own Meta configuration (hashed, never kept in clear).
+  const meta = metaConfigFor(store.code, process.env);
   const key = createHash("sha256")
     .update(
       JSON.stringify([
-        process.env.META_CR_ACCESS_TOKEN,
-        process.env.META_CR_AD_ACCOUNT_IDS,
-        process.env.META_CR_AD_ACCOUNT_ID,
-        process.env.META_CR_GRAPH_VERSION,
+        store.code,
+        meta.token,
+        meta.accountList,
+        meta.version,
         period.from,
         period.to,
         includeStructure,
@@ -47,10 +51,14 @@ export async function GET(req: NextRequest) {
         process.env,
         fetch,
         new Date(),
-        (from, to) => leerCuentasCharlieTiktok(store.id, from, to),
+        // TikTok only where the store has it (Costa Rica).
+        marketingStoreInfo(store.code).tiktok
+          ? (from, to) => leerCuentasCharlieTiktok(store.id, from, to)
+          : undefined,
         includeStructure,
         false,
         includeStructure,
+        store.code,
       ),
     };
     cache.set(key, entry);

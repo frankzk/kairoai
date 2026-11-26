@@ -52,6 +52,7 @@ import { useAccountStatus } from "./AccountStatus";
 import type { MarketingChanges } from "./useMarketing";
 import { SpendByAccount } from "./SpendByAccount";
 import rs from "./resumen.module.css";
+import { summaryClockZones } from "@/lib/marketing-stores";
 
 type Resource<T> = { data: T | null; loading: boolean; error: string };
 type Tone = "good" | "warn" | "bad" | "neutral";
@@ -173,7 +174,9 @@ export function ResumenView({
     (["meta", "tiktok"] as const).every(
       (p) =>
         sources[p].status === "ready" &&
-        sources[p].data?.accounts.every((a) => a.timezone === data.timezone),
+        sources[p].data?.accounts.every((a) =>
+          summaryClockZones(data).has(a.timezone),
+        ),
     ),
   );
   const cpa = realCpa(spend, data.totals.generated, data.totals.annulled);

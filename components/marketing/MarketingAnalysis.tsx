@@ -21,6 +21,7 @@ import { CancellationsPanel } from "./CancellationsPanel";
 import { OrderOriginPanel } from "./OrderOriginPanel";
 import { PathTo200 } from "./PathTo200";
 import { AccountStatus } from "./AccountStatus";
+import type { RateCurrency } from "@/lib/marketing-account-status";
 import { SegmentationPanel } from "./SegmentationPanel";
 import r from "./team-report.module.css";
 
@@ -57,7 +58,7 @@ export interface MarketingAnalysisProps {
   segmentation: Resource<SegmentationPayload>;
   loadSegmentation: (from: string, to: string) => Promise<void>;
   saveRate: (
-    currency: "CRC" | "PEN",
+    currency: RateCurrency,
     rate: number | null,
   ) => Promise<string | null>;
   /** Marketing editor (not read-only). */

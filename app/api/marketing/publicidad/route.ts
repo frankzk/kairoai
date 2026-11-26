@@ -2,7 +2,7 @@
 // (campañas, conjuntos de anuncios y anuncios con sus métricas) para un rango.
 // SOLO LECTURA: esta ruta solo tiene GET y hacia Meta solo hace GET.
 //
-//   GET ?store=mireva-cr&from=YYYY-MM-DD&to=YYYY-MM-DD&level=campaign|adset|ad
+//   GET ?store=mireva-cr|mireva-hn&from=YYYY-MM-DD&to=YYYY-MM-DD&level=campaign|adset|ad
 //       [&platform=meta|tiktok][&account=<id>][&campaign=<id>][&adset=<id>][&refresh=1]
 //
 // Meta se lee en vivo (lib/marketing-publicidad-server.ts, con caché de 60 s
@@ -11,11 +11,12 @@
 // el mensaje de error del proveedor.
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromSearchParams } from "@/lib/stores";
-import { MARKETING_STORE } from "@/lib/marketing";
+import { isMarketingStore, marketingStoreInfo } from "@/lib/marketing-stores";
 import { periodFromParams } from "@/lib/marketing-dates";
 import {
   PUBLICIDAD_LEVELS,
   type PublicidadLevel,
+  type PublicidadPayload,
 } from "@/lib/marketing-publicidad";
 import { getPublicidadMeta } from "@/lib/marketing-publicidad-server";
 import { getPublicidadTiktok } from "@/lib/marketing-publicidad-tiktok";
@@ -31,8 +32,11 @@ const reply = (body: unknown, status = 200) =>
 export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams;
   const store = getRequiredStoreFromSearchParams(params);
-  if (!store || store.code !== MARKETING_STORE)
-    return reply({ error: "store=mireva-cr requerido y autorizado." }, 400);
+  if (!store || !isMarketingStore(store.code))
+    return reply(
+      { error: "store=mireva-cr o mireva-hn requerido y autorizado." },
+      400,
+    );
   const period = periodFromParams(params);
   if (!period)
     return reply({ error: "Indica un rango válido de hasta 93 días." }, 400);
@@ -63,6 +67,21 @@ export async function GET(req: NextRequest) {
     campaign,
     adset,
   };
+  const info = marketingStoreInfo(store.code);
+  if (platform === "tiktok" && !info.tiktok)
+    // Sin TikTok en esta tienda: el estado de "no conectado", sin error.
+    return reply({
+      platform: "tiktok",
+      status: "pending",
+      message: `TikTok Ads no está conectado para ${info.country}.`,
+      level: query.level,
+      from: query.from,
+      to: query.to,
+      generatedAt: new Date().toISOString(),
+      accounts: [],
+      rows: [],
+      unavailable: [],
+    } satisfies PublicidadPayload);
   if (platform === "tiktok") {
     try {
       return reply(await getPublicidadTiktok(store.id, query));
@@ -79,6 +98,7 @@ export async function GET(req: NextRequest) {
   return reply(
     await getPublicidadMeta({
       ...query,
+      store: store.code,
       refresh: params.get("refresh") === "1",
     }),
   );

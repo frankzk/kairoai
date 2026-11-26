@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { identidadActual } from "@/lib/identidad";
 import { leerInventario } from "@/lib/inventario-db";
 import { marketingCatalogLoader } from "@/lib/marketing-catalog-loader";
-import { TIENDA_MARKETING } from "@/lib/navegacion";
+import { TIENDA_INVENTARIO } from "@/lib/navegacion";
 import {
   SHIPHERO_SYNC_BUDGET_MS,
   ShipHeroStorageError,
@@ -28,7 +28,7 @@ const reply = (body: unknown, status = 200) => NextResponse.json(body, { status,
 function tiendaDe(req: NextRequest) {
   const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
   if (!store) return { error: reply({ error: "store requerido: usa mireva-cr" }, 400) };
-  if (store.code !== TIENDA_MARKETING)
+  if (store.code !== TIENDA_INVENTARIO)
     return { error: reply({ error: "El inventario de ShipHero (Boxful) es solo de Mireva Costa Rica." }, 404) };
   return { store };
 }

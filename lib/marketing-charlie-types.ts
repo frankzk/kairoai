@@ -76,7 +76,22 @@ export interface PenRate {
   date: string;
   source: "bcrp" | "manual";
 }
+/**
+ * Units of the store's own currency per USD when it is not CRC (Honduras:
+ * HNL). Today only the team's manual rate. An official source (for HNL the
+ * Banco Central de Honduras reference rate, "bch") plugs in like Hacienda for
+ * CRC and the BCRP for PEN: a reader returns { rate, date, source: "bch" } and
+ * storeUsdRate (lib/marketing-charlie-settings.ts) uses it when no manual
+ * rate is saved. Not implemented yet: there is no BCH fetch.
+ */
+export interface LocalRate {
+  currency: string;
+  rate: number;
+  date: string;
+  source: "manual" | "bch";
+}
 export interface UsdRate {
+  /** CRC per USD (Costa Rica); null when there is none (or the store is not CRC). */
   rate: number | null;
   date: string | null;
   source: "hacienda" | "manual" | "unavailable";
@@ -84,6 +99,8 @@ export interface UsdRate {
   message: string;
   /** null si no se pudo verificar: los importes en PEN quedan sin convertir. */
   pen?: PenRate | null;
+  /** Store currency other than CRC (HNL); null = sin tipo de cambio. */
+  local?: LocalRate | null;
 }
 export interface CharlieSettings {
   config: CharlieConfig;

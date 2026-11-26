@@ -9,6 +9,8 @@ import { ordersText } from "@/lib/marketing-actions";
 import { count, money, percentage, shortDate } from "./format";
 import { ChartLegend, ColumnChart, ENTITY_COLORS } from "./charts";
 import s from "./dashboard.module.css";
+import { marketingStoreInfo } from "@/lib/marketing-stores";
+import { useMarketingStore } from "./MarketingStoreContext";
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
 
 export function CharlieCurrency({
@@ -26,9 +28,17 @@ export function CharlieCurrency({
   saving: string;
   save: Save;
 }) {
+  // Honduras: the HNL rate is only the team's (saved in the same field of
+  // its own row); there is no official source to fall back to.
+  const store = marketingStoreInfo(useMarketingStore());
+  const local = store.currency !== "CRC";
   const [manual, setManual] = useState(Boolean(settings?.config.crc_per_usd));
   const [rate, setRate] = useState(
-    String(settings?.config.crc_per_usd ?? settings?.fx.rate ?? ""),
+    String(
+      settings?.config.crc_per_usd ??
+        (local ? settings?.fx.local?.rate : settings?.fx.rate) ??
+        "",
+    ),
   );
   const [date, setDate] = useState(
     settings?.config.rate_date || settings?.fx.date || marketingDate(),
@@ -41,6 +51,10 @@ export function CharlieCurrency({
         <p className={s.muted}>
           {loading
             ? "Consultando referencia USD…"
+            : local
+              ? settings?.fx.local
+                ? `Todos los reportes en USD. Tasa del equipo: ${count(settings.fx.local.rate)} ${store.currency} por USD, ${settings.fx.local.date}. Períodos históricos reexpresados a esta tasa, no a tasas históricas.`
+                : `Sin tipo de cambio ${store.currency}: los importes en ${store.currency} permanecen sin convertir hasta que se fije la tasa del equipo.`
             : settings?.fx.rate
               ? `Todos los reportes en USD. Referencia ${settings.fx.source === "hacienda" ? "Hacienda, venta" : "manual"}: ${count(settings.fx.rate)} CRC por USD, ${settings.fx.date}.${settings.fx.pen ? ` TikTok (PEN): ${settings.fx.pen.rate} soles por USD, venta SBS del BCRP, ${settings.fx.pen.date}.` : " TikTok (PEN): sin tipo de cambio verificado, queda sin convertir."} Períodos históricos reexpresados a esta tasa, no a tasas históricas.`
               : "La referencia USD no está disponible. Los importes originalmente en CRC permanecen pendientes de conversión."}{" "}
@@ -78,14 +92,18 @@ export function CharlieCurrency({
                 disabled={!canEdit || Boolean(saving)}
                 onChange={(event) => setManual(event.target.value === "manual")}
               >
-                <option value="official">Hacienda, automática</option>
-                <option value="manual">Manual de planificación</option>
+                <option value="official">
+                  {local ? "Sin tipo de cambio" : "Hacienda, automática"}
+                </option>
+                <option value="manual">
+                  {local ? "Tasa del equipo" : "Manual de planificación"}
+                </option>
               </select>
             </label>
             {manual && (
               <>
                 <label className={s.field}>
-                  CRC por USD
+                  {local ? store.currency : "CRC"} por USD
                   <input
                     className={s.control}
                     type="number"
@@ -618,6 +636,7 @@ export function CharlieStructure({
   save: Save;
   error: string;
 }) {
+  const store = useMarketingStore();
   const [filter, setFilter] = useState(""),
     [page, setPage] = useState(0);
   const rows = model.structure.filter(
@@ -633,7 +652,8 @@ export function CharlieStructure({
         <div>
           <h2 className={s.heading}>Estructura Andromeda 1</h2>
           <p className={s.muted}>
-            Estructura real de las cinco cuentas. Roles detectados por nombre y
+            Estructura real de las cuentas de {marketingStoreInfo(store).country}.
+            Roles detectados por nombre y
             corregibles en Kairo. Los metadatos pueden conservarse hasta 5
             minutos; no se modifica Meta.
           </p>

@@ -6,7 +6,12 @@ import { getOrdersDataset } from "@/app/api/finance/_shared/orders-dataset";
 import { getDB } from "./db";
 import { buildFinanceControlCenter } from "./finance-orders";
 import type { marketingAccess } from "./marketing-access";
-import { readCharlieSettings } from "./marketing-charlie-settings";
+import {
+  readCharlieSettings,
+  storeUsdRate,
+} from "./marketing-charlie-settings";
+import { marketingStoreInfo } from "./marketing-stores";
+import type { FinanceStoreCode } from "./store-config";
 import type { UsdRate } from "./marketing-charlie-types";
 import {
   dateTime,
@@ -240,21 +245,34 @@ export async function accountsSection(
   store: Store,
   now = new Date(),
 ): Promise<AccountsPayload> {
+  const info = marketingStoreInfo(store.code);
   const [meta, tiktok, fx] = await Promise.all([
-    readMetaAccountStatuses().then(
+    // The store's own Meta accounts (lib/marketing-meta-config.ts).
+    readMetaAccountStatuses(process.env, fetch, info.code).then(
       (accounts) => ({ accounts, error: false }),
       () => ({ accounts: null, error: true }),
     ),
-    readTiktokFeed(store.id).then(
-      (feed) => ({ feed, error: false }),
-      () => ({ feed: [] as TiktokFeedStatus[], error: true }),
-    ),
-    readCharlieSettings(store.id).then(
+    // TikTok only where the store has it (Costa Rica).
+    info.tiktok
+      ? readTiktokFeed(store.id).then(
+          (feed) => ({ feed, error: false }),
+          () => ({ feed: [] as TiktokFeedStatus[], error: true }),
+        )
+      : Promise.resolve({ feed: [] as TiktokFeedStatus[], error: false }),
+    readCharlieSettings(store.id, info.code).then(
       (settings) => settings.fx,
-      async (): Promise<UsdRate> => ({
-        ...(await getMarketingUsdRate()),
-        pen: await getMarketingPenRate(),
-      }),
+      async (): Promise<UsdRate> =>
+        info.currency === "CRC"
+          ? {
+              ...(await getMarketingUsdRate()),
+              pen: await getMarketingPenRate(),
+            }
+          : // Without the saved rate: sin tipo de cambio (never guessed).
+            storeUsdRate(
+              { crc_per_usd: null, rate_date: null, hero_product_keys: [] },
+              info.currency,
+              now,
+            ),
     ),
   ]);
   return {
@@ -263,6 +281,11 @@ export async function accountsSection(
     metaError: meta.error,
     tiktok: tiktok.feed,
     tiktokError: tiktok.error,
+    ...(info.tiktok
+      ? {}
+      : {
+          tiktokNotConnected: `TikTok Ads no está conectado para ${info.country}.`,
+        }),
     fx,
   };
 }
@@ -271,7 +294,8 @@ export async function accountsSection(
 export async function segmentationSection(
   from: string,
   to: string,
+  store: FinanceStoreCode = "mireva-cr",
 ): Promise<SegmentationPayload> {
-  const result = await readMetaAgeGender(process.env, fetch, from, to);
+  const result = await readMetaAgeGender(process.env, fetch, from, to, store);
   return { from, to, ...result };
 }

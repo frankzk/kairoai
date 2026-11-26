@@ -5,23 +5,31 @@ import {
   shiftDate,
   type MarketingPeriod,
 } from "./marketing-dates";
+import { marketingStoreInfo } from "./marketing-stores";
 
-const identity = (phone: string | null | undefined) => {
+/** The same customer across orders: 8 local digits with the store's country prefix (506 CR, 504 HN). */
+const identity = (phone: string | null | undefined, prefix = "506") => {
   const value = (phone || "").replace(/\D/g, "");
   return /^\d{8}$/.test(value)
-    ? `506${value}`
-    : /^506\d{8}$/.test(value)
+    ? `${prefix}${value}`
+    : new RegExp(`^${prefix}\\d{8}$`).test(value)
       ? value
       : null;
 };
-/** Customer phones remain in server memory. Only aggregates leave the API. */
+/**
+ * Customer phones remain in server memory. Only aggregates leave the API.
+ * The `*Crc` amounts are in the store's own currency (`currency`: CRC in
+ * Costa Rica, HNL in Honduras); the names stay for compatibility.
+ */
 export function buildCharlieRevenue(
   orders: OrderProfitabilityRow[],
   phones: Map<string, string | null>,
   period: MarketingPeriod,
   heroKeys: string[] = [],
   now = new Date(),
+  store: string = "mireva-cr",
 ) {
+  const info = marketingStoreInfo(store);
   const today = marketingDate(now),
     trailTo = period.to < today ? period.to : today,
     trailFrom = shiftDate(trailTo, -6);
@@ -51,7 +59,7 @@ export function buildCharlieRevenue(
     .sort((a, b) => Date.parse(a.created_at!) - Date.parse(b.created_at!));
   for (const order of sorted) {
     const time = Date.parse(order.created_at!),
-      phone = identity(phones.get(order.order_key));
+      phone = identity(phones.get(order.order_key), info.phonePrefix);
     const repeat = Boolean(
       phone && (deliveredBefore.get(phone) ?? Infinity) < time,
     );
@@ -109,6 +117,8 @@ export function buildCharlieRevenue(
   const recurrenceAvailable = identified > 0 && deliveredBefore.size > 0;
   return {
     basis: "created_potential" as const,
+    /** Currency of every `*Crc` amount (the store's). */
+    currency: info.currency,
     totalOrders: total,
     revenueCrc: complete ? revenueCrc : null,
     annulledRevenueCrc: complete ? annulledRevenueCrc : null,

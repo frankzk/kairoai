@@ -89,7 +89,9 @@ export function buildCharlieModel(
       ? spends.reduce<number>((sum, value) => sum + value!, 0)
       : null;
   const count = business?.totalOrders ?? null;
-  const revenueUsd = asUsd(business?.revenueCrc, "CRC", fx);
+  // Revenue is in the store's currency (CRC in Costa Rica, HNL in Honduras).
+  const revenueCurrency = business?.currency ?? "CRC";
+  const revenueUsd = asUsd(business?.revenueCrc, revenueCurrency, fx);
   const cpa =
     coverage.aligned && spendUsd != null && count != null && count > 0
       ? spendUsd / count
@@ -337,7 +339,7 @@ export function buildCharlieModel(
         : rows.map((item) => asUsd(item.row!.spend, item.currency, fx));
       return {
         date: date.date,
-        revenueUsd: asUsd(date.revenueCrc, "CRC", fx),
+        revenueUsd: asUsd(date.revenueCrc, revenueCurrency, fx),
         metaSpendUsd:
           (hasOverview || report?.status === "ready") &&
           values.every((value) => value != null)
@@ -357,9 +359,9 @@ export function buildCharlieModel(
     headroom,
     decision,
     totalOrders: count,
-    recurringUsd: asUsd(business?.recurringRevenueCrc, "CRC", fx),
-    heroUsd: asUsd(business?.heroRevenueCrc, "CRC", fx),
-    floorUsd: asUsd(business?.floorRevenueCrc, "CRC", fx),
+    recurringUsd: asUsd(business?.recurringRevenueCrc, revenueCurrency, fx),
+    heroUsd: asUsd(business?.heroRevenueCrc, revenueCurrency, fx),
+    floorUsd: asUsd(business?.floorRevenueCrc, revenueCurrency, fx),
     floorShare:
       (settings?.config.hero_product_keys.length ?? 0) > 0 &&
       business?.floorRevenueCrc != null &&

@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
   const allowed = marketingAccess(req);
   if (!allowed)
     return marketingReply(
-      { error: "Se requiere Marketing y acceso a Mireva Costa Rica." },
+      { error: "Se requiere Marketing y acceso a la tienda elegida." },
       403,
     );
   try {

@@ -15,13 +15,20 @@
 //
 // Una cuenta que no se puede leer va a `unavailable` con un motivo genérico:
 // el mensaje del proveedor puede traer datos de la cuenta o el token y nunca
-// se reenvía. Hay una caché corta en memoria (60 s) por cuenta, nivel, rango y
+// se reenvía. Hay una caché corta en memoria (60 s) por tienda, cuenta, nivel, rango y
 // filtros para que cambiar de pestaña no vuelva a consultar a Meta;
 // `refresh` la salta.
 //
 // Los normalizadores son puros y viven en lib/marketing-publicidad.ts.
 // Pruebas: tests/marketing-publicidad-server.test.ts.
-import { metaConfigured } from "./marketing-meta-accounts";
+import {
+  metaAuthHeaders,
+  metaConfigAccountIds,
+  metaConfigFor,
+  metaPendingMessage,
+  type MetaStoreConfig,
+} from "./marketing-meta-config";
+import type { FinanceStoreCode } from "./store-config";
 import {
   buildPublicidadRows,
   mergeInsights,
@@ -37,7 +44,6 @@ import {
 import {
   ATTRIBUTION_WINDOWS,
   metaAccountFailure,
-  metaAccountIds,
   metaPages,
   purchasesOf,
 } from "./marketing-sources";
@@ -46,6 +52,8 @@ type Env = Record<string, string | undefined>;
 type Json = Record<string, unknown>;
 
 export interface PublicidadQuery {
+  /** Store whose Meta accounts are read (Costa Rica by default). */
+  store?: FinanceStoreCode;
   level: PublicidadLevel;
   from: string;
   to: string;
@@ -326,15 +334,15 @@ async function readEntities(
 async function readAccount(
   id: string,
   query: PublicidadQuery,
-  env: Env,
+  config: MetaStoreConfig,
   fetcher: typeof fetch,
   signal: AbortSignal,
 ): Promise<AccountRead & { cacheable: boolean }> {
-  const version = env.META_CR_GRAPH_VERSION || "";
+  const version = config.version;
   if (!/^\d+$/.test(id) || !/^v\d+\.\d+$/.test(version))
     throw new Error("Invalid Meta configuration");
   const base = `https://graph.facebook.com/${version}/act_${id}`;
-  const headers = { Authorization: `Bearer ${env.META_CR_ACCESS_TOKEN}` };
+  const headers = metaAuthHeaders(config);
   const [info, report] = await Promise.all([
     accountInfo(base, id, headers, signal, fetcher),
     readInsights(base, query, headers, signal, fetcher),
@@ -411,25 +419,32 @@ export async function getPublicidadMeta(
     to: query.to,
     generatedAt: new Date(now()).toISOString(),
   };
+  const store = query.store ?? "mireva-cr";
+  const config = metaConfigFor(store, env);
   const pending: PublicidadPayload = {
     ...base,
     status: "pending",
-    message: "Meta Ads: pendiente de configurar acceso de lectura.",
+    message:
+      store === "mireva-cr"
+        ? "Meta Ads: pendiente de configurar acceso de lectura."
+        : metaPendingMessage(config),
     accounts: [],
     rows: [],
     unavailable: [],
   };
-  if (!metaConfigured(env)) return pending;
+  if (!config.configured) return pending;
   let ids: string[];
   try {
-    ids = metaAccountIds(env);
+    ids = metaConfigAccountIds(config);
   } catch {
     return pending;
   }
   if (query.account) ids = ids.filter((id) => id === query.account);
   const results = await Promise.allSettled(
     ids.map(async (id) => {
+      // Per store: Costa Rica and Honduras never share a cached table.
       const key = [
+        store,
         id,
         query.level,
         query.from,
@@ -443,7 +458,7 @@ export async function getPublicidadMeta(
       const { cacheable, ...value } = await readAccount(
         id,
         query,
-        env,
+        config,
         fetcher,
         AbortSignal.timeout(ACCOUNT_TIMEOUT_MS),
       );

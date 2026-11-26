@@ -1,6 +1,8 @@
 "use client";
 import { useUsdMoney } from "./UsdContext";
 import type { MarketingSources } from "@/lib/marketing-source-types";
+import { marketingStoreInfo } from "@/lib/marketing-stores";
+import { useMarketingStore } from "./MarketingStoreContext";
 
 const number = new Intl.NumberFormat("es-CR");
 
@@ -13,6 +15,7 @@ export default function CampaignsTable({
   loading: boolean;
   error: string;
 }) {
+  const marketingStore = marketingStoreInfo(useMarketingStore());
   const amount = useUsdMoney();
   if (loading)
     return (
@@ -34,7 +37,7 @@ export default function CampaignsTable({
     <section aria-labelledby="campaigns-heading" className="space-y-5">
       <div>
         <h2 id="campaigns-heading" className="text-base font-semibold">
-          Campañas de Costa Rica
+          Campañas de {marketingStore.country}
         </h2>
         <p className="mt-1 max-w-[75ch] text-xs text-muted-foreground">
           Inversión expresada en USD según la referencia visible y calendario de
@@ -71,7 +74,7 @@ export default function CampaignsTable({
                       dateStyle: "short",
                       timeStyle: "short",
                     }).format(new Date(source.checkedAt))}
-                    , Costa Rica.
+                    , {marketingStore.country}.
                   </p>
                   <div className="overflow-x-auto rounded-lg border border-border">
                     <table className="w-full min-w-[640px] text-left text-xs">

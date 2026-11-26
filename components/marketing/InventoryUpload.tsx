@@ -11,6 +11,7 @@ import type { MarketingSummary } from "@/lib/marketing";
 import { sendMarketing, type MarketingInventoryStatus } from "./useMarketing";
 import { count, shortDate, timeCr } from "./format";
 import r from "./team-report.module.css";
+import { useMarketingStore } from "./MarketingStoreContext";
 
 type Status = {
   data: MarketingInventoryStatus | null;
@@ -63,6 +64,7 @@ export function InventoryUpload({
   canEdit: boolean;
   onSaved: () => void;
 }) {
+  const store = useMarketingStore();
   const inputId = useId();
   const [file, setFile] = useState<{ name: string; text: string } | null>(null);
   const [parsed, setParsed] = useState<InventoryCsvResult | null>(null);
@@ -109,7 +111,7 @@ export function InventoryUpload({
     const result = await sendMarketing<{
       skus: number;
       unmatched: number | null;
-    }>("/api/marketing/inventory?store=mireva-cr", "POST", {
+    }>(`/api/marketing/inventory?store=${store}`, "POST", {
       fileName: file.name.slice(0, 200),
       csv: file.text,
     });

@@ -13,9 +13,10 @@ import { count, dateTimeCr } from "./format";
 import { sendMarketing, useResource } from "./useMarketing";
 import s from "./dashboard.module.css";
 import r from "./team-report.module.css";
+import { useMarketingStore } from "./MarketingStoreContext";
 
-const SHIPHERO_URL = "/api/marketing/shiphero?store=mireva-cr";
-const SYNC_URL = "/api/marketing/shiphero/sync?store=mireva-cr";
+const shipheroUrl = (store: string) => `/api/marketing/shiphero?store=${store}`;
+const syncUrl = (store: string) => `/api/marketing/shiphero/sync?store=${store}`;
 
 type Payload =
   | { status: "ok"; connection: ShipHeroStatus; canEdit: boolean }
@@ -53,6 +54,9 @@ export function ShipHeroConnect({
   canEdit: boolean;
   onChanged: () => void;
 }) {
+  const store = useMarketingStore();
+  const SHIPHERO_URL = shipheroUrl(store);
+  const SYNC_URL = syncUrl(store);
   const [revision, setRevision] = useState(0);
   const resource = useResource<Payload>(SHIPHERO_URL, revision);
   const [busy, setBusy] = useState<

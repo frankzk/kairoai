@@ -97,6 +97,16 @@ export interface MarketingSource<T> {
   data: T | null;
   /** ShipHero only: state of the Kairo connection, when there is one in use. */
   connection?: "connected" | "needs_scope" | "reconnect";
+  /**
+   * Meta only, on "error": no configured account could be read; why each one
+   * failed (generic reasons, never provider text).
+   */
+  unavailable?: Array<{ accountId: string; reason: string }>;
+  /**
+   * The store has no such source (TikTok in Honduras): "ready" with no
+   * accounts, so totals are complete without it; shown as "No conectado".
+   */
+  notConnected?: true;
 }
 
 /** Account-level spend per hour of the account day (account currency). */
@@ -120,7 +130,7 @@ export interface MarketingAdsData {
     to: string;
     days: Array<{ date: string; spend: number }>;
   };
-  /** Only for accounts in America/Costa_Rica (the hours must match the orders' hours). */
+  /** Only for accounts on the orders' clock (America/Costa_Rica or the store's own zone). */
   hourly?: MarketingHourlySpend;
   hourlyMessage?: string;
   lifetimeMessage?: string;
@@ -138,6 +148,11 @@ export interface MarketingAdsAccounts {
    * count, but the spend is PARTIAL: the UI must say which account is missing.
    */
   unavailable?: Array<{ accountId: string; reason: string }>;
+  /**
+   * The store has no such source (TikTok in Honduras): "ready" with no
+   * accounts, so totals are complete without it; shown as "No conectado".
+   */
+  notConnected?: true;
 }
 
 export interface MarketingSources {

@@ -8,6 +8,7 @@ import type { UsdRate } from "@/lib/marketing-charlie-types";
 import { buildSpendByAccount, spendDates, type SpendAccountRow } from "@/lib/marketing-spend-accounts";
 import { money, shortDate } from "./format";
 import rs from "./resumen.module.css";
+import { useMarketingStore } from "./MarketingStoreContext";
 
 // Gasto del período por cuenta publicitaria (Meta y TikTok): para cotejar con
 // el administrador de anuncios que Kairo lee cada cuenta y el gasto correcto.
@@ -30,6 +31,7 @@ export function SpendByAccount({
   fx: UsdRate | null;
   period: { from: string; to: string };
 }) {
+  const store = useMarketingStore();
   const [porDia, setPorDia] = useState(false);
   // El Resumen lee solo el total del período (lo más liviano). Los días se
   // piden aparte, al abrir "Ver gasto por día", y solo para este período.
@@ -51,7 +53,7 @@ export function SpendByAccount({
     if (!abrir || diarioVigente || rows.every((r) => r.problem || r.days)) return;
     setCargandoDias(true);
     try {
-      const res = await fetch(`/api/marketing/sources?${periodQuery(period)}&scope=dias`, { cache: "no-store" });
+      const res = await fetch(`/api/marketing/sources?${periodQuery(period, store)}&scope=dias`, { cache: "no-store" });
       const json = (await res.json().catch(() => null)) as (MarketingSources & { error?: string }) | null;
       if (!res.ok || !json?.meta) throw new Error(json?.error || "No se pudo leer el gasto por día.");
       setDiario({ key: periodKey, sources: json, error: "" });

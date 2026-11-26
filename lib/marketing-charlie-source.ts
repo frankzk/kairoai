@@ -1,5 +1,13 @@
 import { createHash } from "crypto";
-import { metaAccountIds } from "./marketing-sources";
+import {
+  metaAuthHeaders,
+  metaConfigAccountIds,
+  metaConfigFor,
+  metaVersionValid,
+  type MetaStoreConfig,
+} from "./marketing-meta-config";
+import { marketingStoreInfo } from "./marketing-stores";
+import type { FinanceStoreCode } from "./store-config";
 import {
   marketingDate,
   marketingPeriod,
@@ -40,14 +48,14 @@ function action(rows: unknown, names: string[]): number | null {
 async function account(
   id: string,
   period: MarketingPeriod,
-  env: Record<string, string | undefined>,
+  config: MetaStoreConfig,
   fetcher: typeof fetch,
   signal: AbortSignal,
   includeStructure: boolean,
   structureOnly = false,
 ): Promise<CharlieAccount> {
-  const base = `https://graph.facebook.com/${env.META_CR_GRAPH_VERSION}/act_${id}`,
-    headers = { Authorization: `Bearer ${env.META_CR_ACCESS_TOKEN}` };
+  const base = `https://graph.facebook.com/${config.version}/act_${id}`,
+    headers = metaAuthHeaders(config);
   async function read(url: URL) {
     const response = await fetcher(url, {
       headers,
@@ -110,10 +118,12 @@ async function account(
     throw new Error("Invalid account");
   const metadataKey = createHash("sha256")
     .update(
+      // Per store: Costa Rica and Honduras never share creative metadata.
       JSON.stringify([
+        config.store,
         id,
-        env.META_CR_GRAPH_VERSION,
-        env.META_CR_ACCESS_TOKEN,
+        config.version,
+        config.token,
         structureOnly,
       ]),
     )
@@ -352,17 +362,17 @@ export async function getCharlieReport(
   includeStructure = true,
   includeTrailing = true,
   structureOnly = false,
+  /** Store whose Meta accounts are read (Costa Rica by default). */
+  store: FinanceStoreCode = "mireva-cr",
 ): Promise<CharlieReport> {
   const checkedAt = now.toISOString();
-  if (
-    !env.META_CR_ACCESS_TOKEN ||
-    !/^v\d+\.\d+$/.test(env.META_CR_GRAPH_VERSION || "") ||
-    !(env.META_CR_AD_ACCOUNT_IDS || env.META_CR_AD_ACCOUNT_ID)
-  )
+  const config = metaConfigFor(store, env);
+  const country = marketingStoreInfo(store).country;
+  if (!config.token || !metaVersionValid(config) || !config.accountList)
     return {
       status: "pending",
       checkedAt,
-      message: "Falta configurar la lectura de las cuentas Meta de Costa Rica.",
+      message: `Falta configurar la lectura de las cuentas Meta de ${country}.`,
       data: null,
     };
   const today = marketingDate(now),
@@ -383,11 +393,11 @@ export async function getCharlieReport(
     const signal = AbortSignal.timeout(40_000);
     const [meta, deTiktok] = await Promise.all([
       Promise.all(
-        metaAccountIds(env).map((id) =>
+        metaConfigAccountIds(config).map((id) =>
           account(
             id,
             expanded,
-            env,
+            config,
             fetcher,
             signal,
             includeStructure,
@@ -415,7 +425,7 @@ export async function getCharlieReport(
       checkedAt,
       data: null,
       message:
-        "No se pudieron consultar todos los anuncios de las cuentas de Costa Rica. Actualiza o reduce el rango de fechas.",
+        `No se pudieron consultar todos los anuncios de las cuentas de ${country}. Actualiza o reduce el rango de fechas.`,
     };
   }
 }

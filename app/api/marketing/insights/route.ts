@@ -9,7 +9,11 @@
 // Solo agregados o tuplas anónimas: ningún nombre, teléfono, dirección ni
 // número de pedido sale de esta ruta. Errores del proveedor nunca se reenvían.
 import { NextRequest } from "next/server";
-import { marketingAccess, marketingReply } from "@/lib/marketing-access";
+import {
+  MARKETING_NO_ACCESS,
+  marketingAccess,
+  marketingReply,
+} from "@/lib/marketing-access";
 import {
   marketingDate,
   marketingPeriod,
@@ -46,10 +50,7 @@ const ERRORS: Record<InsightSection, string> = {
 export async function GET(req: NextRequest) {
   const allowed = marketingAccess(req);
   if (!allowed)
-    return marketingReply(
-      { error: "Se requiere Marketing y acceso a Mireva Costa Rica." },
-      403,
-    );
+    return marketingReply({ error: MARKETING_NO_ACCESS }, 403);
   const params = req.nextUrl.searchParams;
   const section = params.get("section") as InsightSection | null;
   if (!section || !SECTIONS.includes(section))
@@ -123,7 +124,7 @@ export async function GET(req: NextRequest) {
       await cachedInsight(
         key(period.from, period.to),
         section,
-        () => segmentationSection(period.from, period.to),
+        () => segmentationSection(period.from, period.to, allowed.store.code),
         { refresh },
       ),
     );

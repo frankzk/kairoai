@@ -48,7 +48,7 @@ describe("GET /api/marketing/publicidad", () => {
   });
 
   it("rechaza otra tienda, un rango inválido, un nivel o una plataforma desconocidos", async () => {
-    mocks.store = { id: 90, code: "mireva-hn" };
+    mocks.store = { id: 3, code: "kenku-mx" };
     expect((await get(`${base}&level=campaign`)).status).toBe(400);
     mocks.store = null;
     expect((await get(`${base}&level=campaign`)).status).toBe(400);
@@ -84,6 +84,7 @@ describe("GET /api/marketing/publicidad", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(mocks.meta).toHaveBeenCalledWith({
+      store: "mireva-cr",
       level: "ad",
       from: "2026-11-01",
       to: "2026-11-07",
@@ -94,6 +95,7 @@ describe("GET /api/marketing/publicidad", () => {
     });
     await get(base);
     expect(mocks.meta).toHaveBeenLastCalledWith({
+      store: "mireva-cr",
       level: "campaign",
       from: "2026-11-01",
       to: "2026-11-07",
@@ -124,5 +126,23 @@ describe("GET /api/marketing/publicidad", () => {
     const failed = await get(`${base}&platform=tiktok`);
     expect(failed.status).toBe(502);
     expect(JSON.stringify(await failed.json())).not.toContain("secreta");
+  });
+
+  it("Honduras lee sus propias cuentas de Meta y TikTok queda «no conectado» sin error", async () => {
+    mocks.store = { id: 2, code: "mireva-hn" };
+    const hn = "store=mireva-hn&from=2026-11-01&to=2026-11-07";
+    expect((await get(`${hn}&level=campaign`)).status).toBe(200);
+    expect(mocks.meta).toHaveBeenLastCalledWith(
+      expect.objectContaining({ store: "mireva-hn", level: "campaign" }),
+    );
+    const tiktok = await get(`${hn}&platform=tiktok`);
+    expect(tiktok.status).toBe(200);
+    expect(await tiktok.json()).toMatchObject({
+      platform: "tiktok",
+      status: "pending",
+      message: "TikTok Ads no está conectado para Honduras.",
+      rows: [],
+    });
+    expect(mocks.tiktok).not.toHaveBeenCalled();
   });
 });

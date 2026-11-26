@@ -4,6 +4,7 @@ import type { CharlieReport } from "./marketing-charlie-types";
 import type { MarketingPeriod } from "./marketing-dates";
 import type { UsdRate } from "./marketing-charlie-types";
 import { asUsd } from "./marketing-usd-rate";
+import { marketingClockZones, marketingStoreInfo } from "./marketing-stores";
 
 export type AttributionLevel = "campaign" | "adset" | "ad";
 type Campaign = Pick<
@@ -24,7 +25,11 @@ export function buildAttributionCostRows(
   report: CharlieReport | null,
   period: MarketingPeriod,
   fx: UsdRate | null = null,
+  /** Store of the orders (Costa Rica by default): accounts on its clock align. */
+  store: string = "mireva-cr",
 ) {
+  const clock = marketingClockZones(store);
+  const country = marketingStoreInfo(store).country;
   const grouped = new Map<string, AttributionGroup>();
   const conflicts = new Set<string>();
   const keyOf = (g: AttributionGroup) =>
@@ -177,10 +182,10 @@ export function buildAttributionCostRows(
       } else if (found.length > 1 || matches.length > 1)
         spendMessage = "Cruce ambiguo";
     }
-    const aligned = timezone === "America/Costa_Rica";
+    const aligned = clock.has(timezone);
     if (spend != null)
       spendMessage = !aligned
-        ? "Calendario distinto al de Costa Rica"
+        ? `Calendario distinto al de ${country}`
         : !g.delivered
           ? "Sin entregados todavía"
           : "Gasto registrado / entregados con UTM";

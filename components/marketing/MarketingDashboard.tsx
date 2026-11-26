@@ -17,8 +17,9 @@ import { buildCharlieModel } from "@/lib/marketing-charlie";
 import { subtractionRealOrders } from "@/lib/marketing-subtraction-real";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import {
-  appliedRates,
-  appliedRatesShortText,
+  storeRates,
+  storeRatesShortText,
+  type RateCurrency,
 } from "@/lib/marketing-account-status";
 import type { CharlieSettings } from "@/lib/marketing-charlie-types";
 import { UsdProvider } from "./UsdContext";
@@ -51,6 +52,13 @@ import { ResumenView } from "./ResumenView";
 import { ActionsView } from "./ActionsView";
 import { CpaProductView } from "./CpaProductView";
 import { PublicidadView } from "./PublicidadView";
+import { MarketingStoreProvider } from "./MarketingStoreContext";
+import {
+  DEFAULT_MARKETING_STORE,
+  marketingHourLabel,
+  marketingStoreInfo,
+} from "@/lib/marketing-stores";
+import type { FinanceStoreCode } from "@/lib/store-config";
 
 type View = MarketingView;
 const presets: Array<[MarketingPreset, string]> = [
@@ -67,7 +75,24 @@ const presets: Array<[MarketingPreset, string]> = [
   ["30d", "Últimos 30 días"],
   ["custom", "Personalizado"],
 ];
-export default function MarketingDashboard() {
+/**
+ * Marketing of the store chosen in the menu (Costa Rica or Honduras). Every
+ * request carries that store; the page remounts this on a store change.
+ */
+export default function MarketingDashboard({
+  store = DEFAULT_MARKETING_STORE,
+}: {
+  store?: FinanceStoreCode;
+}) {
+  return (
+    <MarketingStoreProvider value={store}>
+      <Dashboard store={store} />
+    </MarketingStoreProvider>
+  );
+}
+
+function Dashboard({ store }: { store: FinanceStoreCode }) {
+  const storeInfo = marketingStoreInfo(store);
   const [period, setPeriod] = useState<MarketingPeriod | null>(null);
   const [preset, setPreset] = useState<MarketingPreset>("month");
   const [view, setView] = useState<View>("resumen");
@@ -160,12 +185,12 @@ export default function MarketingDashboard() {
   const [frequencyDay, setFrequencyDay] = useState("");
   // Módulo 11: after fixing a rate, reload the applied rates so every
   // section converts with the new one (conversion happens in the browser).
-  async function saveRate(currency: "CRC" | "PEN", rate: number | null) {
+  async function saveRate(currency: RateCurrency, rate: number | null) {
     const error = await api.saveRate(currency, rate);
     if (error) return error;
     try {
       const response = await fetch(
-        "/api/marketing/charlie-settings?store=mireva-cr",
+        `/api/marketing/charlie-settings?store=${store}`,
         { cache: "no-store" },
       );
       if (response.ok)
@@ -279,6 +304,8 @@ export default function MarketingDashboard() {
       ["shiphero", "ShipHero"],
     ] as const
   )
+    // TikTok and ShipHero only count where the store has them (Costa Rica).
+    .filter(([key]) => key === "meta" || storeInfo[key])
     .filter(([key]) => api.sources.data?.[key].status !== "ready")
     .map(([, name]) => name);
   // Meta read, but some account could not be: the spend is partial.
@@ -321,7 +348,7 @@ export default function MarketingDashboard() {
               {period
                 ? periodLabelText(period, marketingDate(), { withDate: true })
                 : "Preparando período"}{" "}
-              · Hora de Costa Rica
+              · {marketingHourLabel(store)}
             </p>
           </div>
           <div className={s.toolbar}>
@@ -475,8 +502,8 @@ export default function MarketingDashboard() {
                 {charlie.settings.loading
                   ? "USD · consultando referencia de conversión"
                   : charlie.settings.data?.fx
-                    ? appliedRatesShortText(
-                        appliedRates(charlie.settings.data.fx),
+                    ? storeRatesShortText(
+                        storeRates(charlie.settings.data.fx, storeInfo.currency),
                       )
                     : "USD · referencia de conversión pendiente"}
               </span>
@@ -524,7 +551,7 @@ export default function MarketingDashboard() {
             <div
               className={s.skeleton}
               role="status"
-              aria-label="Consultando anuncios de las cinco cuentas"
+              aria-label="Consultando anuncios de las cuentas"
             />
           ) : charlie.report.error ||
             charlie.report.data?.status !== "ready" ? (
@@ -840,7 +867,7 @@ export default function MarketingDashboard() {
           )}
           {canViewManagement && (
             <Link
-              href="/admin/finance?store=mireva-cr"
+              href={`/admin/finance?store=${store}`}
               className={`${s.link} ml-2`}
             >
               Ir a Gestión

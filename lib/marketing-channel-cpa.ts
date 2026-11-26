@@ -44,6 +44,7 @@ import type {
   MarketingSources,
 } from "./marketing-source-types";
 import { asUsd } from "./marketing-usd-rate";
+import { summaryClockZones } from "./marketing-stores";
 
 export type SaleChannel = "landing" | "whatsapp";
 export const SALE_CHANNELS: readonly SaleChannel[] = ["landing", "whatsapp"];
@@ -319,7 +320,8 @@ export function productChannelCpa(input: {
     | "groupedProducts"
     | "products"
     | "timezone"
-  >;
+  > &
+    Partial<Pick<MarketingSummary, "store">>;
   sources: MarketingSources | null;
   settings: MarketingSettings | null;
   control: MarketingControl | null;
@@ -445,7 +447,7 @@ export function productChannelCpa(input: {
         (c.observedThrough == null || c.observedThrough < to),
     );
     const approximate = related.some(
-      (c) => c.account.timezone !== summary.timezone,
+      (c) => !summaryClockZones(summary).has(c.account.timezone),
     );
     const partial = coveragePartial || late;
     const total = spend.daily && spend.rate ? spend.usd.total : null;

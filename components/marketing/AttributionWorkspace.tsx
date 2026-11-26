@@ -12,6 +12,7 @@ import { useUsdMoney, useUsdRate } from "./UsdContext";
 import type { MarketingIntelligence } from "@/lib/marketing-intelligence";
 import { count, percentage } from "./format";
 import s from "./dashboard.module.css";
+import { useMarketingStore } from "./MarketingStoreContext";
 
 export default function AttributionWorkspace({
   period,
@@ -24,10 +25,11 @@ export default function AttributionWorkspace({
   campaigns: MarketingIntelligence["campaigns"];
   campaignsLoading?: boolean;
 }) {
+  const store = useMarketingStore();
   const resource = useResource<MarketingAttribution>(
     campaignsLoading
       ? null
-      : `/api/marketing/attribution?${periodQuery(period)}`,
+      : `/api/marketing/attribution?${periodQuery(period, store)}`,
     revision,
   );
   const [level, setLevel] = useState<AttributionLevel>("campaign");
@@ -39,7 +41,7 @@ export default function AttributionWorkspace({
   const report = useResource<CharlieReport>(
     level === "campaign"
       ? null
-      : `/api/marketing/charlie?${periodQuery(period)}&scope=ads`,
+      : `/api/marketing/charlie?${periodQuery(period, store)}&scope=ads`,
     revision,
   );
   const [query, setQuery] = useState("");
@@ -52,6 +54,7 @@ export default function AttributionWorkspace({
       report.data,
       period,
       fx,
+      store,
     )
       .filter((g) =>
         `${g.platform} ${g.campaignName} ${g.matchedCampaignName} ${g.adsetName} ${g.adName} ${g.campaignId} ${g.adsetId} ${g.adId}`
@@ -69,7 +72,7 @@ export default function AttributionWorkspace({
           b.orders - a.orders
         );
       });
-  }, [resource.data, level, query, campaigns, report.data, period, sort, fx]);
+  }, [resource.data, level, query, campaigns, report.data, period, sort, fx, store]);
   const pages = Math.max(1, Math.ceil(groups.length / 15)),
     current = Math.min(page, pages - 1);
   return (

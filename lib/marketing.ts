@@ -8,7 +8,9 @@ import {
 import type { OrderProfitabilityRow } from "./finance-orders";
 import type { BusinessExpense } from "./finance-types";
 
+/** Default Marketing store (Costa Rica); see lib/marketing-stores.ts for every store. */
 export const MARKETING_STORE = "mireva-cr";
+/** Marketing's calendar: Costa Rica's (UTC−6, no DST), also Honduras' clock. */
 export const MARKETING_TIMEZONE = "America/Costa_Rica";
 const DAY = 86_400_000;
 const FINAL = new Set(["delivered", "not_delivered", "returned", "annulled"]);
@@ -70,6 +72,7 @@ export function buildMarketingSummary({
   from,
   to,
   now = new Date(),
+  store = { id: 1, code: MARKETING_STORE, currency: "CRC" },
 }: {
   orders: OrderProfitabilityRow[];
   expenses: BusinessExpense[];
@@ -77,6 +80,8 @@ export function buildMarketingSummary({
   from?: string;
   to?: string;
   now?: Date;
+  /** Store of the orders (Costa Rica by default): its manual ads expenses and currency. */
+  store?: { id: number; code: string; currency: string };
 }) {
   const window = periodFromInput(
     from !== undefined || to !== undefined
@@ -91,7 +96,7 @@ export function buildMarketingSummary({
     return time >= window.start && time < window.end && time <= now.getTime();
   });
   const selectedExpenses = expenses.filter((expense) => {
-    if (expense.store_id !== 1 || expense.type !== "ads") return false;
+    if (expense.store_id !== store.id || expense.type !== "ads") return false;
     if (expense.expense_date)
       return (
         expense.expense_date >= window.from &&
@@ -100,10 +105,10 @@ export function buildMarketingSummary({
     return Boolean(month) && expense.month === month;
   });
   const localExpenses = selectedExpenses.filter(
-    (expense) => expense.currency?.toUpperCase() === "CRC",
+    (expense) => expense.currency?.toUpperCase() === store.currency,
   );
   const foreignExpenses = selectedExpenses.filter(
-    (expense) => expense.currency?.toUpperCase() !== "CRC",
+    (expense) => expense.currency?.toUpperCase() !== store.currency,
   );
   const adSpend = money(
     localExpenses.reduce((sum, expense) => sum + numeric(expense.amount), 0),
@@ -358,9 +363,9 @@ export function buildMarketingSummary({
         )
         .reduce((sum, day) => sum + day.generated, 0),
     })),
-    store: MARKETING_STORE,
+    store: store.code,
     month,
-    currency: "CRC",
+    currency: store.currency,
     timezone: MARKETING_TIMEZONE,
     calculatedAt: now.toISOString(),
     totals: {

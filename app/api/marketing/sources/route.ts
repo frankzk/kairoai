@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRequiredStoreFromSearchParams } from "@/lib/stores";
-import { MARKETING_STORE } from "@/lib/marketing";
+import { marketingStoreFromParams } from "@/lib/marketing-access";
 import { periodFromParams } from "@/lib/marketing-dates";
 import { getMarketingSources } from "@/lib/marketing-sources";
 import { leerCuentasTiktok } from "@/lib/tiktok-diario";
@@ -18,10 +17,10 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
-  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
-  if (!store || store.code !== MARKETING_STORE) {
+  const store = marketingStoreFromParams(req.nextUrl.searchParams);
+  if (!store) {
     return NextResponse.json(
-      { error: "store=mireva-cr requerido y autorizado." },
+      { error: "store=mireva-cr o mireva-hn requerido y autorizado." },
       { status: 400 },
     );
   }
@@ -34,6 +33,8 @@ export async function GET(req: NextRequest) {
   const scope = req.nextUrl.searchParams.get("scope") || "";
   const actions = scope === "actions";
   const sources = await getMarketingSources(period, process.env, fetch, {
+    // Each store reads only its own Meta accounts (lib/marketing-meta-config.ts).
+    store: store.code,
     details: !["overview", "basic", "report", "dias"].includes(scope),
     // "dias": el gasto de cada campaña día por día, sin horas ni presupuestos
     // (Resumen › Gasto por cuenta › Ver gasto por día).

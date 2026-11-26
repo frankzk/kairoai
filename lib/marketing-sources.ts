@@ -25,6 +25,15 @@ import type {
   MarketingSources,
   MarketingStock,
 } from "./marketing-source-types";
+import {
+  metaAuthHeaders,
+  metaConfigAccountIds,
+  metaConfigFor,
+  metaPendingMessage,
+  type MetaStoreConfig,
+} from "./marketing-meta-config";
+import { marketingClockZones, marketingStoreInfo } from "./marketing-stores";
+import type { FinanceStoreCode } from "./store-config";
 
 type Env = Record<string, string | undefined>;
 type Json = Record<string, unknown>;
@@ -108,12 +117,13 @@ async function json(
 async function source<T>(
   configured: boolean,
   load: (signal: AbortSignal) => Promise<T>,
+  pendingMessage = "Pendiente de configurar acceso de lectura.",
 ): Promise<MarketingSource<T>> {
   if (!configured)
     return {
       status: "pending",
       checkedAt: new Date().toISOString(),
-      message: "Pendiente de configurar acceso de lectura.",
+      message: pendingMessage,
       data: null,
     };
   try {
@@ -124,7 +134,7 @@ async function source<T>(
       message: "Consulta de lectura completada.",
       data,
     };
-  } catch {
+  } catch (error) {
     // Provider messages can echo credentials and account details. Never forward them.
     return {
       status: "error",
@@ -132,7 +142,19 @@ async function source<T>(
       message:
         "No se pudo consultar la fuente. Revisa acceso, permisos, límites y configuración de la cuenta.",
       data: null,
+      // Meta: no account could be read; each one says why (generic reasons only).
+      ...(error instanceof MetaAccountsError
+        ? { unavailable: error.unavailable }
+        : {}),
     };
+  }
+}
+
+/** No Meta account could be read: carries each account's generic reason. */
+export class MetaAccountsError extends Error {
+  constructor(readonly unavailable: Array<{ accountId: string; reason: string }>) {
+    super("No Meta account could be read");
+    this.name = "MetaAccountsError";
   }
 }
 
@@ -165,21 +187,21 @@ export async function metaAccountsSettled(
     if (r.status === "fulfilled") accounts.push(r.value);
     else unavailable.push({ accountId: ids[i], reason: metaAccountFailure(r.reason) });
   });
-  if (!accounts.length) throw new Error("No Meta account could be read");
+  if (!accounts.length) throw new MetaAccountsError(unavailable);
   return unavailable.length ? { accounts, unavailable } : { accounts };
 }
 
-export function metaAccountIds(env: Env): string[] {
-  const value = env.META_CR_AD_ACCOUNT_IDS || env.META_CR_AD_ACCOUNT_ID || "";
-  const ids = Array.from(
-    new Set(value.split(",").map((id) => id.trim().replace(/^act_/, ""))),
-  );
-  if (!ids.length || ids.length > 10 || ids.some((id) => !/^\d+$/.test(id)))
-    throw new Error("Invalid Meta account list");
-  return ids;
+/** Meta accounts of the store (Costa Rica by default); throws on an invalid list. */
+export function metaAccountIds(
+  env: Env,
+  store: FinanceStoreCode = "mireva-cr",
+): string[] {
+  return metaConfigAccountIds(metaConfigFor(store, env));
 }
 
 interface MetaExtras {
+  /** Store whose accounts these are (Costa Rica by default). */
+  store?: FinanceStoreCode;
   /** Landing/WhatsApp split of each campaign's daily spend for these CR dates (ad set destinations). */
   channels?: { from: string; to: string };
   /** Account-level spend per hour for these CR dates (only CR time-zone accounts). */
@@ -307,6 +329,7 @@ async function metaHourly(
  * Ad set → destination type. A destination does not change after creation,
  * so it is kept for a day per server instance; only unseen ad sets are asked.
  */
+// Keyed by store and ad set: Costa Rica and Honduras never share entries.
 const destinationCache = new Map<string, { at: number; destination: string }>();
 const DESTINATION_TTL_MS = 24 * 3_600_000;
 const DESTINATION_MAX = 5_000;
@@ -340,12 +363,13 @@ async function adsetDestinations(
   headers: Record<string, string>,
   signal: AbortSignal,
   fetcher: typeof fetch,
+  store: FinanceStoreCode,
 ): Promise<Map<string, string>> {
   const now = Date.now();
   const out = new Map<string, string>();
   const missing = new Map<string, string>();
   for (const { adset, campaign } of wanted) {
-    const hit = destinationCache.get(adset);
+    const hit = destinationCache.get(`${store}:${adset}`);
     if (hit && now - hit.at < DESTINATION_TTL_MS) out.set(adset, hit.destination);
     else missing.set(adset, campaign);
   }
@@ -389,7 +413,7 @@ async function adsetDestinations(
       // Meta omits the field on some website ad sets: same as UNDEFINED.
       const destination = str(row.destination_type) || "UNDEFINED";
       out.set(id, destination);
-      destinationCache.set(id, { at: now, destination });
+      destinationCache.set(`${store}:${id}`, { at: now, destination });
     }
   }
   while (destinationCache.size > DESTINATION_MAX)
@@ -407,6 +431,7 @@ async function metaChannelSpend(
   headers: Record<string, string>,
   signal: AbortSignal,
   fetcher: typeof fetch,
+  store: FinanceStoreCode = "mireva-cr",
 ): Promise<Map<string, Array<{ date: string; whatsapp: number; landing: number }>>> {
   const read = (fields: string) =>
     metaPages(
@@ -458,6 +483,7 @@ async function metaChannelSpend(
     headers,
     signal,
     fetcher,
+    store,
   );
   // Without a destination, a CONVERSATIONS goal is a WhatsApp ad set (the
   // messaging campaigns of the team are all WhatsApp); any other goal stays
@@ -503,7 +529,9 @@ async function enrichMetaAccount(
   extra: MetaExtras & { details: boolean; since: string; version: string },
 ) {
   const needCatalog = extra.details || extra.lifetime || extra.activities;
-  const hourlyAllowed = result.timezone === "America/Costa_Rica";
+  const store = extra.store ?? "mireva-cr";
+  // Only accounts on the orders' clock (Costa Rica's, or the store's own).
+  const hourlyAllowed = marketingClockZones(store).has(result.timezone);
   const [catalog, lifetime, hourly, channels] = await Promise.all([
     needCatalog
       ? readMetaCampaignCatalog(
@@ -529,6 +557,7 @@ async function enrichMetaAccount(
           headers,
           signal,
           fetcher,
+          store,
         ).catch((err) => {
           // No token or URL in the message: our own errors or fetch's.
           console.warn(
@@ -588,8 +617,7 @@ async function enrichMetaAccount(
   }
   if (extra.hourly) {
     if (!hourlyAllowed)
-      result.hourlyMessage =
-        "Sin gasto por hora: la cuenta no usa la hora de Costa Rica.";
+      result.hourlyMessage = `Sin gasto por hora: la cuenta no usa la hora de ${marketingStoreInfo(store).country}.`;
     else if (!hourly)
       result.hourlyMessage = "No se pudo consultar el gasto por hora.";
     else result.hourly = hourly;
@@ -633,7 +661,7 @@ const timesOnly = (budget: MetaCampaignBudget) => ({
 async function metaAds(
   id: string,
   period: MarketingPeriod,
-  env: Env,
+  config: MetaStoreConfig,
   fetcher: typeof fetch,
   signal: AbortSignal,
   details: boolean,
@@ -641,11 +669,11 @@ async function metaAds(
   daily = details,
   extra: MetaExtras = {},
 ): Promise<MarketingAdsData> {
-  const version = env.META_CR_GRAPH_VERSION || "";
+  const version = config.version;
   if (!/^\d+$/.test(id) || !/^v\d+\.\d+$/.test(version))
     throw new Error("Invalid Meta configuration");
   const base = `https://graph.facebook.com/${version}/act_${id}`;
-  const headers = { Authorization: `Bearer ${env.META_CR_ACCESS_TOKEN}` };
+  const headers = metaAuthHeaders(config);
   const account = await json(
     fetcher,
     `${base}?fields=id,name,currency,timezone_name`,
@@ -758,6 +786,7 @@ async function metaAds(
       )
         await enrichMetaAccount(result, base, headers, signal, fetcher, {
           ...extra,
+          store: config.store,
           details,
           since: period.from,
           version,
@@ -956,6 +985,12 @@ export async function getMarketingSources(
   env: Env = process.env,
   fetcher: typeof fetch = fetch,
   options: {
+    /**
+     * Store whose sources are read (Costa Rica by default). Each store reads
+     * only its own Meta variables (lib/marketing-meta-config.ts); TikTok and
+     * ShipHero only exist for Costa Rica (lib/marketing-stores.ts).
+     */
+    store?: FinanceStoreCode;
     details?: boolean;
     overview?: boolean;
     /** Campaign daily metrics without the budget catalogue. */
@@ -991,21 +1026,27 @@ export async function getMarketingSources(
   const overview = options.overview
     ? { from: shiftDate(trailTo, -6), to: trailTo }
     : undefined;
+  const store = options.store ?? "mireva-cr";
+  const info = marketingStoreInfo(store);
+  const metaConfig = metaConfigFor(store, env);
+  // TikTok and ShipHero variables (TIKTOK_CR_*, SHIPHERO_CR_*) belong to
+  // Costa Rica: another store never reads them.
+  const tiktokApi =
+    info.tiktok && has("TIKTOK_CR_ADVERTISER_ID", "TIKTOK_CR_ACCESS_TOKEN");
   const [meta, tiktok, shiphero] = await Promise.all([
     source(
-      has("META_CR_GRAPH_VERSION", "META_CR_ACCESS_TOKEN") &&
-        Boolean(env.META_CR_AD_ACCOUNT_IDS || env.META_CR_AD_ACCOUNT_ID),
+      metaConfig.configured,
       async (signal) => ({
         // One account that cannot be read (disabled, restricted, lost access)
         // must not blank the others; it is listed in `unavailable` so the
         // spend is shown as partial and never as complete.
         ...(await metaAccountsSettled(
-          metaAccountIds(env),
+          metaConfigAccountIds(metaConfig),
           (id) =>
             metaAds(
               id,
               period,
-              env,
+              metaConfig,
               fetcher,
               signal,
               details,
@@ -1021,20 +1062,31 @@ export async function getMarketingSources(
                 lifetime: options.actions === true,
                 activities: options.actions === true,
                 now: options.now,
+                store,
               },
             ),
         )),
       }),
+      store === "mireva-cr"
+        ? undefined
+        : metaPendingMessage(metaConfig),
     ),
-    has("TIKTOK_CR_ADVERTISER_ID", "TIKTOK_CR_ACCESS_TOKEN") ||
-    !options.tiktokDesdeMake
-      ? source(
-          has("TIKTOK_CR_ADVERTISER_ID", "TIKTOK_CR_ACCESS_TOKEN"),
-          async (signal) => ({
+    !info.tiktok
+      ? // The store has no TikTok at all (Honduras): no spend to wait for, so
+        // the totals are Meta's alone and complete. "ready" with no accounts;
+        // the Conexiones panel shows it as "No conectado".
+        Promise.resolve<MarketingSource<MarketingAdsAccounts>>({
+          status: "ready",
+          checkedAt: new Date().toISOString(),
+          message: `TikTok Ads no está conectado para ${info.country}.`,
+          data: { accounts: [] },
+          notConnected: true,
+        })
+      : tiktokApi || !options.tiktokDesdeMake
+        ? source(tiktokApi, async (signal) => ({
             accounts: [await tiktokAds(period, env, fetcher, signal)],
-          }),
-        )
-      : tiktokDesdeMake(options.tiktokDesdeMake, period),
+          }))
+        : tiktokDesdeMake(options.tiktokDesdeMake, period),
     (async () => {
       // A ready snapshot of the Kairo connection goes first. Without one (no
       // connection, disconnected, pending or waiting for a choice), the static
@@ -1043,11 +1095,13 @@ export async function getMarketingSources(
         ? await options.shipheroGuardado().catch(() => null)
         : null;
       if (saved?.status === "ready") return saved;
-      const staticEnv = has(
-        "SHIPHERO_CR_ACCESS_TOKEN",
-        "SHIPHERO_CR_ACCOUNT_ID",
-        "SHIPHERO_CR_WAREHOUSE_ID",
-      );
+      const staticEnv =
+        info.shiphero &&
+        has(
+          "SHIPHERO_CR_ACCESS_TOKEN",
+          "SHIPHERO_CR_ACCOUNT_ID",
+          "SHIPHERO_CR_WAREHOUSE_ID",
+        );
       if (saved && !staticEnv) return saved;
       return source(staticEnv, (signal) => shipheroStock(env, fetcher, signal));
     })(),

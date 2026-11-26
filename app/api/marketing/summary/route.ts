@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { toFriendlyErrorMessage } from "@/lib/api-errors";
-import { MARKETING_STORE } from "@/lib/marketing";
 import { periodFromParams } from "@/lib/marketing-dates";
 import { getMarketingData, getMarketingInputs } from "@/lib/marketing-data";
 import { readCharlieConfig } from "@/lib/marketing-charlie-settings";
 import { buildCharlieRevenue } from "@/lib/marketing-charlie-revenue";
 import { listMarketingOrigins } from "@/lib/marketing-attribution-db";
 import { buildMarketingAttribution } from "@/lib/marketing-attribution";
-import { getRequiredStoreFromSearchParams } from "@/lib/stores";
+import { marketingStoreFromParams } from "@/lib/marketing-access";
 import { isOrdersDatasetUnavailableError } from "../../finance/_shared/orders-dataset";
 
 export const runtime = "nodejs";
@@ -53,12 +52,12 @@ async function optionalOrigins(storeId: number, from: string, to: string) {
 
 export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams;
-  const store = getRequiredStoreFromSearchParams(params);
-  if (!store || store.code !== MARKETING_STORE) {
+  const store = marketingStoreFromParams(params);
+  if (!store) {
     return NextResponse.json(
       {
         error:
-          "Marketing está disponible para Mireva Costa Rica: store=mireva-cr.",
+          "Marketing está disponible para Mireva Costa Rica y Mireva Honduras: store=mireva-cr o store=mireva-hn.",
       },
       { status: 400 },
     );
@@ -116,6 +115,8 @@ export async function GET(req: NextRequest) {
               input.phones,
               period,
               config.hero_product_keys,
+              undefined,
+              store.code,
             )
           : null,
         ...(config

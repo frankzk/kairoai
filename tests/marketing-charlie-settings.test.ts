@@ -21,7 +21,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/identidad", () => ({ identidadActual: () => mocks.actor }));
 vi.mock("@/lib/stores", () => ({
   getRequiredStoreFromSearchParams: (params: URLSearchParams) =>
-    params.get("store") === "mireva-cr" ? { id: 1, code: "mireva-cr" } : null,
+    params.get("store") === "mireva-cr"
+      ? { id: 1, code: "mireva-cr" }
+      : params.get("store") === "mireva-hn"
+        ? { id: 2, code: "mireva-hn" }
+        : null,
 }));
 vi.mock("@/lib/marketing-charlie-settings", () => ({
   readCharlieSettings: mocks.settings,
@@ -311,5 +315,80 @@ describe("Exchange rates of the account status (M11)", () => {
         null,
       ),
     ).toMatchObject({ source: "manual" });
+  });
+
+  describe("Mireva Honduras", () => {
+    beforeEach(() => {
+      mocks.actor.tiendas = ["mireva-hn"];
+      vi.stubEnv("META_HN_AD_ACCOUNT_IDS", "998569598625763");
+      vi.stubEnv("META_HN_ACCESS_TOKEN", "private-hn-fixture");
+      vi.stubEnv("META_HN_GRAPH_VERSION", "v26.0");
+    });
+    it("reads Honduras' own settings and needs the store among the person's tiendas", async () => {
+      expect((await GET(request(undefined, "mireva-hn"))).status).toBe(200);
+      expect(mocks.settings).toHaveBeenCalledWith(2, "mireva-hn");
+      expect((await GET(request(undefined, "mireva-cr"))).status).toBe(403);
+      mocks.actor.tiendas = ["mireva-cr"];
+      expect((await GET(request(undefined, "mireva-hn"))).status).toBe(403);
+    });
+    it("saves the team's HNL rate in Honduras' own row; no CRC or PEN there", async () => {
+      expect(
+        (
+          await PATCH(
+            request(
+              { kind: "hnl", hnl_per_usd: 24.9, rate_date: "2026-11-04" },
+              "mireva-hn",
+            ),
+          )
+        ).status,
+      ).toBe(200);
+      expect(mocks.writes[0]).toMatchObject({
+        table: "marketing_charlie_config",
+        data: { store_id: 2, crc_per_usd: 24.9, rate_date: "2026-11-04" },
+      });
+      mocks.writes.length = 0;
+      expect(
+        (
+          await PATCH(
+            request({ kind: "hnl", hnl_per_usd: null, rate_date: null }, "mireva-hn"),
+          )
+        ).status,
+      ).toBe(200);
+      expect(mocks.writes[0].data).toMatchObject({ crc_per_usd: null, rate_date: null });
+      mocks.writes.length = 0;
+      for (const body of [
+        { kind: "crc", crc_per_usd: 505, rate_date: "2026-11-04" },
+        { kind: "pen", pen_per_usd: 3.5, pen_rate_date: "2026-11-04" },
+        { kind: "hnl", hnl_per_usd: 5000, rate_date: "2026-11-04" },
+      ])
+        expect((await PATCH(request(body, "mireva-hn"))).status).toBe(400);
+      mocks.actor.tiendas = ["mireva-cr"];
+      expect(
+        (
+          await PATCH(
+            request({ kind: "hnl", hnl_per_usd: 25, rate_date: "2026-11-04" }),
+          )
+        ).status,
+      ).toBe(400);
+      expect(mocks.writes).toEqual([]);
+    });
+    it("checks an ad set with Honduras' token and accounts", async () => {
+      const fetcher = vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ id: "456", account_id: "998569598625763" })),
+        );
+      vi.stubGlobal("fetch", fetcher);
+      expect(
+        (await PATCH(request({ ...role, account_id: "998569598625763" }, "mireva-hn"))).status,
+      ).toBe(200);
+      expect(fetcher.mock.calls[0][1]).toMatchObject({
+        headers: { Authorization: "Bearer private-hn-fixture" },
+      });
+      expect(String(fetcher.mock.calls[0][0])).not.toContain("private-hn-fixture");
+      expect(mocks.writes[0].data).toMatchObject({ store_id: 2 });
+      // A Costa Rica account is not Honduras'.
+      expect((await PATCH(request(role, "mireva-hn"))).status).toBe(400);
+    });
   });
 });

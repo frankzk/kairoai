@@ -10,6 +10,7 @@ import { campaignKey } from "./marketing-settings-types";
 import { buildKeywordIndex } from "./marketing-campaign-keywords";
 import { asUsd } from "./marketing-usd-rate";
 import { marketingDate, shiftDate } from "./marketing-dates";
+import { summaryClockZones } from "./marketing-stores";
 
 /** No currency is summed before conversion. Missing sources/rates stay unknown. */
 export function reportChannel(
@@ -18,6 +19,9 @@ export function reportChannel(
   fx: UsdRate | null,
 ) {
   const source = sources?.[platform];
+  // A source the store does not have (TikTok in Honduras) adds nothing.
+  if (source?.status === "ready" && source.notConnected)
+    return { spend: 0, purchases: 0, conversions: 0 };
   const accounts = source?.status === "ready" ? source.data?.accounts : null;
   if (!accounts?.length)
     return { spend: null, purchases: null, conversions: null };
@@ -128,7 +132,9 @@ export function productComparison(
       );
       const base = {
         partial: partial || late,
-        approximate: related.some((c) => c.timezone !== summary.timezone),
+        approximate: related.some(
+          (c) => !summaryClockZones(summary).has(c.timezone),
+        ),
         campaignCount: related.length,
         unmapped,
       };

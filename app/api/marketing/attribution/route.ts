@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRequiredStoreFromSearchParams } from "@/lib/stores";
-import { MARKETING_STORE } from "@/lib/marketing";
+import { marketingStoreFromParams } from "@/lib/marketing-access";
 import { periodFromParams } from "@/lib/marketing-dates";
 import { getOrdersDataset } from "@/app/api/finance/_shared/orders-dataset";
 import { buildFinanceControlCenter } from "@/lib/finance-orders";
@@ -10,8 +9,8 @@ import { buildMarketingAttribution } from "@/lib/marketing-attribution";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 export async function GET(req: NextRequest) {
-  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
-  if (!store || store.code !== MARKETING_STORE)
+  const store = marketingStoreFromParams(req.nextUrl.searchParams);
+  if (!store)
     return NextResponse.json(
       { error: "Tienda de Marketing inválida." },
       { status: 400 },

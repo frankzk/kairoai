@@ -144,4 +144,9 @@ export const asUsd = (
         ? amount / fx.rate
         : currency === "PEN" && fx?.pen?.rate && fx.pen.rate > 0
           ? amount / fx.pen.rate
-          : null;
+          : // HNL (Honduras): only with the team's manual rate; never as USD.
+            currency != null &&
+              fx?.local?.currency === currency &&
+              fx.local.rate > 0
+            ? amount / fx.local.rate
+            : null;

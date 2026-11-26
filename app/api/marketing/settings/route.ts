@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anunciantesTiktok } from "@/lib/tiktok-diario";
 import { getDB } from "@/lib/db";
-import { identidadActual } from "@/lib/identidad";
-import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import {
   buildGroupMetrics,
   selectionTarget,
@@ -10,9 +7,13 @@ import {
 import { marketingPeriod, marketingDate } from "@/lib/marketing-dates";
 import { getMarketingInputs, getMarketingData } from "@/lib/marketing-data";
 import { presetPeriod } from "@/lib/marketing-dates";
-import { metaAccountIds } from "@/lib/marketing-sources";
 import { campaignAlias } from "@/lib/marketing-product-families";
-import { marketingAccountIds } from "@/lib/marketing-access";
+import {
+  MARKETING_NO_ACCESS,
+  marketingAccess,
+  marketingAccountIds,
+} from "@/lib/marketing-access";
+import { marketingStoreInfo } from "@/lib/marketing-stores";
 import { isMissingRelation } from "@/lib/marketing-inventory-db";
 import { normalKeyword } from "@/lib/marketing-settings-types";
 import { keywordProblem } from "@/lib/marketing-campaign-keywords";
@@ -23,22 +24,15 @@ export const maxDuration = 60;
 const headers = { "Cache-Control": "private, no-store" };
 const reply = (body: unknown, status = 200) =>
   NextResponse.json(body, { status, headers });
-function access(req: NextRequest) {
-  const actor = identidadActual();
-  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
-  return actor?.permisos.includes("marketing") &&
-    actor.tiendas.includes("mireva-cr") &&
-    store?.code === "mireva-cr"
-    ? { actor, store }
-    : null;
-}
+// Marketing permission and the requested store (Costa Rica or Honduras).
+const access = marketingAccess;
+/** "Costa Rica" / "Honduras", for the messages. */
+const country = (store: { code: string }) =>
+  marketingStoreInfo(store.code).country;
 export async function GET(req: NextRequest) {
   const allowed = access(req);
   if (!allowed)
-    return reply(
-      { error: "Se requiere Marketing y acceso a Mireva Costa Rica." },
-      403,
-    );
+    return reply({ error: MARKETING_NO_ACCESS }, 403);
   try {
     const readAll = async (table: string, fields: string) => {
       const rows: Record<string, unknown>[] = [];
@@ -151,16 +145,9 @@ export async function PATCH(req: NextRequest) {
       const platform = body.platform,
         account = body.account_id,
         campaign = body.campaign_id;
-      // TikTok: la cuenta configurada o las que ya mandaron gasto por Make.
-      const ids =
-        platform === "meta"
-          ? metaAccountIds(process.env)
-          : platform === "tiktok"
-            ? [
-                process.env.TIKTOK_CR_ADVERTISER_ID,
-                ...(await anunciantesTiktok(store.id).catch(() => [])),
-              ]
-            : [];
+      // Meta: las cuentas de la tienda. TikTok (solo Costa Rica): la cuenta
+      // configurada o las que ya mandaron gasto por Make.
+      const ids = await marketingAccountIds(platform, store.id);
       if (
         typeof account !== "string" ||
         !ids.includes(account) ||
@@ -168,7 +155,7 @@ export async function PATCH(req: NextRequest) {
         !/^\d{1,40}$/.test(campaign)
       )
         return reply(
-          { error: "Cuenta o campaña no autorizada para Costa Rica." },
+          { error: `Cuenta o campaña no autorizada para ${country(store)}.` },
           400,
         );
       if (body.product_key === null) {
@@ -262,7 +249,7 @@ export async function PATCH(req: NextRequest) {
         return reply(
           {
             error:
-              "El producto agrupado no está disponible en el catálogo de Costa Rica.",
+              `El producto agrupado no está disponible en el catálogo de ${country(store)}.`,
           },
           400,
         );
@@ -317,7 +304,7 @@ export async function PATCH(req: NextRequest) {
     )
       return reply(
         {
-          error: "El producto no está disponible en el catálogo de Costa Rica.",
+          error: `El producto no está disponible en el catálogo de ${country(store)}.`,
         },
         400,
       );
@@ -444,7 +431,7 @@ async function saveKeyword(
       return reply(
         {
           error:
-            "El producto agrupado no está disponible en el catálogo de Costa Rica.",
+            `El producto agrupado no está disponible en el catálogo de ${country(store)}.`,
         },
         400,
       );
@@ -483,7 +470,10 @@ async function saveAccountLabel(
 ) {
   const ids = await marketingAccountIds(body.platform, store.id);
   if (typeof body.account_id !== "string" || !ids.includes(body.account_id))
-    return reply({ error: "Cuenta no autorizada para Costa Rica." }, 400);
+    return reply(
+      { error: `Cuenta no autorizada para ${country(store)}.` },
+      400,
+    );
   const label = typeof body.label === "string" ? body.label.trim() : null;
   if (body.label !== null && (!label || label.length > 20))
     return reply(

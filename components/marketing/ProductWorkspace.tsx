@@ -5,6 +5,8 @@ import type { MarketingProductMetric } from "@/lib/marketing-intelligence";
 import { count, money } from "./format";
 import s from "./dashboard.module.css";
 import { useUsdMoney } from "./UsdContext";
+import { marketingStoreInfo } from "@/lib/marketing-stores";
+import { useMarketingStore } from "./MarketingStoreContext";
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
 const planBody = (product: MarketingProductMetric) => ({
   kind: "plan",
@@ -145,6 +147,7 @@ export function ProductWorkspace({
   save: Save;
   replenishment?: boolean;
 }) {
+  const marketingStore = marketingStoreInfo(useMarketingStore());
   const money = useUsdMoney();
   const [query, setQuery] = useState("");
   const [priorityOnly, setPriorityOnly] = useState(false);
@@ -450,7 +453,7 @@ export function ProductWorkspace({
       <p className={`${s.muted} mt-4`}>
         {replenishment
           ? "Demanda = unidades pedidas en los últimos 7 días completos / 7, excluye anulados. Se repone al caer bajo el mayor de 100 unidades o la demanda del plazo del proveedor. La sugerencia cubre plazo y cobertura configurados, resta stock y unidades en camino. Es una estimación, sin costos, mínimos de compra ni devoluciones futuras."
-          : "Hoy y ayer usan la hora de Costa Rica; los 7 días completos terminan ayer. La inversión incluye las campañas asignadas y consultables. Un pedido con varios productos cuenta una vez para cada producto; no sumes estas filas como pedidos únicos. El stock es actual."}
+          : `Hoy y ayer usan la hora de ${marketingStore.country}; los 7 días completos terminan ayer. La inversión incluye las campañas asignadas y consultables. Un pedido con varios productos cuenta una vez para cada producto; no sumes estas filas como pedidos únicos. El stock es actual.`}
       </p>
     </section>
   );

@@ -38,9 +38,12 @@ describe("tiendasDe", () => {
 
 describe("tiendaActual", () => {
   const tiendas = tiendasDe(admin);
-  it("follows the Kenku route, Marketing (Costa Rica) and otherwise the chosen store", () => {
+  it("follows the Kenku route, Inventario (Costa Rica) and otherwise the chosen store", () => {
     expect(tiendaActual(tiendas, "/admin/finance/italia/costos", "mireva-hn")?.code).toBe("kenku-it");
-    expect(tiendaActual(tiendas, "/admin/marketing", "mireva-hn")?.code).toBe("mireva-cr");
+    // Marketing has both Mireva stores: it shows the chosen one.
+    expect(tiendaActual(tiendas, "/admin/marketing", "mireva-hn")?.code).toBe("mireva-hn");
+    expect(tiendaActual(tiendas, "/admin/marketing", "mireva-cr")?.code).toBe("mireva-cr");
+    expect(tiendaActual(tiendas, "/admin/inventario", "mireva-hn")?.code).toBe("mireva-cr");
     expect(tiendaActual(tiendas, "/admin/finance", "mireva-hn")?.code).toBe("mireva-hn");
     expect(tiendaActual(tiendas, "/admin/finance", "nada")?.code).toBe("mireva-cr");
   });
@@ -56,9 +59,9 @@ describe("menuDe", () => {
     ]);
   });
 
-  it("hides Marketing for Honduras", () => {
+  it("shows Marketing for Honduras too", () => {
     const tienda = tiendaActual(tiendasDe(admin), "/admin/leads", "mireva-hn");
-    expect(labels(menuDe(admin, tienda))[1]).toEqual(["Crecimiento", ["Upsells"]]);
+    expect(labels(menuDe(admin, tienda))[1]).toEqual(["Crecimiento", ["Marketing", "Upsells"]]);
   });
 
   it("shows a Kenku store's own orders screen instead of the Mireva sections", () => {
@@ -101,9 +104,17 @@ describe("menuDe", () => {
     expect(soloHn.flatMap((g) => g.items.map((i) => i.label))).toEqual(["Leads"]);
   });
 
-  it("hides Marketing without the Mireva Costa Rica store", () => {
-    const grupos = menuDe({ id: 3, permisos: ["marketing", "pedidos"], tiendas: ["mireva-hn"] });
-    expect(grupos.flatMap((g) => g.items.map((i) => i.label))).toEqual(["Gestión de pedidos"]);
+  it("shows Marketing to a Honduras-only person with the permission, never without it", () => {
+    const hn = { id: 3, permisos: ["marketing", "pedidos"] as const, tiendas: ["mireva-hn"] };
+    const grupos = menuDe({ ...hn, permisos: [...hn.permisos] });
+    expect(grupos.flatMap((g) => g.items.map((i) => i.label))).toEqual(["Gestión de pedidos", "Marketing"]);
+    const sinPermiso = menuDe({ id: 4, permisos: ["pedidos"], tiendas: ["mireva-hn"] });
+    expect(sinPermiso.flatMap((g) => g.items.map((i) => i.label))).toEqual(["Gestión de pedidos"]);
+  });
+
+  it("keeps Marketing hidden without any Mireva store that has it", () => {
+    const grupos = menuDe({ id: 5, permisos: ["marketing", "pedidos"], tiendas: ["kenku-mx"] });
+    expect(grupos.flatMap((g) => g.items.map((i) => i.label))).not.toContain("Marketing");
   });
 });
 

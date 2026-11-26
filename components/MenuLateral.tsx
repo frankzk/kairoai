@@ -26,7 +26,7 @@ import {
   menuDe,
   tiendaActual,
   tiendasDe,
-  TIENDA_MARKETING,
+  pantallaDeTienda,
   type IconoNav,
   type TiendaNav,
 } from "@/lib/navegacion";
@@ -113,8 +113,8 @@ export default function MenuLateral({ children }: { children: ReactNode }) {
 
   // Una sola tienda para toda la app. Kenku abre su pantalla; Mireva cambia
   // la tienda y la pantalla abierta se recarga sola (useSelectedStore). Si la
-  // pantalla no existe para la tienda nueva (Kenku, Marketing fuera de Costa
-  // Rica), va a la primera sección de esa tienda.
+  // pantalla no existe para la tienda nueva (Kenku, Marketing de una tienda
+  // sin Marketing), va a la primera sección de esa tienda.
   function cambiarTienda(t: TiendaNav) {
     if (t.ruta) {
       router.push(t.ruta);
@@ -123,7 +123,8 @@ export default function MenuLateral({ children }: { children: ReactNode }) {
     elegirTienda(t.code as FinanceStoreCode);
     const enKenku = tienda?.marca === "Kenku";
     const enMarketing =
-      pathname.startsWith("/admin/marketing") && t.code !== TIENDA_MARKETING;
+      pathname.startsWith("/admin/marketing") &&
+      !pantallaDeTienda("/admin/marketing", t.code);
     if ((enKenku || enMarketing) && yo) {
       const destino = menuDe(yo, t)[0]?.items[0]?.ruta ?? inicioDe(yo.permisos);
       router.push(destino);
