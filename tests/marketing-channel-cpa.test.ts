@@ -917,3 +917,32 @@ describe("búsqueda por producto", () => {
     expect(sumCpaOrigins([])).toBeNull();
   });
 });
+
+describe("MANUAL sin creador creados desde Kairo", () => {
+  // 19–26/11/2026: los 10 "MANUAL-…" que iComfly guardó sin creador tenían
+  // recibo de Kairo (lead_icomfly_receipts): eran del botón de Leads.
+  const manual = {
+    shopify_display_number: null,
+    order_number: "MANUAL-1795623308573-IWHR2",
+    labels: [],
+    creator: null,
+  };
+  it("con recibo de Kairo cuentan como «Desde Leads en Kairo»", () => {
+    expect(rowSaleOrigin(row("a", { ...manual, kairoLead: true }))).toBe(
+      "conector_ia",
+    );
+  });
+  it("sin recibo siguen como «Manual sin creador»", () => {
+    expect(rowSaleOrigin(row("a", { ...manual }))).toBe("manual");
+    expect(rowSaleOrigin(row("a", { ...manual, kairoLead: false }))).toBe(
+      "manual",
+    );
+  });
+  it("el recibo no cambia otros orígenes", () => {
+    expect(
+      rowSaleOrigin(
+        row("a", { ...manual, order_number: "#1795", kairoLead: true }),
+      ),
+    ).toBe("formulario");
+  });
+});

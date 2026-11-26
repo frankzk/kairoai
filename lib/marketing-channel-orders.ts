@@ -52,7 +52,7 @@ export function rowSaleOrigin(
   // An upsell row carries the replacement's name in its numbers (to match the
   // replacement order); the original's own numbers decide its origin.
   const upsell = row.originSource === "upsell_original";
-  return orderSubOrigin({
+  const origin = orderSubOrigin({
     shopifyNumber:
       text(upsell ? row.originalShopifyNumber : row.shopify_display_number) ||
       null,
@@ -61,6 +61,9 @@ export function rowSaleOrigin(
     creator: text(row.creator) || null,
     orderNumber: upsell ? row.originalOrderNumber : row.order_number,
   });
+  // A "MANUAL-…" without creator that Kairo created from Leads (it has a
+  // receipt): iComfly lost the "Conector IA" creator, not the origin.
+  return origin === "manual" && row.kairoLead ? "conector_ia" : origin;
 }
 
 /** Sale channel of one origin row. */
