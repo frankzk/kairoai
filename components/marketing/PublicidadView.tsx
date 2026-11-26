@@ -42,6 +42,8 @@ import {
   availablePublicidadColumns,
   filterPublicidadRows,
   applyMetricFilters,
+  applyStatusFilter,
+  publicidadStatusOptions,
   isCountFilter,
   metricFilterText,
   parseFilterNumber,
@@ -196,6 +198,17 @@ export function PublicidadView({
     left: number;
   } | null>(null);
   const closeFilter = useCallback(() => setFilterOpen(null), []);
+  // Filter by state (several at once); none checked = every row.
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [statusOpen, setStatusOpen] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
+  const closeStatus = useCallback(() => setStatusOpen(null), []);
+  function setStatusFilter(next: string[]) {
+    setStatuses(next);
+    setLimit(PAGE);
+  }
   function setFilter(
     column: PublicidadFilterColumn,
     filter: PublicidadMetricFilter | null,
@@ -388,14 +401,34 @@ export function PublicidadView({
     () =>
       sortPublicidadRows(
         applyMetricFilters(
-          filterPublicidadRows(allRows, { account, search }),
+          applyStatusFilter(
+            filterPublicidadRows(allRows, { account, search }),
+            statuses,
+          ),
           filters,
         ),
         sort.key,
         sort.direction,
       ),
-    [allRows, account, search, sort, filters],
+    [allRows, account, search, sort, filters, statuses],
   );
+  // The states of the rows in view (account and search), with their counts.
+  const statusOptions = useMemo(
+    () =>
+      publicidadStatusOptions(
+        filterPublicidadRows(allRows, { account, search }),
+      ),
+    [allRows, account, search],
+  );
+  // A checked state that no longer has rows (other level or period) still
+  // shows, with 0, so it can be unchecked.
+  const statusChoices = [
+    ...statusOptions,
+    ...statuses
+      .filter((label) => !statusOptions.some((o) => o.label === label))
+      .map((label) => ({ label, count: 0 })),
+  ];
+  const statusOn = statuses.length > 0 && shown("status");
   const activeFilters = PUBLICIDAD_FILTER_COLUMNS.flatMap((column) => {
     const filter = filters[column];
     return filter && shown(column) ? [{ column, filter }] : [];
@@ -928,9 +961,21 @@ export function PublicidadView({
             </div>
           ))}
         </dl>
-        {activeFilters.length > 0 && (
+        {(activeFilters.length > 0 || statusOn) && (
           <div className={p.crumbs} aria-label="Filtros de métricas">
             <span>Solo filas con</span>
+            {statusOn && (
+              <span className={p.crumb}>
+                <span>Estado: {statuses.join(", ")}</span>
+                <button
+                  type="button"
+                  aria-label="Quitar el filtro de estado"
+                  onClick={() => setStatusFilter([])}
+                >
+                  <X size={12} aria-hidden />
+                </button>
+              </span>
+            )}
             {activeFilters.map(({ column, filter }) => {
               const label =
                 PUBLICIDAD_COLUMNS.find((entry) => entry.id === column)
@@ -950,12 +995,13 @@ export function PublicidadView({
                 </span>
               );
             })}
-            {activeFilters.length > 1 && (
+            {activeFilters.length + (statusOn ? 1 : 0) > 1 && (
               <button
                 type="button"
                 className={p.textButton}
                 onClick={() => {
                   setFilters({});
+                  setStatuses([]);
                   setLimit(PAGE);
                 }}
               >
@@ -963,6 +1009,15 @@ export function PublicidadView({
               </button>
             )}
           </div>
+        )}
+        {statusOpen && (
+          <StatusPopover
+            place={statusOpen}
+            options={statusChoices}
+            selected={statuses}
+            onChange={setStatusFilter}
+            onClose={closeStatus}
+          />
         )}
         {filterOpen && (
           <FilterPopover
@@ -1051,6 +1106,7 @@ export function PublicidadView({
                           }
                           open={filterOpen?.column === column.id}
                           onOpen={(anchor) => {
+                            setStatusOpen(null);
                             const id = column.id as PublicidadFilterColumn;
                             setFilterOpen((current) =>
                               current?.column === id
@@ -1060,7 +1116,26 @@ export function PublicidadView({
                           }}
                         />
                       )}
-                      {!isFilterColumn(column.id) && (
+                      {column.id === "status" && (
+                        <FilterButton
+                          label="estado"
+                          text={
+                            statuses.length === 1
+                              ? statuses[0]
+                              : statuses.length
+                                ? `${statuses.length} estados`
+                                : ""
+                          }
+                          open={Boolean(statusOpen)}
+                          onOpen={(anchor) => {
+                            setFilterOpen(null);
+                            setStatusOpen((current) =>
+                              current ? null : popoverPlace(anchor),
+                            );
+                          }}
+                        />
+                      )}
+                      {!isFilterColumn(column.id) && column.id !== "status" && (
                         <span className={p.filterSpace} aria-hidden />
                       )}
                     </th>
@@ -1432,6 +1507,108 @@ function FilterPopover({
         </button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Checkboxes of the status filter: each change applies at once (no "Aplicar").
+ * Fixed to the window like the metric filter: it closes on scroll or Esc.
+ */
+function StatusPopover({
+  place,
+  options,
+  selected,
+  onChange,
+  onClose,
+}: {
+  place: { top: number; left: number };
+  options: Array<{ label: string; count: number }>;
+  selected: string[];
+  onChange: (next: string[]) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.querySelector<HTMLInputElement>("input")?.focus();
+    const close = (event: Event) => {
+      if (event instanceof KeyboardEvent) {
+        if (event.key === "Escape") onClose();
+        return;
+      }
+      const target = event.target as Element | null;
+      if (event.type === "scroll") {
+        if (!ref.current?.contains(target)) onClose();
+      } else if (
+        !ref.current?.contains(target) &&
+        !target?.closest?.("[data-filter-button]")
+      )
+        onClose();
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", onClose);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+  const toggle = (label: string) =>
+    onChange(
+      selected.includes(label)
+        ? selected.filter((item) => item !== label)
+        : // Keep the list order, not the click order.
+          options
+            .map((option) => option.label)
+            .filter((item) => item === label || selected.includes(item)),
+    );
+  return (
+    <div
+      ref={ref}
+      className={p.filterPop}
+      style={{ top: place.top, left: place.left, width: POPOVER_WIDTH }}
+      role="dialog"
+      aria-label="Filtrar por estado"
+    >
+      <p>
+        Mostrar solo las filas en <strong>estos estados</strong>
+      </p>
+      {options.length ? (
+        <fieldset className={p.checks} aria-label="Estados">
+          {options.map((option) => (
+            <label key={option.label} className={p.check}>
+              <input
+                type="checkbox"
+                checked={selected.includes(option.label)}
+                onChange={() => toggle(option.label)}
+              />
+              <span>{option.label}</span>
+              <span className={p.checkCount}>{count(option.count)}</span>
+            </label>
+          ))}
+        </fieldset>
+      ) : (
+        <p>No hay filas en este período.</p>
+      )}
+      <div className={p.filterFoot}>
+        {selected.length ? (
+          <button
+            type="button"
+            className={p.textButton}
+            onClick={() => onChange([])}
+          >
+            Ver todos
+          </button>
+        ) : (
+          <span />
+        )}
+        <button type="button" className={p.filterApply} onClick={onClose}>
+          Listo
+        </button>
+      </div>
+    </div>
   );
 }
 
