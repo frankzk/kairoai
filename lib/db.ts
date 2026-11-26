@@ -88,7 +88,7 @@ export async function supabaseFetchWithReadRetry(
         !RETRYABLE_SUPABASE_STATUSES.has(response.status) ||
         attempt === attempts - 1
       ) {
-        return response;
+        return respuestaLegible(response, input);
       }
     } catch (error) {
       lastError = error;
@@ -99,6 +99,50 @@ export async function supabaseFetchWithReadRetry(
   }
 
   throw lastError instanceof Error ? lastError : new Error("Supabase no respondio");
+}
+
+/**
+ * Cuando Supabase no responde, Cloudflare devuelve una pagina HTML (522
+ * "Connection timed out", 521, 502...). supabase-js no la puede leer como JSON
+ * y usa el HTML entero como mensaje de error: asi le aparecio a Leny en Leads
+ * el 25/11/2026 un bloque de codigo en vez de un aviso. Aqui esa pagina se
+ * cambia por un error corto que dice que no responde (la base de datos), con
+ * que tabla y que codigo. Las respuestas JSON (errores reales de la base) no se
+ * tocan.
+ */
+export function mensajeBaseCaida(status: number, recurso: string | null): string {
+  const que = recurso ? ` al leer «${recurso}»` : "";
+  const detalle =
+    status === 522 || status === 524 || status === 504
+      ? "tiempo de conexión agotado"
+      : status === 521 || status === 520
+        ? "el servidor de la base no está en línea"
+        : status === 503
+          ? "servicio no disponible"
+          : "error del servidor";
+  return `La base de datos de Kairo (Supabase) no responde${que}: error ${status}, ${detalle}. Kairo reintenta solo; si sigue, revisa el estado del proyecto en Supabase.`;
+}
+
+/** Tabla o función de la URL de PostgREST (/rest/v1/leads → "leads"). */
+export function recursoSupabase(input: RequestInfo | URL): string | null {
+  const url = input instanceof Request ? input.url : String(input);
+  const match = /\/rest\/v1\/(?:rpc\/)?([A-Za-z0-9_]+)/.exec(url);
+  return match ? match[1] : null;
+}
+
+function respuestaLegible(response: Response, input: RequestInfo | URL): Response {
+  if (response.status < 500) return response;
+  const tipo = response.headers.get("content-type") ?? "";
+  if (tipo.includes("json")) return response;
+  const message = mensajeBaseCaida(response.status, recursoSupabase(input));
+  return new Response(
+    JSON.stringify({ message, code: `HTTP_${response.status}`, details: null, hint: null }),
+    {
+      status: response.status,
+      statusText: response.statusText,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    },
+  );
 }
 
 function sleep(ms: number): Promise<void> {

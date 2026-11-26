@@ -776,6 +776,55 @@ export function filterPublicidadRows<
   );
 }
 
+/* --------------------------------------------------- filtro por estado */
+
+/** How each state reads in the status filter ("—" = Meta did not say). */
+export const statusFilterLabel = (row: { statusLabel: string }) =>
+  row.statusLabel === "—" ? "Sin estado" : row.statusLabel;
+
+/** Order of the options: delivering first, then the rest, unknown last. */
+const STATUS_FILTER_ORDER = [
+  "Activo",
+  "Pausado",
+  "En revisión",
+  "En proceso",
+  "Falta facturación",
+  "Con problemas",
+  "Rechazado",
+  "Archivado",
+  "Otro estado",
+  "Eliminado",
+  "Sin estado",
+];
+
+/** The states present in the rows, with how many rows each has. */
+export function publicidadStatusOptions(
+  rows: Array<{ statusLabel: string }>,
+): Array<{ label: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const label = statusFilterLabel(row);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const rank = (label: string) => {
+    const index = STATUS_FILTER_ORDER.indexOf(label);
+    return index < 0 ? STATUS_FILTER_ORDER.length : index;
+  };
+  return Array.from(counts, ([label, count]) => ({ label, count })).sort(
+    (a, b) => rank(a.label) - rank(b.label) || a.label.localeCompare(b.label, "es"),
+  );
+}
+
+/** Rows in any of the chosen states; none chosen = every row. */
+export function applyStatusFilter<T extends { statusLabel: string }>(
+  rows: T[],
+  selected: readonly string[],
+): T[] {
+  if (!selected.length) return rows;
+  const wanted = new Set(selected);
+  return rows.filter((row) => wanted.has(statusFilterLabel(row)));
+}
+
 export type PublicidadSortKey =
   | "name"
   | "status"

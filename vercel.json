@@ -22,22 +22,6 @@
       "schedule": "20,45 * * * *"
     },
     {
-      "path": "/api/cron/shopify-archivo",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/shopify-recent",
-      "schedule": "*/10 * * * *"
-    },
-    {
-      "path": "/api/cron/shopify-refresh",
-      "schedule": "55 */3 * * *"
-    },
-    {
-      "path": "/api/cron/shopify-recheck-stale",
-      "schedule": "22 2,14 * * *"
-    },
-    {
       "path": "/api/cron/finance-index",
       "schedule": "15 * * * *"
     },

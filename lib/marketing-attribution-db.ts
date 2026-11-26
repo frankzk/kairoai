@@ -46,6 +46,22 @@ const savedColumns =
 const archiveColumns =
   "shopify_id,name:payload->>name,note_attributes:payload->note_attributes";
 
+/**
+ * Shopify se cerró el 28/10/2026: el último pedido guardado (shopify_orders y
+ * el archivo) es del 03/11/2026 hora CR (04/11 02:34 UTC). Después de esta
+ * fecha esas tablas no tienen pedidos, así que no se consultan.
+ *
+ * POR QUÉ IMPORTA (25/11/2026): la base de Kairo (tamaño Small) dejó de
+ * responder 2 h 20 min. Lo que más la cargaba era buscar el origen de cada
+ * pedido abierto en el archivo de Shopify por `payload->>name`: sin índice,
+ * recorre los 26 mil pedidos (721 MB de JSON) y tarda ~12 s, para no
+ * encontrar nada, porque los pedidos IC- solo existen en iComfly.
+ */
+export const SHOPIFY_SIN_PEDIDOS_DESDE = "2026-11-05";
+
+/** Nombres que Kairo les pone a los pedidos de iComfly: nunca están en Shopify. */
+const pedidoSoloIcomfly = (name: string) => /^#?IC-/i.test(name.trim());
+
 /** Read only completed, explicit replacement links. No joins by customer/phone/product. */
 async function replacementOrigins(
   storeId: number,
@@ -115,6 +131,8 @@ export async function listMarketingOrigins(
     .toISOString()
     .slice(0, 10);
   const upper = new Date(Date.parse(to) + 86400000).toISOString().slice(0, 10);
+  // Un período posterior al cierre de Shopify no tiene nada en sus tablas.
+  const conShopify = lower < SHOPIFY_SIN_PEDIDOS_DESDE;
   const [native, saved, archive, inherited, catalog] = await Promise.all([
     pages((start) =>
       getDB()
@@ -126,27 +144,31 @@ export async function listMarketingOrigins(
         .order("icomfly_order_id")
         .range(start, start + 999),
     ),
-    pages((start) =>
-      getDB()
-        .from("shopify_orders")
-        .select(savedColumns)
-        .eq("store_id", storeId)
-        .gte("shopify_created_at", from)
-        .lt("shopify_created_at", to)
-        .order("shopify_order_id")
-        .range(start, start + 999),
-    ),
-    pages((start) =>
-      getDB()
-        .from("shopify_archivo")
-        .select(archiveColumns)
-        .eq("store_id", storeId)
-        .eq("recurso", "order")
-        .gte("payload->>created_at", lower)
-        .lt("payload->>created_at", upper)
-        .order("shopify_id")
-        .range(start, start + 999),
-    ),
+    conShopify
+      ? pages((start) =>
+          getDB()
+            .from("shopify_orders")
+            .select(savedColumns)
+            .eq("store_id", storeId)
+            .gte("shopify_created_at", from)
+            .lt("shopify_created_at", to)
+            .order("shopify_order_id")
+            .range(start, start + 999),
+        )
+      : Promise.resolve([] as Raw[]),
+    conShopify
+      ? pages((start) =>
+          getDB()
+            .from("shopify_archivo")
+            .select(archiveColumns)
+            .eq("store_id", storeId)
+            .eq("recurso", "order")
+            .gte("payload->>created_at", lower)
+            .lt("payload->>created_at", upper)
+            .order("shopify_id")
+            .range(start, start + 999),
+        )
+      : Promise.resolve([] as Raw[]),
     replacementOrigins(storeId),
     readOriginCatalog(storeId),
   ]);
@@ -172,6 +194,9 @@ export async function orderMarketingOrigin(storeId: number, orderName: string) {
   if (!filter) return null;
   const name = orderName.trim().replace(/^#/, "");
   const names = [name, "#" + name];
+  // Un pedido IC- es de iComfly: ni shopify_orders ni el archivo lo tienen.
+  const none = Promise.resolve({ data: [] as Raw[], error: null });
+  const soloIcomfly = pedidoSoloIcomfly(orderName);
   const [native, saved, archive, inherited, catalog] = await Promise.all([
     getDB()
       .from("icomfly_order_payloads")
@@ -179,19 +204,23 @@ export async function orderMarketingOrigin(storeId: number, orderName: string) {
       .eq("store_id", storeId)
       .or(filter)
       .limit(2),
-    getDB()
-      .from("shopify_orders")
-      .select(savedColumns)
-      .eq("store_id", storeId)
-      .in("name", names)
-      .limit(2),
-    getDB()
-      .from("shopify_archivo")
-      .select(archiveColumns)
-      .eq("store_id", storeId)
-      .eq("recurso", "order")
-      .in("payload->>name", names)
-      .limit(2),
+    soloIcomfly
+      ? none
+      : getDB()
+          .from("shopify_orders")
+          .select(savedColumns)
+          .eq("store_id", storeId)
+          .in("name", names)
+          .limit(2),
+    soloIcomfly
+      ? none
+      : getDB()
+          .from("shopify_archivo")
+          .select(archiveColumns)
+          .eq("store_id", storeId)
+          .eq("recurso", "order")
+          .in("payload->>name", names)
+          .limit(2),
     replacementOrigins(storeId),
     readOriginCatalog(storeId),
   ]);

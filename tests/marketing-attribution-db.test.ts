@@ -188,3 +188,32 @@ describe("recuperación privada de UTM", () => {
     ]);
   });
 });
+
+describe("Shopify cerrado: no se consulta lo que no puede tener el pedido", () => {
+  it("un pedido IC- se busca solo en iComfly (el archivo de Shopify tardaba ~12 s)", async () => {
+    setup({
+      icomfly_order_payloads: [{ data: [{ ad_origin: origin }], error: null }],
+    });
+    await orderMarketingOrigin(1, "IC-W2077");
+    await orderMarketingOrigin(1, "#IC-100104");
+    const tables = mocks.from.mock.calls.map(([t]) => t);
+    expect(tables).toContain("icomfly_order_payloads");
+    expect(tables).not.toContain("shopify_archivo");
+    expect(tables).not.toContain("shopify_orders");
+  });
+  it("un período posterior al cierre no lee shopify_orders ni el archivo", async () => {
+    setup();
+    await listMarketingOrigins(1, "2026-11-20T06:00:00Z", "2026-11-25T06:00:00Z");
+    const tables = mocks.from.mock.calls.map(([t]) => t);
+    expect(tables).toContain("icomfly_order_payloads");
+    expect(tables).not.toContain("shopify_archivo");
+    expect(tables).not.toContain("shopify_orders");
+  });
+  it("un período que toca la época de Shopify sí los lee", async () => {
+    setup();
+    await listMarketingOrigins(1, "2026-11-03T06:00:00Z", "2026-11-10T06:00:00Z");
+    const tables = mocks.from.mock.calls.map(([t]) => t);
+    expect(tables).toContain("shopify_archivo");
+    expect(tables).toContain("shopify_orders");
+  });
+});
