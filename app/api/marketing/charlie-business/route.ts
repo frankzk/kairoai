@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRequiredStoreFromSearchParams } from "@/lib/stores";
+import { marketingStoreFromParams } from "@/lib/marketing-access";
 import { periodFromParams } from "@/lib/marketing-dates";
 import { getMarketingInputs } from "@/lib/marketing-data";
 import { readCharlieConfig } from "@/lib/marketing-charlie-settings";
@@ -7,16 +7,16 @@ import { buildCharlieRevenue } from "@/lib/marketing-charlie-revenue";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 export async function GET(req: NextRequest) {
-  const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams),
+  const store = marketingStoreFromParams(req.nextUrl.searchParams),
     period = periodFromParams(req.nextUrl.searchParams);
   const respond = (body: unknown, status = 200) =>
     NextResponse.json(body, {
       status,
       headers: { "Cache-Control": "private, no-store" },
     });
-  if (store?.code !== "mireva-cr" || !period)
+  if (!store || !period)
     return respond(
-      { error: "Tienda de Costa Rica y período válido requeridos." },
+      { error: "Tienda de Marketing y período válido requeridos." },
       400,
     );
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -37,6 +37,8 @@ export async function GET(req: NextRequest) {
         input.phones,
         period,
         config.hero_product_keys,
+        undefined,
+        store.code,
       ),
     );
   } catch {

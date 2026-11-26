@@ -278,7 +278,8 @@ export function buildDailyPace(input: PaceInput): DailyPace {
     spendNotes.push(
       `TikTok ≈ estimado con el ${shortDateText(tiktokLast.fromDate)}; llega al día siguiente por Make.`,
     );
-  else spendNotes.push("TikTok sin datos de gasto recientes");
+  else if (!input.sources?.tiktok.notConnected)
+    spendNotes.push("TikTok sin datos de gasto recientes");
   const hour = Math.floor(minutes / 60);
   const minuteFraction = (minutes - hour * 60) / 60;
   const todayHourly = metaAccounts?.length

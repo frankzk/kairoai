@@ -10,6 +10,7 @@
 import { pantallasDe, type Permiso } from "./permisos";
 import { KENKU_MANAGEMENT_STORES } from "./kenku-management";
 import { FINANCE_STORES } from "./store-config";
+import { MARKETING_STORE_CODES } from "./marketing-stores";
 
 export type IconoNav =
   | "panel"
@@ -74,11 +75,24 @@ const GRUPOS: Array<Pick<GrupoNav, "key" | "label">> = [
 /** Orden dentro de Operación: el resumen primero. */
 const ORDEN = ["/", "/admin/leads", "/admin/incidencias", "/admin/finance", "/admin/inventario"];
 
-/** Marketing es solo de Mireva Costa Rica. */
-export const TIENDA_MARKETING = "mireva-cr";
+/** Inventario (ShipHero/Boxful) es solo de Mireva Costa Rica. */
+export const TIENDA_INVENTARIO = "mireva-cr";
 
-/** Pantallas que solo existen para Mireva Costa Rica (Marketing, y el inventario de ShipHero/Boxful). */
-const SOLO_CR = new Set(["/admin/marketing", "/admin/inventario"]);
+/**
+ * Pantallas que solo existen para algunas tiendas: Marketing para Mireva Costa
+ * Rica y Mireva Honduras (lib/marketing-stores.ts), el inventario de
+ * ShipHero/Boxful solo para Costa Rica.
+ */
+const SOLO_TIENDAS: Record<string, readonly string[]> = {
+  "/admin/marketing": MARKETING_STORE_CODES,
+  "/admin/inventario": [TIENDA_INVENTARIO],
+};
+
+/** La pantalla existe para esa tienda (las que no están en SOLO_TIENDAS, para todas). */
+export function pantallaDeTienda(ruta: string, tienda: string): boolean {
+  const solo = SOLO_TIENDAS[ruta];
+  return !solo || solo.includes(tienda);
+}
 
 /**
  * Tiendas que la persona puede elegir, en el orden del selector: primero las
@@ -117,8 +131,9 @@ export function tiendasDe(yo: Persona): TiendaNav[] {
 }
 
 /**
- * La tienda que se está viendo: una Kenku si la ruta es su pantalla; en
- * Marketing e Inventario, Mireva Costa Rica; si no, la elegida (useSelectedStore).
+ * La tienda que se está viendo: una Kenku si la ruta es su pantalla; en una
+ * pantalla que no existe para la elegida (Inventario fuera de Costa Rica), la
+ * primera tienda que la tiene; si no, la elegida (useSelectedStore).
  */
 export function tiendaActual(
   tiendas: readonly TiendaNav[],
@@ -130,9 +145,13 @@ export function tiendaActual(
       t.ruta && (pathname === t.ruta || pathname.startsWith(`${t.ruta}/`)),
   );
   if (kenku) return kenku;
-  const code = Array.from(SOLO_CR).some((r) => pathname.startsWith(r))
-    ? TIENDA_MARKETING
-    : elegida;
+  const solo = Object.entries(SOLO_TIENDAS).find(([r]) =>
+    pathname.startsWith(r),
+  )?.[1];
+  const code =
+    solo && !solo.includes(elegida)
+      ? (solo.find((c) => tiendas.some((t) => t.code === c)) ?? solo[0])
+      : elegida;
   return (
     tiendas.find((t) => t.code === code) ??
     tiendas.find((t) => t.marca === "Mireva") ??
@@ -156,10 +175,11 @@ export function menuDe(yo: Persona, tienda: TiendaNav | null = null): GrupoNav[]
     for (const p of pantallas) {
       const meta = GRUPO[p.ruta];
       if (!meta || meta.grupo === "ajustes") continue;
+      const solo = SOLO_TIENDAS[p.ruta];
       if (
-        SOLO_CR.has(p.ruta) &&
-        (!yo.tiendas.includes(TIENDA_MARKETING) ||
-          (tienda && tienda.code !== TIENDA_MARKETING))
+        solo &&
+        (!solo.some((c) => yo.tiendas.includes(c)) ||
+          (tienda && !solo.includes(tienda.code)))
       )
         continue;
       add(meta.grupo, {

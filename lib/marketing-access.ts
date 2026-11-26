@@ -1,25 +1,66 @@
-// Acceso a las rutas de Marketing (Mireva Costa Rica): permiso "marketing",
-// tienda mireva-cr asignada y store=mireva-cr en la consulta. Escribir exige
-// además no ser "solo_lectura".
+// Acceso a las rutas de Marketing (Mireva Costa Rica y Mireva Honduras):
+// permiso "marketing", la tienda pedida asignada a la persona y store=<tienda>
+// en la consulta. Escribir exige además no ser "solo_lectura". Las reglas son
+// las mismas para las dos tiendas (lib/marketing-stores.ts).
 import { NextRequest, NextResponse } from "next/server";
 import { identidadActual } from "./identidad";
-import { getRequiredStoreFromSearchParams } from "./stores";
+import { getRequiredStoreFromSearchParams, type FinanceStoreConfig } from "./stores";
 import { metaAccountIds } from "./marketing-sources";
 import { anunciantesTiktok } from "./tiktok-diario";
+import { isMarketingStore, marketingStoreInfo } from "./marketing-stores";
+import type { Identidad } from "./auth";
+import { getFinanceStoreById } from "./store-config";
 
 export const MARKETING_NO_STORE = { "Cache-Control": "private, no-store" };
 
 export const marketingReply = (body: unknown, status = 200) =>
   NextResponse.json(body, { status, headers: MARKETING_NO_STORE });
 
-export function marketingAccess(req: NextRequest) {
+/** 403 de las rutas de Marketing sin permiso o sin la tienda. */
+export const MARKETING_NO_ACCESS =
+  "Se requiere Marketing y acceso a la tienda elegida.";
+
+/**
+ * Pure: who may use Marketing for `store` — the "marketing" permission, the
+ * store among the person's `tiendas` and a store that has Marketing.
+ */
+export function marketingAllowed(
+  actor: Pick<Identidad, "permisos" | "tiendas"> | null | undefined,
+  store: Pick<FinanceStoreConfig, "code"> | null | undefined,
+): boolean {
+  return Boolean(
+    actor?.permisos.includes("marketing") &&
+      store &&
+      isMarketingStore(store.code) &&
+      actor.tiendas.includes(store.code),
+  );
+}
+
+/**
+ * Who calls and the store, or null. With `need = "shiphero"`, only a store
+ * that has the ShipHero inventory (Costa Rica).
+ */
+export function marketingAccess(req: NextRequest, need?: "shiphero") {
   const actor = identidadActual();
   const store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
-  return actor?.permisos.includes("marketing") &&
-    actor.tiendas.includes("mireva-cr") &&
-    store?.code === "mireva-cr"
+  return actor &&
+    store &&
+    marketingAllowed(actor, store) &&
+    (need !== "shiphero" || marketingStoreInfo(store.code).shiphero)
     ? { actor, store }
     : null;
+}
+
+/**
+ * The store of a Marketing read whose permission the middleware already
+ * checked (store in the person's tiendas via getRequiredStoreFromSearchParams).
+ * null = no store, not one of theirs, or one without Marketing.
+ */
+export function marketingStoreFromParams(
+  params: URLSearchParams,
+): FinanceStoreConfig | null {
+  const store = getRequiredStoreFromSearchParams(params);
+  return store && isMarketingStore(store.code) ? store : null;
 }
 
 export const canEditMarketing = (
@@ -58,21 +99,28 @@ export async function readJsonBody(
   }
 }
 
-/** Ad accounts of Costa Rica a write may name (Meta env list; TikTok env id or advertisers seen from Make). */
+/**
+ * Ad accounts of the store a write may name: its own Meta env list; TikTok
+ * (Costa Rica only) the env id or the advertisers seen from Make.
+ */
 export async function marketingAccountIds(
   platform: unknown,
   storeId: number,
+  env: Record<string, string | undefined> = process.env,
 ): Promise<string[]> {
+  const code = getFinanceStoreById(storeId)?.code;
+  if (!isMarketingStore(code)) return [];
+  const info = marketingStoreInfo(code);
   if (platform === "meta") {
     try {
-      return metaAccountIds(process.env);
+      return metaAccountIds(env, info.code);
     } catch {
       return [];
     }
   }
-  if (platform === "tiktok")
+  if (platform === "tiktok" && info.tiktok)
     return [
-      process.env.TIKTOK_CR_ADVERTISER_ID,
+      env.TIKTOK_CR_ADVERTISER_ID,
       ...(await anunciantesTiktok(storeId).catch(() => [])),
     ].filter((id): id is string => Boolean(id));
   return [];

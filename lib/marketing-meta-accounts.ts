@@ -14,10 +14,16 @@ import type {
 } from "./marketing-insights-types";
 import {
   ATTRIBUTION_WINDOWS,
-  metaAccountIds,
   metaPages,
   purchasesOf,
 } from "./marketing-sources";
+import {
+  metaAuthHeaders,
+  metaConfigAccountIds,
+  metaConfigFor,
+  type MetaStoreConfig,
+} from "./marketing-meta-config";
+import type { FinanceStoreCode } from "./store-config";
 
 type Env = Record<string, string | undefined>;
 type Json = Record<string, unknown>;
@@ -94,39 +100,40 @@ export function metaAccountStatus(
   };
 }
 
-function graphBase(env: Env, id: string): string {
-  const version = env.META_CR_GRAPH_VERSION || "";
+function graphBase(config: MetaStoreConfig, id: string): string {
+  const version = config.version;
   if (!/^\d+$/.test(id) || !/^v\d+\.\d+$/.test(version))
     throw new Error("Invalid Meta configuration");
   return `https://graph.facebook.com/${version}/act_${id}`;
 }
 
-export const metaConfigured = (env: Env) =>
-  Boolean(
-    env.META_CR_GRAPH_VERSION?.trim() &&
-    env.META_CR_ACCESS_TOKEN?.trim() &&
-    (env.META_CR_AD_ACCOUNT_IDS || env.META_CR_AD_ACCOUNT_ID),
-  );
+/** Version, token and account list of the store (Costa Rica by default) are set. */
+export const metaConfigured = (
+  env: Env,
+  store: FinanceStoreCode = "mireva-cr",
+) => metaConfigFor(store, env).configured;
 
 /**
- * One light call per configured account, independently. null when Meta is
- * not configured or the account list is invalid.
+ * One light call per configured account of the store, independently. null
+ * when Meta is not configured or the account list is invalid.
  */
 export async function readMetaAccountStatuses(
   env: Env = process.env,
   fetcher: typeof fetch = fetch,
+  store: FinanceStoreCode = "mireva-cr",
 ): Promise<MetaAccountStatus[] | null> {
-  if (!metaConfigured(env)) return null;
+  const config = metaConfigFor(store, env);
+  if (!config.configured) return null;
   let ids: string[];
   try {
-    ids = metaAccountIds(env);
+    ids = metaConfigAccountIds(config);
   } catch {
     return null;
   }
-  const headers = { Authorization: `Bearer ${env.META_CR_ACCESS_TOKEN}` };
+  const headers = metaAuthHeaders(config);
   const results = await Promise.allSettled(
     ids.map(async (id) => {
-      const url = new URL(graphBase(env, id));
+      const url = new URL(graphBase(config, id));
       url.searchParams.set(
         "fields",
         "id,name,account_status,disable_reason,currency,timezone_name,amount_spent,spend_cap",
@@ -193,18 +200,20 @@ export async function readMetaAgeGender(
   fetcher: typeof fetch,
   from: string,
   to: string,
+  store: FinanceStoreCode = "mireva-cr",
 ): Promise<{ rows: AgeGenderRow[]; failed: string[]; configured: boolean }> {
-  if (!metaConfigured(env)) return { rows: [], failed: [], configured: false };
+  const config = metaConfigFor(store, env);
+  if (!config.configured) return { rows: [], failed: [], configured: false };
   let ids: string[];
   try {
-    ids = metaAccountIds(env);
+    ids = metaConfigAccountIds(config);
   } catch {
     return { rows: [], failed: [], configured: false };
   }
-  const headers = { Authorization: `Bearer ${env.META_CR_ACCESS_TOKEN}` };
+  const headers = metaAuthHeaders(config);
   const results = await Promise.allSettled(
     ids.map(async (id) => {
-      const base = graphBase(env, id);
+      const base = graphBase(config, id);
       const signal = AbortSignal.timeout(20_000);
       const account = await fetcher(`${base}?fields=id,currency`, {
         headers,

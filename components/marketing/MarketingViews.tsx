@@ -12,6 +12,8 @@ import { CampaignPriorityList } from "./CampaignWorkspace";
 import s from "./dashboard.module.css";
 import { useUsdMoney } from "./UsdContext";
 import { ShipHeroConnect } from "./ShipHeroConnect";
+import { marketingStoreInfo } from "@/lib/marketing-stores";
+import { useMarketingStore } from "./MarketingStoreContext";
 
 export function AlertList({
   model,
@@ -293,15 +295,15 @@ export function Overview({
               ["Con guía", count(totals.withGuide)],
               ["No entregados", count(totals.failed)],
               ["Anulados", count(totals.annulled)],
-              ["Neto en liquidaciones", money(totals.settlementNet, "CRC")],
-              ["Publicidad manual", money(totals.registeredAdSpend, "CRC")],
+              ["Neto en liquidaciones", money(totals.settlementNet, data.currency)],
+              ["Publicidad manual", money(totals.registeredAdSpend, data.currency)],
               [
                 "Margen registrado antes de publicidad",
-                money(totals.recordedMargin, "CRC"),
+                money(totals.recordedMargin, data.currency),
               ],
               [
                 "Saldo parcial después de publicidad manual",
-                money(totals.partialBalance, "CRC"),
+                money(totals.partialBalance, data.currency),
               ],
             ].map(([label, value]) => (
               <div
@@ -408,27 +410,36 @@ export function SourceConnections({
   canEdit?: boolean;
   onChanged?: () => void;
 }) {
+  const store = marketingStoreInfo(useMarketingStore());
+  const cr = store.code === "mireva-cr";
   const rows = [
     {
       key: "meta" as const,
       name: "Meta Ads",
-      detail:
-        "Cinco cuentas exclusivas de Costa Rica. Inversión por período, presupuesto diario actual, clics y compras reportadas.",
-      needs: "Revisar token y acceso de lectura a las cinco cuentas.",
+      detail: cr
+        ? "Cinco cuentas exclusivas de Costa Rica. Inversión por período, presupuesto diario actual, clics y compras reportadas."
+        : `Cuentas exclusivas de ${store.country}. Inversión por período, presupuesto diario actual, clics y compras reportadas.`,
+      needs: cr
+        ? "Revisar token y acceso de lectura a las cinco cuentas."
+        : `Revisar el token de ${store.country} y su acceso de lectura a cada cuenta.`,
     },
     {
       key: "tiktok" as const,
       name: "TikTok Ads",
       detail:
         "Inversión, clics e impresiones en la moneda y calendario de su cuenta.",
-      needs: "Falta el ID del anunciante y el acceso API.",
+      needs: store.tiktok
+        ? "Falta el ID del anunciante y el acceso API."
+        : `TikTok Ads no está conectado para ${store.country}.`,
     },
     {
       key: "shiphero" as const,
       name: "ShipHero",
       detail:
         "Stock por SKU, pedidos esperando y unidades en camino. Se necesita para cobertura y reposición.",
-      needs: "Conéctalo abajo con tu usuario de ShipHero.",
+      needs: store.shiphero
+        ? "Conéctalo abajo con tu usuario de ShipHero."
+        : `ShipHero no está conectado para ${store.country}.`,
     },
   ];
   return (
@@ -455,9 +466,19 @@ export function SourceConnections({
                 return (
                   <tr key={row.key}>
                     <td className="font-medium">{row.name}</td>
-                    <td className={source?.status === "ready" ? s.good : s.warn}>
+                    <td
+                      className={
+                        source?.notConnected
+                          ? s.muted
+                          : source?.status === "ready"
+                            ? s.good
+                            : s.warn
+                      }
+                    >
                       {loading
                         ? "Consultando…"
+                        : source?.notConnected
+                          ? "No conectado"
                         : row.key === "shiphero" &&
                             source?.status === "ready" &&
                             sources?.shiphero.data?.origin === "csv"
@@ -478,17 +499,39 @@ export function SourceConnections({
                     </td>
                     <td className={s.muted}>
                       {row.detail}
-                      {!loading && source?.status !== "ready" && (
+                      {!loading &&
+                        (source?.status !== "ready" || source.notConnected) && (
                         <p className="mt-2">
-                          {/* A Kairo connection says what it is waiting for. */}
-                          {source?.connection ? source.message : row.needs}
+                          {/* A Kairo connection says what it is waiting for;
+                              a store's pending Meta says which variables. */}
+                          {source?.connection ||
+                          (row.key === "meta" &&
+                            source?.status === "pending" &&
+                            !cr)
+                            ? source.message
+                            : row.needs}
                         </p>
                       )}
+                      {/* Meta, account by account: read or not, and why. */}
                       {!loading &&
                         row.key === "meta" &&
-                        sources?.meta.data?.unavailable?.map((u) => (
+                        sources?.meta.data?.accounts.map((a) => (
+                          <p key={a.accountId} className={`mt-2 ${s.good}`}>
+                            Cuenta {a.accountName && a.accountName !== a.accountId
+                              ? `${a.accountName} (${a.accountId})`
+                              : a.accountId}
+                            : Meta la leyó ({a.currency}).
+                          </p>
+                        ))}
+                      {!loading &&
+                        row.key === "meta" &&
+                        (
+                          sources?.meta.data?.unavailable ??
+                          sources?.meta.unavailable
+                        )?.map((u) => (
                           <p key={u.accountId} className={`mt-2 ${s.warn}`}>
-                            Cuenta {u.accountId}: {u.reason} Su gasto no se suma.
+                            No se pudo leer la cuenta {u.accountId}: {u.reason}{" "}
+                            Su gasto no se suma.
                           </p>
                         ))}
                       {source?.checkedAt && (
@@ -509,7 +552,9 @@ export function SourceConnections({
           </table>
         </div>
       </section>
-      <ShipHeroConnect canEdit={canEdit} onChanged={onChanged} />
+      {store.shiphero && (
+        <ShipHeroConnect canEdit={canEdit} onChanged={onChanged} />
+      )}
     </>
   );
 }

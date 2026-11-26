@@ -1,6 +1,7 @@
 // Registro manual de cambios por campaña (presupuesto, puja, creativo,
 // estado, lanzamiento). TikTok llega por Make sin historial de cambios, y
 // Meta puede no dar su registro de actividad: el equipo lo anota aquí.
+import { marketingStoreInfo } from "@/lib/marketing-stores";
 import { NextRequest } from "next/server";
 import { getDB } from "@/lib/db";
 import {
@@ -70,7 +71,7 @@ export async function GET(req: NextRequest) {
   const allowed = marketingAccess(req);
   if (!allowed)
     return marketingReply(
-      { error: "Se requiere Marketing y acceso a Mireva Costa Rica." },
+      { error: "Se requiere Marketing y acceso a la tienda elegida." },
       403,
     );
   const rawDays = req.nextUrl.searchParams.get("days");
@@ -124,7 +125,9 @@ export async function POST(req: NextRequest) {
     !/^\d{1,40}$/.test(body.campaign_id)
   )
     return marketingReply(
-      { error: "Cuenta o campaña no autorizada para Costa Rica." },
+      {
+        error: `Cuenta o campaña no autorizada para ${marketingStoreInfo(allowed.store.code).country}.`,
+      },
       400,
     );
   if (!KINDS.includes(body.kind as CampaignChange["kind"]))

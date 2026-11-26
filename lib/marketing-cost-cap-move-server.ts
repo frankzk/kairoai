@@ -61,7 +61,13 @@ import { getMarketingData } from "./marketing-data";
 import { marketingDate, presetPeriod, shiftDate } from "./marketing-dates";
 import { DECISION_RULES, DONE_PREFIX } from "./marketing-decisions";
 import { displayUploader, isMissingRelation } from "./marketing-inventory-db";
-import { metaConfigured } from "./marketing-meta-accounts";
+import {
+  metaAuthHeaders,
+  metaConfigAccountIds,
+  metaConfigFor,
+  metaVersionValid,
+} from "./marketing-meta-config";
+import { marketingStoreInfo } from "./marketing-stores";
 import {
   effectiveAssignment,
   type MarketingFamily,
@@ -73,12 +79,9 @@ import {
   type CampaignProduct,
 } from "./marketing-settings-types";
 import type { ManualCampaignChange } from "./marketing-source-types";
-import {
-  metaAccountFailure,
-  metaAccountIds,
-  metaPages,
-} from "./marketing-sources";
+import { metaAccountFailure, metaPages } from "./marketing-sources";
 import type { FinanceStoreConfig } from "./stores";
+import type { FinanceStoreCode } from "./store-config";
 
 type Env = Record<string, string | undefined>;
 type Json = Record<string, unknown>;
@@ -118,16 +121,20 @@ export interface MoveAssignments {
 }
 
 const FAMILIES_TTL_MS = 5 * 60_000;
-let familiesCache: {
-  at: number;
-  storeId: number;
-  families: MarketingFamily[];
-  enabled: boolean;
-} | null = null;
+/** Per store: Costa Rica and Honduras never share a catalogue. */
+const familiesCache = new Map<
+  number,
+  {
+    at: number;
+    storeId: number;
+    families: MarketingFamily[];
+    enabled: boolean;
+  }
+>();
 
 /** Test hook. */
 export function clearMoveCaches() {
-  familiesCache = null;
+  familiesCache.clear();
   inFlight.clear();
 }
 
@@ -141,11 +148,10 @@ export async function loadMoveAssignments(
   store: FinanceStoreConfig,
   now: () => number = Date.now,
 ): Promise<MoveAssignments> {
+  const hit = familiesCache.get(store.id);
   const cached =
-    familiesCache &&
-    familiesCache.storeId === store.id &&
-    now() - familiesCache.at < FAMILIES_TTL_MS
-      ? familiesCache
+    hit && hit.storeId === store.id && now() - hit.at < FAMILIES_TTL_MS
+      ? hit
       : null;
   const [catalog, mappings, keywords] = await Promise.all([
     cached
@@ -174,7 +180,7 @@ export async function loadMoveAssignments(
       .catch(() => [] as CampaignKeywordRule[]),
   ]);
   // Un catálogo incompleto no se guarda: la próxima vez se vuelve a leer.
-  if (!cached && catalog.enabled) familiesCache = catalog;
+  if (!cached && catalog.enabled) familiesCache.set(store.id, catalog);
   return {
     families: catalog.families,
     mappings,
@@ -186,6 +192,8 @@ export async function loadMoveAssignments(
 /* ------------------------------------------------------------ Lectura */
 
 export interface MoveDeps {
+  /** Store whose Meta configuration is used (Costa Rica by default). */
+  store?: FinanceStoreCode;
   env?: Env;
   fetcher?: typeof fetch;
   now?: () => Date;
@@ -201,27 +209,26 @@ interface Graph {
 }
 
 function graphOf(deps: MoveDeps): Graph {
-  const env = deps.env ?? process.env;
-  const version = env.META_CR_GRAPH_VERSION || "";
-  if (!metaConfigured(env) || !/^v\d+\.\d+$/.test(version))
+  // The selected store's own Meta configuration (lib/marketing-meta-config.ts).
+  const config = metaConfigFor(deps.store ?? "mireva-cr", deps.env ?? process.env);
+  if (!config.configured || !metaVersionValid(config))
     throw new MoveReadError(
       "Meta Ads: pendiente de configurar el acceso.",
       503,
     );
   let ids: string[];
   try {
-    ids = metaAccountIds(env);
+    ids = metaConfigAccountIds(config);
   } catch {
     throw new MoveReadError(
       "Meta Ads: pendiente de configurar el acceso.",
       503,
     );
   }
-  const token = env.META_CR_ACCESS_TOKEN || "";
   return {
-    version,
-    token,
-    headers: { Authorization: `Bearer ${token}` },
+    version: config.version,
+    token: config.token,
+    headers: metaAuthHeaders(config),
     fetcher: deps.fetcher ?? fetch,
     ids,
   };
@@ -352,7 +359,10 @@ async function readMove(
 ): Promise<MoveRead> {
   const graph = graphOf(deps);
   if (!graph.ids.includes(query.account))
-    throw new MoveReadError("Cuenta no autorizada para Costa Rica.", 400);
+    throw new MoveReadError(
+      `Cuenta no autorizada para ${marketingStoreInfo(deps.store).country}.`,
+      400,
+    );
   const now = (deps.now ?? (() => new Date()))();
   const today = marketingDate(now);
   const window = {
@@ -843,9 +853,13 @@ export async function createCostCapAd(
   input: { account: string; ad: string; targetAccount: string; adset: string },
   deps: MoveDeps & { ledger: MoveLedger },
 ): Promise<MoveOutcome> {
-  const key = [input.account, input.ad, input.targetAccount, input.adset].join(
-    ":",
-  );
+  const key = [
+    deps.store ?? "mireva-cr",
+    input.account,
+    input.ad,
+    input.targetAccount,
+    input.adset,
+  ].join(":");
   if (inFlight.has(key))
     return { ok: false, status: 409, reason: MOVE_TEXT.inProgress };
   inFlight.add(key);

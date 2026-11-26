@@ -150,6 +150,8 @@ export interface AccountsPayload {
   metaError: boolean;
   tiktok: TiktokFeedStatus[];
   tiktokError: boolean;
+  /** Set when the store has no TikTok (Honduras): the text to show instead. */
+  tiktokNotConnected?: string;
   fx: UsdRate;
 }
 

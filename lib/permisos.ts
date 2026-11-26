@@ -42,7 +42,7 @@ export const PERMISO_INFO: Record<Permiso, { label: string; detalle: string }> =
   novedades: { label: "Novedades", detalle: "Bandeja de entregas con problemas" },
   pedidos: { label: "Gestión de pedidos", detalle: "Pedidos, despacho, auditoría, notas y archivos de logística" },
   finanzas: { label: "Finanzas", detalle: "Liquidaciones, gastos, cierre mensual, productos y costos" },
-  marketing: { label: "Marketing", detalle: "Dashboard de campañas, inversión, costo por pedido, productos y stock de Mireva Costa Rica" },
+  marketing: { label: "Marketing", detalle: "Dashboard de campañas, inversión, costo por pedido, productos y stock de las tiendas Mireva que tenga asignadas (Costa Rica, Honduras)" },
   upsell: { label: "Upsells", detalle: "Reglas de venta adicional" },
   config: { label: "Configuración", detalle: "Agente de voz, telefonía y conexiones" },
   usuarios: { label: "Usuarios", detalle: "Crear usuarios y darles accesos" },

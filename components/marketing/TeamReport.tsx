@@ -43,6 +43,8 @@ import { LaunchTracker } from "./LaunchTracker";
 import { InventoryAlerts } from "./InventoryAlerts";
 import { useInventoryDecision } from "./InventoryDecision";
 import { useCampaignActions } from "./useCampaignActions";
+import { useMarketingStore } from "./MarketingStoreContext";
+import { marketingStoreInfo, summaryClockZones } from "@/lib/marketing-stores";
 
 type Save = (key: string, body: Record<string, unknown>) => Promise<boolean>;
 type Resource<T> = { data: T | null; loading: boolean; error: string };
@@ -125,6 +127,7 @@ export function TeamReport({
   /** Name of the top filter preset ("Este mes", "Últimos 7 días"); null for a custom range. */
   periodName?: string | null;
 }) {
+  const store = useMarketingStore();
   const [query, setQuery] = useState("");
   const [ascending, setAscending] = useState(false);
   const [allStock, setAllStock] = useState(false);
@@ -141,13 +144,13 @@ export function TeamReport({
   const filterLabel = isToday ? null : periodText;
   const budgets = useResource<MarketingSources>(
     campaignsOpen
-      ? `/api/marketing/sources?${periodQuery(data.period)}&scope=details`
+      ? `/api/marketing/sources?${periodQuery(data.period, store)}&scope=details`
       : null,
     revision,
   );
   const ads = useResource<CharlieReport>(
     adsOpen
-      ? `/api/marketing/charlie?${periodQuery(data.period)}&scope=ads`
+      ? `/api/marketing/charlie?${periodQuery(data.period, store)}&scope=ads`
       : null,
     revision,
   );
@@ -256,7 +259,9 @@ export function TeamReport({
     (["meta", "tiktok"] as const).every(
       (p) =>
         sources[p].status === "ready" &&
-        sources[p].data?.accounts.every((a) => a.timezone === data.timezone),
+        sources[p].data?.accounts.every((a) =>
+          summaryClockZones(data).has(a.timezone),
+        ),
     ),
   );
   const cpa = realCpa(spend, data.totals.generated, data.totals.annulled);
@@ -351,7 +356,11 @@ export function TeamReport({
           label="Gasto · Meta Ads"
           swatch={ENTITY_COLORS.meta}
           value={loading ? "…" : usd(meta.spend)}
-          note="Las cinco cuentas publicitarias"
+          note={
+            store === "mireva-cr"
+              ? "Las cinco cuentas publicitarias"
+              : `Las cuentas de ${marketingStoreInfo(store).country}`
+          }
         />
         <Metric
           label="Gasto · TikTok Ads"
@@ -366,7 +375,7 @@ export function TeamReport({
       </section>
       {!aligned && (
         <p className={r.explanation}>
-          Los pedidos usan hora de Costa Rica; TikTok reporta con el calendario
+          Los pedidos usan hora de {marketingStoreInfo(store).country}; TikTok reporta con el calendario
           de su cuenta. El CPA marcado con ≈ es orientativo: divide el gasto
           consultado entre pedidos reales, con un desfase horario entre fuentes.
           Las compras del píxel no se suman como pedidos de Kairo.
@@ -826,7 +835,10 @@ export function TeamReport({
           <div>
             <h2>Campañas, presupuesto y producto</h2>
             <p>
-              Las cinco cuentas de Meta y TikTok. Presupuesto diario vigente,
+              {store === "mireva-cr"
+                ? "Las cinco cuentas de Meta y TikTok."
+                : `Las cuentas de Meta de ${marketingStoreInfo(store).country}.`}{" "}
+              Presupuesto diario vigente,
               aunque el período sea histórico.
             </p>
           </div>
@@ -887,7 +899,8 @@ export function TeamReport({
           <div>
             <h2>Cómo se mueve la demanda</h2>
             <p>
-              Pedidos creados en el período seleccionado · hora de Costa Rica.
+              Pedidos creados en el período seleccionado · hora de{" "}
+              {marketingStoreInfo(store).country}.
             </p>
           </div>
         </div>
@@ -953,7 +966,11 @@ export function TeamReport({
       <p className={r.explanation}>
         Los pedidos reales excluyen los anulados en iComfly al momento de
         consultar; un pedido anulado más tarde cambia el CPA de días anteriores.
-        El stock y los presupuestos son actuales. Los importes CRC y PEN se
+        El stock y los presupuestos son actuales. Los importes{" "}
+        {marketingStoreInfo(store).currency === "CRC"
+          ? "CRC y PEN"
+          : marketingStoreInfo(store).currency}{" "}
+        se
         reexpresan en USD con la referencia indicada arriba; no representan
         cobros ni utilidad final.
       </p>

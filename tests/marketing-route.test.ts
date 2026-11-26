@@ -90,7 +90,7 @@ describe("marketing API isolation and availability", () => {
     expect(JSON.stringify(body)).not.toContain("private database failure");
   });
   it("rejects missing, unsupported or unauthorized stores before reading data", async () => {
-    for (const query of ["month=2026-10", "store=mireva-hn&month=2026-10"]) {
+    for (const query of ["month=2026-10", "store=kenku-mx&month=2026-10"]) {
       expect((await GET(request(query))).status).toBe(400);
     }
     mocks.storeAllowed = false;
@@ -120,6 +120,18 @@ describe("marketing API isolation and availability", () => {
       store: "mireva-cr",
       currency: "CRC",
       totals: { generated: 0, registeredAdSpend: null },
+    });
+  });
+
+  it("scopes every reader to Honduras (store 2, HNL) for store=mireva-hn", async () => {
+    const result = await GET(request("store=mireva-hn&month=2026-10"));
+    expect(result.status).toBe(200);
+    expect(mocks.expenses).toHaveBeenCalledWith("ads", 2);
+    expect(mocks.costs).toHaveBeenCalledWith(2);
+    expect(mocks.versions).toHaveBeenCalledWith(undefined, 2);
+    expect(await result.json()).toMatchObject({
+      store: "mireva-hn",
+      currency: "HNL",
     });
   });
 

@@ -5,11 +5,11 @@
 // crea campañas ni conjuntos, no borra nada y nada es automático (sin cron:
 // solo con el botón y su confirmación).
 //
-//   GET  ?store=mireva-cr&account=<cuenta del anuncio>&ad=<anuncio>
+//   GET  ?store=mireva-cr|mireva-hn&account=<cuenta del anuncio>&ad=<anuncio>
 //        → vista previa leída en vivo de Meta: el anuncio, las COST CAP destino
 //          (de cualquier cuenta ACTIVA) con sus conjuntos, si la publicación ya
 //          está ahí y `blocked` con el motivo cuando no se puede.
-//   POST ?store=mireva-cr  { account, ad, targetAccount, adset }
+//   POST ?store=mireva-cr|mireva-hn  { account, ad, targetAccount, adset }
 //        → vuelve a validar todo en el servidor, reserva en el registro de
 //          cambios, crea el anuncio y deja el "Hecho". Devuelve el id nuevo.
 //
@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
   const allowed = marketingAccess(req);
   if (!allowed)
     return marketingReply(
-      { error: "Se requiere Marketing y acceso a Mireva Costa Rica." },
+      { error: "Se requiere Marketing y acceso a la tienda elegida." },
       403,
     );
   const params = req.nextUrl.searchParams;
@@ -71,7 +71,10 @@ export async function GET(req: NextRequest) {
     return marketingReply(
       await previewCostCapMove(
         { account, ad },
-        { assignments: () => loadMoveAssignments(allowed.store) },
+        {
+          store: allowed.store.code,
+          assignments: () => loadMoveAssignments(allowed.store),
+        },
       ),
     );
   } catch (error) {
@@ -106,6 +109,7 @@ export async function POST(req: NextRequest) {
     const outcome = await createCostCapAd(
       { account, ad, targetAccount, adset },
       {
+        store: allowed.store.code,
         assignments: () => loadMoveAssignments(allowed.store),
         ledger: dbMoveLedger(allowed.store.id, marketingAuthor(allowed.actor)),
       },

@@ -90,5 +90,8 @@ export const previousPeriod = (period: MarketingPeriod) =>
     shiftDate(period.from, -period.days),
     shiftDate(period.from, -1),
   )!;
-export const periodQuery = (period: Pick<MarketingPeriod, "from" | "to">) =>
-  `store=mireva-cr&from=${period.from}&to=${period.to}`;
+/** `store=…&from=…&to=…` of a Marketing request (Costa Rica by default). */
+export const periodQuery = (
+  period: Pick<MarketingPeriod, "from" | "to">,
+  store = "mireva-cr",
+) => `store=${encodeURIComponent(store)}&from=${period.from}&to=${period.to}`;

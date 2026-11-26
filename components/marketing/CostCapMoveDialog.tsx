@@ -19,6 +19,7 @@ import { marketingDate, shiftDate } from "@/lib/marketing-dates";
 import { DECISION_RULES } from "@/lib/marketing-decisions";
 import { count, money } from "./format";
 import a from "./acciones.module.css";
+import { useMarketingStore } from "./MarketingStoreContext";
 
 export interface CostCapMoveResult {
   adId: string;
@@ -60,6 +61,7 @@ export function CostCapMoveDialog({
   onClose: () => void;
   onCreated: (result: CostCapMoveResult) => void;
 }) {
+  const store = useMarketingStore();
   const titleId = useId();
   const ref = useRef<HTMLDivElement>(null);
   const [load, setLoad] = useState<Load>({ status: "loading" });
@@ -75,7 +77,7 @@ export function CostCapMoveDialog({
     const controller = new AbortController();
     setLoad({ status: "loading" });
     fetch(
-      `/api/marketing/cost-cap-move?store=mireva-cr&account=${item.accountId}&ad=${item.adId}`,
+      `/api/marketing/cost-cap-move?store=${store}&account=${item.accountId}&ad=${item.adId}`,
       { signal: controller.signal, cache: "no-store" },
     )
       .then(async (response) => {
@@ -111,7 +113,7 @@ export function CostCapMoveDialog({
           });
       });
     return () => controller.abort();
-  }, [item.accountId, item.adId, attempt]);
+  }, [item.accountId, item.adId, attempt, store]);
 
   // Foco: entra al diálogo, no sale con Tab y vuelve a donde estaba al cerrar.
   useEffect(() => {
@@ -174,12 +176,12 @@ export function CostCapMoveDialog({
     setPhase({ status: "creating" });
     try {
       const response = await fetch(
-        "/api/marketing/cost-cap-move?store=mireva-cr",
+        `/api/marketing/cost-cap-move?store=${store}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            store: "mireva-cr",
+            store,
             account: item.accountId,
             ad: item.adId,
             targetAccount: chosen.accountId,

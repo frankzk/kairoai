@@ -36,7 +36,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const NO_ACCESS = "No tienes acceso a Marketing de Costa Rica.";
+const NO_ACCESS = "No tienes acceso a Marketing de la tienda elegida.";
 const NO_EDIT = "No tienes permiso para modificar Marketing.";
 
 /** ShipHero rejections are never 401: the app reads 401 as "session expired". */
@@ -55,7 +55,7 @@ function keyMessage(): string | null {
 }
 
 export async function GET(req: NextRequest) {
-  const allowed = marketingAccess(req);
+  const allowed = marketingAccess(req, "shiphero");
   if (!allowed) return marketingReply({ error: NO_ACCESS }, 403);
   try {
     const canEdit = canEditMarketing(allowed);
@@ -115,7 +115,7 @@ function connectInput(
 
 export async function POST(req: NextRequest) {
   const start = Date.now();
-  const allowed = marketingAccess(req);
+  const allowed = marketingAccess(req, "shiphero");
   if (!canEditMarketing(allowed))
     return marketingReply({ error: allowed ? NO_EDIT : NO_ACCESS }, 403);
   const pendingKey = keyMessage();
@@ -205,7 +205,7 @@ const optionalId = (value: unknown): string | null | undefined | false =>
         : false;
 
 export async function PATCH(req: NextRequest) {
-  const allowed = marketingAccess(req);
+  const allowed = marketingAccess(req, "shiphero");
   if (!canEditMarketing(allowed))
     return marketingReply({ error: allowed ? NO_EDIT : NO_ACCESS }, 403);
   const read = await readJsonBody(req, 2048);

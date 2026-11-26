@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDB } from "@/lib/db";
-import { identidadActual } from "@/lib/identidad";
-import { getRequiredStoreFromSearchParams } from "@/lib/stores";
 import { readCharlieSettings } from "@/lib/marketing-charlie-settings";
 import { metaAccountIds } from "@/lib/marketing-sources";
+import { MARKETING_NO_ACCESS, marketingAccess } from "@/lib/marketing-access";
+import { metaAuthHeaders, metaConfigFor } from "@/lib/marketing-meta-config";
+import { marketingStoreInfo } from "@/lib/marketing-stores";
 import { dateTime, marketingDate } from "@/lib/marketing-dates";
 import { getMarketingData } from "@/lib/marketing-data";
 import { isMissingColumn } from "@/lib/marketing-inventory-db";
@@ -16,21 +17,16 @@ const reply = (body: unknown, status = 200) =>
     status,
     headers: { "Cache-Control": "private, no-store" },
   });
-function access(req: NextRequest) {
-  const actor = identidadActual(),
-    store = getRequiredStoreFromSearchParams(req.nextUrl.searchParams);
-  return actor?.permisos.includes("marketing") &&
-    actor.tiendas.includes("mireva-cr") &&
-    store?.code === "mireva-cr"
-    ? { actor, store }
-    : null;
-}
+// Marketing permission and the requested store (Costa Rica or Honduras).
+const access = marketingAccess;
 export async function GET(req: NextRequest) {
   const allowed = access(req);
   if (!allowed)
-    return reply({ error: "Marketing y Mireva Costa Rica requeridos." }, 403);
+    return reply({ error: MARKETING_NO_ACCESS }, 403);
   try {
-    return reply(await readCharlieSettings(allowed.store.id));
+    return reply(
+      await readCharlieSettings(allowed.store.id, allowed.store.code),
+    );
   } catch {
     return reply({ error: "No se pudo cargar la configuración Charlie." }, 503);
   }
@@ -95,7 +91,7 @@ export async function PATCH(req: NextRequest) {
           return reply(
             {
               error:
-                "La oferta contiene un producto fuera del catálogo de Costa Rica.",
+                `La oferta contiene un producto fuera del catálogo de ${marketingStoreInfo(allowed.store.code).country}.`,
             },
             400,
           );
@@ -112,13 +108,33 @@ export async function PATCH(req: NextRequest) {
           { onConflict: "store_id" },
         );
       if (result.error) throw new Error();
-    } else if (body.kind === "pen" || body.kind === "crc") {
+    } else if (
+      body.kind === "pen" ||
+      body.kind === "crc" ||
+      body.kind === "hnl"
+    ) {
       // Only the exchange rate (Estado de las cuentas, M11): the offer and the
-      // other currency stay as they are. Both null = back to the official rate.
+      // other currency stay as they are. Both null = back to the official rate
+      // (HNL has none: null = sin tipo de cambio).
+      // Each store converts its own currency: CRC and PEN in Costa Rica, HNL
+      // in Honduras. The store's currency goes in crc_per_usd/rate_date of
+      // its own row (marketing_charlie_config is keyed by store_id), so
+      // Honduras needs no new column.
+      const own =
+        marketingStoreInfo(allowed.store.code).currency === "HNL"
+          ? ["hnl"]
+          : ["crc", "pen"];
+      if (!own.includes(String(body.kind)))
+        return reply({ error: "Esta tienda no usa esa moneda." }, 400);
       const pen = body.kind === "pen";
-      const rate = pen ? body.pen_per_usd : body.crc_per_usd,
+      const hnl = body.kind === "hnl";
+      const rate = pen
+          ? body.pen_per_usd
+          : hnl
+            ? body.hnl_per_usd
+            : body.crc_per_usd,
         date = pen ? body.pen_rate_date : body.rate_date;
-      const max = pen ? 100 : 100000;
+      const max = pen ? 100 : hnl ? 1000 : 100000;
       if (
         !(
           (rate === null && date === null) ||
@@ -149,20 +165,20 @@ export async function PATCH(req: NextRequest) {
         role = body.role;
       if (
         typeof account !== "string" ||
-        !metaAccountIds(process.env).includes(account) ||
+        !metaAccountIds(process.env, allowed.store.code).includes(account) ||
         typeof adset !== "string" ||
         !/^\d{1,40}$/.test(adset) ||
         !["auto", "control", "testing", "other"].includes(String(role))
       )
         return reply({ error: "Cuenta, conjunto o rol inválido." }, 400);
+      // The store's own Meta token, in the header (never in the URL).
+      const meta = metaConfigFor(allowed.store.code, process.env);
       const url = new URL(
-        `https://graph.facebook.com/${process.env.META_CR_GRAPH_VERSION}/${adset}`,
+        `https://graph.facebook.com/${meta.version}/${adset}`,
       );
       url.searchParams.set("fields", "id,account_id");
       const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${process.env.META_CR_ACCESS_TOKEN}`,
-        },
+        headers: metaAuthHeaders(meta),
         cache: "no-store",
         redirect: "error",
         signal: AbortSignal.timeout(10000),

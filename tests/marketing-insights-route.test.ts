@@ -333,6 +333,7 @@ describe("marketing insights route", () => {
       expect.any(Function),
       shiftDate(today, -7),
       shiftDate(today, -1),
+      "mireva-cr",
     );
   });
 });

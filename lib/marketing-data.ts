@@ -16,6 +16,7 @@ import {
 import { buildMarketingSummary, type MarketingSummary } from "./marketing";
 import type { MarketingPeriod } from "./marketing-dates";
 import type { FinanceStoreConfig } from "./stores";
+import { getFinanceStore } from "./store-config";
 import { getOrdersDataset } from "../app/api/finance/_shared/orders-dataset";
 
 async function optionalFamilyData<T>(promise: Promise<T>): Promise<T | null> {
@@ -51,12 +52,15 @@ export async function getMarketingInputs(
       optionalFamilyData(readMarketingProductCatalog(store.id)),
       optionalFamilyData(readMarketingVariantMappings(store.id)),
     ]);
+  // The store's own currency (CRC, HNL), from the store catalogue.
+  const currency = getFinanceStore(store.code).currency;
   const control = buildFinanceControlCenter(
     dataset.rows,
     dataset.matchedSettlementRows,
     dataset.imports,
-    costs.filter((cost) => cost.currency?.toUpperCase() === "CRC"),
-    versions.filter((cost) => cost.currency?.toUpperCase() === "CRC"),
+    // Product costs in the store's own currency (CRC, HNL).
+    costs.filter((cost) => cost.currency?.toUpperCase() === currency),
+    versions.filter((cost) => cost.currency?.toUpperCase() === currency),
     dataset.settlementTraceByKey,
   );
   const summary: MarketingSummary = buildMarketingSummary({
@@ -65,6 +69,7 @@ export async function getMarketingInputs(
     month,
     from: period.from,
     to: period.to,
+    store: { id: store.id, code: store.code, currency },
   });
   const catalog = new Map(
     summary.catalog.map((product) => [product.key, product]),

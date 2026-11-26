@@ -74,6 +74,7 @@ import { count, money, shortDate } from "./format";
 import s from "./dashboard.module.css";
 import r from "./team-report.module.css";
 import p from "./publicidad.module.css";
+import { useMarketingStore } from "./MarketingStoreContext";
 
 const LEVELS: Array<{
   id: PublicidadLevel;
@@ -178,6 +179,7 @@ export function PublicidadView({
   /** The page's "Actualizar": asks Meta again (skips the short cache). */
   revision: number;
 }) {
+  const store = useMarketingStore();
   const fx = useUsdRate();
   const today = marketingDate();
   const [platform, setPlatform] = useState<PublicidadPlatform>("meta");
@@ -288,7 +290,7 @@ export function PublicidadView({
         : undefined;
   const url =
     period && !future
-      ? `/api/marketing/publicidad?${periodQuery(period)}&platform=${platform}&level=${level}${
+      ? `/api/marketing/publicidad?${periodQuery(period, store)}&platform=${platform}&level=${level}${
           scope
             ? `&account=${scope.accountId}&${level === "ad" && drill.adset ? "adset" : "campaign"}=${scope.id}`
             : ""
@@ -357,7 +359,7 @@ export function PublicidadView({
   const wantsReal = shown("realOrders");
   const control = useResource<MarketingControl>(
     wantsReal && period && !future
-      ? `/api/marketing/control?${periodQuery(period)}`
+      ? `/api/marketing/control?${periodQuery(period, store)}`
       : null,
     refreshKey,
   );
@@ -382,7 +384,7 @@ export function PublicidadView({
     wantsReady && period?.from === readyFrom && period?.to === readyTo;
   const readyRead = useResource<PublicidadPayload>(
     wantsReady && !readyInTable
-      ? `/api/marketing/publicidad?${periodQuery({ from: readyFrom, to: readyTo })}&platform=meta&level=ad${
+      ? `/api/marketing/publicidad?${periodQuery({ from: readyFrom, to: readyTo }, store)}&platform=meta&level=ad${
           scope
             ? `&account=${scope.accountId}&${drill.adset ? "adset" : "campaign"}=${scope.id}`
             : ""

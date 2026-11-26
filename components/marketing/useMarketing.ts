@@ -24,6 +24,8 @@ import type {
   ProductInsightsPayload,
   SegmentationPayload,
 } from "@/lib/marketing-insights-types";
+import { useMarketingStore } from "./MarketingStoreContext";
+import type { RateCurrency } from "@/lib/marketing-account-status";
 
 /** Manual change log (`/api/marketing/changes`). */
 export interface MarketingChanges {
@@ -136,7 +138,8 @@ export function useMarketing(
   expandedOverview = false,
   financialRevision = 0,
 ) {
-  const query = period ? periodQuery(period) : null;
+  const store = useMarketingStore();
+  const query = period ? periodQuery(period, store) : null;
   const plan = marketingLoadPlan(view, expandedOverview);
   const summary = useResource<
     MarketingSummary & {
@@ -171,12 +174,12 @@ export function useMarketing(
       Boolean(period && period.from <= today && period.to >= today));
   const recent = useResource<MarketingSources>(
     period && needsRecent
-      ? `/api/marketing/sources?${periodQuery(recentPeriod)}&scope=report`
+      ? `/api/marketing/sources?${periodQuery(recentPeriod, store)}&scope=report`
       : null,
     revision,
   );
   const settings = useResource<MarketingSettings>(
-    period && plan.settings ? "/api/marketing/settings?store=mireva-cr" : null,
+    period && plan.settings ? `/api/marketing/settings?store=${store}` : null,
     revision,
   );
   // Real orders: today and the 13 previous days (goals, actions, COST CAP),
@@ -185,7 +188,7 @@ export function useMarketing(
   const windowPeriod = marketingPeriod(shiftDate(today, -13), today)!;
   const control = useResource<MarketingControl>(
     period && plan.control
-      ? `/api/marketing/control?${periodQuery(windowPeriod)}`
+      ? `/api/marketing/control?${periodQuery(windowPeriod, store)}`
       : null,
     revision,
   );
@@ -197,27 +200,27 @@ export function useMarketing(
   );
   const ownPeriodControl = useResource<MarketingControl>(
     period && plan.periodControl && !inWindow && period.to <= today
-      ? `/api/marketing/control?${periodQuery(period)}`
+      ? `/api/marketing/control?${periodQuery(period, store)}`
       : null,
     revision,
   );
   const periodControl = inWindow ? control : ownPeriodControl;
   const actions = useResource<MarketingSources>(
     period && plan.actions
-      ? `/api/marketing/sources?${periodQuery(windowPeriod)}&scope=actions`
+      ? `/api/marketing/sources?${periodQuery(windowPeriod, store)}&scope=actions`
       : null,
     revision,
   );
   const [changesRevision, setChangesRevision] = useState(0);
   const changes = useResource<MarketingChanges>(
     period && plan.changes
-      ? "/api/marketing/changes?store=mireva-cr&days=30"
+      ? `/api/marketing/changes?store=${store}&days=30`
       : null,
     revision + changesRevision,
   );
   const inventory = useResource<MarketingInventoryStatus>(
     period && plan.inventory
-      ? "/api/marketing/inventory?store=mireva-cr"
+      ? `/api/marketing/inventory?store=${store}`
       : null,
     revision,
   );
@@ -227,14 +230,14 @@ export function useMarketing(
   const mainSettled =
     !["report", "resumen", "acciones"].includes(view) ||
     (!summary.loading && !actions.loading && !control.loading);
-  const accountsUrl = "/api/marketing/insights?store=mireva-cr&section=cuentas";
+  const accountsUrl = `/api/marketing/insights?store=${store}&section=cuentas`;
   const accounts = useResource<AccountsPayload>(
     period && plan.accounts && mainSettled ? accountsUrl : null,
     revision,
   );
   const ordersInsights = useResource<OrderFactsPayload>(
     period && plan.ordersInsights && period.to <= today
-      ? `/api/marketing/insights?${periodQuery(period)}&section=pedidos`
+      ? `/api/marketing/insights?${periodQuery(period, store)}&section=pedidos`
       : null,
     revision,
   );
@@ -245,7 +248,7 @@ export function useMarketing(
       ? `/api/marketing/insights?${periodQuery({
           from: shiftDate(today, -(MARKETING_TARGETS.cancelOpenDays + 6)),
           to: today,
-        })}&section=pedidos`
+        }, store)}&section=pedidos`
       : null,
     revision,
   );
@@ -256,13 +259,13 @@ export function useMarketing(
       ? `/api/marketing/charlie?${periodQuery({
           from: shiftDate(today, -DECISION_RULES.windowDays),
           to: shiftDate(today, -1),
-        })}&scope=ads`
+        }, store)}&scope=ads`
       : null,
     revision,
   );
   const productsInsights = useResource<ProductInsightsPayload>(
     period && plan.productsInsights
-      ? "/api/marketing/insights?store=mireva-cr&section=productos"
+      ? `/api/marketing/insights?store=${store}&section=productos`
       : null,
     revision,
   );
@@ -276,7 +279,7 @@ export function useMarketing(
     setSegmentation((current) => ({ ...current, loading: true, error: "" }));
     try {
       const response = await fetch(
-        `/api/marketing/insights?store=mireva-cr&section=segmentacion&from=${from}&to=${to}`,
+        `/api/marketing/insights?store=${store}&section=segmentacion&from=${from}&to=${to}`,
         { cache: "no-store" },
       );
       const body = await response.json().catch(() => ({}));
@@ -303,18 +306,20 @@ export function useMarketing(
     }
   }
   /**
-   * Fixes the CRC or PEN rate to `rate` (today's date) or, with null, goes
-   * back to the official one; then reloads the account status. Returns the
-   * route's Spanish error or null.
+   * Fixes the CRC, PEN or HNL rate to `rate` (today's date) or, with null,
+   * goes back to the official one (HNL: to "sin tipo de cambio"); then
+   * reloads the account status. Returns the route's Spanish error or null.
    */
-  async function saveRate(currency: "CRC" | "PEN", rate: number | null) {
+  async function saveRate(currency: RateCurrency, rate: number | null) {
     const date = rate == null ? null : marketingDate();
     const result = await sendMarketing(
-      "/api/marketing/charlie-settings?store=mireva-cr",
+      `/api/marketing/charlie-settings?store=${store}`,
       "PATCH",
       currency === "PEN"
         ? { kind: "pen", pen_per_usd: rate, pen_rate_date: date }
-        : { kind: "crc", crc_per_usd: rate, rate_date: date },
+        : currency === "HNL"
+          ? { kind: "hnl", hnl_per_usd: rate, rate_date: date }
+          : { kind: "crc", crc_per_usd: rate, rate_date: date },
     );
     if (!result.ok) return result.error;
     // One fresh read (it also refreshes the route's cache); later loads use the cache.
@@ -336,7 +341,7 @@ export function useMarketing(
   /** Saves a manual campaign change and reloads the change log. */
   async function logChange(body: Record<string, unknown>) {
     const result = await sendMarketing(
-      "/api/marketing/changes?store=mireva-cr",
+      `/api/marketing/changes?store=${store}`,
       "POST",
       body,
     );
@@ -346,7 +351,7 @@ export function useMarketing(
   /** Deletes a manual change (undo of "Hecho") and reloads the change log. */
   async function deleteChange(id: string) {
     const result = await sendMarketing(
-      `/api/marketing/changes?store=mireva-cr&id=${encodeURIComponent(id)}`,
+      `/api/marketing/changes?store=${store}&id=${encodeURIComponent(id)}`,
       "DELETE",
     );
     if (result.ok) setChangesRevision((value) => value + 1);
@@ -360,7 +365,7 @@ export function useMarketing(
     setSaveError("");
     setSaved("");
     try {
-      const response = await fetch("/api/marketing/settings?store=mireva-cr", {
+      const response = await fetch(`/api/marketing/settings?store=${store}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -398,7 +403,7 @@ export function useMarketing(
           loading: false,
           error: "",
         });
-      const refreshed = await fetch("/api/marketing/settings?store=mireva-cr", {
+      const refreshed = await fetch(`/api/marketing/settings?store=${store}`, {
         cache: "no-store",
       });
       if (!refreshed.ok)

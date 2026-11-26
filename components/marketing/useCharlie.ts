@@ -7,6 +7,7 @@ import type {
 } from "@/lib/marketing-charlie-types";
 import type { CharlieRevenue } from "@/lib/marketing-charlie-revenue";
 import { useResource } from "./useMarketing";
+import { useMarketingStore } from "./MarketingStoreContext";
 export function useCharlie(
   period: MarketingPeriod | null,
   revision: number,
@@ -14,9 +15,10 @@ export function useCharlie(
   business: { data: CharlieRevenue | null; loading: boolean; error: string },
   onConfigSaved: () => void,
 ) {
-  const query = period && scope ? periodQuery(period) : null;
+  const store = useMarketingStore();
+  const query = period && scope ? periodQuery(period, store) : null;
   const settings = useResource<CharlieSettings>(
-    period ? "/api/marketing/charlie-settings?store=mireva-cr" : null,
+    period ? `/api/marketing/charlie-settings?store=${store}` : null,
     revision,
   );
   const report = useResource<CharlieReport>(
@@ -30,7 +32,7 @@ export function useCharlie(
     setError("");
     try {
       const response = await fetch(
-        "/api/marketing/charlie-settings?store=mireva-cr",
+        `/api/marketing/charlie-settings?store=${store}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -46,7 +48,7 @@ export function useCharlie(
         );
       }
       const refreshed = await fetch(
-        "/api/marketing/charlie-settings?store=mireva-cr",
+        `/api/marketing/charlie-settings?store=${store}`,
         { cache: "no-store" },
       );
       if (!refreshed.ok)
