@@ -370,7 +370,7 @@ describe("syncShipHeroInventory", () => {
         graphql: () => jsonResponse({ message: "Token is expired" }, 401),
       }),
     );
-    const result = await syncShipHeroInventory(1, { by: "cron", deadline: deadline(), env, fetcher });
+    const result = await syncShipHeroInventory(1, { by: "cron", deadline: deadline(), env, fetcher, now: () => NOW });
     expect(result).toMatchObject({ ok: false, error: SHIPHERO_MESSAGES.reconnect });
     expect(fakeDb.state.row).toMatchObject({ state: "reconnect", last_error: SHIPHERO_MESSAGES.reconnect });
     expect(fakeDb.state.row!.refresh_token_enc).toBeTruthy();
@@ -381,7 +381,7 @@ describe("syncShipHeroInventory", () => {
   it("a scope mismatch writes a fixed message, never provider text", async () => {
     fakeDb.state.row = connectedRow();
     const fetcher = vi.fn(shipheroFetcher({ graphql: () => stockPage(CUSTOMER) }));
-    const result = await syncShipHeroInventory(1, { by: "cron", deadline: deadline(), env, fetcher });
+    const result = await syncShipHeroInventory(1, { by: "cron", deadline: deadline(), env, fetcher, now: () => NOW });
     expect(result).toMatchObject({ ok: false, error: SHIPHERO_MESSAGES.scope_mismatch });
     expect(fakeDb.state.row!.last_error).toBe(SHIPHERO_MESSAGES.scope_mismatch);
     expect(fakeDb.state.calls.some((call) => call.op === "marketing_replace_shiphero_snapshot")).toBe(false);

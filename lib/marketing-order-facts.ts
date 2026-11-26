@@ -8,6 +8,7 @@
 //
 // Puro: se prueba en tests/marketing-order-facts.test.ts.
 import { motivoMarketing } from "./anulacion-motivos";
+import type { SaleOrigin } from "./marketing-channel-cpa";
 import { provinceOf } from "./cr-provinces";
 import { etapaVentaIcomfly } from "./icomfly-estado-venta";
 import { marketingDate } from "./marketing-dates";
@@ -83,6 +84,35 @@ export function orderOrigin(signals: {
   if (creator === "conector ia") return "bot";
   if (creator) return "asesora";
   return "formulario";
+}
+
+/**
+ * Finer origin for the CPA por producto y canal (26/11/2026): `orderOrigin`
+ * with its precedence unchanged, where "bot" splits into the WhatsApp bot
+ * (label "Venta por bot" or channel whatsapp, which win as in `orderOrigin`)
+ * and the Conector IA (creator only), and "formulario" splits off the
+ * "MANUAL-…" orders iComfly kept without creator (typed by the team, never
+ * the web form). Other callers keep `orderOrigin`.
+ */
+export function orderSubOrigin(signals: {
+  shopifyNumber: string | null;
+  labels: string[];
+  salesChannel: string | null;
+  creator: string | null;
+  orderNumber?: unknown;
+}): Exclude<SaleOrigin, "otro"> {
+  const origin = orderOrigin(signals);
+  if (origin === "bot")
+    return signals.labels.some((l) => norm(l).includes("venta por bot")) ||
+      norm(signals.salesChannel) === "whatsapp"
+      ? "bot"
+      : "conector_ia";
+  if (
+    origin === "formulario" &&
+    /^MANUAL-/i.test(String(signals.orderNumber ?? "").trim())
+  )
+    return "manual";
+  return origin;
 }
 
 /** Product name without variant suffixes ("- Beige / Talla única", "(Talla única)"). */

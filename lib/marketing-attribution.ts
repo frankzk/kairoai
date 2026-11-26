@@ -15,6 +15,13 @@ export interface MarketingOriginRow {
   sales_channel?: unknown;
   creator?: unknown;
   resolvedOrigin?: IcomflyAdOrigin | null;
+  /**
+   * Upsell rows only: the original order's own Shopify and order numbers
+   * (`shopify_display_number` / `order_number` carry the replacement's name
+   * to match it). They decide the origin of the replacement.
+   */
+  originalShopifyNumber?: unknown;
+  originalOrderNumber?: unknown;
   originSource?:
     | "icomfly"
     | "shopify_saved"

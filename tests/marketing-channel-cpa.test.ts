@@ -6,13 +6,20 @@ import {
   metaDestinationChannel,
   originChannel,
   productChannelCpa,
+  saleOriginChannel,
+  SALE_CHANNEL_LABEL,
+  SALE_CHANNELS,
+  SALE_ORIGINS,
+  type ChannelCpaRow,
   type ChannelOrderGroup,
 } from "../lib/marketing-channel-cpa";
 import {
   attachChannelMix,
   matchChannelsToOrders,
   rowChannel,
+  rowSaleOrigin,
 } from "../lib/marketing-channel-orders";
+import { orderSubOrigin } from "../lib/marketing-order-facts";
 import { marketingPeriod } from "../lib/marketing-dates";
 import type { MarketingOriginRow } from "../lib/marketing-attribution";
 import type { MarketingControl, RealOrderDay } from "../lib/marketing-real-orders";
@@ -127,6 +134,137 @@ describe("canal de cada origen", () => {
       null,
     ])
       expect(metaDestinationChannel(value)).toBe("landing");
+  });
+});
+
+describe("origen dentro del canal", () => {
+  const base = {
+    shopifyNumber: null,
+    labels: [] as string[],
+    salesChannel: null,
+    creator: null,
+  };
+  it("WhatsApp: bot, Conector IA, asesora y MANUAL sin creador", () => {
+    expect(orderSubOrigin({ ...base, labels: ["Venta por bot"] })).toBe("bot");
+    expect(orderSubOrigin({ ...base, labels: ["VENTA POR BOT"] })).toBe("bot");
+    expect(orderSubOrigin({ ...base, salesChannel: "WhatsApp" })).toBe("bot");
+    expect(orderSubOrigin({ ...base, creator: "Conector IA" })).toBe(
+      "conector_ia",
+    );
+    expect(orderSubOrigin({ ...base, creator: "  conector ia " })).toBe(
+      "conector_ia",
+    );
+    // The bot signals win over the creator, as in `orderOrigin`.
+    expect(
+      orderSubOrigin({ ...base, salesChannel: "whatsapp", creator: "Conector IA" }),
+    ).toBe("bot");
+    expect(
+      orderSubOrigin({ ...base, labels: ["Venta por bot"], creator: "Leonor" }),
+    ).toBe("bot");
+    expect(orderSubOrigin({ ...base, creator: "Leonor" })).toBe("asesora");
+    expect(
+      orderSubOrigin({ ...base, creator: "Leonor", orderNumber: "MANUAL-7" }),
+    ).toBe("asesora");
+    expect(
+      orderSubOrigin({ ...base, creator: "Conector IA", orderNumber: "MANUAL-7" }),
+    ).toBe("conector_ia");
+    expect(orderSubOrigin({ ...base, orderNumber: "MANUAL-1-ABCDE" })).toBe(
+      "manual",
+    );
+    expect(orderSubOrigin({ ...base, orderNumber: " manual-9" })).toBe(
+      "manual",
+    );
+  });
+  it("Página web: formulario, carrito recuperado y Shopify", () => {
+    expect(orderSubOrigin(base)).toBe("formulario");
+    expect(orderSubOrigin({ ...base, orderNumber: "#1790" })).toBe(
+      "formulario",
+    );
+    expect(orderSubOrigin({ ...base, labels: ["Retomó la compra"] })).toBe(
+      "formulario",
+    );
+    expect(
+      orderSubOrigin({
+        ...base,
+        labels: ["Carrito abandonado recuperado", "Venta por bot"],
+        creator: "Leonor",
+        orderNumber: "MANUAL-3",
+      }),
+    ).toBe("carrito");
+    expect(
+      orderSubOrigin({
+        ...base,
+        shopifyNumber: "#MCRC1",
+        labels: ["Venta por bot"],
+        creator: "Conector IA",
+      }),
+    ).toBe("shopify");
+  });
+  it("each origin belongs to one channel; 'otro' to none", () => {
+    for (const channel of SALE_CHANNELS)
+      for (const origin of SALE_ORIGINS[channel])
+        expect(saleOriginChannel(origin)).toBe(
+          origin === "otro" ? null : channel,
+        );
+    expect(SALE_CHANNEL_LABEL.landing).toBe("Página web");
+  });
+  it("classifies origin rows: iComfly, saved Shopify and upsell originals", () => {
+    const icomfly = { shopify_display_number: null };
+    expect(rowSaleOrigin(row("a", { ...icomfly, creator: "Conector IA" }))).toBe(
+      "conector_ia",
+    );
+    expect(
+      rowSaleOrigin(row("a", { ...icomfly, sales_channel: "whatsapp" })),
+    ).toBe("bot");
+    expect(rowSaleOrigin(row("a", { ...icomfly, creator: "Leonor" }))).toBe(
+      "asesora",
+    );
+    expect(
+      rowSaleOrigin(row("a", { ...icomfly, order_number: "MANUAL-9" })),
+    ).toBe("manual");
+    expect(rowSaleOrigin(row("a", { ...icomfly, order_number: "#55" }))).toBe(
+      "formulario",
+    );
+    expect(
+      rowSaleOrigin(
+        row("a", {
+          ...icomfly,
+          labels: [{ name: "Carrito abandonado recuperado" }],
+        }),
+      ),
+    ).toBe("carrito");
+    expect(rowSaleOrigin(row("#MCRC1"))).toBe("shopify");
+    // Saved Shopify rows are Shopify whatever they carry.
+    for (const originSource of ["shopify_saved", "shopify_archive"] as const)
+      expect(
+        rowSaleOrigin(
+          row("#1001", { originSource, sales_channel: "whatsapp" }),
+        ),
+      ).toBe("shopify");
+    // An upsell row carries the replacement's name in its numbers: the
+    // original's own numbers decide.
+    const upsell = {
+      originSource: "upsell_original" as const,
+      shopify_display_number: "IC-900",
+      order_number: "IC-900",
+    };
+    expect(rowSaleOrigin(row("IC-900", { ...upsell, creator: "Leonor" }))).toBe(
+      "asesora",
+    );
+    expect(rowChannel(row("IC-900", { ...upsell, creator: "Leonor" }))).toBe(
+      "whatsapp",
+    );
+    expect(
+      rowSaleOrigin(
+        row("IC-900", { ...upsell, originalOrderNumber: "MANUAL-4" }),
+      ),
+    ).toBe("manual");
+    expect(
+      rowSaleOrigin(
+        row("IC-900", { ...upsell, originalShopifyNumber: "#MCRC9" }),
+      ),
+    ).toBe("shopify");
+    expect(rowSaleOrigin(row("IC-900", upsell))).toBe("formulario");
   });
 });
 
@@ -248,14 +386,17 @@ describe("pedidos reales por canal", () => {
     }));
   it("matches orders to iComfly rows and groups real orders anonymously", () => {
     const channels = matchChannelsToOrders(orders, rows);
-    expect(channels.get("#1")).toBe("landing");
-    expect(channels.get("IC-50")).toBe("whatsapp");
-    expect(channels.get("IC-51")).toBe("whatsapp");
+    expect(channels.get("#1")).toEqual({ channel: "landing", origin: "shopify" });
+    expect(channels.get("IC-50")).toEqual({ channel: "whatsapp", origin: "bot" });
+    expect(channels.get("IC-51")).toEqual({
+      channel: "whatsapp",
+      origin: "asesora",
+    });
     expect(channels.has("#2")).toBe(false);
     const mixed = attachChannelMix(days(), orders, channels, period, now);
     expect(mixed[0].mix).toEqual(
       expect.arrayContaining<ChannelOrderGroup>([
-        ["landing", [["sku:a", 2]], 1],
+        ["landing", [["sku:a", 2]], 1, "shopify"],
         [
           "whatsapp",
           [
@@ -263,28 +404,101 @@ describe("pedidos reales por canal", () => {
             ["sku:b", 1],
           ],
           1,
+          "bot",
         ],
       ]),
     );
-    // Annulled IC-52 is excluded; #2 has no iComfly row → unknown.
+    // Annulled IC-52 is excluded; #2 has no iComfly row → unknown, no origin.
     expect(mixed[1].mix).toEqual(
       expect.arrayContaining<ChannelOrderGroup>([
-        ["whatsapp", [["sku:b", 3]], 1],
+        ["whatsapp", [["sku:b", 3]], 1, "asesora"],
         ["unknown", [["sku:a", 1]], 1],
       ]),
     );
     expect(mixed[1].mix).toHaveLength(2);
   });
-  it("upsell replacements keep the channel of the original order", () => {
+  it("groups split by origin and stay anonymous", () => {
+    const same = [
+      order("IC-60", "2026-11-18", [{ sku: "A", title: "Fat Burn", quantity: 1 }]),
+      order("IC-61", "2026-11-18", [{ sku: "A", title: "Fat Burn", quantity: 1 }]),
+      order("IC-62", "2026-11-18", [{ sku: "A", title: "Fat Burn", quantity: 1 }]),
+    ];
+    const channels = matchChannelsToOrders(
+      same,
+      ["IC-60", "IC-61", "IC-62"].map((name, i) =>
+        row(name, {
+          shopify_display_number: null,
+          order_number: name.slice(3),
+          creator: i === 2 ? "Conector IA" : null,
+          sales_channel: i === 2 ? null : "whatsapp",
+        }),
+      ),
+    );
+    const [day] = attachChannelMix(days(), same, channels, period, now);
+    expect(day.mix).toEqual([
+      ["whatsapp", [["sku:a", 1]], 2, "bot"],
+      ["whatsapp", [["sku:a", 1]], 1, "conector_ia"],
+    ]);
+    // Only channel, lines, count and origin leave the server.
+    const text = JSON.stringify(day.mix);
+    for (const secret of ["IC-60", "IC-61", "IC-62", "Conector IA"])
+      expect(text).not.toContain(secret);
+  });
+  it("upsell replacements keep the channel and origin of the original order", () => {
+    const upsell = { originSource: "upsell_original" as const };
     const channels = matchChannelsToOrders(orders, [
       row("IC-50", {
         shopify_display_number: null,
         order_number: "50",
         creator: "Leonor",
       }),
-      row("IC-50", { originSource: "upsell_original" }),
+      row("IC-50", upsell),
     ]);
-    expect(channels.get("IC-50")).toBe("landing");
+    expect(channels.get("IC-50")).toEqual({
+      channel: "landing",
+      origin: "formulario",
+    });
+    // The original was a bot sale: the replacement (typed by an asesora)
+    // stays a bot sale, not Shopify for carrying its name in the numbers.
+    const bot = matchChannelsToOrders(orders, [
+      row("IC-50", {
+        shopify_display_number: null,
+        order_number: "50",
+        creator: "Leonor",
+      }),
+      row("IC-50", { ...upsell, sales_channel: "whatsapp" }),
+    ]);
+    expect(bot.get("IC-50")).toEqual({ channel: "whatsapp", origin: "bot" });
+  });
+  it("same rank: channel kept with origin 'otro' on origin disagreement; dropped on channel disagreement", () => {
+    const icomfly = { shopify_display_number: null, order_number: "50" };
+    const otro = matchChannelsToOrders(orders, [
+      row("IC-50", { ...icomfly, sales_channel: "whatsapp" }),
+      row("IC-50", { ...icomfly, creator: "Leonor" }),
+    ]);
+    expect(otro.get("IC-50")).toEqual({ channel: "whatsapp", origin: "otro" });
+    const agree = matchChannelsToOrders(orders, [
+      row("IC-50", { ...icomfly, creator: "Leonor" }),
+      row("IC-50", { ...icomfly, creator: "María" }),
+    ]);
+    expect(agree.get("IC-50")).toEqual({
+      channel: "whatsapp",
+      origin: "asesora",
+    });
+    const clash = matchChannelsToOrders(orders, [
+      row("IC-50", { ...icomfly, creator: "Leonor" }),
+      row("IC-50", { ...icomfly }),
+    ]);
+    expect(clash.has("IC-50")).toBe(false);
+    // iComfly rows win over saved Shopify rows.
+    const ranked = matchChannelsToOrders(orders, [
+      row("IC-50", { originSource: "shopify_saved" }),
+      row("IC-50", { ...icomfly, creator: "Leonor" }),
+    ]);
+    expect(ranked.get("IC-50")).toEqual({
+      channel: "whatsapp",
+      origin: "asesora",
+    });
   });
   it("without iComfly rows every order is unknown", () => {
     const mixed = attachChannelMix(days(), orders, null, period, now);
@@ -413,9 +627,11 @@ describe("CPA por producto y canal", () => {
   });
   const mix = {
     "2026-11-18": [
-      ["landing", [[keyA, 2]], 3],
-      ["whatsapp", [[keyA, 1]], 1],
-      ["whatsapp", [[keyB, 1]], 2],
+      ["landing", [[keyA, 2]], 2, "formulario"],
+      ["landing", [[keyA, 2]], 1, "carrito"],
+      ["whatsapp", [[keyA, 1]], 1, "bot"],
+      ["whatsapp", [[keyB, 1]], 1, "conector_ia"],
+      ["whatsapp", [[keyB, 1]], 1, "asesora"],
     ] as ChannelOrderGroup[],
     "2026-11-19": [
       [
@@ -425,6 +641,7 @@ describe("CPA por producto y canal", () => {
           [keyB, 2],
         ],
         1,
+        "formulario",
       ],
     ] as ChannelOrderGroup[],
   };
@@ -491,6 +708,99 @@ describe("CPA por producto y canal", () => {
     expect(result.ordersChannel).toBe("ok");
   });
 
+  it("breaks the orders of each channel down by origin, without spend", () => {
+    const result = report(
+      sources([
+        campaign("fat", [{ date: "2026-11-18", whatsapp: 10, landing: 30 }]),
+        campaign("shi", [{ date: "2026-11-18", whatsapp: 40, landing: 0 }]),
+      ]),
+    );
+    const a = result.rows.find((r) => r.key === keyA)!;
+    expect(a.origins!.landing).toEqual([
+      { origin: "formulario", orders: 3, units: 5, share: 0.75 },
+      { origin: "carrito", orders: 1, units: 2, share: 0.25 },
+      { origin: "shopify", orders: 0, units: 0, share: 0 },
+    ]);
+    expect(a.origins!.whatsapp).toEqual([
+      { origin: "bot", orders: 1, units: 1, share: 1 },
+      { origin: "conector_ia", orders: 0, units: 0, share: 0 },
+      { origin: "asesora", orders: 0, units: 0, share: 0 },
+      { origin: "manual", orders: 0, units: 0, share: 0 },
+    ]);
+    const b = result.rows.find((r) => r.key === keyB)!;
+    expect(
+      b.origins!.whatsapp.filter((o) => o.orders).map((o) => o.origin),
+    ).toEqual(["conector_ia", "asesora"]);
+    // Origins carry no spend or CPA of their own.
+    expect(Object.keys(a.origins!.landing[0]).sort()).toEqual([
+      "orders",
+      "origin",
+      "share",
+      "units",
+    ]);
+    // Totals by origin add up to the channel totals, for rows and totals.
+    const sums = (row: ChannelCpaRow) => {
+      for (const channel of SALE_CHANNELS) {
+        const list = row.origins![channel];
+        expect(list.reduce((n, o) => n + o.orders, 0)).toBe(
+          row[channel].orders,
+        );
+        expect(list.reduce((n, o) => n + o.units, 0)).toBeCloseTo(
+          row[channel].units!,
+        );
+        if (row[channel].orders)
+          expect(list.reduce((n, o) => n + (o.share ?? 0), 0)).toBeCloseTo(1);
+      }
+    };
+    for (const row of [...result.rows, result.totals]) sums(row);
+    expect(result.totals.origins!.whatsapp.map((o) => o.orders)).toEqual([
+      1, 1, 1, 0,
+    ]);
+  });
+
+  it("origin 'otro', old payloads and unknown channels", () => {
+    const result = report(
+      sources([campaign("fat", [{ date: "2026-11-18", whatsapp: 0, landing: 1 }])]),
+      control({
+        "2026-11-18": [
+          ["whatsapp", [[keyA, 1]], 2, "otro"],
+          // From before the origin existed: counted in the channel as "otro".
+          ["whatsapp", [[keyA, 1]], 1],
+          // An origin of the other channel never moves the order.
+          ["landing", [[keyA, 1]], 1, "bot"],
+          ["whatsapp", [[keyA, 1]], 1, "manual"],
+          ["unknown", [[keyA, 1]], 4],
+        ],
+      }),
+    );
+    const a = result.rows.find((r) => r.key === keyA)!;
+    expect(a.whatsapp.orders).toBe(4);
+    expect(a.origins!.whatsapp.at(-1)).toEqual({
+      origin: "otro",
+      orders: 3,
+      units: 3,
+      share: 0.75,
+    });
+    expect(a.origins!.whatsapp.find((o) => o.origin === "manual")!.orders).toBe(
+      1,
+    );
+    expect(a.origins!.landing.at(-1)).toMatchObject({ origin: "otro", orders: 1 });
+    // Unknown-channel orders count in the total, not in any origin.
+    expect(a.total.orders).toBe(9);
+    const inOrigins = SALE_CHANNELS.flatMap((c) => a.origins![c]).reduce(
+      (n, o) => n + o.orders,
+      0,
+    );
+    expect(inOrigins).toBe(5);
+    // Without channel there is no breakdown either.
+    const none = report(
+      sources([campaign("fat", null)]),
+      control({ "2026-11-18": [["unknown", [[keyA, 1]], 2]] }),
+    );
+    expect(none.rows.find((r) => r.key === keyA)!.origins).toBeNull();
+    expect(none.totals.origins).toBeNull();
+  });
+
   it("CPA is null with 0 orders and no cost is invented", () => {
     const result = report(
       sources([
@@ -499,7 +809,7 @@ describe("CPA por producto y canal", () => {
           { date: "2026-11-19", whatsapp: 0, landing: 20 },
         ]),
       ]),
-      control({ "2026-11-18": [["landing", [[keyA, 1]], 1]] }),
+      control({ "2026-11-18": [["landing", [[keyA, 1]], 1, "formulario"]] }),
     );
     const a = result.rows.find((r) => r.key === keyA)!;
     expect(a.whatsapp).toEqual({
@@ -568,5 +878,42 @@ describe("CPA por producto y canal", () => {
       ]),
     );
     expect(result.rows.find((r) => r.key === keyA)!.partial).toBe(true);
+  });
+});
+
+describe("búsqueda por producto", () => {
+  const rowsOf = (names: string[]) => names.map((name) => ({ name }));
+  it("encuentra por partes del nombre, sin tildes ni mayúsculas", async () => {
+    const { filterCpaRows } = await import("../lib/marketing-channel-cpa");
+    const rows = rowsOf(["Colágeno Hidrolizado + Biotina", "Magnesio Citrato 500 mg", "Omega 3 Premium"]);
+    expect(filterCpaRows(rows, "colageno bio").map((r) => r.name)).toEqual(["Colágeno Hidrolizado + Biotina"]);
+    expect(filterCpaRows(rows, "  MAGNESIO ").map((r) => r.name)).toEqual(["Magnesio Citrato 500 mg"]);
+    expect(filterCpaRows(rows, "")).toBe(rows);
+    expect(filterCpaRows(rows, "batana")).toEqual([]);
+  });
+
+  it("suma el origen de los productos filtrados y recalcula el % del canal", async () => {
+    const { sumCpaOrigins } = await import("../lib/marketing-channel-cpa");
+    const o = (origin: string, orders: number, units = orders) => ({ origin, orders, units, share: null });
+    const row = (landing: ReturnType<typeof o>[], whatsapp: ReturnType<typeof o>[]) =>
+      ({ origins: { landing, whatsapp } }) as unknown as Parameters<typeof sumCpaOrigins>[0][number];
+    const sum = sumCpaOrigins([
+      row([o("formulario", 3), o("carrito", 1), o("shopify", 0)], [o("bot", 2), o("conector_ia", 0), o("asesora", 1), o("manual", 0)]),
+      row([o("formulario", 1), o("carrito", 0), o("shopify", 0)], [o("bot", 1), o("conector_ia", 1), o("asesora", 0), o("manual", 0), o("otro", 1)]),
+    ])!;
+    expect(sum.landing.map((c) => [c.origin, c.orders, c.share])).toEqual([
+      ["formulario", 4, 0.8],
+      ["carrito", 1, 0.2],
+      ["shopify", 0, 0],
+    ]);
+    expect(sum.whatsapp.map((c) => [c.origin, c.orders])).toEqual([
+      ["bot", 3],
+      ["conector_ia", 1],
+      ["asesora", 1],
+      ["manual", 0],
+      ["otro", 1],
+    ]);
+    expect(sumCpaOrigins([{ origins: null }])).toBeNull();
+    expect(sumCpaOrigins([])).toBeNull();
   });
 });
