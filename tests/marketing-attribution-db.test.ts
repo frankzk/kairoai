@@ -217,3 +217,36 @@ describe("Shopify cerrado: no se consulta lo que no puede tener el pedido", () =
     expect(tables).toContain("shopify_orders");
   });
 });
+
+describe("pedidos creados desde Leads en Kairo", () => {
+  it("marca los pedidos de iComfly que tienen recibo de Kairo", async () => {
+    setup({
+      icomfly_order_payloads: [
+        {
+          data: [
+            { icomfly_order_id: "5", order_number: "MANUAL-1-ABCDE", ad_origin: null },
+            { icomfly_order_id: "6", order_number: "MANUAL-2-FGHIJ", ad_origin: null },
+          ],
+          error: null,
+        },
+      ],
+      lead_icomfly_receipts: [{ data: [{ icomfly_id: "5" }], error: null }],
+    });
+    const rows = await listMarketingOrigins(1, "2026-11-20T06:00:00Z", "2026-11-25T06:00:00Z");
+    expect(rows.map((r) => [r.icomfly_order_id, r.kairoLead])).toEqual([
+      ["5", true],
+      ["6", false],
+    ]);
+  });
+
+  it("sin poder leer los recibos, nada se marca y el resto sigue", async () => {
+    setup({
+      icomfly_order_payloads: [
+        { data: [{ icomfly_order_id: "5", order_number: "MANUAL-1-ABCDE", ad_origin: null }], error: null },
+      ],
+      lead_icomfly_receipts: [{ data: null, error: { message: "no" } }],
+    });
+    const rows = await listMarketingOrigins(1, "2026-11-20T06:00:00Z", "2026-11-25T06:00:00Z");
+    expect(rows.map((r) => r.kairoLead)).toEqual([false]);
+  });
+});

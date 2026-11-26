@@ -113,6 +113,7 @@ async function replacementOrigins(
     ancestors(String(r.original_id)).map((source) => ({
       ...source,
       originalShopifyNumber: source.shopify_display_number,
+      originalIcomflyId: source.icomfly_order_id,
       originalOrderNumber: source.order_number,
       icomfly_order_id: String(r.replacement_id),
       order_number: r.replacement_name,
@@ -123,6 +124,35 @@ async function replacementOrigins(
     })),
   );
 }
+/**
+ * iComfly ids of the orders Kairo created from Leads ("Crear en iComfly"),
+ * from its own receipts. iComfly sometimes keeps those "MANUAL-…" orders
+ * without creator (10 of them on 19–26/11/2026, all with a receipt): with this
+ * they count as "Desde Leads en Kairo" instead of "Manual sin creador".
+ * Fail-soft: without the receipts they stay as before.
+ */
+async function kairoLeadOrderIds(storeId: number): Promise<Set<string>> {
+  const ids = new Set<string>();
+  try {
+    for (let start = 0; start < 50_000; start += 1000) {
+      const { data, error } = await getDB()
+        .from("lead_icomfly_receipts")
+        .select("icomfly_id")
+        .eq("store_id", storeId)
+        .not("icomfly_id", "is", null)
+        .order("icomfly_id")
+        .range(start, start + 999);
+      if (error || !data) break;
+      for (const row of data as Array<{ icomfly_id: unknown }>)
+        if (row.icomfly_id != null) ids.add(String(row.icomfly_id));
+      if (data.length < 1000) break;
+    }
+  } catch {
+    // Sin recibos: los MANUAL sin creador quedan como "Manual sin creador".
+  }
+  return ids;
+}
+
 export async function listMarketingOrigins(
   storeId: number,
   from: string,
@@ -135,7 +165,7 @@ export async function listMarketingOrigins(
   const upper = new Date(Date.parse(to) + 86400000).toISOString().slice(0, 10);
   // Un período posterior al cierre de Shopify no tiene nada en sus tablas.
   const conShopify = lower < SHOPIFY_SIN_PEDIDOS_DESDE;
-  const [native, saved, archive, inherited, catalog] = await Promise.all([
+  const [native, saved, archive, inherited, catalog, kairoLeads] = await Promise.all([
     pages((start) =>
       getDB()
         .from("icomfly_order_payloads")
@@ -173,6 +203,7 @@ export async function listMarketingOrigins(
       : Promise.resolve([] as Raw[]),
     replacementOrigins(storeId),
     readOriginCatalog(storeId),
+    kairoLeadOrderIds(storeId),
   ]);
   return [
     ...(native as unknown as MarketingOriginRow[]).map((r) => ({
@@ -184,8 +215,16 @@ export async function listMarketingOrigins(
     ...inherited,
   ].map((row) => {
     const origin = readIcomflyAdOrigin(row.ad_origin);
+    // The upsell rows carry the replacement's id: the original's decides.
+    const ownId =
+      row.originSource === "upsell_original"
+        ? row.originalIcomflyId
+        : row.originSource === "icomfly"
+          ? row.icomfly_order_id
+          : null;
     return {
       ...row,
+      kairoLead: ownId != null && kairoLeads.has(String(ownId)),
       resolvedOrigin: origin ? resolveOriginCampaign(origin, catalog) : null,
     };
   });

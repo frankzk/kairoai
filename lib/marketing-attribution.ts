@@ -22,6 +22,13 @@ export interface MarketingOriginRow {
    */
   originalShopifyNumber?: unknown;
   originalOrderNumber?: unknown;
+  /** Upsell rows only: the original order's own iComfly id. */
+  originalIcomflyId?: unknown;
+  /**
+   * Kairo created this order from Leads (it has a receipt in
+   * lead_icomfly_receipts), even when iComfly kept it without creator.
+   */
+  kairoLead?: boolean;
   originSource?:
     | "icomfly"
     | "shopify_saved"
