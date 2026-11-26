@@ -112,6 +112,8 @@ async function replacementOrigins(
   return receipts.flatMap((r) =>
     ancestors(String(r.original_id)).map((source) => ({
       ...source,
+      originalShopifyNumber: source.shopify_display_number,
+      originalOrderNumber: source.order_number,
       icomfly_order_id: String(r.replacement_id),
       order_number: r.replacement_name,
       shopify_display_number: r.replacement_name,

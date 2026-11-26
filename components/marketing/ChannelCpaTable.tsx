@@ -1,22 +1,30 @@
 "use client";
 // Tablero › CPA por producto y canal (20/11/2026). Gasto de las campañas
 // asignadas, pedidos reales (sin anulados) y unidades de cada producto, con el
-// CPA por orden y por unidad, en total y abierto en Landing y WhatsApp. Sigue
-// el período superior del reporte. Las reglas de canal y de reparto del gasto
-// están en lib/marketing-channel-cpa.ts; aquí solo se muestran, con "≈" cuando
-// la cobertura es parcial y sin inventar un costo cuando falta un dato.
-import { useState } from "react";
+// CPA por orden y por unidad, en total y abierto en Página web y WhatsApp.
+// Sigue el período superior del reporte. Las reglas de canal y de reparto del
+// gasto están en lib/marketing-channel-cpa.ts; aquí solo se muestran, con "≈"
+// cuando la cobertura es parcial y sin inventar un costo cuando falta un dato.
+//
+// Origen dentro del canal (26/11/2026): arriba, el resumen de todos los
+// productos por canal → origen (bot, Leads en Kairo, asesora…; formulario,
+// carrito, Shopify); en cada producto abierto, el mismo detalle a un clic.
+// Solo pedidos, unidades y % del canal: el gasto no se separa por origen.
+import { useState, type CSSProperties } from "react";
 import { ChevronRight } from "lucide-react";
 import {
   SALE_CHANNEL_LABEL,
   SALE_CHANNELS,
+  SALE_ORIGIN_HINT,
+  SALE_ORIGIN_LABEL,
   type ChannelCell,
   type ChannelCpaReport,
   type ChannelCpaRow,
+  type OriginCell,
   type SaleChannel,
 } from "@/lib/marketing-channel-cpa";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
-import { count, money } from "./format";
+import { count, money, percentage } from "./format";
 import r from "./team-report.module.css";
 
 const t = MARKETING_TARGETS;
@@ -93,20 +101,197 @@ function Cells({
   );
 }
 
+const ORIGIN_NOTE =
+  "El gasto solo se puede separar por canal: el detalle muestra de dónde salieron los pedidos, sin CPA propio.";
+
+/** One channel → its origins: orders, units and % of the channel's orders. */
+function OriginTable({
+  channel,
+  value,
+  origins,
+  approx,
+  loading,
+  product,
+  onlyUsed = false,
+}: {
+  channel: SaleChannel;
+  value: ChannelCell;
+  origins: OriginCell[];
+  approx: boolean;
+  loading: boolean;
+  /** Product of the detail, for screen readers (null = all products). */
+  product: string | null;
+  /** Hide the origins without orders (product detail). */
+  onlyUsed?: boolean;
+}) {
+  const rows = onlyUsed ? origins.filter((o) => o.orders > 0) : origins;
+  const orders = value.orders ?? 0;
+  const cpa =
+    value.cpaOrder != null
+      ? `${approx ? "≈ " : ""}${usd(value.cpaOrder)}`
+      : value.spend == null
+        ? "sin desglose"
+        : orders === 0
+          ? "sin pedidos"
+          : value.spend === 0
+            ? "sin pauta"
+            : "sin datos";
+  return (
+    <table
+      className={`${r.originTable} ${channel === "whatsapp" ? r.originWhatsapp : ""}`}
+    >
+      <caption>
+        <span className={r.originCaption}>
+          <span className={r.originChannel}>
+            {SALE_CHANNEL_LABEL[channel]}
+            {product && <span className="sr-only"> · {product}</span>}
+          </span>
+          <span className={r.originMeta}>
+            {loading
+              ? "…"
+              : `${count(orders)} ${orders === 1 ? "pedido" : "pedidos"} · CPA del canal ${cpa}`}
+          </span>
+        </span>
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Origen</th>
+          <th scope="col">Pedidos</th>
+          <th scope="col">Unidades</th>
+          <th scope="col">% del canal</th>
+        </tr>
+      </thead>
+      <tbody>
+        {loading ? (
+          <tr>
+            <td colSpan={4} className={r.originEmpty}>
+              …
+            </td>
+          </tr>
+        ) : !rows.length ? (
+          <tr>
+            <td colSpan={4} className={r.originEmpty}>
+              Sin pedidos reales en este canal.
+            </td>
+          </tr>
+        ) : (
+          rows.map((o) => (
+            <tr key={o.origin} className={o.orders ? undefined : r.originZero}>
+              <th scope="row" title={SALE_ORIGIN_HINT[o.origin]}>
+                {SALE_ORIGIN_LABEL[o.origin]}
+              </th>
+              <td>{count(o.orders)}</td>
+              <td>{count(Math.round(o.units))}</td>
+              <td>
+                <span className={r.originShare}>
+                  <span
+                    className={r.originBar}
+                    aria-hidden
+                    style={
+                      {
+                        "--share": `${Math.round((o.share ?? 0) * 100)}%`,
+                      } as CSSProperties
+                    }
+                  />
+                  <span className={r.originPct}>
+                    {o.share == null ? "—" : percentage(o.share)}
+                  </span>
+                </span>
+              </td>
+            </tr>
+          ))
+        )}
+      </tbody>
+    </table>
+  );
+}
+
+/** Both channels of one row, side by side (stacked on a phone). */
+function OriginPair({
+  row,
+  loading,
+  product,
+  onlyUsed,
+}: {
+  row: ChannelCpaRow;
+  loading: boolean;
+  product: string | null;
+  onlyUsed?: boolean;
+}) {
+  if (!row.origins) return null;
+  const approx = row.partial || row.approximate || row.split !== "ok";
+  return (
+    <div className={r.originGrid}>
+      {SALE_CHANNELS.map((channel) => (
+        <OriginTable
+          key={channel}
+          channel={channel}
+          value={row[channel]}
+          origins={row.origins![channel]}
+          approx={approx}
+          loading={loading}
+          product={product}
+          onlyUsed={onlyUsed}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Totals of all products by channel → origin, above the table. */
+function OriginSummary({
+  report,
+  loading,
+}: {
+  report: ChannelCpaReport;
+  loading: boolean;
+}) {
+  return (
+    <section className={r.originSummary} aria-labelledby="cpa-origen">
+      <h3 id="cpa-origen">De dónde salieron los pedidos</h3>
+      <p>{ORIGIN_NOTE}</p>
+      {report.totals.origins ? (
+        <OriginPair row={report.totals} loading={loading} product={null} />
+      ) : (
+        <p className={r.originEmpty}>
+          {loading
+            ? "Consultando pedidos…"
+            : "El canal de los pedidos no está disponible: no se pudo cruzar con iComfly."}
+        </p>
+      )}
+      {!loading && report.totals.origins && report.unknownOrders > 0 && (
+        <p className={r.originFoot}>
+          {count(report.unknownOrders)}{" "}
+          {report.unknownOrders === 1
+            ? "pedido real sin canal (sin cruce con iComfly) no entra"
+            : "pedidos reales sin canal (sin cruce con iComfly) no entran"}{" "}
+          en este detalle.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function Group({
   row,
   open,
   onToggle,
+  originOpen = false,
+  onOriginToggle,
   loading,
   total = false,
 }: {
   row: ChannelCpaRow;
   open: boolean;
   onToggle: () => void;
+  originOpen?: boolean;
+  onOriginToggle?: () => void;
   loading: boolean;
   total?: boolean;
 }) {
   const id = `canal-${row.key.replace(/[^a-z0-9]+/gi, "-")}`;
+  // The totals' detail is the summary above the table.
+  const detail = !total && row.origins != null && onOriginToggle != null;
   return (
     <tbody className={total ? r.channelTotal : undefined}>
       <tr>
@@ -115,7 +300,11 @@ function Group({
             type="button"
             className={r.channelToggle}
             aria-expanded={open}
-            aria-controls={`${id}-landing ${id}-whatsapp`}
+            aria-controls={[
+              `${id}-landing`,
+              `${id}-whatsapp`,
+              ...(detail ? [`${id}-origen-fila`] : []),
+            ].join(" ")}
             onClick={onToggle}
           >
             <ChevronRight aria-hidden size={14} />
@@ -147,6 +336,33 @@ function Group({
           />
         </tr>
       ))}
+      {detail && (
+        <tr id={`${id}-origen-fila`} className={r.originRow} hidden={!open}>
+          <td colSpan={6}>
+            <div className={r.originDetail}>
+              <button
+                type="button"
+                className={r.channelToggle}
+                aria-expanded={originOpen}
+                aria-controls={`${id}-origen`}
+                onClick={onOriginToggle}
+              >
+                <ChevronRight aria-hidden size={14} />
+                <span>De dónde salieron los pedidos</span>
+              </button>
+              <div id={`${id}-origen`} hidden={!originOpen}>
+                <p>{ORIGIN_NOTE}</p>
+                <OriginPair
+                  row={row}
+                  loading={loading}
+                  product={row.name}
+                  onlyUsed
+                />
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
     </tbody>
   );
 }
@@ -166,9 +382,12 @@ export function ChannelCpaTable({
   onAssign: () => void;
 }) {
   const [open, setOpen] = useState<Record<string, boolean>>({ total: true });
+  const [originOpen, setOriginOpen] = useState<Record<string, boolean>>({});
   const [all, setAll] = useState(false);
   const toggle = (key: string) =>
     setOpen((current) => ({ ...current, [key]: !current[key] }));
+  const toggleOrigin = (key: string) =>
+    setOriginOpen((current) => ({ ...current, [key]: !current[key] }));
   const rows = report?.rows ?? [];
   const visible = all ? rows : rows.slice(0, PAGE);
   const notes = report
@@ -197,10 +416,12 @@ export function ChannelCpaTable({
             {periodText}, el período elegido arriba. CPA por orden =
             gasto de las campañas asignadas / pedidos reales del producto (sin
             anulados); CPA por unidad = gasto / unidades de esos pedidos. Abre
-            un producto para ver Landing y WhatsApp.
+            un producto para ver Página web y WhatsApp, y de dónde salieron sus
+            pedidos.
           </p>
         </div>
       </div>
+      {report && <OriginSummary report={report} loading={loading} />}
       <div
         className={r.tableWrap}
         tabIndex={0}
@@ -233,6 +454,8 @@ export function ChannelCpaTable({
               row={row}
               open={Boolean(open[row.key])}
               onToggle={() => toggle(row.key)}
+              originOpen={Boolean(originOpen[row.key])}
+              onOriginToggle={() => toggleOrigin(row.key)}
               loading={loading}
             />
           ))}
@@ -254,7 +477,7 @@ export function ChannelCpaTable({
         <p>
           {[
             ...notes,
-            "Landing = formulario web, carrito recuperado y Shopify (hasta el 28/10). WhatsApp = bot, Conector IA y pedidos de asesoras. El gasto de Meta se reparte por el destino de cada conjunto de anuncios; TikTok cuenta como Landing. El total incluye campañas sin asignar y no es la suma de las filas.",
+            "Página web = formulario, carrito recuperado y Shopify (hasta el 28/10). WhatsApp = bot de WhatsApp, pedidos creados desde Leads en Kairo, asesoras en iComfly y pedidos MANUAL sin creador. El gasto de Meta se reparte por el destino de cada conjunto de anuncios; TikTok cuenta como Página web. El total incluye campañas sin asignar y no es la suma de las filas.",
           ].join(" ")}
         </p>
         {rows.length > PAGE && (
