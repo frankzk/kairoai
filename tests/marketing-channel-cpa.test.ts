@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildMarketingSummary } from "../lib/marketing";
 import {
   campaignChannelSpend,
+  campaignNameSaysWhatsapp,
   itemUnits,
   metaDestinationChannel,
   originChannel,
@@ -298,17 +299,17 @@ describe("reparto del gasto por canal", () => {
         "2026-11-18",
         "2026-11-19",
       ),
-    ).toEqual({ total: 40, landing: 30, whatsapp: 10, unknown: 0 });
+    ).toEqual({ total: 40, landing: 30, whatsapp: 10, unknown: 0, inferred: 0 });
   });
   it("TikTok is all Landing", () => {
     expect(
       campaignChannelSpend({ daily }, "tiktok", "2026-11-18", "2026-11-19"),
-    ).toEqual({ total: 40, landing: 40, whatsapp: 0, unknown: 0 });
+    ).toEqual({ total: 40, landing: 40, whatsapp: 0, unknown: 0, inferred: 0 });
   });
   it("a day without rows uses the campaign's share; no rows at all stays unknown", () => {
     expect(
       campaignChannelSpend({ daily }, "meta", "2026-11-18", "2026-11-19"),
-    ).toEqual({ total: 40, landing: 0, whatsapp: 0, unknown: 40 });
+    ).toEqual({ total: 40, landing: 0, whatsapp: 0, unknown: 40, inferred: 0 });
     expect(
       campaignChannelSpend(
         {
@@ -319,7 +320,7 @@ describe("reparto del gasto por canal", () => {
         "2026-11-18",
         "2026-11-19",
       ),
-    ).toEqual({ total: 40, landing: 0, whatsapp: 40, unknown: 0 });
+    ).toEqual({ total: 40, landing: 0, whatsapp: 40, unknown: 0, inferred: 0 });
     expect(
       campaignChannelSpend(
         {
@@ -330,10 +331,40 @@ describe("reparto del gasto por canal", () => {
         "2026-11-18",
         "2026-11-19",
       ),
-    ).toEqual({ total: 40, landing: 30, whatsapp: 10, unknown: 0 });
+    ).toEqual({ total: 40, landing: 30, whatsapp: 10, unknown: 0, inferred: 0 });
     expect(
       campaignChannelSpend({}, "meta", "2026-11-18", "2026-11-19"),
     ).toBeNull();
+  });
+
+  it("without destination, a campaign named WhatsApp counts as WhatsApp (inferred); never Página web by name", () => {
+    for (const name of ["WSP | Magnesio Citrato", "WSP BATANA OIL | CR", "ABO WSP", "wpp colágeno", "WhatsApp - Omega"])
+      expect(
+        campaignChannelSpend({ daily, name }, "meta", "2026-11-18", "2026-11-19"),
+      ).toEqual({ total: 40, landing: 0, whatsapp: 40, unknown: 0, inferred: 40 });
+    for (const name of ["WEB | Magnesio", "Landing Batana", "Fat Burn", "", undefined])
+      expect(
+        campaignChannelSpend({ daily, name }, "meta", "2026-11-18", "2026-11-19"),
+      ).toMatchObject({ landing: 0, whatsapp: 0, unknown: 40, inferred: 0 });
+    // A read destination always wins over the name.
+    expect(
+      campaignChannelSpend(
+        { daily, name: "WSP | Magnesio", channelSpend: [{ date: "2026-11-18", whatsapp: 0, landing: 5 }] },
+        "meta",
+        "2026-11-18",
+        "2026-11-19",
+      ),
+    ).toEqual({ total: 40, landing: 40, whatsapp: 0, unknown: 0, inferred: 0 });
+    // TikTok is never read by name.
+    expect(
+      campaignChannelSpend({ daily, name: "WSP" }, "tiktok", "2026-11-18", "2026-11-19"),
+    ).toMatchObject({ landing: 40, inferred: 0 });
+  });
+  it("only clear WhatsApp names", () => {
+    for (const name of ["WSP | Magnesio Citrato", "WSP BATANA OIL", "Magnesio WSP", "WA | Batana", "wa - batana", "[WPP] Omega", "Whats App Colágeno"])
+      expect(campaignNameSaysWhatsapp(name)).toBe(true);
+    for (const name of ["Wasabi", "WAX | Depil", "Batana WA", "Washington", "WSPX", "WSP vs WEB", "WSP landing", null])
+      expect(campaignNameSaysWhatsapp(name)).toBe(false);
   });
 });
 
@@ -833,6 +864,81 @@ describe("CPA por producto y canal", () => {
     expect(a.landing.orders).toBe(4);
     expect(a.split).toBe("partial");
     expect(result.spendChannel).toBe("unavailable");
+  });
+
+  it("partial destinations: known spend split, the rest «sin destino», CPA per channel ≈ on the known part", () => {
+    const named = (id: string, name: string, split: Parameters<typeof campaign>[1]) => ({
+      ...campaign(id, split),
+      name,
+    });
+    // fat: 60 split 10 WhatsApp / 50 web; a deleted campaign of the same
+    // product (no destination, no WhatsApp in the name) spent 60 too.
+    const s = sources([
+      campaign("fat", [
+        { date: "2026-11-18", whatsapp: 10, landing: 30 },
+        { date: "2026-11-19", whatsapp: 0, landing: 20 },
+      ]),
+      named("fat-old", "Fat Burn | Eliminada", null),
+    ]);
+    const mapped: MarketingSettings = {
+      ...settings,
+      mappings: [
+        ...settings.mappings,
+        { ...settings.mappings[0], campaign_id: "fat-old" },
+      ],
+    };
+    const result = productChannelCpa({ summary, sources: s, settings: mapped, control: control(mix), fx, ...period });
+    const a = result.rows.find((r) => r.key === keyA)!;
+    // The product total does not change.
+    expect(a.total).toMatchObject({ spend: 120, orders: 5, cpaOrder: 24 });
+    expect(a.landing).toMatchObject({ spend: 50, orders: 4, cpaOrder: 12.5 });
+    expect(a.whatsapp).toMatchObject({ spend: 10, orders: 1, cpaOrder: 10 });
+    expect(a.unknownSpend).toBe(60);
+    expect(a.unknownCampaigns).toBe(1);
+    expect(a.inferredSpend).toBe(0);
+    expect(a.split).toBe("partial");
+    expect(a.spendNote).toMatch(/^USD\s?60,00 sin destino \(1 campaña sin destino leído en Meta\)/);
+    expect(result.spendChannel).toBe("partial");
+    // The totals row keeps every campaign's total and shows the same split.
+    expect(result.totals.total.spend).toBe(120);
+    expect(result.totals.unknownSpend).toBe(60);
+    expect(result.totals.landing.spend).toBe(50);
+  });
+
+  it("a campaign named WhatsApp without destination is WhatsApp ≈, marked as inferred", () => {
+    const s = sources([
+      campaign("fat", [{ date: "2026-11-18", whatsapp: 0, landing: 30 }]),
+      { ...campaign("shi", null), name: "WSP | Magnesio Citrato" },
+    ]);
+    const result = report(s);
+    const b = result.rows.find((r) => r.key === keyB)!;
+    expect(b.whatsapp).toMatchObject({ spend: 60, orders: 2, cpaOrder: 30 });
+    expect(b.landing).toMatchObject({ spend: 0 });
+    expect(b.inferredSpend).toBe(60);
+    expect(b.unknownSpend).toBe(0);
+    expect(b.split).toBe("partial");
+    expect(b.spendNote).toMatch(/WhatsApp incluye USD\s?60,00 por el nombre de la campaña/);
+    expect(result.spendInferred).toBe(true);
+    expect(result.spendChannel).toBe("ok");
+    const a = result.rows.find((r) => r.key === keyA)!;
+    expect(a.split).toBe("ok");
+    expect(a.spendNote).toBe("");
+  });
+
+  it("a product with no destination at all still shows «Sin desglose»", () => {
+    const s = sources([
+      campaign("fat", null),
+      campaign("shi", [{ date: "2026-11-18", whatsapp: 1, landing: 1 }]),
+    ]);
+    const result = report(s);
+    const a = result.rows.find((r) => r.key === keyA)!;
+    expect(a.total.spend).toBe(60);
+    expect(a.landing.spend).toBeNull();
+    expect(a.whatsapp.spend).toBeNull();
+    expect(a.whatsapp.cpaOrder).toBeNull();
+    expect(a.unknownSpend).toBe(60);
+    expect(a.spendNote).toBe("Meta no dio el destino de 1 campaña: sin desglose");
+    expect(result.spendChannel).toBe("partial");
   });
 
   it("orders without channel mark the split partial; no iComfly marks it unavailable", () => {

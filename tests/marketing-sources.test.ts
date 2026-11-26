@@ -236,11 +236,16 @@ describe("Landing / WhatsApp split of Meta spend (ad set destinations)", () => {
     failAdsetEdge?: boolean;
     failAdsets?: boolean;
     refuseStatus?: boolean;
+    refuseStatusFilter?: boolean;
+    refuseDeletedSpend?: boolean;
     refuseGoal?: boolean;
     hide?: string[];
   };
+  type Filter = { field: string; operator: string; value: string[] };
+  const filters = (url: URL): Filter[] => JSON.parse(url.searchParams.get("filtering") ?? "[]");
+  const statusFilter = (url: URL) => filters(url).find((f) => f.field === "adset.effective_status");
   function router(options: Options = {}) {
-    return vi.fn(async (input: string | URL | Request) => {
+    return vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/act_123"))
         return response({ id: "act_123", currency: "USD", timezone_name: "America/Costa_Rica" });
@@ -248,15 +253,22 @@ describe("Landing / WhatsApp split of Meta spend (ad set destinations)", () => {
         if (options.failAdsetEdge) return response({ error: { message: "private-meta-token" } }, 400);
         if (options.refuseStatus && url.searchParams.get("effective_status"))
           return response({ error: { message: "bad status" } }, 400);
-        const campaigns: string[] = JSON.parse(url.searchParams.get("filtering")!)[0].value;
+        if ((options.refuseStatusFilter || options.refuseStatus) && statusFilter(url))
+          return response({ error: { message: "bad filter private-meta-token" } }, 400);
+        const campaigns: string[] = filters(url)[0].value;
+        // Like Meta: with `filtering`, only live ad sets unless the status is
+        // in the filter itself (the separate parameter does not bring them).
+        const withDeleted = statusFilter(url)?.value.includes("DELETED") ?? false;
         const all = [
           { id: "S1", campaign: "C1", destination_type: "WEBSITE" },
           { id: "S2", campaign: "C1", destination_type: "WHATSAPP" },
           { id: "S3", campaign: "C2", destination_type: "UNDEFINED" },
+          { id: "S4", campaign: "C3", destination_type: "WHATSAPP", deleted: true },
         ];
         return response({
           data: all
             .filter((a) => campaigns.includes(a.campaign) && !(options.hide ?? []).includes(a.id))
+            .filter((a) => withDeleted || !a.deleted)
             .map(({ id, destination_type }) => ({ id, destination_type })),
         });
       }
@@ -266,15 +278,22 @@ describe("Landing / WhatsApp split of Meta spend (ad set destinations)", () => {
           if (options.refuseGoal && url.searchParams.get("fields")!.includes("optimization_goal"))
             return response({ error: { message: "bad field" } }, 400);
           const withGoal = url.searchParams.get("fields")!.includes("optimization_goal");
-          return response({ data: [
+          const status = statusFilter(url);
+          if (status && options.refuseDeletedSpend) return response({ error: { message: "bad filter" } }, 400);
+          const live = [
             { adset_id: "S1", campaign_id: "C1", optimization_goal: "OFFSITE_CONVERSIONS", spend: "30" },
             { adset_id: "S2", campaign_id: "C1", optimization_goal: "CONVERSATIONS", spend: "10" },
             { adset_id: "S3", campaign_id: "C2", optimization_goal: "CONVERSATIONS", spend: "5" },
-          ].map(({ optimization_goal, ...row }) => (withGoal ? { ...row, optimization_goal } : row)) });
+          ];
+          // A deleted ad set only answers when asked by status.
+          const deleted = [{ adset_id: "S4", campaign_id: "C3", optimization_goal: "OFFSITE_CONVERSIONS", spend: "8" }];
+          const rows = status ? (status.value.includes("DELETED") ? deleted : []) : live;
+          return response({ data: rows.map(({ optimization_goal, ...row }) => (withGoal ? { ...row, optimization_goal } : row)) });
         }
         return response({ data: [
           { campaign_id: "C1", campaign_name: "Fat Burn", date_start: "2026-11-18", spend: "40", impressions: "1", clicks: "1" },
           { campaign_id: "C2", campaign_name: "WSP", date_start: "2026-11-19", spend: "5", impressions: "1", clicks: "1" },
+          { campaign_id: "C3", campaign_name: "Magnesio (borrada)", date_start: "2026-11-19", spend: "8", impressions: "1", clicks: "1" },
         ] });
       }
       return response({}, 404);
@@ -311,9 +330,59 @@ describe("Landing / WhatsApp split of Meta spend (ad set destinations)", () => {
 
   it("retries without the status list, and without the goal field, when Meta refuses them", async () => {
     clearDestinationCache();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const result = await getMarketingSources(period, metaEnv, router({ refuseStatus: true, refuseGoal: true }), { daily: true, channels: true });
+    warn.mockRestore();
     expect(result.meta.data!.accounts[0].channels).toBe("ok");
     expect(spendOf(result, "C1")).toEqual([{ date: "2026-11-18", whatsapp: 10, landing: 30 }]);
+  });
+
+  it("reads deleted and archived ad sets too: their spend and their destination", async () => {
+    clearDestinationCache();
+    const fetcher = router();
+    const result = await getMarketingSources(period, metaEnv, fetcher, { daily: true, channels: true });
+    const urls = fetcher.mock.calls.map(([u]) => new URL(String(u)));
+    // Spend of the deleted/archived ad sets: a second adset-level read by status.
+    const spendReads = urls.filter((u) => u.searchParams.get("level") === "adset");
+    expect(spendReads.map((u) => statusFilter(u)?.value ?? null)).toEqual(
+      expect.arrayContaining([null, ["DELETED", "ARCHIVED"]]),
+    );
+    // Destinations: the status goes inside `filtering`, next to the campaigns.
+    const lookups = urls.filter((u) => u.pathname.endsWith("/adsets"));
+    expect(lookups).toHaveLength(1);
+    expect(filters(lookups[0])[0]).toMatchObject({ field: "campaign.id", operator: "IN" });
+    expect(filters(lookups[0])[0].value).toEqual(expect.arrayContaining(["C1", "C2", "C3"]));
+    expect(statusFilter(lookups[0])).toMatchObject({ operator: "IN", value: expect.arrayContaining(["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"]) });
+    expect(urls.some((u) => u.searchParams.get("ids"))).toBe(false);
+    // Token only in the Authorization header.
+    expect(urls.some((u) => u.href.includes("private-meta-token"))).toBe(false);
+    expect(fetcher.mock.calls.every(([, init]) => JSON.stringify(init?.headers ?? {}).includes("private-meta-token"))).toBe(true);
+    // The deleted WhatsApp ad set gives its campaign a split; the live ones are unchanged.
+    expect(spendOf(result, "C3")).toEqual([{ date: "2026-11-18", whatsapp: 8, landing: 0 }]);
+    expect(spendOf(result, "C1")).toEqual([{ date: "2026-11-18", whatsapp: 10, landing: 30 }]);
+  });
+
+  it("falls back to the earlier request when Meta refuses the status filter, warning without the token", async () => {
+    clearDestinationCache();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetcher = router({ refuseStatusFilter: true, refuseDeletedSpend: true });
+    const result = await getMarketingSources(period, metaEnv, fetcher, { daily: true, channels: true });
+    const warnings = warn.mock.calls.map((c) => c.join(" "));
+    warn.mockRestore();
+    const lookups = fetcher.mock.calls
+      .map(([u]) => new URL(String(u)))
+      .filter((u) => u.pathname.endsWith("/adsets"));
+    // Filter refused → the earlier request: `effective_status` as its own parameter.
+    expect(lookups).toHaveLength(2);
+    expect(statusFilter(lookups[1])).toBeUndefined();
+    expect(JSON.parse(lookups[1].searchParams.get("effective_status")!)).toContain("DELETED");
+    expect(result.meta.data!.accounts[0].channels).toBe("ok");
+    expect(spendOf(result, "C1")).toEqual([{ date: "2026-11-18", whatsapp: 10, landing: 30 }]);
+    // Without the deleted ad sets, that campaign has no split (never guessed).
+    expect(spendOf(result, "C3")).toBeUndefined();
+    expect(warnings.length).toBeGreaterThanOrEqual(2);
+    expect(warnings.join(" ")).toMatch(/borrados o archivados/);
+    expect(warnings.join(" ")).not.toContain("private-meta-token");
   });
 
   it("fails soft: spend stays, the split is marked unavailable", async () => {

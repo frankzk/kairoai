@@ -339,7 +339,8 @@ export function clearDestinationCache() {
   destinationCache.clear();
 }
 
-const ADSET_STATUSES = JSON.stringify([
+/** Every ad set `effective_status`, deleted and archived included. */
+const ADSET_STATUS_LIST = [
   "ACTIVE",
   "PAUSED",
   "CAMPAIGN_PAUSED",
@@ -347,15 +348,30 @@ const ADSET_STATUSES = JSON.stringify([
   "DELETED",
   "IN_PROCESS",
   "WITH_ISSUES",
-]);
+];
+const ADSET_STATUSES = JSON.stringify(ADSET_STATUS_LIST);
+
+/** Warns once per request kind; never the token or the URL (only our own text). */
+function warnMeta(what: string, err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  console.warn(`[marketing/sources] ${what} (${message.slice(0, 120)})`);
+}
 
 /**
  * Destination of each ad set. Read from the account's own `/adsets` edge (the
  * same path as the reports that already work; the multi-id `?ids=` lookup was
  * refused by Meta for every ad set in production), filtered by the campaigns
- * that spent, with every status so archived and deleted ad sets answer too.
- * Ad sets that still do not answer are left out (the caller can fall back to
- * the ad set's optimization goal).
+ * that spent.
+ *
+ * Deleted and archived ad sets (campaigns recreated: "Eliminado" in
+ * Publicidad) still spend in the period, but a request with `filtering` only
+ * returns live objects unless the status is in the filter too (Meta, "Manage
+ * your ad object's status"). So the status goes inside `filtering`
+ * (`adset.effective_status IN [...]`, every status). If Meta refuses that
+ * filter, it falls back to the earlier request (`effective_status` as its own
+ * parameter) and then to no status at all, with a warning. Ad sets that still
+ * do not answer are left out (the caller can fall back to the ad set's
+ * optimization goal, and the CPA to the campaign name).
  */
 async function adsetDestinations(
   base: string,
@@ -374,7 +390,8 @@ async function adsetDestinations(
     else missing.set(adset, campaign);
   }
   const campaigns = Array.from(new Set(missing.values()));
-  const read = (chunk: string[], withStatus: boolean) =>
+  type Mode = "filter" | "param" | "none";
+  const read = (chunk: string[], mode: Mode) =>
     metaPages(
       fetcher,
       (after) => {
@@ -384,9 +401,19 @@ async function adsetDestinations(
           "filtering",
           JSON.stringify([
             { field: "campaign.id", operator: "IN", value: chunk },
+            ...(mode === "filter"
+              ? [
+                  {
+                    field: "adset.effective_status",
+                    operator: "IN",
+                    value: ADSET_STATUS_LIST,
+                  },
+                ]
+              : []),
           ]),
         );
-        if (withStatus) url.searchParams.set("effective_status", ADSET_STATUSES);
+        if (mode === "param")
+          url.searchParams.set("effective_status", ADSET_STATUSES);
         url.searchParams.set("limit", "500");
         if (after) url.searchParams.set("after", after);
         return url;
@@ -398,14 +425,23 @@ async function adsetDestinations(
     const chunk = campaigns.slice(i, i + 50);
     let rows: Json[] = [];
     try {
-      rows = await read(chunk, true);
+      rows = await read(chunk, "filter");
     } catch (err) {
       if (signal.aborted) throw err;
-      // Some API versions refuse a status in the list: ask without it.
-      rows = await read(chunk, false).catch((again) => {
+      warnMeta(
+        "Meta rechazó el filtro de estado en /adsets: los conjuntos borrados o archivados pueden quedar sin destino",
+        err,
+      );
+      try {
+        rows = await read(chunk, "param");
+      } catch (again) {
         if (signal.aborted) throw again;
-        return [];
-      });
+        // Some API versions refuse a status in the list: ask without it.
+        rows = await read(chunk, "none").catch((last) => {
+          if (signal.aborted) throw last;
+          return [];
+        });
+      }
     }
     for (const row of rows) {
       const id = str(row.id);
@@ -433,7 +469,7 @@ async function metaChannelSpend(
   fetcher: typeof fetch,
   store: FinanceStoreCode = "mireva-cr",
 ): Promise<Map<string, Array<{ date: string; whatsapp: number; landing: number }>>> {
-  const read = (fields: string) =>
+  const read = (fields: string, statuses?: string[]) =>
     metaPages(
       fetcher,
       (after) => {
@@ -447,6 +483,13 @@ async function metaChannelSpend(
           "time_range",
           JSON.stringify({ since: range.from, until: range.to }),
         );
+        if (statuses)
+          url.searchParams.set(
+            "filtering",
+            JSON.stringify([
+              { field: "adset.effective_status", operator: "IN", value: statuses },
+            ]),
+          );
         url.searchParams.set("limit", "500");
         if (after) url.searchParams.set("after", after);
         return url;
@@ -456,12 +499,38 @@ async function metaChannelSpend(
     );
   // The ad set's optimization goal is the fallback when its destination does
   // not answer; if Meta refuses the field, the spend is read without it.
-  const rows = await read("adset_id,campaign_id,optimization_goal,spend").catch(
-    (err) => {
+  const readGoal = (statuses?: string[]) =>
+    read("adset_id,campaign_id,optimization_goal,spend", statuses).catch(
+      (err) => {
+        if (signal.aborted) throw err;
+        return read("adset_id,campaign_id,spend", statuses);
+      },
+    );
+  // Account-level insights by ad set leave deleted and archived ad sets out
+  // unless asked by status: a second read brings only those, and adds the ad
+  // sets the first one did not have. If Meta refuses it, the split goes on
+  // with the live ad sets (as before) and a warning.
+  const [live, gone] = await Promise.all([
+    readGoal(),
+    readGoal(["DELETED", "ARCHIVED"]).catch((err) => {
       if (signal.aborted) throw err;
-      return read("adset_id,campaign_id,spend");
-    },
-  );
+      warnMeta(
+        "Meta rechazó leer el gasto de conjuntos borrados o archivados",
+        err,
+      );
+      return [] as Json[];
+    }),
+  ]);
+  const known = new Set(live.map((row) => str(row.adset_id)));
+  const rows = [
+    ...live,
+    ...gone.filter((row) => {
+      const id = str(row.adset_id);
+      if (!id || known.has(id)) return false;
+      known.add(id);
+      return true;
+    }),
+  ];
   // One row per ad set for the whole range, dated at its first day.
   const parsed = rows.flatMap((row) =>
     str(row.adset_id) && str(row.campaign_id)

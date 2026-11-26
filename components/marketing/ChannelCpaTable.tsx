@@ -13,6 +13,11 @@
 //
 // Búsqueda por producto (26/11/2026): filtra la tabla y el resumen pasa a
 // sumar solo los productos encontrados.
+//
+// Sin destino (26/11/2026): el gasto de Meta sin destino leído va en su
+// propia fila ("Sin destino", con el motivo) y Página web / WhatsApp llevan
+// el resto, con "≈"; el WhatsApp contado por el nombre de la campaña lo dice
+// debajo. "Sin desglose" solo cuando nada del gasto tiene destino.
 import { useState, type CSSProperties } from "react";
 import { ChevronRight, Search, X } from "lucide-react";
 import {
@@ -89,10 +94,17 @@ function Cells({
   // above the target is marked.
   const risky =
     !approx && value.cpaOrder != null && value.cpaOrder > t.cpaUsd;
+  const inferred =
+    channel === "whatsapp" && value.spend != null
+      ? (row.inferredSpend ?? 0)
+      : 0;
   return (
     <>
       <td>
         {value.spend == null ? missingSpend : `${mark}${usd(value.spend)}`}
+        {inferred > 0.005 && (
+          <small>{usd(inferred)} por el nombre de la campaña</small>
+        )}
       </td>
       <td>{value.orders == null ? missingOrders : count(value.orders)}</td>
       <td>
@@ -348,6 +360,8 @@ function Group({
   const id = `canal-${row.key.replace(/[^a-z0-9]+/gi, "-")}`;
   // The totals' detail is the summary above the table.
   const detail = !total && row.origins != null && onOriginToggle != null;
+  // Spend without a read destination: its own row, never in a channel.
+  const unknown = (row.unknownSpend ?? 0) > 0.005;
   return (
     <tbody className={total ? r.channelTotal : undefined}>
       <tr>
@@ -359,6 +373,7 @@ function Group({
             aria-controls={[
               `${id}-landing`,
               `${id}-whatsapp`,
+              ...(unknown ? [`${id}-sin-destino`] : []),
               ...(detail ? [`${id}-origen-fila`] : []),
             ].join(" ")}
             onClick={onToggle}
@@ -392,6 +407,21 @@ function Group({
           />
         </tr>
       ))}
+      {unknown && (
+        <tr
+          id={`${id}-sin-destino`}
+          className={`${r.channelSub} ${r.channelUnknown}`}
+          hidden={!open}
+        >
+          <th scope="row">Sin destino</th>
+          <td>{loading ? "…" : usd(row.unknownSpend ?? 0)}</td>
+          <td>—</td>
+          <td>—</td>
+          <td colSpan={2} className={r.channelNote}>
+            {loading ? "…" : row.spendNote}
+          </td>
+        </tr>
+      )}
       {detail && (
         <tr id={`${id}-origen-fila`} className={r.originRow} hidden={!open}>
           <td colSpan={6}>
@@ -460,8 +490,11 @@ export function ChannelCpaTable({
         report.spendChannel === "unavailable"
           ? "Meta no dejó leer el destino de los conjuntos de anuncios: el gasto no se reparte por canal."
           : report.spendChannel === "partial"
-            ? "Parte del gasto de Meta no tiene destino leído: esos productos quedan sin desglose de gasto."
+            ? "Parte del gasto de Meta no tiene destino leído: va aparte como «sin destino» y el CPA por canal de esos productos es aproximado (≈), sobre el gasto con destino."
             : "",
+        report.spendInferred
+          ? "Las campañas sin destino leído cuyo nombre dice WhatsApp (WSP, WPP, WhatsApp) cuentan como WhatsApp (≈)."
+          : "",
       ].filter(Boolean)
     : [];
   return (
