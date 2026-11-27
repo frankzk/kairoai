@@ -13,7 +13,7 @@ Reglas:
 Estado actual:
 
 Leads, una asesora a la vez por lead: `20261128120000_lead_holds.sql`
-**PENDIENTE** de aplicar. Sin ella los leads se abren y se gestionan como
+Aplicada el 27/11/2026. Sin ella los leads se abren y se gestionan como
 siempre (la app detecta que falta, no reserva, no muestra candados ni avisos y
 deja de preguntar por 5 minutos). Crea `lead_holds` (una fila por lead
 reservado: id y nombre de quien lo abrió, desde y hasta cuándo; máximo 1 hora
