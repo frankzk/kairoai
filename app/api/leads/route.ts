@@ -15,6 +15,7 @@ import { daysAgoIso } from "@/lib/leads-metrics";
 import { identidadActual } from "@/lib/identidad";
 import { canSeePresenceTeam } from "@/lib/leads-presence-server";
 import { readAssignmentBoardInfo } from "@/lib/leads-assignment-server";
+import { activeBoardHolds } from "@/lib/lead-holds-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -36,6 +37,12 @@ export async function GET(req: NextRequest) {
     me: yo && yo.id > 0 ? yo.id : null,
     team: yo ? canSeePresenceTeam(yo) : true,
   }));
+  // Leads que OTRA persona tiene abiertos ahora (candado en la tarjeta). Una
+  // consulta indexada con solo las reservas vigentes; falla suave: [].
+  // El archivo (?scope=archivo, sin busqueda) no las usa: no se consultan.
+  const soloArchivo =
+    !req.nextUrl.searchParams.get("q")?.trim() && req.nextUrl.searchParams.get("scope") === "archivo";
+  const holds = soloArchivo ? Promise.resolve([]) : activeBoardHolds(store.id, yo ? yo.id : null);
   try {
     // Busqueda: se resuelve en Postgres sobre toda la tabla de la tienda, sin
     // ventana ni scope. El tablero antes se bajaba el archivo entero (~3.800
@@ -60,6 +67,7 @@ export async function GET(req: NextRequest) {
         views: BOARD_VIEWS,
         scope: "busqueda",
         assignment: await assignmentInfo,
+        holds: await holds,
         // El tablero lo usa para avisar que no son coincidencias exactas.
         aproximado,
         counts: null,
@@ -122,6 +130,7 @@ export async function GET(req: NextRequest) {
       views: BOARD_VIEWS,
       scope,
       assignment: await assignmentInfo,
+      holds: await holds,
       counts,
       counts_error: countsError,
       leads: withStage,

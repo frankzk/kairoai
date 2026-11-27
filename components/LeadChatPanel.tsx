@@ -104,12 +104,15 @@ export default function LeadChatPanel({
   compact = false,
   title,
   onActivity,
+  fromLeads = false,
 }: {
   lead: ChatLeadSummary;
   store: string;
   compact?: boolean;
   title?: string;
   onActivity?: () => void;
+  /** Abierto desde la sección Leads: el envío respeta la reserva del lead (lib/lead-holds.ts). */
+  fromLeads?: boolean;
 }) {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -263,6 +266,7 @@ export default function LeadChatPanel({
           storeLabel={storeConfig?.shortLabel ?? ""}
           catalogUrl={storeConfig?.catalogUrl}
           compact={compact}
+          fromLeads={fromLeads}
           onSent={(text) => {
             setMessages((previous) => [
               ...previous,

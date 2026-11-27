@@ -20,6 +20,7 @@ import { nombrePedidoIcomfly } from "@/lib/icomfly-pedidos";
 import { runIcomflySync } from "@/lib/icomfly-sync";
 import { verifyCreatedIcomflyOrder } from "@/lib/icomfly-confirmation";
 import { ensureManualOrderDiscount } from "@/lib/icomfly-discount";
+import { leadHoldConflict } from "@/lib/lead-holds-server";
 import { findReceipt, reserveReceipt, saveReceiptId, confirmReceipt, type Receipt } from "@/lib/icomfly-receipts";
 
 export const runtime = "nodejs";
@@ -70,6 +71,9 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
     if (!lead) return NextResponse.json({ error: "lead no encontrado" }, { status: 404 });
     const existing=await findReceipt(store.id,leadId,body.request_id!);
     if(existing)return await verificarRecibo(existing,store.code);
+    // Otra persona tiene abierto este lead (lib/lead-holds.ts): no se escribe.
+    const ocupado = await leadHoldConflict({ leadId, timeZone: store.timezone });
+    if (ocupado) return ocupado;
   // Una asesora sin permiso de supervision queda SIEMPRE a su nombre
   // (lib/identidad.ts): el navegador no puede registrar a nombre de otra.
   const vendedoraId = vendedoraEfectiva(body?.vendedora_id) ?? NaN;
