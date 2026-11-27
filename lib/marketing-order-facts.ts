@@ -100,13 +100,24 @@ export function orderSubOrigin(signals: {
   salesChannel: string | null;
   creator: string | null;
   orderNumber?: unknown;
+  /**
+   * What iComfly said about the chat of the order (27/11/2026,
+   * lib/icomfly-whatsapp-ad.ts): it splits the WhatsApp bot into "desde
+   * anuncio", "orgánico" and "sin revisar". Without it the bot stays "bot".
+   */
+  whatsappAd?: "ad" | "organic" | "unchecked";
 }): Exclude<SaleOrigin, "otro"> {
   const origin = orderOrigin(signals);
-  if (origin === "bot")
-    return signals.labels.some((l) => norm(l).includes("venta por bot")) ||
-      norm(signals.salesChannel) === "whatsapp"
-      ? "bot"
-      : "conector_ia";
+  if (origin === "bot") {
+    const bot =
+      signals.labels.some((l) => norm(l).includes("venta por bot")) ||
+      norm(signals.salesChannel) === "whatsapp";
+    if (!bot) return "conector_ia";
+    if (signals.whatsappAd === "ad") return "bot_anuncio";
+    if (signals.whatsappAd === "organic") return "bot_organico";
+    if (signals.whatsappAd === "unchecked") return "bot_sin_revisar";
+    return "bot";
+  }
   if (
     origin === "formulario" &&
     /^MANUAL-/i.test(String(signals.orderNumber ?? "").trim())

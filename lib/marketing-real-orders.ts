@@ -5,12 +5,12 @@
 // pedido sale de aquí.
 import {
   mergeAdOrigins,
-  readIcomflyAdOrigin,
   resolveOriginCampaign,
   type IcomflyAdOrigin,
   type OriginCampaign,
 } from "./icomfly-ad-origin";
 import { nombrePedidoIcomfly } from "./icomfly-pedidos";
+import { rowAdOrigin } from "./icomfly-whatsapp-ad";
 import type { OrderProfitabilityRow } from "./finance-orders";
 import type { ChannelOrderGroup } from "./marketing-channel-cpa";
 import type { MarketingOriginRow } from "./marketing-attribution";
@@ -87,7 +87,10 @@ export function matchOriginsToOrders(
   const match = orderMatcher(orders);
   const candidates = new Map<string, IcomflyAdOrigin[]>();
   for (const row of rows) {
-    const parsed = row.resolvedOrigin ?? readIcomflyAdOrigin(row.ad_origin);
+    // A WhatsApp order has no UTM: the ad that started its chat counts like
+    // a web UTM ad id (lib/icomfly-whatsapp-ad.ts).
+    const parsed =
+      row.resolvedOrigin ?? rowAdOrigin(row.ad_origin, row.whatsappAd, catalog);
     if (!parsed) continue;
     const origin = resolveOriginCampaign(parsed, catalog);
     const orderKey = match(row);

@@ -204,6 +204,39 @@ export async function getIcomflyOrderDetalle(
   return order;
 }
 
+/**
+ * Anuncio de Meta que inició el chat de WhatsApp del pedido (Click-to-WhatsApp):
+ * GET /orders/{id}/whatsapp-ad-origin. Devuelve el status y el cuerpo sin
+ * interpretar (lib/icomfly-whatsapp-ad.ts lo lee) y nunca lanza por un status
+ * no-2xx: el cron lo cuenta como error. El token va solo en la cabecera; el
+ * cuerpo de un error no se devuelve (podría traer datos del pedido).
+ */
+export async function getIcomflyWhatsappAdOrigin(
+  storeCode: FinanceStoreCode,
+  id: string,
+  timeoutMs = 8000
+): Promise<{ status: number; body: unknown }> {
+  if (!/^[1-9]\d*$/.test(id)) throw new Error("ID de pedido inválido.");
+  const storeId = getIcomflyExternalStoreId(storeCode);
+  if (storeId == null) throw new Error("iComfly no configurado para la tienda.");
+  const pedir = async (token: string) =>
+    fetch(`${BASE}/orders/${id}/whatsapp-ad-origin`, {
+      headers: { Authorization: `Bearer ${token}`, "X-Active-Store-Ids": String(storeId) },
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  let res = await pedir(await getToken(storeCode));
+  if (res.status === 401) {
+    cachedTokens.delete(credencialIcomfly(storeCode).origen);
+    res = await pedir(await getToken(storeCode));
+  }
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    return { status: res.status, body: null };
+  }
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
 /** Read the exact internal ID independently and reject another store's order. */
 export async function getIcomflyOrder(store: FinanceStoreCode, id: string): Promise<Record<string, unknown>> {
   if (!/^[1-9]\d*$/.test(id)) throw new Error("ID de pedido inválido.");

@@ -14,6 +14,10 @@ export interface IcomflyAdOrigin {
   hasClick: boolean;
   origin: string;
   conflicts: string[];
+  /** "whatsapp" when it comes from the Click-to-WhatsApp ad of the chat (lib/icomfly-whatsapp-ad.ts), not a web UTM. */
+  via?: "whatsapp";
+  /** Text of the WhatsApp ad (iComfly `headline`). */
+  headline?: string;
 }
 const text = (v: unknown) =>
   typeof v === "string" ? v.trim().slice(0, 2000) : "";

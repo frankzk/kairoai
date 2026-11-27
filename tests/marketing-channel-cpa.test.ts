@@ -11,6 +11,7 @@ import {
   SALE_CHANNEL_LABEL,
   SALE_CHANNELS,
   SALE_ORIGINS,
+  SALE_ORIGIN_LABEL,
   type ChannelCpaRow,
   type ChannelOrderGroup,
 } from "../lib/marketing-channel-cpa";
@@ -214,9 +215,35 @@ describe("origen dentro del canal", () => {
     expect(rowSaleOrigin(row("a", { ...icomfly, creator: "Conector IA" }))).toBe(
       "conector_ia",
     );
+    // The bot splits by the WhatsApp ad of the chat (27/11/2026).
     expect(
       rowSaleOrigin(row("a", { ...icomfly, sales_channel: "whatsapp" })),
-    ).toBe("bot");
+    ).toBe("bot_sin_revisar");
+    const ad = { hasAd: true, adId: "120247519549990424" } as never;
+    const organic = { hasAd: false, adId: null } as never;
+    expect(
+      rowSaleOrigin(
+        row("a", { ...icomfly, sales_channel: "whatsapp", whatsappAd: ad }),
+      ),
+    ).toBe("bot_anuncio");
+    expect(
+      rowSaleOrigin(
+        row("a", {
+          ...icomfly,
+          labels: [{ name: "Venta por bot" }],
+          whatsappAd: organic,
+        }),
+      ),
+    ).toBe("bot_organico");
+    expect(
+      rowSaleOrigin(
+        row("a", { ...icomfly, sales_channel: "whatsapp", whatsappAd: null }),
+      ),
+    ).toBe("bot_sin_revisar");
+    // Only the bot splits: an asesora's order with an ad stays asesora.
+    expect(
+      rowSaleOrigin(row("a", { ...icomfly, creator: "Leonor", whatsappAd: ad })),
+    ).toBe("asesora");
     expect(rowSaleOrigin(row("a", { ...icomfly, creator: "Leonor" }))).toBe(
       "asesora",
     );
@@ -418,7 +445,10 @@ describe("pedidos reales por canal", () => {
   it("matches orders to iComfly rows and groups real orders anonymously", () => {
     const channels = matchChannelsToOrders(orders, rows);
     expect(channels.get("#1")).toEqual({ channel: "landing", origin: "shopify" });
-    expect(channels.get("IC-50")).toEqual({ channel: "whatsapp", origin: "bot" });
+    expect(channels.get("IC-50")).toEqual({
+      channel: "whatsapp",
+      origin: "bot_sin_revisar",
+    });
     expect(channels.get("IC-51")).toEqual({
       channel: "whatsapp",
       origin: "asesora",
@@ -435,7 +465,7 @@ describe("pedidos reales por canal", () => {
             ["sku:b", 1],
           ],
           1,
-          "bot",
+          "bot_sin_revisar",
         ],
       ]),
     );
@@ -467,7 +497,7 @@ describe("pedidos reales por canal", () => {
     );
     const [day] = attachChannelMix(days(), same, channels, period, now);
     expect(day.mix).toEqual([
-      ["whatsapp", [["sku:a", 1]], 2, "bot"],
+      ["whatsapp", [["sku:a", 1]], 2, "bot_sin_revisar"],
       ["whatsapp", [["sku:a", 1]], 1, "conector_ia"],
     ]);
     // Only channel, lines, count and origin leave the server.
@@ -499,7 +529,10 @@ describe("pedidos reales por canal", () => {
       }),
       row("IC-50", { ...upsell, sales_channel: "whatsapp" }),
     ]);
-    expect(bot.get("IC-50")).toEqual({ channel: "whatsapp", origin: "bot" });
+    expect(bot.get("IC-50")).toEqual({
+      channel: "whatsapp",
+      origin: "bot_sin_revisar",
+    });
   });
   it("same rank: channel kept with origin 'otro' on origin disagreement; dropped on channel disagreement", () => {
     const icomfly = { shopify_display_number: null, order_number: "50" };
@@ -752,8 +785,12 @@ describe("CPA por producto y canal", () => {
       { origin: "carrito", orders: 1, units: 2, share: 0.25 },
       { origin: "shopify", orders: 0, units: 0, share: 0 },
     ]);
+    // The payload carries the legacy "bot" (before 27/11/2026): it reads as
+    // "Bot · sin revisar"; the ad split shows with 0.
     expect(a.origins!.whatsapp).toEqual([
-      { origin: "bot", orders: 1, units: 1, share: 1 },
+      { origin: "bot_anuncio", orders: 0, units: 0, share: 0 },
+      { origin: "bot_organico", orders: 0, units: 0, share: 0 },
+      { origin: "bot_sin_revisar", orders: 1, units: 1, share: 1 },
       { origin: "conector_ia", orders: 0, units: 0, share: 0 },
       { origin: "asesora", orders: 0, units: 0, share: 0 },
       { origin: "manual", orders: 0, units: 0, share: 0 },
@@ -785,8 +822,42 @@ describe("CPA por producto y canal", () => {
     };
     for (const row of [...result.rows, result.totals]) sums(row);
     expect(result.totals.origins!.whatsapp.map((o) => o.orders)).toEqual([
-      1, 1, 1, 0,
+      0, 0, 1, 1, 1, 0,
     ]);
+  });
+
+  it("the bot split by WhatsApp ad; old payloads with 'bot' still render", () => {
+    const result = report(
+      sources([campaign("fat", [{ date: "2026-11-18", whatsapp: 10, landing: 0 }])]),
+      control({
+        "2026-11-18": [
+          ["whatsapp", [[keyA, 1]], 3, "bot_anuncio"],
+          ["whatsapp", [[keyA, 2]], 1, "bot_organico"],
+          ["whatsapp", [[keyA, 1]], 1, "bot_sin_revisar"],
+          // A payload cached before 27/11/2026.
+          ["whatsapp", [[keyA, 1]], 1, "bot"],
+        ],
+      }),
+    );
+    const a = result.rows.find((r) => r.key === keyA)!;
+    expect(a.whatsapp.orders).toBe(6);
+    expect(a.origins!.whatsapp.slice(0, 3)).toEqual([
+      { origin: "bot_anuncio", orders: 3, units: 3, share: 0.5 },
+      { origin: "bot_organico", orders: 1, units: 2, share: 1 / 6 },
+      { origin: "bot_sin_revisar", orders: 2, units: 2, share: 2 / 6 },
+    ]);
+    expect(a.origins!.whatsapp.some((o) => o.origin === "bot")).toBe(false);
+    expect(SALE_ORIGIN_LABEL.bot_anuncio).toBe("Bot · desde anuncio");
+    expect(SALE_ORIGIN_LABEL.bot_organico).toBe("Bot · orgánico");
+    expect(SALE_ORIGIN_LABEL.bot_sin_revisar).toBe("Bot · sin revisar");
+    // Once every bot order is checked, "sin revisar" is not listed.
+    const checked = report(
+      sources([campaign("fat", [{ date: "2026-11-18", whatsapp: 10, landing: 0 }])]),
+      control({ "2026-11-18": [["whatsapp", [[keyA, 1]], 1, "bot_anuncio"]] }),
+    );
+    expect(
+      checked.rows.find((r) => r.key === keyA)!.origins!.whatsapp.map((o) => o.origin),
+    ).toEqual(["bot_anuncio", "bot_organico", "conector_ia", "asesora", "manual"]);
   });
 
   it("origin 'otro', old payloads and unknown channels", () => {
@@ -1012,8 +1083,11 @@ describe("búsqueda por producto", () => {
       ["carrito", 1, 0.2],
       ["shopify", 0, 0],
     ]);
+    // Old cells with "bot" add up as "Bot · sin revisar".
     expect(sum.whatsapp.map((c) => [c.origin, c.orders])).toEqual([
-      ["bot", 3],
+      ["bot_anuncio", 0],
+      ["bot_organico", 0],
+      ["bot_sin_revisar", 3],
       ["conector_ia", 1],
       ["asesora", 1],
       ["manual", 0],

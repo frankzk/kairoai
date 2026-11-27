@@ -250,3 +250,86 @@ describe("pedidos creados desde Leads en Kairo", () => {
     expect(rows.map((r) => r.kairoLead)).toEqual([false]);
   });
 });
+
+describe("anuncio de WhatsApp del chat (27/11/2026)", () => {
+  const AD = "120247519549990424",
+    CAMPAIGN = "120247519549990001";
+  const wsp = {
+    icomfly_order_id: "1328939",
+    skipped: false,
+    has_ad: true,
+    ad_id: AD,
+    headline: "¡Complementa tu bienestar diario!",
+    has_click: true,
+    meta_status: "ok",
+    meta_account_id: "111",
+    campaign_id: CAMPAIGN,
+    campaign_name: "WSP | Magnesio",
+  };
+  it("lo adjunta a las filas de iComfly por rango de creación y cuenta como UTM", async () => {
+    mocks.catalog.mockResolvedValue([
+      { platform: "meta", accountId: "111", campaignId: CAMPAIGN },
+    ]);
+    const q = setup({
+      icomfly_order_payloads: [
+        {
+          data: [
+            { icomfly_order_id: "1328939", order_number: "172132", sales_channel: "whatsapp", ad_origin: null },
+            { icomfly_order_id: "1329232", order_number: "MANUAL-1-ABCDE", ad_origin: null },
+            { icomfly_order_id: "1329300", order_number: "172300", sales_channel: "whatsapp", ad_origin: null },
+          ],
+          error: null,
+        },
+      ],
+      icomfly_whatsapp_ad_origins: [
+        {
+          data: [wsp, { icomfly_order_id: "1329232", skipped: false, has_ad: false }],
+          error: null,
+        },
+      ],
+    });
+    const rows = await listMarketingOrigins(1, "2026-11-20T06:00:00Z", "2026-11-26T06:00:00Z");
+    const byId = new Map(rows.map((r) => [r.icomfly_order_id, r]));
+    expect(byId.get("1328939")).toMatchObject({
+      whatsappAd: { hasAd: true, adId: AD },
+      resolvedOrigin: { platform: "meta", via: "whatsapp", adId: AD, campaignId: CAMPAIGN },
+    });
+    expect(byId.get("1329232")).toMatchObject({ whatsappAd: { hasAd: false }, resolvedOrigin: null });
+    // Not checked yet: no ad origin, and "sin revisar" downstream.
+    expect(byId.get("1329300")!.whatsappAd).toBeNull();
+    const w = q.icomfly_whatsapp_ad_origins[0];
+    expect(w.eq).toHaveBeenCalledWith("store_id", 1);
+    expect(w.gte).toHaveBeenCalledWith("order_created_at", "2026-11-19");
+    expect(w.lt).toHaveBeenCalledWith("order_created_at", "2026-11-27");
+  });
+
+  it("sin la tabla (migración pendiente) todo sigue igual, sin anuncio", async () => {
+    setup({
+      icomfly_order_payloads: [
+        { data: [{ icomfly_order_id: "1328939", sales_channel: "whatsapp", ad_origin: null }], error: null },
+      ],
+      icomfly_whatsapp_ad_origins: [{ data: null, error: { code: "PGRST205" } }],
+    });
+    const rows = await listMarketingOrigins(1, "2026-11-20T06:00:00Z", "2026-11-26T06:00:00Z");
+    expect(rows[0]).toMatchObject({ whatsappAd: null, resolvedOrigin: null });
+  });
+
+  it("la ficha del pedido muestra el anuncio de WhatsApp", async () => {
+    mocks.catalog.mockResolvedValue([
+      { platform: "meta", accountId: "111", campaignId: CAMPAIGN },
+    ]);
+    const q = setup({
+      icomfly_order_payloads: [
+        { data: [{ icomfly_order_id: "1328939", order_number: "172132", ad_origin: null }], error: null },
+      ],
+      icomfly_whatsapp_ad_origins: [{ data: [wsp], error: null }],
+    });
+    expect(await orderMarketingOrigin(1, "IC-172132")).toMatchObject({
+      via: "whatsapp",
+      adId: AD,
+      campaignId: CAMPAIGN,
+      headline: "¡Complementa tu bienestar diario!",
+    });
+    expect(q.icomfly_whatsapp_ad_origins[0].in).toHaveBeenCalledWith("icomfly_order_id", ["1328939"]);
+  });
+});

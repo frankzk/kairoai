@@ -68,6 +68,10 @@
     {
       "path": "/api/cron/call-recordings",
       "schedule": "4,19,34,49 * * * *"
+    },
+    {
+      "path": "/api/cron/icomfly-whatsapp-ads",
+      "schedule": "41 * * * *"
     }
   ],
   "functions": {
@@ -156,6 +160,9 @@
       "maxDuration": 60
     },
     "app/api/cron/call-recordings/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/cron/icomfly-whatsapp-ads/route.ts": {
       "maxDuration": 60
     }
   }
