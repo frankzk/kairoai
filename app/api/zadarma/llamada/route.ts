@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody } from "@/lib/stores";
 import { vendedoraEfectiva } from "@/lib/identidad";
+import { leadHoldConflict } from "@/lib/lead-holds-server";
 import { destinoDeLlamada, type PedidoDeLlamada } from "@/lib/llamada-destino";
 import { isZadarmaConfigured } from "@/lib/zadarma";
 
@@ -42,6 +43,9 @@ export async function POST(req: NextRequest) {
   try {
     const destino = await destinoDeLlamada(store, body);
     if (!destino.ok) return NextResponse.json({ error: destino.error }, { status: destino.status });
+    // Llamada desde la ficha de un lead que otra persona tiene abierto.
+    const ocupado = await leadHoldConflict({ leadId: destino.leadId, timeZone: store.timezone });
+    if (ocupado) return ocupado;
     // Solo dígitos: el teléfono le agrega el "+" que Zadarma necesita
     // (lib/zadarma-webrtc.ts › destinoSip).
     return NextResponse.json({ ok: true, destino: destino.phone.replace(/\D/g, "") });

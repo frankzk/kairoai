@@ -20,6 +20,7 @@ export default function ChatComposer({
   storeLabel,
   catalogUrl,
   compact = false,
+  fromLeads = false,
   onSent,
 }: {
   leadId: number;
@@ -28,6 +29,8 @@ export default function ChatComposer({
   storeLabel: string;
   catalogUrl?: string;
   compact?: boolean;
+  /** Enviado desde la sección Leads: el servidor aplica la reserva del lead. */
+  fromLeads?: boolean;
   onSent: (text: string) => void;
 }) {
   const [text, setText] = useState("");
@@ -85,6 +88,7 @@ export default function ChatComposer({
         vendedora_id: vendedoraId,
         message,
         quick_reply_id: quickReplyId,
+        ...(fromLeads ? { origen: "leads" } : {}),
       }),
     });
     const data = await res.json();

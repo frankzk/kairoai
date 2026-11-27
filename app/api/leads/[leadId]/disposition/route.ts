@@ -3,6 +3,7 @@ import { getRequiredStoreFromBody } from "@/lib/stores";
 import { applyDisposition, getLead } from "@/lib/leads";
 import { defaultFollowupForStatus, isValidDisposition } from "@/lib/leads-classify";
 import { vendedoraEfectiva } from "@/lib/identidad";
+import { leadHoldConflict } from "@/lib/lead-holds-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -55,6 +56,9 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
   }
 
   try {
+    // Otra persona tiene abierto este lead (lib/lead-holds.ts): no se escribe.
+    const ocupado = await leadHoldConflict({ leadId, timeZone: store.timezone });
+    if (ocupado) return ocupado;
     const lead = await getLead(store.id, leadId);
     if (!lead) return NextResponse.json({ error: "lead no encontrado" }, { status: 404 });
 

@@ -12,6 +12,22 @@ Reglas:
 
 Estado actual:
 
+Leads, una asesora a la vez por lead: `20261128120000_lead_holds.sql`
+**PENDIENTE** de aplicar. Sin ella los leads se abren y se gestionan como
+siempre (la app detecta que falta, no reserva, no muestra candados ni avisos y
+deja de preguntar por 5 minutos). Crea `lead_holds` (una fila por lead
+reservado: id y nombre de quien lo abrió, desde y hasta cuándo; máximo 1 hora
+por la restricción, la app usa 10 minutos), con PK `lead_id` (lo que leen las
+escrituras de un lead para responder 409), índice `(store_id, expires_at)`
+(las reservas vigentes que muestra el tablero) e índice `(holder_user_id)`
+(limpieza de las vencidas de la misma persona). Y la función
+`lead_hold_acquire` (una sentencia `insert … on conflict do update … where`:
+toma la reserva si no hay o venció; la de la misma persona no se alarga; la de
+otra solo cambia con `p_takeover`, que la app manda únicamente con el permiso
+`leads_equipo`). `security invoker`, `search_path = ''`, sin permiso para
+anon/authenticated; RLS sin políticas: solo service role, como
+`lead_presence`. Re-ejecutable.
+
 Anuncio de WhatsApp de los pedidos: `20261127120000_icomfly_whatsapp_ad_origins.sql`
 aplicada el 27/11/2026. Sin ella el cron `icomfly-whatsapp-ads`
 responde ok con `pendiente` y no consulta nada, y Marketing muestra las ventas

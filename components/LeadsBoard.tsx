@@ -9,6 +9,7 @@ import {
   CircleCheck,
   Flame,
   Hand,
+  Lock,
   MessageCircle,
   Target,
   ChevronDown,
@@ -28,6 +29,7 @@ import ProductivityPanel from "@/components/ProductivityPanel";
 import LeadsPresenceReporter from "@/components/LeadsPresenceReporter";
 import CustomerPanel from "@/components/CustomerPanel";
 import LeadChatPanel from "@/components/LeadChatPanel";
+import LeadHoldModal from "@/components/LeadHoldModal";
 import CallButton from "@/components/CallButton";
 import { creaEnIcomfly } from "@/lib/icomfly-pedido-lead";
 import TelefonoWeb from "@/components/TelefonoWeb";
@@ -61,6 +63,17 @@ import {
   vencidosEnCola,
 } from "@/lib/leads-queue";
 import { assignmentCounts } from "@/lib/leads-assignment";
+import {
+  HOLD_EXPIRED_TEXT,
+  heldByMeText,
+  holdActive,
+  holderFirstName,
+  holdLostText,
+  type BoardHold,
+  type LeadHold,
+} from "@/lib/lead-holds";
+import { checkLeadHold, requestLeadHold } from "@/lib/lead-holds-client";
+import { useLeadHoldInDrawer } from "@/lib/use-lead-hold";
 import {
   buildUncalledLeadBuckets,
   isUncalledLeadOnDate,
@@ -351,6 +364,18 @@ interface AssignmentInfo {
  */
 type OwnerFilter = "mine" | "all" | "unassigned" | number;
 
+/** Reservas de otras personas que manda GET /api/leads, por lead. */
+function holdsMap(raw: unknown): Map<number, BoardHold> {
+  const m = new Map<number, BoardHold>();
+  if (!Array.isArray(raw)) return m;
+  for (const h of raw as Array<Partial<BoardHold>>) {
+    const id = Number(h?.lead_id);
+    if (!Number.isSafeInteger(id) || typeof h?.expires_at !== "string") continue;
+    m.set(id, { lead_id: id, holder_name: String(h.holder_name ?? ""), expires_at: h.expires_at });
+  }
+  return m;
+}
+
 export default function LeadsBoard() {
   // La tienda se elige en el menú lateral (selector único).
   const [store] = useSelectedStore();
@@ -371,6 +396,23 @@ export default function LeadsBoard() {
   const [syncingShopifyCarts, setSyncingShopifyCarts] = useState(false);
   const [cartSyncMessage, setCartSyncMessage] = useState<string | null>(null);
   const [drawerLead, setDrawerLead] = useState<LeadRow | null>(null);
+  // Reserva del lead abierto (lib/lead-holds.ts): una asesora a la vez, maximo
+  // 10 minutos. `hold` null: se abrio sin reserva (falla suave).
+  const [drawerHold, setDrawerHold] = useState<{ hold: LeadHold | null; offsetMs: number } | null>(null);
+  // Aviso "lead ocupado": otra persona lo tiene abierto.
+  const [blocked, setBlocked] = useState<{
+    lead: LeadRow;
+    hold: LeadHold;
+    canTakeOver: boolean;
+    offsetMs: number;
+    freed: boolean;
+    busy: boolean;
+  } | null>(null);
+  // Leads que otra persona tiene abiertos (candado en la tarjeta). Llegan con
+  // el tablero; no se sondean.
+  const [boardHolds, setBoardHolds] = useState<Map<number, BoardHold>>(() => new Map());
+  const [openingId, setOpeningId] = useState<number | null>(null);
+  const openSeq = useRef(0);
   const [selectedUncalledBucket, setSelectedUncalledBucket] = useState<string | null>(null);
   // Cerrados y Descartados se cargan aparte: son mas de la mitad de la tabla y
   // nadie los trabaja, asi que traerlos de entrada solo desplazaba de la
@@ -440,6 +482,7 @@ export default function LeadsBoard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error al cargar leads");
       setLeads(data.leads ?? []);
+      setBoardHolds(holdsMap(data.holds));
       // Datos nuevos: el reloj con el que se clasifican tambien avanza. Antes
       // `Actualizar` traia la lista nueva y la seguia juzgando contra la hora
       // en que se habia abierto la pagina.
@@ -473,6 +516,62 @@ export default function LeadsBoard() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * Abrir un lead = pedir su reserva primero. Si otra persona lo tiene
+   * abierto, NO se abre: sale el aviso con su nombre y hasta cuando. Si la
+   * reserva no se pudo pedir (sin migracion, base o red caidas), se abre
+   * como siempre: nunca se deja a la asesora sin trabajar.
+   */
+  const openLead = useCallback(
+    async (lead: LeadRow, takeover = false) => {
+      const seq = ++openSeq.current;
+      const leadStore = getFinanceStoreById(lead.store_id)?.code ?? store;
+      setOpeningId(lead.id);
+      const r = await requestLeadHold(lead.id, leadStore, takeover);
+      if (seq !== openSeq.current) return; // otro clic la reemplazo
+      setOpeningId(null);
+      if (r.kind === "blocked") {
+        setBlocked({ lead, hold: r.hold, canTakeOver: r.canTakeOver, offsetMs: r.offsetMs, freed: false, busy: false });
+        setBoardHolds((m) =>
+          new Map(m).set(lead.id, { lead_id: lead.id, holder_name: r.hold.holder_name, expires_at: r.hold.expires_at })
+        );
+        return;
+      }
+      setBlocked(null);
+      setBoardHolds((m) => {
+        if (!m.has(lead.id)) return m;
+        const n = new Map(m);
+        n.delete(lead.id);
+        return n;
+      });
+      setDrawerHold({ hold: r.hold, offsetMs: r.offsetMs });
+      setDrawerLead(lead);
+    },
+    [store]
+  );
+
+  // El aviso llego a la hora de liberacion: UNA consulta (no se sondea).
+  const recheckBlocked = useCallback(async () => {
+    const actual = blocked;
+    if (!actual) return;
+    const leadStore = getFinanceStoreById(actual.lead.store_id)?.code ?? store;
+    const r = await checkLeadHold(actual.lead.id, leadStore);
+    setBlocked((b) => {
+      if (!b || b.lead.id !== actual.lead.id) return b;
+      // Otra persona lo volvio a abrir: se muestra su reserva y se espera esa.
+      if (r.status === "other") return { ...b, hold: r.hold, offsetMs: r.offsetMs, freed: false };
+      return { ...b, freed: true };
+    });
+    if (r.status !== "other") {
+      setBoardHolds((m) => {
+        if (!m.has(actual.lead.id)) return m;
+        const n = new Map(m);
+        n.delete(actual.lead.id);
+        return n;
+      });
+    }
+  }, [blocked, store]);
 
   useEffect(() => {
     setSelectedUncalledBucket(null);
@@ -551,6 +650,7 @@ export default function LeadsBoard() {
           if (!cancelado) {
             setSearchResults(data.leads ?? []);
             setSearchAproximado(Boolean(data.aproximado));
+            setBoardHolds(holdsMap(data.holds));
           }
         })
         .catch((err) => {
@@ -680,6 +780,13 @@ export default function LeadsBoard() {
       assignment?.users.find((u) => u.id === userId)?.nombre ?? `Usuario ${userId}`,
     [assignment]
   );
+  // Primer nombre de quien tiene abierto el lead ahora (otra persona), o null.
+  // Se juzga contra el reloj del tablero: al vencer, el candado desaparece.
+  const abiertoPor = (leadId: number): string | null => {
+    const h = boardHolds.get(leadId);
+    return h && holdActive(h, chartNow.getTime()) ? holderFirstName(h.holder_name) : null;
+  };
+
   /** "ti", el nombre de la dueña, o null (apagado o sin dueña). */
   const etiquetaDuena = (lead: LeadRow): string | null => {
     if (!repartoActivo || lead.claimed_by == null) return null;
@@ -865,7 +972,7 @@ export default function LeadsBoard() {
     const onKeyDown = (e: KeyboardEvent) => {
       // La ficha tiene su propio manejador (en captura): mientras este
       // abierta, el tablero de atras no responde al teclado.
-      if (drawerLead) return;
+      if (drawerLead || blocked) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
       if (
@@ -897,7 +1004,7 @@ export default function LeadsBoard() {
         const lead = leadsEnPantalla[cursorIndex];
         if (lead) {
           e.preventDefault();
-          setDrawerLead(lead);
+          void openLead(lead);
         }
         return;
       }
@@ -913,7 +1020,7 @@ export default function LeadsBoard() {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [leadsEnPantalla, cursorIndex, drawerLead]);
+  }, [leadsEnPantalla, cursorIndex, drawerLead, blocked, openLead]);
 
   const chartContextLeads = useMemo(() => {
     if (searching) return searchMatches.filter(matchesSegment);
@@ -1583,10 +1690,12 @@ export default function LeadsBoard() {
                               lead={lead}
                               onOpen={() => {
                                 setCursorId(lead.id);
-                                setDrawerLead(lead);
+                                void openLead(lead);
                               }}
                               queuePosition={desde + i + 1}
                               asignadoA={etiquetaDuena(lead)}
+                              abiertoPor={abiertoPor(lead.id)}
+                              abriendo={openingId === lead.id}
                             />
                           ))}
                         </div>
@@ -1606,9 +1715,11 @@ export default function LeadsBoard() {
                     lead={lead}
                     onOpen={() => {
                       setCursorId(lead.id);
-                      setDrawerLead(lead);
+                      void openLead(lead);
                     }}
                     asignadoA={etiquetaDuena(lead)}
+                    abiertoPor={abiertoPor(lead.id)}
+                    abriendo={openingId === lead.id}
                   />
                 ))}
               </div>
@@ -1633,10 +1744,38 @@ export default function LeadsBoard() {
 
       {drawerLead && (
         <LeadDrawer
+          // key: otra ficha (u otra reserva) empieza de cero sus avisos.
+          key={`${drawerLead.id}:${drawerHold?.hold?.acquired_at ?? "sin-reserva"}`}
           lead={drawerLead}
           store={store}
-          onClose={() => setDrawerLead(null)}
+          hold={drawerHold?.hold ?? null}
+          holdOffsetMs={drawerHold?.offsetMs ?? 0}
+          onClose={() => {
+            setDrawerLead(null);
+            setDrawerHold(null);
+          }}
           onRefresh={load}
+        />
+      )}
+
+      {blocked && (
+        <LeadHoldModal
+          hold={blocked.hold}
+          timeZone={getFinanceStoreById(blocked.lead.store_id)?.timezone ?? "America/Costa_Rica"}
+          offsetMs={blocked.offsetMs}
+          freed={blocked.freed}
+          canTakeOver={blocked.canTakeOver}
+          busy={blocked.busy}
+          onClose={() => setBlocked(null)}
+          onExpire={() => void recheckBlocked()}
+          onOpen={() => {
+            setBlocked((b) => (b ? { ...b, busy: true } : b));
+            void openLead(blocked.lead);
+          }}
+          onTakeOver={() => {
+            setBlocked((b) => (b ? { ...b, busy: true } : b));
+            void openLead(blocked.lead, true);
+          }}
         />
       )}
     </div>
@@ -1689,6 +1828,8 @@ const LeadCard = forwardRef(function LeadCard(
     nowMs,
     isCursor = false,
     asignadoA = null,
+    abiertoPor = null,
+    abriendo = false,
   }: {
     lead: LeadRow;
     onOpen: () => void;
@@ -1697,6 +1838,10 @@ const LeadCard = forwardRef(function LeadCard(
     isCursor?: boolean;
     /** Dueña del lead con el reparto encendido ("ti" o su nombre). */
     asignadoA?: string | null;
+    /** Primer nombre de quien lo tiene abierto ahora (otra persona). */
+    abiertoPor?: string | null;
+    /** Pidiendo la reserva para abrirlo. */
+    abriendo?: boolean;
   },
   ref: React.Ref<HTMLDivElement>
 ) {
@@ -1773,6 +1918,13 @@ const LeadCard = forwardRef(function LeadCard(
             {lead.next_followup_at && (
               <FollowupBadge iso={lead.next_followup_at} nowMs={nowMs} />
             )}
+            {abiertoPor && (
+              <Badge variant="muted" className="shrink-0" title={`Lo tiene abierto ${abiertoPor}`}>
+                <Lock className="h-3 w-3" aria-hidden="true" />
+                <span className="sr-only">Abierto por </span>
+                {abiertoPor}
+              </Badge>
+            )}
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
             <PhoneWithCopy phone={lead.phone} />
@@ -1804,9 +1956,15 @@ const LeadCard = forwardRef(function LeadCard(
           <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground" title="Fecha del último mensaje">
             {fmtDateTime(lead.last_interaction_at)}
           </span>
-          <Button variant="outline" size="sm" onClick={onOpen} aria-label={`Ver chat de ${lead.name || "este lead"}`}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onOpen}
+            disabled={abriendo}
+            aria-label={`Ver chat de ${lead.name || "este lead"}`}
+          >
             <MessageSquare className="h-4 w-4 sm:mr-1.5" aria-hidden="true" />
-            <span className="hidden sm:inline">Ver chat</span>
+            <span className="hidden sm:inline">{abriendo ? "Abriendo…" : "Ver chat"}</span>
           </Button>
         </div>
       </CardContent>
@@ -1817,11 +1975,16 @@ const LeadCard = forwardRef(function LeadCard(
 function LeadDrawer({
   lead,
   store,
+  hold,
+  holdOffsetMs,
   onClose,
   onRefresh,
 }: {
   lead: LeadRow;
   store: string;
+  /** Reserva propia (lib/lead-holds.ts); null si se abrio sin reserva. */
+  hold: LeadHold | null;
+  holdOffsetMs: number;
   onClose: () => void;
   onRefresh: () => void;
 }) {
@@ -1907,6 +2070,8 @@ function LeadDrawer({
   // filtran el lead por (store_id, id) y devolvian 404 ("lead no encontrado"),
   // y peor aun, "Crear pedido" habria escrito el pedido en la otra tienda.
   const leadStore = getFinanceStoreById(lead.store_id)?.code ?? store;
+  const timeZone = getFinanceStoreById(lead.store_id)?.timezone ?? "America/Costa_Rica";
+  const reserva = useLeadHoldInDrawer(lead.id, leadStore, hold, holdOffsetMs);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-[rgb(15_15_30/0.36)] dark:bg-black/60" onClick={onClose}>
@@ -1927,8 +2092,14 @@ function LeadDrawer({
         <div className="flex items-center gap-2 border-b border-border p-4">
           <div className="min-w-0 flex-1">
             <p className="line-clamp-2 break-words font-medium leading-snug">{lead.name || "Sin nombre"}</p>
-            <div className="text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
               <PhoneWithCopy phone={lead.phone} />
+              {reserva.hold && reserva.fase === "mia" && (
+                <span className="inline-flex items-center gap-1" title="Mientras la tengas, otra asesora no puede abrir este lead">
+                  <Lock className="h-3 w-3" aria-hidden="true" />
+                  <span className="tabular-nums">{heldByMeText(reserva.hold, timeZone)}</span>
+                </span>
+              )}
             </div>
           </div>
           <CallButton leadId={lead.id} store={leadStore} />
@@ -1967,6 +2138,16 @@ function LeadDrawer({
           </button>
         </div>
 
+        {reserva.fase !== "mia" && reserva.fase !== "sin" && (
+          // Aviso que no bloquea: la ficha se sigue usando. Si otra persona ya
+          // lo abrio, el servidor rechaza los cambios (409) y aqui se explica.
+          <div role="status" className="border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
+            {reserva.fase === "perdida" && reserva.otra
+              ? holdLostText(reserva.otra, timeZone)
+              : `${HOLD_EXPIRED_TEXT}. Puedes seguir trabajando; para reservarlo de nuevo, ciérralo y ábrelo otra vez.`}
+          </div>
+        )}
+
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {/* Columna izquierda: SOLO el chat + composer */}
           <div className="flex min-h-0 flex-col md:w-1/2 md:border-r md:border-border">
@@ -1979,6 +2160,7 @@ function LeadDrawer({
                 hasConversation: Boolean(lead.crm_conversation_id),
               }}
               store={leadStore}
+              fromLeads
               onActivity={() => {
                 setHistoryKey((k) => k + 1);
               }}

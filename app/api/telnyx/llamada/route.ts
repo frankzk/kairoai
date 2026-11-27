@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody } from "@/lib/stores";
 import { vendedoraEfectiva } from "@/lib/identidad";
+import { leadHoldConflict } from "@/lib/lead-holds-server";
 import { destinoDeLlamada, type PedidoDeLlamada } from "@/lib/llamada-destino";
 import { callerIdDeTienda, codificarEstadoCliente, getTelnyxConfig, variableCallerId } from "@/lib/telnyx";
 import { crearLlamadaTelnyx } from "@/lib/telnyx-calls";
@@ -50,6 +51,9 @@ export async function POST(req: NextRequest) {
   try {
     const destino = await destinoDeLlamada(store, body);
     if (!destino.ok) return NextResponse.json({ error: destino.error }, { status: destino.status });
+    // Llamada desde la ficha de un lead que otra persona tiene abierto.
+    const ocupado = await leadHoldConflict({ leadId: destino.leadId, timeZone: store.timezone });
+    if (ocupado) return ocupado;
     // Hoy ya contesto el buzon: otra llamada se cobra como un minuto aunque
     // vuelva a caer ahi (lib/telnyx-buzon.ts). Se frena salvo "Llamar igual".
     if (body?.forzar !== true) {

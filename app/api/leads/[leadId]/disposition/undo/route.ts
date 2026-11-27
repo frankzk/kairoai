@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRequiredStoreFromBody } from "@/lib/stores";
 import { undoDisposition } from "@/lib/leads";
 import { vendedoraEfectiva } from "@/lib/identidad";
+import { leadHoldConflict } from "@/lib/lead-holds-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -38,6 +39,9 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
   }
 
   try {
+    // Otra persona tiene abierto este lead (lib/lead-holds.ts): no se escribe.
+    const ocupado = await leadHoldConflict({ leadId, timeZone: store.timezone });
+    if (ocupado) return ocupado;
     const result = await undoDisposition({
       storeId: store.id,
       leadId,

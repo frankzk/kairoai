@@ -6,6 +6,7 @@ import { getDB } from "@/lib/db";
 import { insertLeadCall } from "@/lib/leads";
 import { bumpQuickReplyUsage } from "@/lib/quick-replies";
 import { vendedoraEfectiva } from "@/lib/identidad";
+import { leadHoldConflict } from "@/lib/lead-holds-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -19,6 +20,8 @@ interface Body {
   // Si el texto salio de una respuesta rapida, se suma a su contador de uso
   // para ordenar los chips del composer. Es telemetria, nunca bloquea.
   quick_reply_id?: number;
+  // "leads" cuando se envía desde la sección Leads: aplica la reserva del lead.
+  origen?: string;
 }
 
 // POST: envia un mensaje de WhatsApp al lead desde Kairo (sale por el mismo
@@ -55,6 +58,13 @@ export async function POST(req: NextRequest, ctx: { params: { leadId: string } }
   }
 
   try {
+    // Otra persona tiene abierto este lead (lib/lead-holds.ts): no se escribe.
+    // Solo desde la sección Leads: Novedades y Gestión de pedidos usan este
+    // mismo envío para hablar con el cliente y no deben esperar la reserva.
+    if (body?.origen === "leads") {
+      const ocupado = await leadHoldConflict({ leadId, timeZone: store.timezone });
+      if (ocupado) return ocupado;
+    }
     const { data, error } = await getDB()
       .from("leads")
       .select("id,crm_conversation_id")

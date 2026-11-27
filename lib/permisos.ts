@@ -244,6 +244,8 @@ export const REGLAS: Regla[] = [
   { ruta: "/api/leads/*/carts", exige: P(...LEADS) },
   { ruta: "/api/leads/*/orders", exige: P(...LEADS) },
   { ruta: "/api/leads/*/history", exige: P(...LEADS) },
+  // Reserva del lead abierto (una asesora a la vez, maximo 10 minutos).
+  { ruta: "/api/leads/*/hold", exige: P(...LEADS) },
   { ruta: "/api/quick-replies", exige: P(...CHAT) },
 
   // Novedades
