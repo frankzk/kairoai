@@ -3,6 +3,8 @@ import { buildMarketingSummary } from "../lib/marketing";
 import {
   campaignChannelSpend,
   campaignNameSaysWhatsapp,
+  filterCpaRows,
+  sumCpaSources,
   itemUnits,
   metaDestinationChannel,
   originChannel,
@@ -444,20 +446,26 @@ describe("pedidos reales por canal", () => {
     }));
   it("matches orders to iComfly rows and groups real orders anonymously", () => {
     const channels = matchChannelsToOrders(orders, rows);
-    expect(channels.get("#1")).toEqual({ channel: "landing", origin: "shopify" });
+    expect(channels.get("#1")).toEqual({
+      channel: "landing",
+      origin: "shopify",
+      source: "organico",
+    });
     expect(channels.get("IC-50")).toEqual({
       channel: "whatsapp",
       origin: "bot_sin_revisar",
+      source: "sin_dato",
     });
     expect(channels.get("IC-51")).toEqual({
       channel: "whatsapp",
       origin: "asesora",
+      source: "sin_dato",
     });
     expect(channels.has("#2")).toBe(false);
     const mixed = attachChannelMix(days(), orders, channels, period, now);
     expect(mixed[0].mix).toEqual(
       expect.arrayContaining<ChannelOrderGroup>([
-        ["landing", [["sku:a", 2]], 1, "shopify"],
+        ["landing", [["sku:a", 2]], 1, "shopify", "organico"],
         [
           "whatsapp",
           [
@@ -466,13 +474,14 @@ describe("pedidos reales por canal", () => {
           ],
           1,
           "bot_sin_revisar",
+          "sin_dato",
         ],
       ]),
     );
     // Annulled IC-52 is excluded; #2 has no iComfly row → unknown, no origin.
     expect(mixed[1].mix).toEqual(
       expect.arrayContaining<ChannelOrderGroup>([
-        ["whatsapp", [["sku:b", 3]], 1, "asesora"],
+        ["whatsapp", [["sku:b", 3]], 1, "asesora", "sin_dato"],
         ["unknown", [["sku:a", 1]], 1],
       ]),
     );
@@ -497,10 +506,10 @@ describe("pedidos reales por canal", () => {
     );
     const [day] = attachChannelMix(days(), same, channels, period, now);
     expect(day.mix).toEqual([
-      ["whatsapp", [["sku:a", 1]], 2, "bot_sin_revisar"],
-      ["whatsapp", [["sku:a", 1]], 1, "conector_ia"],
+      ["whatsapp", [["sku:a", 1]], 2, "bot_sin_revisar", "sin_dato"],
+      ["whatsapp", [["sku:a", 1]], 1, "conector_ia", "sin_dato"],
     ]);
-    // Only channel, lines, count and origin leave the server.
+    // Only channel, lines, count, origin and source leave the server.
     const text = JSON.stringify(day.mix);
     for (const secret of ["IC-60", "IC-61", "IC-62", "Conector IA"])
       expect(text).not.toContain(secret);
@@ -518,6 +527,7 @@ describe("pedidos reales por canal", () => {
     expect(channels.get("IC-50")).toEqual({
       channel: "landing",
       origin: "formulario",
+      source: "organico",
     });
     // The original was a bot sale: the replacement (typed by an asesora)
     // stays a bot sale, not Shopify for carrying its name in the numbers.
@@ -532,6 +542,7 @@ describe("pedidos reales por canal", () => {
     expect(bot.get("IC-50")).toEqual({
       channel: "whatsapp",
       origin: "bot_sin_revisar",
+      source: "sin_dato",
     });
   });
   it("same rank: channel kept with origin 'otro' on origin disagreement; dropped on channel disagreement", () => {
@@ -540,7 +551,11 @@ describe("pedidos reales por canal", () => {
       row("IC-50", { ...icomfly, sales_channel: "whatsapp" }),
       row("IC-50", { ...icomfly, creator: "Leonor" }),
     ]);
-    expect(otro.get("IC-50")).toEqual({ channel: "whatsapp", origin: "otro" });
+    expect(otro.get("IC-50")).toEqual({
+      channel: "whatsapp",
+      origin: "otro",
+      source: "sin_dato",
+    });
     const agree = matchChannelsToOrders(orders, [
       row("IC-50", { ...icomfly, creator: "Leonor" }),
       row("IC-50", { ...icomfly, creator: "María" }),
@@ -548,6 +563,7 @@ describe("pedidos reales por canal", () => {
     expect(agree.get("IC-50")).toEqual({
       channel: "whatsapp",
       origin: "asesora",
+      source: "sin_dato",
     });
     const clash = matchChannelsToOrders(orders, [
       row("IC-50", { ...icomfly, creator: "Leonor" }),
@@ -562,6 +578,7 @@ describe("pedidos reales por canal", () => {
     expect(ranked.get("IC-50")).toEqual({
       channel: "whatsapp",
       origin: "asesora",
+      source: "sin_dato",
     });
   });
   it("without iComfly rows every order is unknown", () => {
@@ -901,6 +918,130 @@ describe("CPA por producto y canal", () => {
     );
     expect(none.rows.find((r) => r.key === keyA)!.origins).toBeNull();
     expect(none.totals.origins).toBeNull();
+  });
+
+  it("breaks the orders down by traffic source, per product and in the totals", () => {
+    const result = report(
+      sources([campaign("fat", [{ date: "2026-11-18", whatsapp: 10, landing: 30 }])]),
+      control({
+        "2026-11-18": [
+          ["landing", [[keyA, 2]], 2, "formulario", "meta"],
+          ["landing", [[keyA, 1]], 1, "formulario", "organico"],
+          [
+            "landing",
+            [
+              [keyA, 1],
+              [keyB, 1],
+            ],
+            1,
+            "carrito",
+            "google",
+          ],
+          ["whatsapp", [[keyA, 1]], 3, "bot_anuncio", "meta"],
+          ["whatsapp", [[keyB, 2]], 1, "asesora", "sin_dato"],
+          ["whatsapp", [[keyB, 1]], 1, "conector_ia", "tiktok"],
+          ["unknown", [[keyA, 1]], 2],
+        ],
+      }),
+    );
+    const a = result.rows.find((r) => r.key === keyA)!;
+    // Meta, TikTok and Orgánico always; the rest only with orders.
+    expect(a.sources).toEqual([
+      { source: "meta", orders: 5, units: 7, share: 5 / 7 },
+      { source: "tiktok", orders: 0, units: 0, share: 0 },
+      { source: "google", orders: 1, units: 1, share: 1 / 7 },
+      { source: "organico", orders: 1, units: 1, share: 1 / 7 },
+    ]);
+    const b = result.rows.find((r) => r.key === keyB)!;
+    expect(b.sources!.map((c) => [c.source, c.orders, c.units])).toEqual([
+      ["meta", 0, 0],
+      ["tiktok", 1, 1],
+      ["google", 1, 1],
+      ["organico", 0, 0],
+      ["sin_dato", 1, 2],
+    ]);
+    // Totals: every order with channel once (unknown channel stays out).
+    expect(result.totals.sources!.map((c) => [c.source, c.orders, c.units])).toEqual([
+      ["meta", 5, 7],
+      ["tiktok", 1, 1],
+      ["google", 1, 2],
+      ["organico", 1, 1],
+      ["sin_dato", 1, 2],
+    ]);
+    // Sources add up to the orders and units of both channels; no spend.
+    for (const row of [...result.rows, result.totals]) {
+      const list = row.sources!;
+      expect(list.reduce((n, c) => n + c.orders, 0)).toBe(
+        row.landing.orders! + row.whatsapp.orders!,
+      );
+      expect(list.reduce((n, c) => n + c.units, 0)).toBeCloseTo(
+        row.landing.units! + row.whatsapp.units!,
+      );
+      expect(list.reduce((n, c) => n + (c.share ?? 0), 0)).toBeCloseTo(1);
+      expect(Object.keys(list[0]).sort()).toEqual([
+        "orders",
+        "share",
+        "source",
+        "units",
+      ]);
+    }
+    // The search keeps working and the filtered summary adds sources up.
+    const found = filterCpaRows(result.rows, "shilaj");
+    expect(found.map((r) => r.key)).toEqual([keyB]);
+    expect(sumCpaSources(found)).toEqual(b.sources);
+    const both = sumCpaSources(result.rows)!;
+    // An order with both products counts in each (google: 1 + 1).
+    expect(both.find((c) => c.source === "google")).toEqual({
+      source: "google",
+      orders: 2,
+      units: 2,
+      share: 2 / 10,
+    });
+    expect(sumCpaSources([{ sources: null }, b])).toBeNull();
+    expect(sumCpaSources([])).toBeNull();
+  });
+
+  it("payloads without source keep both channels and show no source detail", () => {
+    // A payload cached before 27/11/2026: origins, no source.
+    const old = report(
+      sources([campaign("fat", [{ date: "2026-11-18", whatsapp: 10, landing: 30 }])]),
+    );
+    const a = old.rows.find((r) => r.key === keyA)!;
+    expect(a.origins).not.toBeNull();
+    expect(a.sources).toBeNull();
+    expect(old.totals.sources).toBeNull();
+    // In a payload that has sources, a group without one counts as sin dato.
+    const mixed = report(
+      sources([campaign("fat", [{ date: "2026-11-18", whatsapp: 10, landing: 30 }])]),
+      control({
+        "2026-11-18": [
+          ["landing", [[keyA, 1]], 1, "formulario", "organico"],
+          ["whatsapp", [[keyA, 1]], 1, "asesora"],
+          ["whatsapp", [[keyA, 1]], 1, "asesora", "nueva" as never],
+        ],
+      }),
+    );
+    expect(
+      mixed.rows.find((r) => r.key === keyA)!.sources!.map((c) => [c.source, c.orders]),
+    ).toEqual([
+      ["meta", 0],
+      ["tiktok", 0],
+      ["organico", 1],
+      ["sin_dato", 2],
+    ]);
+    // No orders at all: the source detail shows its zeros.
+    const empty = report(sources([]), control({}));
+    expect(empty.totals.sources).toEqual([
+      { source: "meta", orders: 0, units: 0, share: null },
+      { source: "tiktok", orders: 0, units: 0, share: null },
+      { source: "organico", orders: 0, units: 0, share: null },
+    ]);
+    // Without channel there is no source detail either.
+    const none = report(
+      sources([campaign("fat", null)]),
+      control({ "2026-11-18": [["unknown", [[keyA, 1]], 2]] }),
+    );
+    expect(none.totals.sources).toBeNull();
   });
 
   it("CPA is null with 0 orders and no cost is invented", () => {

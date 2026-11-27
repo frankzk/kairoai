@@ -22,6 +22,12 @@
 //   consultó (los grupos viejos con "bot" se leen así). El gasto solo se separa por canal (destino del
 //   conjunto de anuncios): el origen muestra pedidos, unidades y % del canal,
 //   nunca un CPA propio.
+// - Fuente del tráfico (27/11/2026): cada pedido con canal lleva también de
+//   dónde llegó el cliente (lib/marketing-traffic-source.ts): Meta, TikTok,
+//   Google, otra fuente, orgánico / directo o sin dato (pedidos del equipo y
+//   bot sin revisar). Igual que el origen: pedidos, unidades y %, sin gasto.
+//   Los grupos de antes del 27/11/2026 no la traen: entonces la fuente no se
+//   muestra (`sources: null`) en vez de contarla toda como "sin dato".
 // - Unidades: suma de cantidades de los productos del pedido real; si la línea
 //   no trae cantidad, el "2x Producto" del nombre.
 // - Gasto: la pauta de las campañas asignadas al producto (misma asignación
@@ -56,6 +62,12 @@ import type {
 import { moneyText } from "./marketing-copy";
 import { asUsd } from "./marketing-usd-rate";
 import { summaryClockZones } from "./marketing-stores";
+import {
+  isTrafficSource,
+  sourceShownEmpty,
+  TRAFFIC_SOURCES,
+  type TrafficSource,
+} from "./marketing-traffic-source";
 
 export type SaleChannel = "landing" | "whatsapp";
 export const SALE_CHANNELS: readonly SaleChannel[] = ["landing", "whatsapp"];
@@ -157,17 +169,19 @@ export function saleOriginChannel(origin: SaleOrigin): SaleChannel | null {
 }
 
 /**
- * Real orders of one CR day that share channel, lines and origin:
+ * Real orders of one CR day that share channel, lines, origin and source:
  * [channel, [[product key, units], …] sorted by key, number of orders,
- * origin inside the channel]. The origin is absent when the channel is
- * unknown (and in payloads from before 26/11/2026: read as "otro").
- * Anonymous: no order id, name or phone.
+ * origin inside the channel, traffic source]. Origin and source are absent
+ * when the channel is unknown; payloads from before 26/11/2026 have no
+ * origin (read as "otro") and from before 27/11/2026 no source (the source
+ * detail is not shown). Anonymous: no order id, name or phone.
  */
 export type ChannelOrderGroup = [
   channel: SaleChannel | "unknown",
   lines: Array<[key: string, units: number]>,
   count: number,
   origin?: SaleOrigin,
+  source?: TrafficSource,
 ];
 
 /** WhatsApp = bot, Leads in Kairo (creator "Conector IA") and asesoras; Página web = form, recovered cart and Shopify. */
@@ -340,6 +354,15 @@ export interface OriginCell {
   share: number | null;
 }
 
+/** Orders of one traffic source (both channels). No spend and no CPA. */
+export interface SourceCell {
+  source: TrafficSource;
+  orders: number;
+  units: number;
+  /** orders / orders with channel; null when there are none. */
+  share: number | null;
+}
+
 export interface ChannelCpaRow {
   key: string;
   name: string;
@@ -354,6 +377,13 @@ export interface ChannelCpaRow {
    * unknown.
    */
   origins: Record<SaleChannel, OriginCell[]> | null;
+  /**
+   * Traffic source of the orders with channel (Página web + WhatsApp), in
+   * `TRAFFIC_SOURCES` order: Meta, TikTok and Orgánico always, the rest only
+   * with orders. Sums to the orders and units of both channels. Null when
+   * the channel of the orders is unknown or the payload predates the source.
+   */
+  sources: SourceCell[] | null;
   /** Coverage is incomplete (unassigned campaigns, sources missing, TikTok late). */
   partial: boolean;
   /** Different calendars between ad accounts and orders. */
@@ -462,6 +492,11 @@ export function productChannelCpa(input: {
     .filter((g) => g[0] === "unknown")
     .reduce((n, g) => n + g[2], 0);
   const realOrders = groups.reduce((n, g) => n + g[2], 0);
+  // Payloads from before 27/11/2026 carry no source: no source detail then
+  // (never all of it as "sin dato"). With no order with channel, zeros.
+  const channelGroups = groups.filter((g) => g[0] !== "unknown");
+  const sourcesKnown =
+    !channelGroups.length || channelGroups.some((g) => g[4] != null);
   const ordersChannel: ChannelCpaReport["ordersChannel"] = !covered
     ? "unavailable"
     : unknownOrders === 0
@@ -483,7 +518,8 @@ export function productChannelCpa(input: {
       landing: new Map<SaleOrigin, { orders: number; units: number }>(),
       whatsapp: new Map<SaleOrigin, { orders: number; units: number }>(),
     };
-    for (const [channel, lines, count, origin] of groups) {
+    const bySource = new Map<TrafficSource, { orders: number; units: number }>();
+    for (const [channel, lines, count, origin, source] of groups) {
       const units = lines
         .filter(([key]) => !keys || keys.has(key))
         .reduce((n, [, u]) => n + u, 0);
@@ -496,6 +532,11 @@ export function productChannelCpa(input: {
         const bucket = byOrigin[channel].get(known) ?? zero();
         byOrigin[channel].set(known, bucket);
         buckets.push(bucket);
+        // A group without a valid source (in a payload that has them).
+        const from = isTrafficSource(source) ? source : "sin_dato";
+        const sourceBucket = bySource.get(from) ?? zero();
+        bySource.set(from, sourceBucket);
+        buckets.push(sourceBucket);
       }
       for (const bucket of buckets) {
         bucket.orders += count;
@@ -517,7 +558,17 @@ export function productChannelCpa(input: {
           };
         })
         .filter((c) => originShownEmpty(c.origin) || c.orders > 0);
-    return { ...out, origins };
+    const withChannel = out.landing.orders + out.whatsapp.orders;
+    const sources = TRAFFIC_SOURCES.map((source): SourceCell => {
+      const bucket = bySource.get(source) ?? zero();
+      return {
+        source,
+        orders: bucket.orders,
+        units: bucket.units,
+        share: withChannel ? bucket.orders / withChannel : null,
+      };
+    }).filter((c) => sourceShownEmpty(c.source) || c.orders > 0);
+    return { ...out, origins, sources };
   }
 
   function spendOf(list: typeof campaigns) {
@@ -635,6 +686,7 @@ export function productChannelCpa(input: {
       landing: channelCell("landing"),
       whatsapp: channelCell("whatsapp"),
       origins: ordersKnown ? counts.origins : null,
+      sources: ordersKnown && sourcesKnown ? counts.sources : null,
       partial,
       approximate,
       split,
@@ -751,4 +803,36 @@ export function sumCpaOrigins(
       });
   }
   return out;
+}
+
+/**
+ * Traffic sources of several products added up, for the summary when the
+ * table is filtered (an order with two of them counts in each, as in
+ * `sumCpaOrigins`). Null when any of the rows has no source detail.
+ */
+export function sumCpaSources(
+  rows: Array<Pick<ChannelCpaRow, "sources">>,
+): SourceCell[] | null {
+  if (!rows.length || rows.some((row) => !row.sources)) return null;
+  const sums = new Map<TrafficSource, { orders: number; units: number }>();
+  for (const row of rows)
+    for (const cellOf of row.sources!) {
+      if (!isTrafficSource(cellOf.source)) continue;
+      const current = sums.get(cellOf.source) ?? { orders: 0, units: 0 };
+      current.orders += cellOf.orders;
+      current.units += cellOf.units;
+      sums.set(cellOf.source, current);
+    }
+  const orders = Array.from(sums.values()).reduce((n, s) => n + s.orders, 0);
+  return TRAFFIC_SOURCES.filter(
+    (source) => sourceShownEmpty(source) || (sums.get(source)?.orders ?? 0) > 0,
+  ).map((source) => {
+    const sum = sums.get(source) ?? { orders: 0, units: 0 };
+    return {
+      source,
+      orders: sum.orders,
+      units: Math.round(sum.units * 1000) / 1000,
+      share: orders ? sum.orders / orders : null,
+    };
+  });
 }

@@ -28,6 +28,59 @@ const id = (v: unknown): string | null => {
 };
 const suffix = (v: string) => id(/-{2,}([1-9]\d{5,30})$/.exec(v)?.[1]);
 const name = (v: string) => v.replace(/-{2,}[1-9]\d{5,30}$/, "").trim();
+
+type Platform = IcomflyAdOrigin["platform"];
+
+/**
+ * Platform of the click id of the visit: fbclid → Meta, ttclid → TikTok,
+ * gclid / gbraid / wbraid → Google. Null without one, or with ids of
+ * different platforms.
+ */
+function clickPlatform(v: Record<string, unknown>): Platform {
+  const found = new Set<Platform>();
+  if (text(v.fbclid)) found.add("meta");
+  if (text(v.ttclid)) found.add("tiktok");
+  if (text(v.gclid) || text(v.gbraid) || text(v.wbraid)) found.add("google");
+  return found.size === 1 ? Array.from(found)[0] : null;
+}
+
+/**
+ * Platform of the visit (27/11/2026). In order:
+ * 1. The source names the platform: Meta (facebook…, instagram…, fb_, ig_,
+ *    meta, messenger, an, audience…), TikTok (tiktok…, tt), Google
+ *    (google…, gads, adwords, youtube…); or `channel` does.
+ * 2. Else the click id: Meta ads often send the ad set name as `utm_source`
+ *    ("vascu glow_0611_ed", "thyroid support") or a placement name
+ *    ("whatsapp_status", "threads_…", "others"), always with an fbclid.
+ * 3. Else "tiktok" / "google" anywhere in the source ("vid_tiktok_2").
+ * 4. Else "other" when there is a source or channel; null otherwise.
+ * A "-sitelink" suffix of the source is ignored.
+ */
+function adPlatform(
+  source: string,
+  channel: string,
+  v: Record<string, unknown>,
+): Platform {
+  const lower = source.toLowerCase().replace(/[-_\s]*sitelinks?$/, "").trim();
+  if (
+    /^(facebook|instagram|fb(?:_|$)|ig(?:_|$)|meta|messenger|an$|audience)/.test(
+      lower,
+    ) ||
+    /^(facebook|instagram|meta)$/.test(channel)
+  )
+    return "meta";
+  if (/^(tiktok|tt$)/.test(lower) || channel === "tiktok") return "tiktok";
+  if (
+    /^(google|gads|adwords|youtube)/.test(lower) ||
+    /^(google|youtube)$/.test(channel)
+  )
+    return "google";
+  const click = clickPlatform(v);
+  if (click) return click;
+  if (/tiktok/.test(lower)) return "tiktok";
+  if (/google|gads|adwords|youtube/.test(lower)) return "google";
+  return lower || channel ? "other" : null;
+}
 /** Read captured advertising fields only. Never search free-form customer notes for IDs. */
 export function readIcomflyAdOrigin(value: unknown): IcomflyAdOrigin | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -37,21 +90,8 @@ export function readIcomflyAdOrigin(value: unknown): IcomflyAdOrigin | null {
     campaign = text(v.utm_campaign),
     content = text(v.utm_content),
     term = text(v.utm_term);
-  const channel = text(v.channel).toLowerCase(),
-    lower = source.toLowerCase();
-  const platform =
-    /^(facebook|instagram|fb(?:_|$)|ig(?:_|$)|meta|messenger|an$|audience)/.test(
-      lower,
-    ) || /^(facebook|instagram|meta)$/.test(channel)
-      ? "meta"
-      : /tiktok|^tt$/.test(lower) || channel === "tiktok"
-        ? "tiktok"
-        : /google|gads|adwords|youtube/.test(lower) ||
-            /^(google|youtube)$/.test(channel)
-          ? "google"
-          : lower || channel
-            ? "other"
-            : null;
+  const channel = text(v.channel).toLowerCase();
+  const platform = adPlatform(source, channel, v);
   const conflicts: string[] = [];
   const choose = (field: string, candidates: Array<string | null>) => {
     const ids = Array.from(
@@ -76,7 +116,13 @@ export function readIcomflyAdOrigin(value: unknown): IcomflyAdOrigin | null {
     mediumId ? id(term) : null,
   ]);
   const adId = choose("ad", [id(v.ad_id), id(content), suffix(content)]);
-  const hasClick = Boolean(text(v.fbclid) || text(v.ttclid) || text(v.gclid));
+  const hasClick = Boolean(
+    text(v.fbclid) ||
+      text(v.ttclid) ||
+      text(v.gclid) ||
+      text(v.gbraid) ||
+      text(v.wbraid),
+  );
   if (
     ![source, medium, campaign, content, term, campaignId, adsetId, adId].some(
       Boolean,
