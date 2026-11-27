@@ -6,7 +6,7 @@
 -- anuncio de una orgánica, ni podía contarla en su campaña.
 --
 -- El cron `icomfly-whatsapp-ads` (lib/icomfly-whatsapp-ad-db.ts) llena esta
--- tabla, de a pocos pedidos por corrida (≤ 60 por tienda por hora). Guarda
+-- tabla, de a pocos pedidos por corrida (≤ 60 por tienda cada 10 min). Guarda
 -- también los pedidos SIN anuncio (has_ad = false) para no volver a pedirlos
 -- (se revisan una sola vez más, a los 2 días), y los que no pueden venir de un
 -- chat (skipped = true: web con UTM, Shopify). El anuncio se cruza con su

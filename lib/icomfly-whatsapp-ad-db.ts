@@ -2,7 +2,7 @@
 // llena `icomfly_whatsapp_ad_origins` y las lecturas de Marketing.
 // Solo servidor. Las reglas puras están en lib/icomfly-whatsapp-ad.ts.
 //
-// EL CRON (`icomfly-whatsapp-ads`, cada hora a los :41), por tienda:
+// EL CRON (`icomfly-whatsapp-ads`, cada 10 min: :01/:11/:21/:31/:41/:51), por tienda:
 //   1. Recorre los pedidos de los últimos 45 días, del más nuevo al más viejo
 //      (icomfly_orders con su índice (store_id, icomfly_created_at)), y deja
 //      los que tocan: nunca revisados; con error (hasta 3 intentos); o sin
