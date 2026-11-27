@@ -11,6 +11,11 @@
 // carrito, Shopify); en cada producto abierto, el mismo detalle a un clic.
 // Solo pedidos, unidades y % del canal: el gasto no se separa por origen.
 //
+// Fuente del tráfico (27/11/2026): a la derecha de los dos canales (debajo
+// en pantallas angostas), de qué fuente llegaron esos mismos pedidos: Meta,
+// TikTok, Google, otra fuente, orgánico / directo o sin dato. Tampoco tiene
+// CPA propio. Sin la fuente en los datos (respuestas viejas) no se muestra.
+//
 // Búsqueda por producto (26/11/2026): filtra la tabla y el resumen pasa a
 // sumar solo los productos encontrados.
 //
@@ -23,6 +28,7 @@ import { ChevronRight, Search, X } from "lucide-react";
 import {
   filterCpaRows,
   sumCpaOrigins,
+  sumCpaSources,
   SALE_CHANNEL_LABEL,
   SALE_CHANNELS,
   SALE_ORIGIN_HINT,
@@ -32,7 +38,12 @@ import {
   type ChannelCpaRow,
   type OriginCell,
   type SaleChannel,
+  type SourceCell,
 } from "@/lib/marketing-channel-cpa";
+import {
+  TRAFFIC_SOURCE_HINT,
+  TRAFFIC_SOURCE_LABEL,
+} from "@/lib/marketing-traffic-source";
 import { MARKETING_TARGETS } from "@/lib/marketing-targets";
 import { count, money, percentage } from "./format";
 import r from "./team-report.module.css";
@@ -119,7 +130,29 @@ function Cells({
 }
 
 const ORIGIN_NOTE =
-  "El gasto solo se puede separar por canal: el detalle muestra de dónde salieron los pedidos, sin CPA propio.";
+  "El gasto solo se puede separar por canal: el detalle muestra de dónde salieron los pedidos y de qué fuente llegaron, sin CPA propio.";
+const SOURCE_NOTE =
+  "Según la UTM del pedido o el anuncio de WhatsApp que abrió el chat. Sin dato: pedidos creados por el equipo (Leads, asesoras), que no guardan de dónde llegó el cliente.";
+
+/** Share cell: bar + percentage (the bar takes the table's series color). */
+function Share({ share }: { share: number | null }) {
+  return (
+    <span className={r.originShare}>
+      <span
+        className={r.originBar}
+        aria-hidden
+        style={
+          {
+            "--share": `${Math.round((share ?? 0) * 100)}%`,
+          } as CSSProperties
+        }
+      />
+      <span className={r.originPct}>
+        {share == null ? "—" : percentage(share)}
+      </span>
+    </span>
+  );
+}
 
 /** One channel → its origins: orders, units and % of the channel's orders. */
 function OriginTable({
@@ -200,20 +233,7 @@ function OriginTable({
               <td>{count(o.orders)}</td>
               <td>{count(Math.round(o.units))}</td>
               <td>
-                <span className={r.originShare}>
-                  <span
-                    className={r.originBar}
-                    aria-hidden
-                    style={
-                      {
-                        "--share": `${Math.round((o.share ?? 0) * 100)}%`,
-                      } as CSSProperties
-                    }
-                  />
-                  <span className={r.originPct}>
-                    {o.share == null ? "—" : percentage(o.share)}
-                  </span>
-                </span>
+                <Share share={o.share} />
               </td>
             </tr>
           ))
@@ -223,7 +243,82 @@ function OriginTable({
   );
 }
 
-/** Both channels of one row, side by side (stacked on a phone). */
+/** Traffic source of the orders with channel: orders, units and % of them. */
+function SourceTable({
+  sources,
+  loading,
+  product,
+  onlyUsed = false,
+}: {
+  sources: SourceCell[];
+  loading: boolean;
+  /** Product of the detail, for screen readers (null = all products). */
+  product: string | null;
+  /** Hide the sources without orders (product detail). */
+  onlyUsed?: boolean;
+}) {
+  const rows = onlyUsed ? sources.filter((s) => s.orders > 0) : sources;
+  const orders = sources.reduce((n, s) => n + s.orders, 0);
+  return (
+    <table className={`${r.originTable} ${r.originSource}`}>
+      <caption>
+        <span className={r.originCaption}>
+          <span className={r.originChannel}>
+            Fuente del tráfico
+            {product && <span className="sr-only"> · {product}</span>}
+          </span>
+          <span className={r.originMeta}>
+            {loading
+              ? "…"
+              : `${count(orders)} ${orders === 1 ? "pedido" : "pedidos"} · sin CPA por fuente`}
+          </span>
+        </span>
+        <span className={r.originExplain}>{SOURCE_NOTE}</span>
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Fuente</th>
+          <th scope="col">Pedidos</th>
+          <th scope="col">Unidades</th>
+          <th scope="col">% de pedidos</th>
+        </tr>
+      </thead>
+      <tbody>
+        {loading ? (
+          <tr>
+            <td colSpan={4} className={r.originEmpty}>
+              …
+            </td>
+          </tr>
+        ) : !rows.length ? (
+          <tr>
+            <td colSpan={4} className={r.originEmpty}>
+              Sin pedidos reales con canal.
+            </td>
+          </tr>
+        ) : (
+          rows.map((s) => (
+            <tr key={s.source} className={s.orders ? undefined : r.originZero}>
+              <th scope="row" title={TRAFFIC_SOURCE_HINT[s.source]}>
+                {TRAFFIC_SOURCE_LABEL[s.source]}
+              </th>
+              <td>{count(s.orders)}</td>
+              <td>{count(Math.round(s.units))}</td>
+              <td>
+                <Share share={s.share} />
+              </td>
+            </tr>
+          ))
+        )}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * Both channels of one row side by side, and the traffic source to their
+ * right when the data has it (under them on narrow screens).
+ */
 function OriginPair({
   row,
   loading,
@@ -251,6 +346,14 @@ function OriginPair({
           onlyUsed={onlyUsed}
         />
       ))}
+      {row.sources && (
+        <SourceTable
+          sources={row.sources}
+          loading={loading}
+          product={product}
+          onlyUsed={onlyUsed}
+        />
+      )}
     </div>
   );
 }
@@ -335,6 +438,7 @@ function filteredRow(rows: ChannelCpaRow[]): ChannelCpaRow | null {
     landing: sum("landing"),
     whatsapp: sum("whatsapp"),
     origins: sumCpaOrigins(rows),
+    sources: sumCpaSources(rows),
     // Orders with two of these products count in each: approximate.
     approximate: true,
   };
@@ -608,7 +712,7 @@ export function ChannelCpaTable({
         <p>
           {[
             ...notes,
-            "Página web = formulario, carrito recuperado y Shopify (hasta el 28/10). WhatsApp = bot de WhatsApp (desde anuncio u orgánico, según el anuncio que inició el chat en iComfly; «sin revisar» mientras Kairo no lo consultó), pedidos creados desde Leads en Kairo, asesoras en iComfly y pedidos MANUAL sin creador. El gasto de Meta se reparte por el destino de cada conjunto de anuncios; TikTok cuenta como Página web. El total incluye campañas sin asignar y no es la suma de las filas.",
+            "Página web = formulario, carrito recuperado y Shopify (hasta el 28/10). WhatsApp = bot de WhatsApp (desde anuncio u orgánico, según el anuncio que inició el chat en iComfly; «sin revisar» mientras Kairo no lo consultó), pedidos creados desde Leads en Kairo, asesoras en iComfly y pedidos MANUAL sin creador. Fuente = la UTM del pedido o el anuncio de WhatsApp que abrió el chat (Meta, TikTok, Google u otra); sin ninguno, la página web y el bot sin anuncio son orgánicos y los pedidos del equipo quedan sin dato. El gasto de Meta se reparte por el destino de cada conjunto de anuncios; TikTok cuenta como Página web. El total incluye campañas sin asignar y no es la suma de las filas.",
           ].join(" ")}
         </p>
         {!searching && rows.length > PAGE && (

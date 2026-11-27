@@ -1602,9 +1602,11 @@
   margin: 10px 0 0;
   color: var(--mk-subtle);
 }
+/* Página web, WhatsApp and, to their right, the traffic source (27/11/2026);
+   the source wraps under the channels when the three do not fit. */
 .originGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
   align-items: start;
   gap: 14px 22px;
 }
@@ -1614,6 +1616,21 @@
 }
 .report table.originWhatsapp {
   --origin-color: var(--mk-series-2);
+}
+.report table.originSource {
+  --origin-color: var(--mk-series-3);
+}
+/* "Meta (Facebook / Instagram)" may wrap so the three tables fit. */
+.report table.originSource tbody th {
+  white-space: normal;
+}
+.originExplain {
+  display: block;
+  padding: 6px 0 0;
+  color: var(--mk-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
 }
 .originTable caption {
   text-align: left;
@@ -1719,8 +1736,14 @@
 .originDetail {
   position: sticky;
   left: 14px;
-  width: min(760px, calc(100vw - 96px));
+  width: min(1120px, calc(100vw - 96px));
   padding-left: 20px;
+}
+/* With the side menu (≥1024px) the table is 240px narrower than the screen. */
+@media (min-width: 1024px) {
+  .originDetail {
+    width: min(1120px, calc(100vw - 336px));
+  }
 }
 .report .originDetail > .channelToggle {
   width: auto;
@@ -1736,7 +1759,7 @@
     padding: 14px 14px 12px;
   }
   .originGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .originDetail {
     left: 10px;

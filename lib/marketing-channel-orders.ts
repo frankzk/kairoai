@@ -3,6 +3,9 @@
 // canal (26/11/2026: bot, Conector IA, asesora, manual; formulario, carrito,
 // Shopify). El bot se separa por el anuncio de WhatsApp que inició el chat
 // (27/11/2026): desde anuncio, orgánico o sin revisar (`row.whatsappAd`).
+// Cada pedido lleva además la fuente del tráfico (27/11/2026: Meta, TikTok,
+// orgánico…; lib/marketing-traffic-source.ts), de la UTM o del anuncio de
+// WhatsApp que esas mismas filas ya traen.
 //
 // Los pedidos y sus productos salen del dataset de Finanzas (los mismos que
 // cuentan el CPA general por producto); el canal sale del pedido de iComfly
@@ -25,6 +28,12 @@ import {
 } from "./marketing-channel-cpa";
 import { marketingDate, type MarketingPeriod } from "./marketing-dates";
 import { labelNames, orderSubOrigin } from "./marketing-order-facts";
+import { rowAdOrigin } from "./icomfly-whatsapp-ad";
+import {
+  mergeTrafficAds,
+  orderTrafficSource,
+  type TrafficSource,
+} from "./marketing-traffic-source";
 import {
   orderItemKey,
   orderMatcher,
@@ -35,6 +44,8 @@ import {
 export interface OrderChannel {
   channel: SaleChannel;
   origin: SaleOrigin;
+  /** Where the customer came from (lib/marketing-traffic-source.ts). */
+  source: TrafficSource;
 }
 
 const text = (value: unknown) =>
@@ -74,6 +85,14 @@ export function rowSaleOrigin(
   return origin === "manual" && row.kairoLead ? "conector_ia" : origin;
 }
 
+/**
+ * Ad origin of one row: the one Marketing already resolved (web UTM, else
+ * the WhatsApp ad of the chat), or read from the row when it was not set.
+ */
+function rowTrafficAd(row: MarketingOriginRow) {
+  return row.resolvedOrigin ?? rowAdOrigin(row.ad_origin, row.whatsappAd, []);
+}
+
 /** Sale channel of one origin row. */
 export function rowChannel(row: MarketingOriginRow): SaleChannel {
   return saleOriginChannel(rowSaleOrigin(row)) ?? "landing";
@@ -85,7 +104,9 @@ export function rowChannel(row: MarketingOriginRow): SaleChannel {
  * the team); then iComfly rows win over saved Shopify rows. Rows of the same
  * rank that disagree on the channel leave the order without channel; rows
  * that agree on the channel but not on the origin keep the channel with
- * origin "otro".
+ * origin "otro". The traffic source joins the ad origins of every row of
+ * the order (an upsell keeps the original's ad) and, without any, follows
+ * the origin (`orderTrafficSource`).
  */
 export function matchChannelsToOrders(
   orders: OrderProfitabilityRow[],
@@ -99,12 +120,14 @@ export function matchChannelsToOrders(
         ? 1
         : 2;
   const found = new Map<string, Array<Set<SaleOrigin>>>();
+  const ads = new Map<string, Array<ReturnType<typeof rowTrafficAd>>>();
   for (const row of rows) {
     const orderKey = match(row);
     if (!orderKey) continue;
     const ranks = found.get(orderKey) ?? [new Set(), new Set(), new Set()];
     ranks[rank(row)].add(rowSaleOrigin(row));
     found.set(orderKey, ranks);
+    ads.set(orderKey, [...(ads.get(orderKey) ?? []), rowTrafficAd(row)]);
   }
   const result = new Map<string, OrderChannel>();
   for (const [orderKey, ranks] of Array.from(found)) {
@@ -115,9 +138,14 @@ export function matchChannelsToOrders(
     if (channels.size !== 1) continue;
     const channel = Array.from(channels)[0];
     if (!channel) continue;
+    const origin = origins.length === 1 ? origins[0] : "otro";
     result.set(orderKey, {
       channel,
-      origin: origins.length === 1 ? origins[0] : "otro",
+      origin,
+      source: orderTrafficSource(
+        origin,
+        mergeTrafficAds(ads.get(orderKey) ?? []),
+      ),
     });
   }
   return result;
@@ -125,8 +153,9 @@ export function matchChannelsToOrders(
 
 /**
  * Adds `mix` to each day: real (non-annulled) orders grouped by channel,
- * lines `[product key, units]` and origin. Without `channels` (iComfly could
- * not be read) every order is "unknown": product totals stay usable.
+ * lines `[product key, units]`, origin and traffic source. Without
+ * `channels` (iComfly could not be read) every order is "unknown": product
+ * totals stay usable.
  */
 export function attachChannelMix(
   days: RealOrderDay[],
@@ -152,11 +181,16 @@ export function attachChannelMix(
       .map(([key, n]): [string, number] => [key, Math.round(n * 1000) / 1000])
       .sort((a, b) => a[0].localeCompare(b[0]));
     const found = channels?.get(order.order_key);
-    const signature = JSON.stringify([found?.channel, lines, found?.origin]);
+    const signature = JSON.stringify([
+      found?.channel,
+      lines,
+      found?.origin,
+      found?.source,
+    ]);
     const groups = byDay.get(date) ?? new Map<string, ChannelOrderGroup>();
     const group: ChannelOrderGroup = groups.get(signature) ??
       (found
-        ? [found.channel, lines, 0, found.origin]
+        ? [found.channel, lines, 0, found.origin, found.source]
         : ["unknown", lines, 0]);
     group[2]++;
     groups.set(signature, group);
