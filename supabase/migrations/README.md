@@ -12,6 +12,16 @@ Reglas:
 
 Estado actual:
 
+Anuncio de WhatsApp de los pedidos: `20261127120000_icomfly_whatsapp_ad_origins.sql`
+aplicada el 27/11/2026. Sin ella el cron `icomfly-whatsapp-ads`
+responde ok con `pendiente` y no consulta nada, y Marketing muestra las ventas
+del bot como «Bot · sin revisar». Crea `icomfly_whatsapp_ad_origins` (un
+registro por pedido revisado: anuncio de Meta que inició el chat según
+iComfly, también los sin anuncio, y la campaña del anuncio leída en Meta), con
+índices `(store_id, order_created_at)`, `(store_id, ad_id)` parcial y el
+parcial de anuncios con campaña pendiente. RLS sin políticas: solo service
+role. Re-ejecutable.
+
 Reparto de leads, personas que no reciben: `20261109120000_lead_assignment_excluded.sql`
 aplicada el 09/11/2026 (columna `excluded_user_ids` en `lead_assignment_settings`).
 

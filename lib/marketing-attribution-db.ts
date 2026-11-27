@@ -1,12 +1,16 @@
 import { getDB } from "./db";
 import type { MarketingOriginRow } from "./marketing-attribution";
 import {
-  readIcomflyAdOrigin,
   shopifyAdOrigin,
   mergeAdOrigins,
   resolveOriginCampaign,
 } from "./icomfly-ad-origin";
 import { readOriginCatalog } from "./marketing-origin-catalog";
+import { rowAdOrigin, type WhatsappAdCheck } from "./icomfly-whatsapp-ad";
+import {
+  readWhatsappAdChecksByIds,
+  readWhatsappAdChecksByRange,
+} from "./icomfly-whatsapp-ad-db";
 import { filtrosPedidoIcomfly } from "./zadarma-calls";
 
 const columns =
@@ -165,7 +169,7 @@ export async function listMarketingOrigins(
   const upper = new Date(Date.parse(to) + 86400000).toISOString().slice(0, 10);
   // Un período posterior al cierre de Shopify no tiene nada en sus tablas.
   const conShopify = lower < SHOPIFY_SIN_PEDIDOS_DESDE;
-  const [native, saved, archive, inherited, catalog, kairoLeads] = await Promise.all([
+  const [native, saved, archive, inherited, catalog, kairoLeads, whatsapp] = await Promise.all([
     pages((start) =>
       getDB()
         .from("icomfly_order_payloads")
@@ -204,7 +208,19 @@ export async function listMarketingOrigins(
     replacementOrigins(storeId),
     readOriginCatalog(storeId),
     kairoLeadOrderIds(storeId),
+    // The WhatsApp ad of the chat of each order of the period (one indexed
+    // query by creation range; fail-soft).
+    readWhatsappAdChecksByRange(storeId, lower, upper),
   ]);
+  // Upsell originals can be older than the period: by primary key.
+  const missing = inherited
+    .map((r) => String(r.originalIcomflyId ?? ""))
+    .filter((id) => id && !whatsapp.has(id));
+  if (missing.length)
+    for (const [id, check] of Array.from(
+      await readWhatsappAdChecksByIds(storeId, missing),
+    ))
+      whatsapp.set(id, check);
   return [
     ...(native as unknown as MarketingOriginRow[]).map((r) => ({
       ...r,
@@ -214,7 +230,6 @@ export async function listMarketingOrigins(
     ...archive.map((r) => savedOrigin(r, true)),
     ...inherited,
   ].map((row) => {
-    const origin = readIcomflyAdOrigin(row.ad_origin);
     // The upsell rows carry the replacement's id: the original's decides.
     const ownId =
       row.originSource === "upsell_original"
@@ -222,9 +237,14 @@ export async function listMarketingOrigins(
         : row.originSource === "icomfly"
           ? row.icomfly_order_id
           : null;
+    const whatsappAd: WhatsappAdCheck | null | undefined =
+      ownId == null ? undefined : (whatsapp.get(String(ownId)) ?? null);
+    // A web UTM wins; else the WhatsApp ad counts like a UTM ad id.
+    const origin = rowAdOrigin(row.ad_origin, whatsappAd, catalog);
     return {
       ...row,
       kairoLead: ownId != null && kairoLeads.has(String(ownId)),
+      ...(whatsappAd !== undefined ? { whatsappAd } : {}),
       resolvedOrigin: origin ? resolveOriginCampaign(origin, catalog) : null,
     };
   });
@@ -269,19 +289,34 @@ export async function orderMarketingOrigin(storeId: number, orderName: string) {
     throw new Error("No se pudo consultar el origen publicitario.");
   if ([native, saved, archive].some((r) => (r.data?.length ?? 0) > 1))
     return null;
+  const nativeRows = (native.data ?? []) as unknown as MarketingOriginRow[];
+  const inheritedRows = inherited.filter(
+    (r) =>
+      String(r.shopify_display_number).replace(/^#/, "").toUpperCase() ===
+      name.toUpperCase(),
+  );
   const rows = [
-    ...((native.data ?? []) as unknown as MarketingOriginRow[]),
-    ...(saved.data ?? []).map((r) => savedOrigin(r)),
-    ...(archive.data ?? []).map((r) => savedOrigin(r, true)),
-    ...inherited.filter(
-      (r) =>
-        String(r.shopify_display_number).replace(/^#/, "").toUpperCase() ===
-        name.toUpperCase(),
-    ),
+    ...nativeRows.map((r) => ({ row: r, own: r.icomfly_order_id })),
+    ...(saved.data ?? []).map((r) => ({ row: savedOrigin(r), own: null })),
+    ...(archive.data ?? []).map((r) => ({ row: savedOrigin(r, true), own: null })),
+    ...inheritedRows.map((r) => ({ row: r, own: r.originalIcomflyId })),
   ];
+  // The WhatsApp ad of the chat (iComfly order and upsell original), by key.
+  const ownIds = rows
+    .map((r) => String(r.own ?? ""))
+    .filter(Boolean);
+  const whatsapp = ownIds.length
+    ? await readWhatsappAdChecksByIds(storeId, ownIds)
+    : new Map<string, WhatsappAdCheck>();
   const merged = mergeAdOrigins(
     rows
-      .map((r) => readIcomflyAdOrigin(r.ad_origin))
+      .map(({ row, own }) =>
+        rowAdOrigin(
+          row.ad_origin,
+          own == null ? null : whatsapp.get(String(own)),
+          catalog,
+        ),
+      )
       .filter((r) => r !== null)
       .map((o) => resolveOriginCampaign(o, catalog)),
   );

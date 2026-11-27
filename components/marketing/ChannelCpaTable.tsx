@@ -608,7 +608,7 @@ export function ChannelCpaTable({
         <p>
           {[
             ...notes,
-            "Página web = formulario, carrito recuperado y Shopify (hasta el 28/10). WhatsApp = bot de WhatsApp, pedidos creados desde Leads en Kairo, asesoras en iComfly y pedidos MANUAL sin creador. El gasto de Meta se reparte por el destino de cada conjunto de anuncios; TikTok cuenta como Página web. El total incluye campañas sin asignar y no es la suma de las filas.",
+            "Página web = formulario, carrito recuperado y Shopify (hasta el 28/10). WhatsApp = bot de WhatsApp (desde anuncio u orgánico, según el anuncio que inició el chat en iComfly; «sin revisar» mientras Kairo no lo consultó), pedidos creados desde Leads en Kairo, asesoras en iComfly y pedidos MANUAL sin creador. El gasto de Meta se reparte por el destino de cada conjunto de anuncios; TikTok cuenta como Página web. El total incluye campañas sin asignar y no es la suma de las filas.",
           ].join(" ")}
         </p>
         {!searching && rows.length > PAGE && (

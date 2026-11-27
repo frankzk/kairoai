@@ -16,7 +16,10 @@
 // - Origen dentro del canal (26/11/2026): cada pedido con canal lleva además
 //   su origen fino (`orderSubOrigin`): WhatsApp = bot de WhatsApp, Conector
 //   IA, asesora o "MANUAL-…" sin creador; Página web = formulario, carrito
-//   recuperado o Shopify. El gasto solo se separa por canal (destino del
+//   recuperado o Shopify. Desde el 27/11/2026 el bot se separa por el anuncio
+//   que inició el chat (iComfly, lib/icomfly-whatsapp-ad.ts): "Bot · desde
+//   anuncio", "Bot · orgánico" y "Bot · sin revisar" mientras Kairo no lo
+//   consultó (los grupos viejos con "bot" se leen así). El gasto solo se separa por canal (destino del
 //   conjunto de anuncios): el origen muestra pedidos, unidades y % del canal,
 //   nunca un CPA propio.
 // - Unidades: suma de cantidades de los productos del pedido real; si la línea
@@ -69,6 +72,13 @@ export type SaleOrigin =
   | "formulario"
   | "carrito"
   | "shopify"
+  | "bot_anuncio"
+  | "bot_organico"
+  | "bot_sin_revisar"
+  /**
+   * Bot without the WhatsApp ad split: payloads from before 27/11/2026 (and
+   * `orderSubOrigin` without ad signal). Read as "bot_sin_revisar".
+   */
   | "bot"
   | "conector_ia"
   | "asesora"
@@ -78,13 +88,42 @@ export type SaleOrigin =
 /** Origins of each channel, in display order ("otro" last). */
 export const SALE_ORIGINS: Record<SaleChannel, readonly SaleOrigin[]> = {
   landing: ["formulario", "carrito", "shopify", "otro"],
-  whatsapp: ["bot", "conector_ia", "asesora", "manual", "otro"],
+  whatsapp: [
+    "bot_anuncio",
+    "bot_organico",
+    "bot_sin_revisar",
+    "conector_ia",
+    "asesora",
+    "manual",
+    "otro",
+  ],
 };
+
+/** Origins listed only when they have orders. */
+const ONLY_WITH_ORDERS = new Set<SaleOrigin>(["otro", "bot_sin_revisar"]);
+export const originShownEmpty = (origin: SaleOrigin) =>
+  !ONLY_WITH_ORDERS.has(origin);
+
+/**
+ * Origin of a payload group as the table counts it: the legacy "bot" (no ad
+ * split yet) is "Bot · sin revisar"; an origin of another channel, or none,
+ * is "otro" (the channel is never dropped).
+ */
+export function knownSaleOrigin(
+  channel: SaleChannel,
+  origin: SaleOrigin | undefined,
+): SaleOrigin {
+  const normal = origin === "bot" ? "bot_sin_revisar" : origin;
+  return normal && SALE_ORIGINS[channel].includes(normal) ? normal : "otro";
+}
 
 export const SALE_ORIGIN_LABEL: Record<SaleOrigin, string> = {
   formulario: "Formulario",
   carrito: "Carrito recuperado",
   shopify: "Shopify",
+  bot_anuncio: "Bot · desde anuncio",
+  bot_organico: "Bot · orgánico",
+  bot_sin_revisar: "Bot · sin revisar",
   bot: "Bot de WhatsApp",
   conector_ia: "Desde Leads en Kairo",
   asesora: "Asesora en iComfly",
@@ -96,6 +135,12 @@ export const SALE_ORIGIN_HINT: Record<SaleOrigin, string> = {
   formulario: "Formulario web de iComfly",
   carrito: "Etiqueta “Carrito abandonado recuperado”",
   shopify: "Pedidos de Shopify, la página web hasta el 28/10/2026",
+  bot_anuncio:
+    "Venta del bot (etiqueta “Venta por bot” o canal WhatsApp) cuyo chat empezó en un anuncio de Meta, según iComfly",
+  bot_organico:
+    "Venta del bot cuyo chat no vino de un anuncio, según iComfly",
+  bot_sin_revisar:
+    "Venta del bot que Kairo todavía no consultó en iComfly (se revisan de a poco, cada hora)",
   bot: "Etiqueta “Venta por bot” o canal WhatsApp de iComfly",
   conector_ia: "Botón “Crear en iComfly” de Leads en Kairo (iComfly lo firma como “Conector IA”)",
   asesora: "Creados a mano en iComfly por una asesora: seguimientos y reactivaciones",
@@ -106,7 +151,9 @@ export const SALE_ORIGIN_HINT: Record<SaleOrigin, string> = {
 /** Channel of a known origin; null for "otro" (it carries its channel apart). */
 export function saleOriginChannel(origin: SaleOrigin): SaleChannel | null {
   if (origin === "otro") return null;
-  return SALE_ORIGINS.whatsapp.includes(origin) ? "whatsapp" : "landing";
+  return origin === "bot" || SALE_ORIGINS.whatsapp.includes(origin)
+    ? "whatsapp"
+    : "landing";
 }
 
 /**
@@ -302,7 +349,7 @@ export interface ChannelCpaRow {
   whatsapp: ChannelCell;
   /**
    * Origin of the orders inside each channel, in `SALE_ORIGINS` order (every
-   * origin of the channel, 0 included; "otro" only when it has orders). Sums
+   * origin of the channel, 0 included; "otro" and "bot_sin_revisar" only when they have orders). Sums
    * to the channel's orders and units. Null when the channel of the orders is
    * unknown.
    */
@@ -445,8 +492,7 @@ export function productChannelCpa(input: {
       if (channel !== "unknown") {
         // An origin that does not belong to the channel (or a payload
         // without origin) counts as "otro": the channel is never dropped.
-        const known =
-          origin && SALE_ORIGINS[channel].includes(origin) ? origin : "otro";
+        const known = knownSaleOrigin(channel, origin);
         const bucket = byOrigin[channel].get(known) ?? zero();
         byOrigin[channel].set(known, bucket);
         buckets.push(bucket);
@@ -470,7 +516,7 @@ export function productChannelCpa(input: {
               : null,
           };
         })
-        .filter((c) => c.origin !== "otro" || c.orders > 0);
+        .filter((c) => originShownEmpty(c.origin) || c.orders > 0);
     return { ...out, origins };
   }
 
@@ -685,14 +731,15 @@ export function sumCpaOrigins(
     const sums = new Map<SaleOrigin, { orders: number; units: number }>();
     for (const row of rows)
       for (const cellOf of row.origins![channel]) {
-        const current = sums.get(cellOf.origin) ?? { orders: 0, units: 0 };
+        const origin = knownSaleOrigin(channel, cellOf.origin);
+        const current = sums.get(origin) ?? { orders: 0, units: 0 };
         current.orders += cellOf.orders;
         current.units += cellOf.units;
-        sums.set(cellOf.origin, current);
+        sums.set(origin, current);
       }
     const orders = Array.from(sums.values()).reduce((n, s) => n + s.orders, 0);
     out[channel] = SALE_ORIGINS[channel]
-      .filter((origin) => origin !== "otro" || (sums.get(origin)?.orders ?? 0) > 0)
+      .filter((origin) => originShownEmpty(origin) || (sums.get(origin)?.orders ?? 0) > 0)
       .map((origin) => {
         const sum = sums.get(origin) ?? { orders: 0, units: 0 };
         return {

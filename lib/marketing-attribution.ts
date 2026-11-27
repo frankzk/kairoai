@@ -1,4 +1,5 @@
 import type { OriginCampaign, IcomflyAdOrigin } from "./icomfly-ad-origin";
+import type { WhatsappAdCheck } from "./icomfly-whatsapp-ad";
 import { matchOriginsToOrders } from "./marketing-real-orders";
 import type { OrderProfitabilityRow } from "./finance-orders";
 import type { MarketingPeriod } from "./marketing-dates";
@@ -29,6 +30,12 @@ export interface MarketingOriginRow {
    * lead_icomfly_receipts), even when iComfly kept it without creator.
    */
   kairoLead?: boolean;
+  /**
+   * iComfly rows (and upsell originals): the Click-to-WhatsApp ad of the
+   * order's chat (lib/icomfly-whatsapp-ad.ts). Absent / null = Kairo has not
+   * checked it yet; `hasAd: false` = checked, no ad.
+   */
+  whatsappAd?: WhatsappAdCheck | null;
   originSource?:
     | "icomfly"
     | "shopify_saved"

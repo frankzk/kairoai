@@ -1,7 +1,8 @@
 // Canal de venta (Página web / WhatsApp) de los pedidos reales para el CPA
 // por producto y canal del Tablero (20/11/2026), con el origen fino dentro del
 // canal (26/11/2026: bot, Conector IA, asesora, manual; formulario, carrito,
-// Shopify).
+// Shopify). El bot se separa por el anuncio de WhatsApp que inició el chat
+// (27/11/2026): desde anuncio, orgánico o sin revisar (`row.whatsappAd`).
 //
 // Los pedidos y sus productos salen del dataset de Finanzas (los mismos que
 // cuentan el CPA general por producto); el canal sale del pedido de iComfly
@@ -60,6 +61,13 @@ export function rowSaleOrigin(
     salesChannel: text(row.sales_channel) || null,
     creator: text(row.creator) || null,
     orderNumber: upsell ? row.originalOrderNumber : row.order_number,
+    // The WhatsApp ad of the chat (of the original, for an upsell row).
+    whatsappAd:
+      row.whatsappAd == null
+        ? "unchecked"
+        : row.whatsappAd.hasAd
+          ? "ad"
+          : "organic",
   });
   // A "MANUAL-…" without creator that Kairo created from Leads (it has a
   // receipt): iComfly lost the "Conector IA" creator, not the origin.

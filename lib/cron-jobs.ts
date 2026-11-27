@@ -29,7 +29,8 @@ export interface CronJob {
 //   :20/:45 wyn · :25 icomfly-historial · :30 forza (~2 min)
 //   :40 cargo-expreso · :50 c807
 // Livianos con minuto propio: :13/:28/:43/:58 shiphero-inventario (~11 s) ·
-//   :04/:19/:34/:49 call-recordings.
+//   :04/:19/:34/:49 call-recordings · :41 icomfly-whatsapp-ads (≤ 60 consultas
+//   a iComfly por tienda, consultas a la base por clave o índice).
 // Al agregar uno pesado, busca un minuto libre.
 export const CRON_JOBS: CronJob[] = [
   { name: "woo-status", label: "Estados de Kenku Italia", everyMinutes: 5, scheduler: "external" },
@@ -45,6 +46,9 @@ export const CRON_JOBS: CronJob[] = [
   { name: "leads-inbound", label: "Chat de los leads (Conversó)", everyMinutes: 10 },
   { name: "icomfly", label: "Pedidos de Icomfly", everyMinutes: 15 },
   { name: "icomfly-historial", label: "Historial de Icomfly", everyMinutes: 60 },
+  // Anuncio de Meta que inició el chat de cada pedido de WhatsApp (27/11/2026,
+  // lib/icomfly-whatsapp-ad-db.ts). Sin su migración responde ok sin hacer nada.
+  { name: "icomfly-whatsapp-ads", label: "Anuncios de WhatsApp de Icomfly", everyMinutes: 60 },
   // Shopify: apagados el 25/11/2026. Las 5 tiendas responden "Unavailable
   // Shop" desde el 04/11 y el respaldo ya estaba completo; seguian corriendo
   // (el respaldo cada 5 min) sin traer nada. Las rutas siguen para correrlas a
