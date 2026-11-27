@@ -1545,6 +1545,16 @@
   white-space: nowrap;
   max-width: none;
 }
+/* Gasto de Meta sin destino leído: fila aparte, con el motivo. */
+.report .channelTable tr.channelUnknown > * {
+  font-style: italic;
+}
+.report .channelTable tr.channelUnknown > td.channelNote {
+  min-width: 220px;
+  white-space: normal;
+  text-align: left;
+  font-style: normal;
+}
 .report .channelTable td.channelEmpty {
   text-align: left;
   white-space: normal;

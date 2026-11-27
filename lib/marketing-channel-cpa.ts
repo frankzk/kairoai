@@ -27,8 +27,15 @@
 //   destino (`destination_type` WHATSAPP → WhatsApp; WEBSITE, UNDEFINED y
 //   cualquier otro destino → Landing; Messenger o Instagram Direct no son
 //   WhatsApp). TikTok cuenta entero como Landing. Si Meta no dejó leer los
-//   destinos, ese gasto queda "sin desglose": el total del producto se
-//   muestra, el reparto por canal no.
+//   destinos, ese gasto queda "sin destino".
+// - Sin destino (26/11/2026): una campaña de Meta sin destino leído cuyo
+//   nombre dice WhatsApp ("WSP | Magnesio", "WPP", "WHATSAPP", "WA | …")
+//   cuenta como WhatsApp, marcada "≈ por el nombre de la campaña". El nombre
+//   nunca da "Página web": sin señal de WhatsApp el gasto sigue sin destino.
+//   Lo que sigue sin destino se muestra aparte ("USD X sin destino") y el
+//   reparto y el CPA por canal salen del gasto con destino, marcados "≈".
+//   Solo cuando nada del gasto tiene destino la fila queda "Sin desglose".
+//   El total del producto no cambia.
 //
 // Puro y sin dependencias de servidor (lo usa el Tablero en el navegador). El
 // cruce de pedidos con iComfly vive en lib/marketing-channel-orders.ts.
@@ -43,6 +50,7 @@ import type {
   MarketingCampaign,
   MarketingSources,
 } from "./marketing-source-types";
+import { moneyText } from "./marketing-copy";
 import { asUsd } from "./marketing-usd-rate";
 import { summaryClockZones } from "./marketing-stores";
 
@@ -136,6 +144,25 @@ export function metaDestinationChannel(destination: unknown): SaleChannel {
   return /WHATSAPP/i.test(String(destination ?? "")) ? "whatsapp" : "landing";
 }
 
+/**
+ * The campaign name clearly says WhatsApp: a "WSP", "WPP", "WHATSAPP" (or
+ * "WHATS APP") word anywhere ("WSP | Magnesio Citrato", "WSP BATANA OIL",
+ * "ABO WSP"), or a "WA |" / "WA -" prefix. A name that also says web or
+ * landing is not clear. Never used to infer Página web.
+ */
+export function campaignNameSaysWhatsapp(name: unknown): boolean {
+  const text = String(name ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+  const word = (pattern: string) =>
+    new RegExp(`(^|[^A-Z0-9])(${pattern})(?=$|[^A-Z0-9])`).test(text);
+  const whatsapp =
+    word("WSP|WPP|WHATSAPP|WHATS APP|WASAP") || /^\s*WA\s*[|:\-–—·]/.test(text);
+  if (!whatsapp) return false;
+  return !word("WEB|LANDING|PAGINA|SITIO|WEBSITE|LP");
+}
+
 /** "2x A" or "1x A, 2x B" → 2 / 3; 0 when the name carries no quantity. */
 function nameUnits(title: string): number {
   const text = title.trim();
@@ -167,6 +194,11 @@ export interface ChannelSpend {
   whatsapp: number;
   /** Spend whose destination could not be read (Meta only). */
   unknown: number;
+  /**
+   * Part of `whatsapp` without a read destination, counted as WhatsApp
+   * because the campaign name says so (Meta only).
+   */
+  inferred: number;
 }
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
@@ -176,17 +208,26 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
  * spend × the share of its ad sets per destination (`channelSpend`); a day
  * without its own ad set rows uses the campaign's share over all the rows it
  * has (Meta now answers with period totals: one row per campaign), and only
- * a campaign with no rows at all stays `unknown`. TikTok: all Landing. Null
+ * a campaign with no rows at all stays `unknown`, unless its name says
+ * WhatsApp (then it is WhatsApp, `inferred`). TikTok: all Landing. Null
  * without daily detail.
  */
 export function campaignChannelSpend(
-  campaign: Pick<MarketingCampaign, "daily" | "channelSpend">,
+  campaign: Pick<MarketingCampaign, "daily" | "channelSpend"> &
+    Partial<Pick<MarketingCampaign, "name">>,
   platform: "meta" | "tiktok",
   from: string,
   to: string,
 ): ChannelSpend | null {
   if (!campaign.daily) return null;
-  const out: ChannelSpend = { total: 0, landing: 0, whatsapp: 0, unknown: 0 };
+  const out: ChannelSpend = {
+    total: 0,
+    landing: 0,
+    whatsapp: 0,
+    unknown: 0,
+    inferred: 0,
+  };
+  const byName = platform === "meta" && campaignNameSaysWhatsapp(campaign.name);
   const split = new Map<string, { landing: number; whatsapp: number }>();
   for (const row of campaign.channelSpend ?? []) {
     const current = split.get(row.date) ?? { landing: 0, whatsapp: 0 };
@@ -213,7 +254,10 @@ export function campaignChannelSpend(
     const share = split.get(date) ?? overall;
     const sum = share ? share.landing + share.whatsapp : 0;
     if (!share || sum <= 0) {
-      out.unknown += spend;
+      if (byName) {
+        out.whatsapp += spend;
+        out.inferred += spend;
+      } else out.unknown += spend;
       continue;
     }
     const whatsapp = (spend * share.whatsapp) / sum;
@@ -225,6 +269,7 @@ export function campaignChannelSpend(
     landing: round2(out.landing),
     whatsapp: round2(out.whatsapp),
     unknown: round2(out.unknown),
+    inferred: round2(out.inferred),
   };
 }
 
@@ -266,8 +311,20 @@ export interface ChannelCpaRow {
   partial: boolean;
   /** Different calendars between ad accounts and orders. */
   approximate: boolean;
-  /** Channel split: "partial" = some spend or some orders without channel. */
+  /**
+   * Channel split: "partial" = some spend without destination (shown apart,
+   * the channels hold the rest), WhatsApp inferred from a campaign name, or
+   * some orders without channel.
+   */
   split: "ok" | "partial" | "unavailable";
+  /** USD spend without a read destination (in the total, in no channel); null when the total is unknown. */
+  unknownSpend: number | null;
+  /** USD of the WhatsApp spend counted by the campaign name; null when the total is unknown. */
+  inferredSpend: number | null;
+  /** Campaigns of the row with spend without destination. */
+  unknownCampaigns: number;
+  /** Why the channel spend is partial or approximate ("" when it is complete). */
+  spendNote: string;
   /** Why a cost is missing or partial, for the row. */
   reason: string;
 }
@@ -284,6 +341,8 @@ export interface ChannelCpaReport {
   ordersChannel: "ok" | "partial" | "unavailable";
   /** "unavailable": no Meta destination could be read. */
   spendChannel: "ok" | "partial" | "unavailable";
+  /** Some Meta spend counts as WhatsApp by the campaign name. */
+  spendInferred: boolean;
 }
 
 const cell = (
@@ -418,13 +477,19 @@ export function productChannelCpa(input: {
   function spendOf(list: typeof campaigns) {
     let daily = true,
       rate = true;
-    const usd = { total: 0, landing: 0, whatsapp: 0, unknown: 0 };
+    const usd = { total: 0, landing: 0, whatsapp: 0, unknown: 0, inferred: 0 };
     for (const c of list) {
       if (!c.split) {
         daily = false;
         continue;
       }
-      for (const part of ["total", "landing", "whatsapp", "unknown"] as const) {
+      for (const part of [
+        "total",
+        "landing",
+        "whatsapp",
+        "unknown",
+        "inferred",
+      ] as const) {
         const value = asUsd(c.split[part], c.account.currency, fx);
         if (value == null) rate = false;
         else usd[part] += value;
@@ -451,16 +516,46 @@ export function productChannelCpa(input: {
     );
     const partial = coveragePartial || late;
     const total = spend.daily && spend.rate ? spend.usd.total : null;
-    // Never a guessed split: any spend without destination blanks the
-    // channel spend; orders without channel only mark it as partial.
-    const spendSplit = total != null && spend.usd.unknown <= 0.005;
+    // Never a guessed split: spend without destination stays apart ("sin
+    // destino") and the channels hold only the spend with destination. Only
+    // when nothing has a destination is there no channel spend at all.
+    const unknownSpend = total != null ? round2(spend.usd.unknown) : null;
+    const inferredSpend = total != null ? round2(spend.usd.inferred) : null;
+    const hasUnknown = (unknownSpend ?? 0) > 0.005;
+    const hasInferred = (inferredSpend ?? 0) > 0.005;
+    const knownSpend = spend.usd.landing + spend.usd.whatsapp;
+    const spendSplit = total != null && (!hasUnknown || knownSpend > 0.005);
+    const unknownCampaigns = related.filter(
+      (c) => (c.split?.unknown ?? 0) > 0.005,
+    ).length;
     const ordersKnown = ordersChannel !== "unavailable";
     const split: ChannelCpaRow["split"] =
       !spendSplit && !ordersKnown
         ? "unavailable"
-        : !spendSplit || !ordersKnown || counts.unknown.orders > 0
+        : !spendSplit ||
+            hasUnknown ||
+            hasInferred ||
+            !ordersKnown ||
+            counts.unknown.orders > 0
           ? "partial"
           : "ok";
+    const campaignsText = (n: number) =>
+      `${n} ${n === 1 ? "campaña" : "campañas"}`;
+    const spendNote =
+      total == null
+        ? ""
+        : [
+            hasUnknown
+              ? spendSplit
+                ? `${moneyText(unknownSpend)} sin destino (${campaignsText(unknownCampaigns)} sin destino leído en Meta): el CPA por canal usa solo el gasto con destino`
+                : `Meta no dio el destino de ${campaignsText(unknownCampaigns)}: sin desglose`
+              : "",
+            hasInferred
+              ? `WhatsApp incluye ${moneyText(inferredSpend)} por el nombre de la campaña`
+              : "",
+          ]
+            .filter(Boolean)
+            .join(". ");
     const channelCell = (channel: SaleChannel) =>
       cell(
         spendSplit ? spend.usd[channel] : null,
@@ -497,6 +592,10 @@ export function productChannelCpa(input: {
       partial,
       approximate,
       split,
+      unknownSpend,
+      inferredSpend,
+      unknownCampaigns,
+      spendNote,
       reason,
     };
   }
@@ -546,6 +645,7 @@ export function productChannelCpa(input: {
           unknownMeta.every((c) => c.split!.unknown >= c.split!.total - 0.005)
         ? "unavailable"
         : "partial",
+    spendInferred: metaSpend.some((c) => (c.split?.inferred ?? 0) > 0.005),
   };
 }
 
