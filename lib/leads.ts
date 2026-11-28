@@ -14,6 +14,17 @@ import {
   type GestionSnapshot,
 } from "./leads-undo";
 import { normalizePhone, phoneConfigForStore } from "./phone-cr";
+import {
+  acumularGestiones,
+  COLUMNAS_LEAD_LISTA,
+  leadsOrdenados,
+  LOTE_LEADS,
+  MAX_GESTIONES_LISTA,
+  MAX_LEADS_LISTA,
+  type GestionDeProductividad,
+  type LeadDeAsesora,
+  type ResumenAsesora,
+} from "./leads-productividad-leads";
 import { AGENT_LEG_ANSWERED, describeZadarmaCall } from "./zadarma";
 import { esLlamadaReal } from "./telnyx";
 import { COLUMNAS_GRABACION, esColumnaFaltante, estadoGrabacion, type EstadoGrabacion } from "./grabaciones";
@@ -471,8 +482,24 @@ export interface ProductivityRow {
   vendedora_id: number;
   name: string;
   gestiones: number; // total de gestiones registradas
-  leads: number; // leads distintos gestionados
+  leads: number; // leads distintos gestionados (lib/leads-productividad-leads.ts)
   pedidos: number; // pedidos creados (lead_calls kind='sale')
+}
+
+/**
+ * Las gestiones que cuentan para Productividad: de la tienda, en [from, to) y
+ * con asesora. El conteo de la tabla y la lista de una asesora salen de aca,
+ * con el mismo filtro (la lista solo agrega `vendedora = X`, que usa el
+ * indice lead_calls_vendedora_idx (vendedora, occurred_at DESC)).
+ */
+function gestionesDelPeriodo(select: string, storeId: number, fromIso: string, toIso: string) {
+  return getDB()
+    .from("lead_calls")
+    .select(select)
+    .eq("store_id", storeId)
+    .gte("occurred_at", fromIso)
+    .lt("occurred_at", toIso)
+    .not("vendedora", "is", null);
 }
 
 export async function getProductivity(
@@ -486,29 +513,14 @@ export async function getProductivity(
   for (const s of (staffData ?? []) as Array<{ id: number; name: string }>) names.set(s.id, s.name);
 
   // Gestiones en el rango, con vendedora asignada.
-  const agg = new Map<number, { gestiones: number; pedidos: number; leads: Set<number> }>();
+  const agg = new Map<number, ResumenAsesora>();
   const pageSize = 1000;
   for (let from = 0; from < 200000; from += pageSize) {
-    const { data, error } = await getDB()
-      .from("lead_calls")
-      .select("vendedora,kind,lead_id")
-      .eq("store_id", storeId)
-      .gte("occurred_at", fromIso)
-      .lt("occurred_at", toIso)
-      .not("vendedora", "is", null)
+    const { data, error } = await gestionesDelPeriodo("vendedora,kind,lead_id", storeId, fromIso, toIso)
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`getProductivity: ${error.message}`);
-    const page = (data ?? []) as Array<{ vendedora: number; kind: string; lead_id: number }>;
-    for (const row of page) {
-      let a = agg.get(row.vendedora);
-      if (!a) {
-        a = { gestiones: 0, pedidos: 0, leads: new Set() };
-        agg.set(row.vendedora, a);
-      }
-      a.gestiones += 1;
-      a.leads.add(row.lead_id);
-      if (row.kind === "sale") a.pedidos += 1;
-    }
+    const page = (data ?? []) as unknown as GestionDeProductividad[];
+    acumularGestiones(agg, page);
     if (page.length < pageSize) break;
   }
 
@@ -521,6 +533,74 @@ export async function getProductivity(
       pedidos: a.pedidos,
     }))
     .sort((x, y) => y.pedidos - x.pedidos || y.gestiones - x.gestiones);
+}
+
+/** Un lead de la lista, con su ficha (null si ya no existe en la tienda). */
+export interface LeadDeAsesoraConFicha extends LeadDeAsesora {
+  lead: Record<string, unknown> | null;
+}
+
+export interface LeadsDeAsesora {
+  /** Leads distintos: el mismo numero que la columna "Leads" de la tabla. */
+  total: number;
+  gestiones: number;
+  /** Se llego al tope de gestiones leidas: el total puede quedar corto. */
+  incompleto: boolean;
+  /** Con ficha: los MAX_LEADS_LISTA de gestion mas reciente. */
+  leads: LeadDeAsesoraConFicha[];
+}
+
+/**
+ * Los leads que cuenta la columna "Leads" para UNA asesora: misma regla y mismo
+ * filtro que `getProductivity`. Dos consultas acotadas, solo al apretar el
+ * numero: las gestiones de esa asesora (indice por vendedora + fecha, maximo
+ * MAX_GESTIONES_LISTA filas) y las fichas por id (llave primaria, en tandas).
+ */
+export async function getLeadsDeAsesora(
+  storeId: number,
+  vendedora: number,
+  fromIso: string,
+  toIso: string
+): Promise<LeadsDeAsesora> {
+  const agg = new Map<number, ResumenAsesora>();
+  const pageSize = 1000;
+  let incompleto = false;
+  for (let from = 0; ; from += pageSize) {
+    if (from >= MAX_GESTIONES_LISTA) {
+      incompleto = true;
+      break;
+    }
+    const { data, error } = await gestionesDelPeriodo("vendedora,kind,lead_id,occurred_at", storeId, fromIso, toIso)
+      .eq("vendedora", vendedora)
+      .order("occurred_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`getLeadsDeAsesora: ${error.message}`);
+    const page = (data ?? []) as unknown as GestionDeProductividad[];
+    acumularGestiones(agg, page);
+    if (page.length < pageSize) break;
+  }
+  const resumen = agg.get(vendedora);
+  const ordenados = leadsOrdenados(resumen);
+  const conFicha = ordenados.slice(0, MAX_LEADS_LISTA);
+  const fichas = new Map<number, Record<string, unknown>>();
+  for (let i = 0; i < conFicha.length; i += LOTE_LEADS) {
+    const ids = conFicha.slice(i, i + LOTE_LEADS).map((l) => l.lead_id);
+    const { data, error } = await getDB()
+      .from("leads")
+      .select(COLUMNAS_LEAD_LISTA)
+      .eq("store_id", storeId)
+      .in("id", ids)
+      .limit(ids.length);
+    if (error) throw new Error(`getLeadsDeAsesora(leads): ${error.message}`);
+    for (const row of (data ?? []) as unknown as Array<Record<string, unknown>>) fichas.set(Number(row.id), row);
+  }
+  return {
+    total: ordenados.length,
+    gestiones: resumen?.gestiones ?? 0,
+    incompleto,
+    leads: conFicha.map((l) => ({ ...l, lead: fichas.get(l.lead_id) ?? null })),
+  };
 }
 
 export interface LeadBoardCounts {

@@ -159,3 +159,17 @@ export function maskPhone(phone: string): string {
   const tail = phone.slice(-4);
   return `${head}${"#".repeat(Math.max(0, phone.length - 7))}${tail}`;
 }
+
+/**
+ * Formato de presentacion del tablero de Leads: 506######## -> +506 6123-4567.
+ *
+ * Cualquier codigo de pais de 3 digitos, no solo 506. Desde que la ingesta
+ * acepta numeros con codigo explicito (un nicaragüense en Guanacaste es +505),
+ * un formateador fijo en "+506" le habria puesto el PAIS EQUIVOCADO al numero
+ * que la asesora lee para marcar. El codigo sale del numero mismo.
+ */
+export function formatLeadPhone(phone: string): string {
+  const m = /^(\d{3})(\d{4})(\d{4})$/.exec(phone);
+  if (m) return `+${m[1]} ${m[2]}-${m[3]}`;
+  return phone;
+}

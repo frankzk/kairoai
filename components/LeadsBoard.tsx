@@ -39,6 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { FINANCE_STORES, getFinanceStoreById, type FinanceStoreCode } from "@/lib/store-config";
 import { useSelectedStore } from "@/lib/use-selected-store";
+import { formatLeadPhone } from "@/lib/phone-cr";
 import {
   BOARD_STAGE_PRIORITY,
   getStatusDef,
@@ -104,17 +105,9 @@ function fmtDateTime(iso: string | null): string {
   }
 }
 
-// Formato de presentacion: 506######## -> +506 6123-4567.
-//
-// Cualquier codigo de pais de 3 digitos, no solo 506. Desde que la ingesta
-// acepta numeros con codigo explicito (un nicaragüense en Guanacaste es +505),
-// un formateador fijo en "+506" le habria puesto el PAIS EQUIVOCADO al numero
-// que la asesora lee para marcar. El codigo sale del numero mismo.
-function formatPhone(phone: string): string {
-  const m = /^(\d{3})(\d{4})(\d{4})$/.exec(phone);
-  if (m) return `+${m[1]} ${m[2]}-${m[3]}`;
-  return phone;
-}
+// Formato de presentacion (+506 6123-4567): lib/phone-cr.ts, compartido con
+// la lista de Productividad.
+const formatPhone = formatLeadPhone;
 
 function fmtDayLabel(dateKey: string, long = false): string {
   try {
@@ -1188,7 +1181,15 @@ export default function LeadsBoard() {
         )}
 
         {showProductivity && (
-          <ProductivityPanel key={store} store={store} asignados={asignados?.porUsuario ?? null} />
+          <ProductivityPanel
+            key={store}
+            store={store}
+            asignados={asignados?.porUsuario ?? null}
+            // La lista de leads de una asesora abre la ficha por el mismo
+            // camino que una tarjeta: reserva y aviso de "lead ocupado".
+            onOpenLead={(lead) => void openLead(lead as unknown as LeadRow)}
+            fichaAbierta={Boolean(drawerLead || blocked)}
+          />
         )}
 
         <Card className="mb-4 overflow-hidden border-border/80 bg-card/80">
