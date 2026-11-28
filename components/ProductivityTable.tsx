@@ -1,6 +1,7 @@
 import { activityAgo, presenceStatus } from "@/lib/leads-presence";
 import type { ConnectedProductivityRow } from "@/lib/leads-productivity-presence";
 import type { RecibidosAsesora } from "@/lib/leads-recibidos";
+import { etiquetaVerLeads } from "@/lib/leads-productividad-leads";
 
 const STATES = {
   active: { label: "Activa", color: "oklch(0.76 0.17 163)" },
@@ -10,12 +11,14 @@ const STATES = {
 export interface ProductivityTotals { gestiones: number; leads: number; pedidos: number }
 const conversion = (orders: number | null, actions: number | null) => actions && orders !== null ? `${Math.round(orders / actions * 100)}%` : "–";
 
-export default function ProductivityTable({ rows, totals, now, loading, stale, asignados = null, recibidos = null }: {
+export default function ProductivityTable({ rows, totals, now, loading, stale, asignados = null, recibidos = null, onVerLeads }: {
   rows: ConnectedProductivityRow[]; totals: ProductivityTotals | null; now: number; loading: boolean; stale: boolean;
   /** Reparto de leads encendido: leads abiertos asignados ahora por usuario. Null = sin columna. */
   asignados?: Record<number, number> | null;
   /** Leads que el reparto le asigno en el periodo, con cuantos trabajo / cerro / sin tocar. Null = sin columnas. */
   recibidos?: Record<number, RecibidosAsesora> | null;
+  /** Apretar el numero de "Leads": la lista de esos leads (ProductivityLeadsModal). */
+  onVerLeads?: (row: ConnectedProductivityRow) => void;
 }) {
   const conAsignados = asignados != null;
   const conRecibidos = recibidos != null;
@@ -49,7 +52,7 @@ export default function ProductivityTable({ rows, totals, now, loading, stale, a
               </>
             ) : null}
             <th scope="col" className="py-2 pr-4 text-right font-medium">Gestiones</th>
-            <th scope="col" className="py-2 pr-4 text-right font-medium">Leads</th>
+            <th scope="col" className="py-2 pr-4 text-right font-medium" title="Leads distintos con al menos una gestión suya en el período. Aprieta el número para verlos">Leads</th>
             <th scope="col" className="py-2 pr-4 text-right font-medium">Pedidos</th>
             <th scope="col" className="py-2 text-right font-medium">Conversión</th>
           </tr>
@@ -92,7 +95,22 @@ export default function ProductivityTable({ rows, totals, now, loading, stale, a
                   );
                 })() : null}
                 <td className="py-3 pr-4 text-right tabular-nums">{row.gestiones ?? "–"}</td>
-                <td className="py-3 pr-4 text-right tabular-nums">{row.leads ?? "–"}</td>
+                <td className="py-1.5 pr-2 text-right tabular-nums">
+                  {onVerLeads && row.vendedora_id != null && row.leads ? (
+                    <button
+                      type="button"
+                      onClick={() => onVerLeads(row)}
+                      aria-label={etiquetaVerLeads(row.leads, row.name)}
+                      title={etiquetaVerLeads(row.leads, row.name)}
+                      aria-haspopup="dialog"
+                      className="inline-flex min-h-8 min-w-8 items-center justify-end rounded-md px-2 font-medium text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:bg-primary/10 hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {row.leads}
+                    </button>
+                  ) : (
+                    <span className="pr-2">{row.leads ?? "–"}</span>
+                  )}
+                </td>
                 <td className="py-3 pr-4 text-right font-semibold tabular-nums">{row.pedidos ?? "–"}</td>
                 <td className="py-3 text-right tabular-nums">{conversion(row.pedidos, row.gestiones)}</td>
               </tr>

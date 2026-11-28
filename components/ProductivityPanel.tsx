@@ -8,14 +8,20 @@ import ProductivityTable, { type ProductivityTotals } from "@/components/Product
 import { localDateKey, RANGE_LABELS, type RangeKey } from "@/lib/leads-metrics";
 import { PRESENCE_OFFLINE_MS, PRESENCE_POLL_MS } from "@/lib/leads-presence";
 import type { ConnectedProductivityRow } from "@/lib/leads-productivity-presence";
+import ProductivityLeadsModal, { type LeadParaAbrir } from "@/components/ProductivityLeadsModal";
+import { getFinanceStore } from "@/lib/store-config";
 
 const RANGES: RangeKey[] = ["hoy", "ayer", "7d", "30d", "mes"];
 const FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card";
 
-export default function ProductivityPanel({ store, asignados = null }: {
+export default function ProductivityPanel({ store, asignados = null, onOpenLead, fichaAbierta = false }: {
   store: string;
   /** Con el reparto de leads encendido: leads abiertos asignados por usuario. */
   asignados?: Record<number, number> | null;
+  /** Abre la ficha del tablero (con su reserva) desde la lista de leads de una asesora. */
+  onOpenLead?: (lead: LeadParaAbrir) => void;
+  /** La ficha o el aviso de reserva estan abiertos: la lista se esconde mientras. */
+  fichaAbierta?: boolean;
 }) {
   const [range, setRange] = useState<RangeKey>("hoy");
   const [fromDate, setFromDate] = useState("");
@@ -26,6 +32,10 @@ export default function ProductivityPanel({ store, asignados = null }: {
   const [totals, setTotals] = useState<ProductivityTotals | null>(null);
   // Leads que el reparto le asigno a cada una en el periodo (lib/leads-recibidos.ts).
   const [recibidos, setRecibidos] = useState<Record<number, RecibidosAsesora> | null>(null);
+  // El periodo EXACTO de las metricas en pantalla: la lista de una asesora se
+  // pide con el mismo [from, to) para que tenga tantos leads como el numero.
+  const [bounds, setBounds] = useState<{ from: string; to: string; label: string } | null>(null);
+  const [detalle, setDetalle] = useState<{ staffId: number; nombre: string; leads: number; from: string; to: string; label: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(0);
@@ -74,6 +84,7 @@ export default function ProductivityPanel({ store, asignados = null }: {
         setRows(data.rows);
         setTotals(data.totals ?? null);
         setRecibidos(data.recibidos ?? null);
+        setBounds(typeof data.from === "string" && typeof data.to === "string" ? { from: data.from, to: data.to, label: String(data.range_label ?? "") } : null);
       }
       setError(null);
     } catch (err) {
@@ -88,7 +99,7 @@ export default function ProductivityPanel({ store, asignados = null }: {
   useEffect(() => {
     let disposed = false;
     setRows([]); currentRows.current = []; metricsAt.current = 0;
-    setTotals(null); setError(null); clock.current = { server: 0, local: 0 };
+    setTotals(null); setBounds(null); setError(null); clock.current = { server: 0, local: 0 };
     void load();
     const refresh = async () => {
       const needsMetrics = await load(false, performance.now() - metricsAt.current < 60_000);
@@ -146,7 +157,27 @@ export default function ProductivityPanel({ store, asignados = null }: {
           {rows.length ? <span>{rows.length} {rows.length === 1 ? "persona" : "personas"}</span> : null}
         </div>
         {error ? <p role="status" className="mb-3 text-xs text-amber-300">{error}</p> : null}
-        <ProductivityTable rows={rows} totals={totals} now={now} loading={loading} stale={stale} asignados={asignados} recibidos={recibidos} />
+        <ProductivityTable rows={rows} totals={totals} now={now} loading={loading} stale={stale} asignados={asignados} recibidos={recibidos}
+          onVerLeads={bounds ? (row) => {
+            if (row.vendedora_id == null || !row.leads) return;
+            setDetalle({ staffId: row.vendedora_id, nombre: row.name, leads: row.leads, from: bounds.from, to: bounds.to, label: bounds.label });
+          } : undefined} />
+        {detalle ? (
+          <ProductivityLeadsModal
+            key={`${detalle.staffId}:${detalle.from}:${detalle.to}`}
+            store={store}
+            staffId={detalle.staffId}
+            nombre={detalle.nombre}
+            esperado={detalle.leads}
+            fromIso={detalle.from}
+            toIso={detalle.to}
+            periodoLabel={detalle.label}
+            timeZone={getFinanceStore(store).timezone}
+            suspendido={fichaAbierta}
+            onOpenLead={onOpenLead}
+            onClose={() => setDetalle(null)}
+          />
+        ) : null}
       </CardContent>
     </Card>
   );
